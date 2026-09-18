@@ -16,7 +16,7 @@ Those surfaces worked, but there was no single machine-readable contract describ
 
 `backend/agentcad/tool_registry.py` is now the canonical metadata layer for implemented harness tools.
 
-The first slice is intentionally metadata-only. It does **not** replace DocumentService, SemanticTransactionCompiler, AutoLayoutEngine or the existing atomic transaction boundary.
+The registry began as a metadata-only slice. T0.2/T0.3 now consume its permission/risk metadata through the persisted Agent Harness. It still does **not** replace DocumentService, SemanticTransactionCompiler, AutoLayoutEngine or the existing atomic transaction boundary.
 
 The execution chain remains:
 
@@ -78,7 +78,7 @@ Proposed Charter tools must not be added to the registry until a real determinis
 
 ## Permission semantics in this slice
 
-Permissions are currently descriptive metadata. Enforcement is the next Priority 0 task.
+Permissions are now enforced for Agent-originated mutating paths by `AgentHarnessService`. See [`agent-harness-sessions-permissions.md`](agent-harness-sessions-permissions.md).
 
 Current policy:
 
@@ -130,7 +130,7 @@ Existing MCP execution tools remain unchanged.
 
 ## Next step
 
-The next Charter task is T0.2/T0.3 groundwork:
+The T0.2/T0.3 groundwork is now implemented. The next Charter task is T0.4 Semantic Diff:
 
 1. introduce an Agent Session identity;
 2. add a permission decision object;

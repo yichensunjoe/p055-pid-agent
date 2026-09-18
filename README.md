@@ -38,7 +38,7 @@ WIP / Alpha — 核心文档引擎、浏览器编辑器、REST/Python/MCP 接入
 - 单位图例使用声明式 JSON 维护，人工编辑器和 Agent 共用同一份符号定义；
 - 最终支持生成和继续编辑与实际复杂 P&ID 相当的工程图纸。
 
-完整产品边界见 [`docs/product-vision.md`](docs/product-vision.md)。Agent Harness 第一阶段的统一工具契约见 [`docs/tool-registry.md`](docs/tool-registry.md)。
+完整产品边界见 [`docs/product-vision.md`](docs/product-vision.md)。Agent Harness 第一阶段的统一工具契约见 [`docs/tool-registry.md`](docs/tool-registry.md)，Session 与 Permission/Approval Gate 见 [`docs/agent-harness-sessions-permissions.md`](docs/agent-harness-sessions-permissions.md)。
 
 ## 当前能力
 

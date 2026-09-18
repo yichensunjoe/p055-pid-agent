@@ -11,6 +11,7 @@ import { DocumentTree } from "./editor/DocumentTree";
 import { CreateFolderDialog, RenameFolderDialog } from "./editor/FolderDialogs";
 import { BasicShapesToolbar } from "./editor/BasicShapesToolbar";
 import { ExperienceSettings } from "./editor/ExperienceSettings";
+import { EngineeringGraphPanel } from "./editor/EngineeringGraphPanel";
 import { EngineeringReportPanel } from "./editor/EngineeringReportPanel";
 import { ViewNavigator } from "./editor/ViewNavigator";
 import { elementPaletteCommands, type PaletteCommand } from "./editor/paletteCommands";
@@ -127,7 +128,7 @@ function ShapeToolButton({ tool, label, shortcut, active }: { tool: "line" | "re
   );
 }
 
-type RightPanel = "properties" | "groups" | "history" | "reports" | "agent";
+type RightPanel = "properties" | "groups" | "history" | "reports" | "graph" | "agent";
 
 function operationDescription(operation: SemanticOperation): string {
   switch (operation.op) {
@@ -571,6 +572,7 @@ export default function App() {
     { id: "groups", label: "图层/系统" },
     { id: "history", label: "历史" },
     { id: "reports", label: "报表/检查" },
+    { id: "graph", label: "工程图谱" },
     { id: "agent", label: "Agent" },
   ];
   const busyAgent = planningAgent || repairingAgent || applyingAgent || automaticAgentRunning;
@@ -920,6 +922,7 @@ export default function App() {
           {rightPanel === "groups" ? <section className="inspector-panel" role="tabpanel"><h2>图层与工艺系统</h2><LayerSystemPanel /></section> : null}
           {rightPanel === "history" ? <section className="inspector-panel" role="tabpanel"><h2>Revision 历史</h2><HistoryPanel /></section> : null}
           {rightPanel === "reports" ? <section className="inspector-panel" role="tabpanel"><h2>工程报表与规则检查</h2><EngineeringReportPanel /></section> : null}
+          {rightPanel === "graph" ? <section className="inspector-panel" role="tabpanel"><h2>工程语义图（派生）</h2><EngineeringGraphPanel /></section> : null}
           <section className="agent-panel" role="tabpanel" hidden={rightPanel !== "agent"}>
             <h2>P&amp;ID Agent</h2>
             <label>自然语言指令<textarea value={prompt} onChange={(event: ChangeEvent<HTMLTextAreaElement>) => setPrompt(event.target.value)} placeholder="例如：把选中的阀门替换为球阀，并保持原有管线连接。" rows={5} /></label>

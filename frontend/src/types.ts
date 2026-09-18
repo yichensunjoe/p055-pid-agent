@@ -420,3 +420,184 @@ export type EngineeringReport = {
   instruments: InstrumentScheduleRow[];
   findings: RuleFinding[];
 };
+
+// --- M2 engineering semantic graph -----------------------------------------------
+
+export type EngineeringObjectKind =
+  | "equipment"
+  | "valve"
+  | "instrument"
+  | "line"
+  | "junction"
+  | "off_page_connector"
+  | "annotation"
+  | "graphic";
+
+export type EngineeringObject = {
+  object_id: string;
+  kind: EngineeringObjectKind;
+  identity_scope: "tag" | "element";
+  tag: string;
+  name: string;
+  label: string;
+  symbol_key: string;
+  symbol_name: string;
+  category: string;
+  capability: string;
+  element_ids: string[];
+  primary_element_id: string;
+  layer_id: string;
+  layer_name: string;
+  system_id: string;
+  system_name: string;
+  media: string;
+  medium_class: string;
+  nominal_diameter: string;
+  flow_direction: string;
+  required_port_count: number;
+  connected_port_count: number;
+  connection_count: number;
+  length: number;
+  opc_direction: "in" | "out" | "";
+  target_document_id: string;
+};
+
+export type EngineeringGraphFinding = {
+  severity: RuleSeverity;
+  code: string;
+  message: string;
+  object_ids: string[];
+  element_ids: string[];
+  details: Record<string, unknown>;
+};
+
+export type EngineeringGraphCounts = {
+  equipment: number;
+  valves: number;
+  instruments: number;
+  lines: number;
+  junctions: number;
+  off_page_connectors: number;
+  annotations: number;
+  graphics: number;
+  objects: number;
+  edges: number;
+  signal_links: number;
+  errors: number;
+  warnings: number;
+  info: number;
+};
+
+export type TopologyEdge = {
+  connector_id: string;
+  pipeline_object_id: string;
+  source_object_id: string;
+  target_object_id: string;
+  source_port_id: string;
+  target_port_id: string;
+  medium: string;
+  medium_class: string;
+  flow_direction: "forward" | "reverse" | "none";
+  directed: boolean;
+};
+
+export type EngineeringGraph = {
+  schema: "pid-agent.engineering-graph";
+  version: 1;
+  builder_version: number;
+  document_id: string;
+  document_name: string;
+  revision: number;
+  content_hash: string;
+  counts: EngineeringGraphCounts;
+  objects: EngineeringObject[];
+  edges: TopologyEdge[];
+  signal_links: Array<{ connector_id: string; source_object_id: string; target_object_id: string; medium: string; instrument_object_ids: string[]; classification: string }>;
+  off_page_object_ids: string[];
+  connectivity_components: string[][];
+  findings: EngineeringGraphFinding[];
+};
+
+export type EngineeringTraceStep = {
+  depth: number;
+  object_id: string;
+  kind: EngineeringObjectKind;
+  via_connector_id: string;
+  direction: "upstream" | "downstream" | "undirected" | "origin";
+};
+
+export type EngineeringTraceResult = {
+  document_id: string;
+  revision: number;
+  origin_object_id: string;
+  direction: "upstream" | "downstream" | "both";
+  steps: EngineeringTraceStep[];
+  reached_object_ids: string[];
+  traversed_pipeline_ids: string[];
+  truncated: boolean;
+};
+
+export type ProjectIndexStaleness =
+  | "verified_fresh"
+  | "fresh"
+  | "stale"
+  | "missing_document"
+  | "builder_outdated";
+
+export type ProjectIndexEntry = {
+  document_id: string;
+  document_name: string;
+  revision: number;
+  content_hash: string;
+  graph_hash: string;
+  builder_version: number;
+  built_at: string;
+  built_by: string;
+  counts: {
+    objects: number;
+    equipment: number;
+    valves: number;
+    instruments: number;
+    lines: number;
+    off_page_connectors: number;
+    errors: number;
+    warnings: number;
+  };
+  staleness: ProjectIndexStaleness;
+  stale_reasons: string[];
+};
+
+export type ProjectEngineeringGraph = {
+  schema: "pid-agent.project-engineering-index";
+  version: 1;
+  generated_at: string;
+  freshness: "cheap" | "verified";
+  document_count: number;
+  indexed_document_count: number;
+  stale_document_ids: string[];
+  unindexed_document_ids: string[];
+  totals: EngineeringGraphCounts;
+  documents: ProjectIndexEntry[];
+  cross_document_links: Array<{
+    source_document_id: string;
+    source_object_id: string;
+    source_tag: string;
+    direction: "in" | "out" | "";
+    target_document_id: string;
+    target_document_found: boolean;
+    resolved: boolean;
+    matching_object_ids: string[];
+  }>;
+  findings: EngineeringGraphFinding[];
+};
+
+export type ProjectIndexRebuildReport = {
+  schema: "pid-agent.project-index-rebuild";
+  version: 1;
+  rebuilt: string[];
+  unchanged: string[];
+  removed: string[];
+  stale_after: string[];
+  duration_ms: number;
+  built_by: string;
+};

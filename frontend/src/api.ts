@@ -10,7 +10,11 @@ import type {
   Operation,
   ImportResult,
   ProjectSettings,
+  EngineeringGraph,
   EngineeringReport,
+  EngineeringTraceResult,
+  ProjectEngineeringGraph,
+  ProjectIndexRebuildReport,
   ReportScope,
   SemanticAgentPlan,
   SemanticAgentPlanResult,
@@ -354,6 +358,22 @@ export const api = {
     }),
   getEngineeringReport: (id: string, scope: ReportScope = "visible") =>
     request<EngineeringReport>(`/documents/${id}/engineering-report?scope=${encodeURIComponent(scope)}`),
+  getEngineeringGraph: (id: string) =>
+    request<EngineeringGraph>(`/documents/${id}/engineering-graph`),
+  getEngineeringTrace: (
+    id: string,
+    objectId: string,
+    direction: "upstream" | "downstream" | "both" = "both",
+  ) => request<EngineeringTraceResult>(
+    `/documents/${encodeURIComponent(id)}/engineering-graph/trace`
+    + `?object_id=${encodeURIComponent(objectId)}&direction=${direction}`,
+  ),
+  getProjectEngineeringGraph: () =>
+    request<ProjectEngineeringGraph>("/project/engineering-graph"),
+  rebuildProjectIndex: (force = false) =>
+    request<ProjectIndexRebuildReport>(`/project/index/rebuild?force=${force ? "true" : "false"}`, {
+      method: "POST",
+    }),
   engineeringReportCsvUrl: (
     id: string,
     kind: "equipment" | "lines" | "instruments" | "rules",

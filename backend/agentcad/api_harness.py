@@ -12,6 +12,7 @@ from .harness import (
     ToolIntentMismatchError,
     ToolPermissionDeniedError,
 )
+from .service import DocumentNotFoundError
 from .harness_models import (
     AgentSession,
     AgentSessionAudit,
@@ -23,7 +24,10 @@ from .harness_models import (
 
 
 def _raise_harness_error(exc: Exception):
-    if isinstance(exc, (AgentSessionNotFoundError, ToolApprovalNotFoundError)):
+    if isinstance(
+        exc,
+        (AgentSessionNotFoundError, ToolApprovalNotFoundError, DocumentNotFoundError),
+    ):
         raise HTTPException(
             status_code=404,
             detail={"error": exc.code, "message": str(exc), "retryable": False},

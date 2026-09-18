@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+from .agent_semantic_models import SemanticTransaction
 from .diagnostics import DiagnosticLogger
 from .harness_models import (
     AgentSession,
@@ -16,6 +17,8 @@ from .harness_models import (
     ToolApprovalResolveRequest,
     ToolCallRecord,
 )
+from .layout_models import AutoLayoutRequest
+from .models import TransactionRequest
 from .service import DocumentService
 from .store import SQLiteDocumentStore
 from .tool_registry import ToolDefinition, ToolRegistry, get_default_tool_registry
@@ -74,6 +77,26 @@ def _normalize_json(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         return [_normalize_json(item) for item in value]
     return str(value)
+
+
+def canonicalize_tool_intent(tool_name: str, intent: Any) -> Any:
+    """Normalize implemented tool payloads before hashing approvals.
+
+    Approval identity is semantic, not dependent on whether a caller omitted fields
+    that Pydantic later fills with deterministic defaults.
+    """
+    if not isinstance(intent, dict):
+        return intent
+    if tool_name == "apply_compiled_agent_transaction":
+        transaction = TransactionRequest.model_validate(intent.get("transaction", {}))
+        return {"transaction": transaction.model_dump(mode="json")}
+    if tool_name == "apply_agent_transaction":
+        transaction = SemanticTransaction.model_validate(intent.get("transaction", {}))
+        return {"transaction": transaction.model_dump(mode="json")}
+    if tool_name == "apply_auto_layout":
+        options = AutoLayoutRequest.model_validate(intent.get("options", {}))
+        return {"options": options.model_dump(mode="json")}
+    return intent
 
 
 def tool_intent_hash(tool_name: str, document_id: str, intent: Any) -> str:
@@ -196,7 +219,12 @@ class AgentHarnessService:
     ) -> ToolApproval:
         session = self.ensure_session(request.document_id, session_id=session_id)
         definition = self.registry.require(request.tool_name)
-        intent_hash = tool_intent_hash(request.tool_name, request.document_id, request.intent)
+        canonical_intent = canonicalize_tool_intent(request.tool_name, request.intent)
+        intent_hash = tool_intent_hash(
+            request.tool_name,
+            request.document_id,
+            canonical_intent,
+        )
         approval = ToolApproval(
             session_id=session.id,
             tool_name=definition.name,
@@ -266,7 +294,8 @@ class AgentHarnessService:
     ) -> AuthorizedToolCall:
         definition = self.registry.require(tool_name)
         session = self.ensure_session(document_id, session_id=session_id)
-        intent_hash = tool_intent_hash(tool_name, document_id, intent)
+        canonical_intent = canonicalize_tool_intent(tool_name, intent)
+        intent_hash = tool_intent_hash(tool_name, document_id, canonical_intent)
         approval: ToolApproval | None = None
 
         if definition.permission == "deny":

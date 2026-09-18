@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import secrets
 from collections.abc import Awaitable, Callable
+from typing import Any
 from urllib.parse import parse_qsl, urlencode
 
 from fastapi import Request
@@ -262,7 +263,39 @@ class RequestBoundary:
             await send(message)
 
         try:
-            await self.app(scope, receive, send_with_security_headers)
+            replay_receive = receive
+            if body_limit is not None:
+                buffered_messages: list[dict[str, Any]] = []
+                total = 0
+                while True:
+                    message = await receive()
+                    buffered_messages.append(message)
+                    if message.get("type") == "http.request":
+                        chunk = message.get("body", b"")
+                        total += len(chunk)
+                        if total > body_limit:
+                            res = _error(
+                                413,
+                                "request_body_too_large",
+                                f"Request body exceeds {body_limit} bytes.",
+                            )
+                            return await res(scope, receive, send)
+                        if not message.get("more_body", False):
+                            break
+                    elif message.get("type") == "http.disconnect":
+                        break
+
+                replay_index = 0
+
+                async def replay_receive() -> dict[str, Any]:
+                    nonlocal replay_index
+                    if replay_index < len(buffered_messages):
+                        message = buffered_messages[replay_index]
+                        replay_index += 1
+                        return message
+                    return await receive()
+
+            await self.app(scope, replay_receive, send_with_security_headers)
         finally:
             self._semaphore.release()
 

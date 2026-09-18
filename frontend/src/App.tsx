@@ -439,6 +439,7 @@ export default function App() {
         document.revision,
         prompt.trim(),
         scopedContext(),
+        pendingPlan.session_id,
         pendingPlan.plan,
         attempt,
         providerConfig(),
@@ -471,8 +472,29 @@ export default function App() {
     setApplyingAgent(true);
     setAgentError("");
     try {
+      const sessionId = pendingPlan.session_id
+        ?? (await api.createAgentSession(document.id, {
+          actor: "web-user",
+          provider: baseUrl.trim(),
+          model: model.trim(),
+          metadata: { surface: "web", workflow: "manual-agent-apply" },
+        })).id;
+      const requestedApproval = await api.requestToolApproval(
+        sessionId,
+        "apply_compiled_agent_transaction",
+        document.id,
+        { transaction: compiled.transaction },
+        "用户已查看 Agent 预览并点击应用。",
+      );
+      const approval = await api.resolveToolApproval(
+        requestedApproval.id,
+        true,
+        "用户显式点击“应用”确认本次工程变更。",
+      );
       const result = await api.applySemanticAgentPlan(
         document.id,
+        sessionId,
+        approval.id,
         pendingPlan.plan.plan_id,
         pendingPlan.parent_plan_id,
         pendingPlan.attempt,

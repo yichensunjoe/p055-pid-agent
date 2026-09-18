@@ -1,6 +1,16 @@
 # REUSE_AND_PITFALL_LOG — P055-PID-Agent
 
 
+## 2026-09-18 · Approval 必须绑定 exact intent，不能只批准工具名（P055-PID-Agent）
+
+- 场景：Tool Registry 已能标记 ask/deny，但若 approval 只记录“用户批准 apply_transaction”，同一个批准令牌就可能被换成另一份事务、另一张图或另一个 Agent session 使用。
+- 结论做法：Approval 绑定 `session + tool_name + document_id + canonical intent hash`；执行前重新计算 SHA-256 比对；成功执行后状态变为 consumed，禁止重放。Tool Call 另外记录 base/result revision 和 error status。
+- 关键经验：工程 Agent 的“人工确认”不能只是前端按钮状态，必须是后端可验证、持久化、与具体工程变更严格绑定的 capability token。
+- 旁路治理：不能只保护高层 semantic endpoint；任何模型可访问的低层 MCP mutation API 也必须复用同一 gate，否则 Agent 会自然选择阻力更小的旧工具绕过治理。
+- 人机边界：普通人工编辑器事务仍可直接进入 DocumentService；Agent-originated engineering change 才强制走 Harness Approval Gate，避免把治理层错误地变成所有 UI 点击的额外负担。
+- 适用场景：CAD/CAE、数据库变更、基础设施、金融操作等需要“模型可自主规划，但关键写入由人明确批准”的 Agent Harness。
+
+
 ## 2026-09-18 · Tool Registry 先做元数据层，不重写事务执行器（P055-PID-Agent）
 
 - 场景：按 PROJECT_CHARTER Priority 0 启动 Agent Harness 改造；仓库已有成熟的 DocumentService、TransactionRequest、SemanticTransactionCompiler、MCP/REST 能力，若直接重写执行路径风险很高。

@@ -214,6 +214,23 @@ def get_default_tool_registry() -> ToolRegistry:
                 tags=["compile", "pid", "semantic", "preview"],
             ),
             ToolDefinition(
+                name="apply_compiled_agent_transaction",
+                description=(
+                    "Apply an already compiled and validated low-level Agent transaction "
+                    "through the atomic DocumentService write boundary."
+                ),
+                input_schema=LowLevelTransactionToolInput.model_json_schema(),
+                output_schema=_object_schema("Applied TransactionResult and provenance."),
+                permission="ask",
+                risk="engineering_change",
+                has_side_effect=True,
+                preview_supported=True,
+                idempotency="depends_on_revision",
+                audit_event="tool.apply_compiled_agent_transaction",
+                surfaces=["rest", "agent"],
+                tags=["apply", "compiled", "engineering-change"],
+            ),
+            ToolDefinition(
                 name="apply_agent_transaction",
                 description=(
                     "Compile, validate and atomically apply a semantic P&ID transaction."

@@ -4,6 +4,16 @@ import path from "node:path";
 const databasePath = path.resolve("test-results", `pid-agent-e2e-${process.pid}.db`);
 const diagnosticsPath = path.resolve("test-results", `pid-agent-e2e-${process.pid}.diagnostics.jsonl`);
 
+// Ports are overridable so the suite can run on a machine where the default backend
+// port is already held by another checkout; CI uses the defaults.
+const apiPort = Number(process.env.PID_AGENT_E2E_API_PORT ?? 8000);
+const previewPort = Number(process.env.PID_AGENT_E2E_PREVIEW_PORT ?? 4173);
+const apiOrigin = `http://127.0.0.1:${apiPort}`;
+const previewOrigin = `http://127.0.0.1:${previewPort}`;
+// Keep the fixtures' direct API calls pointed at the same backend as the proxy.
+process.env.PID_AGENT_E2E_API_ROOT ??= `${apiOrigin}/api/v2`;
+process.env.PID_AGENT_API_TARGET ??= apiOrigin;
+
 export default defineConfig({
   testDir: "./e2e",
   testIgnore: "security.shared.spec.ts",
@@ -26,7 +36,7 @@ export default defineConfig({
     ? [["line"], ["html", { outputFolder: "test-results/playwright-report", open: "never" }]]
     : [["list"], ["html", { outputFolder: "test-results/playwright-report", open: "never" }]],
   use: {
-    baseURL: "http://127.0.0.1:4173",
+    baseURL: previewOrigin,
     viewport: { width: 1440, height: 960 },
     locale: "zh-CN",
     timezoneId: "Asia/Shanghai",
@@ -42,7 +52,7 @@ export default defineConfig({
   projects: [{ name: "chromium", use: { browserName: "chromium" } }],
   webServer: [
     {
-      command: "python -m uvicorn agentcad.main:app --host 127.0.0.1 --port 8000",
+      command: `python -m uvicorn agentcad.main:app --host 127.0.0.1 --port ${apiPort}`,
       cwd: "..",
       env: {
         ...process.env,
@@ -50,17 +60,17 @@ export default defineConfig({
         PID_AGENT_DATABASE_PATH: databasePath,
         PID_AGENT_DIAGNOSTICS_PATH: diagnosticsPath,
         PID_AGENT_FRONTEND_DIST: path.resolve("dist"),
-        PID_AGENT_CORS_ORIGINS: "http://127.0.0.1:4173",
+        PID_AGENT_CORS_ORIGINS: previewOrigin,
         PID_AGENT_AGENT_TIMEOUT_SECONDS: "180",
       },
-      url: "http://127.0.0.1:8000/health",
+      url: `${apiOrigin}/health`,
       timeout: 30_000,
       reuseExistingServer: false,
     },
     {
-      command: "npm run preview -- --host 127.0.0.1 --port 4173",
+      command: `npm run preview -- --host 127.0.0.1 --port ${previewPort}`,
       cwd: ".",
-      url: "http://127.0.0.1:4173",
+      url: previewOrigin,
       timeout: 30_000,
       reuseExistingServer: false,
     },

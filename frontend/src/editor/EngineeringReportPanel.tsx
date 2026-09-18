@@ -78,7 +78,7 @@ export function EngineeringReportPanel() {
     if (!document) return;
     const available = new Set(document.elements.map((element) => element.id));
     const elementIds = reportRowElementIds(row).filter((elementId) => available.has(elementId));
-    if (elementIds.length) setSelection(elementIds);
+    if (elementIds.length) setSelection(elementIds, { revealProperties: false });
   };
 
   const downloadCsv = async () => {

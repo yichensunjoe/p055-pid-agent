@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, ApiError } from "../api";
 import {
+  connectionMatchLabel,
+  connectionSummary,
   engineeringGroupOrder,
   engineeringObjectLabel,
   engineeringObjectSummary,
   filterEngineeringObjects,
   filterFindings,
   groupEngineeringObjects,
+  identityBasisLabel,
   kindCount,
   projectFreshnessSummary,
   severityCounts,
@@ -40,9 +43,10 @@ const reasonLabels: Record<string, string> = {
 /**
  * Read-only view of the derived engineering semantic graph (Charter M2).
  *
- * The panel never edits anything: it shows engineering objects, topology size,
- * findings and cross-document links so a reviewer can see what the system derived
- * from the drawing instead of trusting the picture.
+ * The panel never edits anything: it shows engineering objects with their stable
+ * identities, process vs signal connectivity, findings and cross-drawing connections
+ * so a reviewer can see what the system derived from the drawing instead of trusting
+ * the picture.
  */
 export function EngineeringGraphPanel() {
   const document = useWorkspace((state) => state.document);
@@ -119,17 +123,22 @@ export function EngineeringGraphPanel() {
   const selectObject = (elementIds: string[]) => {
     const available = new Set((document?.elements ?? []).map((element) => element.id));
     const selectable = elementIds.filter((elementId) => available.has(elementId));
-    if (selectable.length) setSelection(selectable);
+    if (selectable.length) setSelection(selectable, { revealProperties: false });
   };
 
-  const runTrace = async (objectId: string, direction: TraceDirection) => {
-    if (!documentId || !objectId) return;
+  const runTrace = async (ref: string, direction: TraceDirection) => {
+    if (!documentId || !ref) return;
     setTraceLoading(true);
     setTraceError("");
     try {
-      const result = await api.getEngineeringTrace(documentId, objectId, direction);
+      const result = await api.getEngineeringTrace(documentId, ref, direction);
       setTrace(result);
-      selectObject(result.reached_object_ids);
+      // Map the reached identities back to drawing elements so the canvas highlights
+      // what the trace actually walked.
+      const elementIds = result.steps.flatMap(
+        (step) => graph?.objects.find((object) => object.engineering_id === step.engineering_id)?.element_ids ?? [],
+      );
+      selectObject(elementIds);
     } catch (reason) {
       setTrace(null);
       setTraceError(reason instanceof ApiError ? reason.message : String(reason));
@@ -167,8 +176,10 @@ export function EngineeringGraphPanel() {
             {kindCount(graph?.counts ?? emptyCounts, kind)}
           </button>
         ))}
-        <span data-testid="graph-edge-count">拓扑边 {graph?.counts.edges ?? 0}</span>
-        <span data-testid="graph-signal-count">信号 {graph?.counts.signal_links ?? 0}</span>
+        <span data-testid="graph-edge-count">
+          工艺边 {graph?.counts.process_edges ?? 0} · 信号边 {graph?.counts.signal_edges ?? 0}
+        </span>
+        <span data-testid="graph-signal-count">信号 {graph?.counts.signals ?? 0}</span>
       </div>
 
       <div className="graph-toolbar">
@@ -218,6 +229,7 @@ export function EngineeringGraphPanel() {
             </div>
             <p>{finding.message}</p>
             {finding.object_ids.length ? <code>{finding.object_ids.join(", ")}</code> : null}
+            {finding.element_ids.length ? <code>{finding.element_ids.join(", ")}</code> : null}
           </article>
         ))}
         {!loading && graph && !visibleFindings.length ? (
@@ -230,21 +242,24 @@ export function EngineeringGraphPanel() {
           <section key={group.kind} data-testid={`graph-group-${group.kind}`}>
             <h3>{group.label} · {group.objects.length}{group.count !== group.objects.length ? ` / ${group.count}` : ""}</h3>
             {group.objects.map((object) => (
-              <article className="graph-object" data-testid={`graph-object-${object.object_id}`} key={object.object_id}>
+              <article className="graph-object" data-testid={`graph-object-${object.engineering_id}`} key={object.engineering_id}>
                 <div className="graph-object-heading">
                   <strong>{engineeringObjectLabel(object)}</strong>
-                  <span>{object.identity_scope === "tag" ? "位号标识" : "元素标识"}</span>
+                  <span title={object.declared_id ? `声明标识 ${object.declared_id}` : undefined}>
+                    {identityBasisLabel(object)}
+                  </span>
                 </div>
                 <p>{engineeringObjectSummary(object)}</p>
-                <code>{object.object_id}</code>
+                <code data-testid={`graph-identity-${object.engineering_id}`}>{object.engineering_id}</code>
+                {object.tag_key ? <code>{object.tag_key}</code> : null}
                 <div className="graph-object-actions">
                   <button type="button" onClick={() => selectObject(object.element_ids)}>定位</button>
                   <button
                     type="button"
-                    data-testid={`graph-trace-${object.object_id}`}
+                    data-testid={`graph-trace-${object.engineering_id}`}
                     onClick={() => {
-                      setTraceOrigin(object.object_id);
-                      void runTrace(object.object_id, traceDirection);
+                      setTraceOrigin(object.engineering_id);
+                      void runTrace(object.engineering_id, traceDirection);
                     }}
                   >
                     追踪
@@ -279,8 +294,8 @@ export function EngineeringGraphPanel() {
             <p data-testid="graph-trace-summary">{traceSummary(trace)}</p>
             <ol data-testid="graph-trace-steps">
               {trace.steps.map((step) => (
-                <li key={`${step.depth}-${step.object_id}-${step.via_connector_id}`}>
-                  <span>{step.object_id}</span>
+                <li key={`${step.depth}-${step.engineering_id}-${step.via_connector_id}`}>
+                  <span>{step.engineering_id}</span>
                   <em>{step.direction === "origin" ? "起点" : step.direction === "downstream" ? "下游" : step.direction === "upstream" ? "上游" : "未声明方向"}</em>
                   {step.via_connector_id ? <code>{step.via_connector_id}</code> : null}
                 </li>
@@ -305,8 +320,10 @@ export function EngineeringGraphPanel() {
               <li>设备 {project.totals.equipment}</li>
               <li>阀门 {project.totals.valves}</li>
               <li>仪表 {project.totals.instruments}</li>
+              <li>信号 {project.totals.signals}</li>
               <li>管线 {project.totals.lines}</li>
               <li>跨图 {project.totals.off_page_connectors}</li>
+              <li>跨图连接 {project.off_page_connections.length}</li>
             </ul>
             {project.stale_document_ids.length ? (
               <p className="graph-stale" data-testid="graph-project-stale">
@@ -314,12 +331,18 @@ export function EngineeringGraphPanel() {
               </p>
             ) : null}
             <ul className="graph-cross-links" data-testid="graph-cross-links">
-              {project.cross_document_links.slice(0, 12).map((link) => (
-                <li key={`${link.source_document_id}-${link.source_object_id}`} className={link.resolved ? "resolved" : "unresolved"}>
-                  <span>{link.source_tag || link.source_object_id}</span>
-                  <em>{link.direction === "out" ? "出口" : link.direction === "in" ? "入口" : "—"}</em>
-                  <code>{link.target_document_id || "未声明目标"}</code>
-                  <strong>{link.resolved ? "已解析" : link.target_document_found ? "目标图内无匹配" : "目标图不存在"}</strong>
+              {project.off_page_connections.slice(0, 12).map((connection) => (
+                <li
+                  key={connection.connection_id}
+                  className={connection.resolved ? "resolved" : "unresolved"}
+                  data-testid={`graph-connection-${connection.connection_id}`}
+                >
+                  <span>{connection.source_tag || connection.source_engineering_id}</span>
+                  <em>{connection.direction === "out" ? "出口" : connection.direction === "in" ? "入口" : "—"}</em>
+                  <code>{connection.target_document_id || "未声明目标"}</code>
+                  <strong>{connectionSummary(connection)}</strong>
+                  <code>{connectionMatchLabel(connection.matched_by)}</code>
+                  <code>{connection.connection_id}</code>
                 </li>
               ))}
             </ul>
@@ -354,6 +377,7 @@ const emptyCounts: EngineeringGraph["counts"] = {
   equipment: 0,
   valves: 0,
   instruments: 0,
+  signals: 0,
   lines: 0,
   junctions: 0,
   off_page_connectors: 0,
@@ -361,7 +385,8 @@ const emptyCounts: EngineeringGraph["counts"] = {
   graphics: 0,
   objects: 0,
   edges: 0,
-  signal_links: 0,
+  process_edges: 0,
+  signal_edges: 0,
   errors: 0,
   warnings: 0,
   info: 0,

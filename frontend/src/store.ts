@@ -106,6 +106,9 @@ type State = {
   symbols: SymbolDefinition[];
   tool: Tool;
   selectedElementIds: string[];
+  /** True when the last selection change came from the canvas/toolbar (reveal 属性).
+   *  Panels that highlight results pass `revealProperties: false` so the user keeps reading the panel. */
+  selectionRevealsProperties: boolean;
   selectedSymbolKey: string | null;
   lineVariety: LineVariety;
   rectangleVariety: RectangleVariety;
@@ -130,7 +133,7 @@ type State = {
   clearError: () => void;
   openDocument: (id: string) => Promise<void>;
   setTool: (tool: Tool) => void;
-  setSelection: (ids: string[], options?: { expandGroups?: boolean }) => void;
+  setSelection: (ids: string[], options?: { expandGroups?: boolean; revealProperties?: boolean }) => void;
   toggleSelection: (id: string, options?: { expandGroups?: boolean }) => void;
   clearSelection: () => void;
   selectAll: () => void;
@@ -168,6 +171,7 @@ export const useWorkspace = create<State>((set, get) => ({
   symbols: [],
   tool: "select",
   selectedElementIds: [],
+  selectionRevealsProperties: true,
   selectedSymbolKey: null,
   lineVariety: "solid",
   rectangleVariety: "solid",
@@ -518,7 +522,10 @@ export const useWorkspace = create<State>((set, get) => ({
   setSelection: (ids, options) => {
     const document = get().document;
     const unique = [...new Set(ids)];
-    set({ selectedElementIds: document && options?.expandGroups !== false ? expandSelectionByGroups(document.elements, unique) : unique });
+    set({
+      selectedElementIds: document && options?.expandGroups !== false ? expandSelectionByGroups(document.elements, unique) : unique,
+      selectionRevealsProperties: options?.revealProperties !== false,
+    });
   },
   toggleSelection: (id, options) => {
     const document = get().document;

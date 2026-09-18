@@ -239,7 +239,12 @@ export default function App() {
     if (import.meta.env.MODE !== "e2e") return;
     return installE2EBridge(() => pendingPlan, setPendingPlan);
   }, [pendingPlan]);
-  useEffect(() => { if (state.selectedElementIds.length) setRightPanel("properties"); }, [state.selectedElementIds]);
+  useEffect(() => {
+    // Canvas selections reveal 属性; panel-driven highlights (定位/追踪) must not eject the user
+    // from the analysis panel they were reading.
+    if (!state.selectedElementIds.length || !state.selectionRevealsProperties) return;
+    setRightPanel("properties");
+  }, [state.selectedElementIds, state.selectionRevealsProperties]);
   useEffect(() => {
     const document = state.document;
     if (!pendingPlan) return;

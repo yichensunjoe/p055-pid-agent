@@ -1,6 +1,10 @@
 import { expect, type APIRequestContext, type Page } from "@playwright/test";
 
-export const API_ROOT = "http://127.0.0.1:8000/api/v2";
+// The suite addresses the backend directly (create/reset documents) as well as through
+// the preview proxy. Defaults match playwright.config.ts; the override exists so the
+// suite can run against a scratch backend on a port that is not the default one.
+export const API_ROOT =
+  process.env.PID_AGENT_E2E_API_ROOT ?? "http://127.0.0.1:8000/api/v2";
 
 export type Point = { x: number; y: number };
 export type TestDocument = {

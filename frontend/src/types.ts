@@ -427,17 +427,39 @@ export type EngineeringObjectKind =
   | "equipment"
   | "valve"
   | "instrument"
+  | "signal"
   | "line"
   | "junction"
   | "off_page_connector"
   | "annotation"
   | "graphic";
 
+/** Where the immutable engineering identity came from. */
+export type EngineeringIdentityBasis = "declared" | "element";
+
+export type EngineeringSignalDetail = {
+  signal_id: string;
+  connector_id: string;
+  signal_type: "analog" | "digital" | "electrical" | "pneumatic" | "impulse" | "unknown";
+  medium: string;
+  medium_class: string;
+  source_engineering_id: string;
+  target_engineering_id: string;
+  instrument_engineering_ids: string[];
+  equipment_engineering_ids: string[];
+  classification: "declared_medium" | "instrument_to_instrument";
+  provenance: Record<string, unknown>;
+};
+
 export type EngineeringObject = {
-  object_id: string;
+  /** Immutable identity. A tag rename never changes it. */
+  engineering_id: string;
   kind: EngineeringObjectKind;
-  identity_scope: "tag" | "element";
+  identity_basis: EngineeringIdentityBasis;
+  declared_id: string;
+  /** Mutable engineering attribute, and its derived human-readable alias key. */
   tag: string;
+  tag_key: string;
   name: string;
   label: string;
   symbol_key: string;
@@ -460,6 +482,10 @@ export type EngineeringObject = {
   length: number;
   opc_direction: "in" | "out" | "";
   target_document_id: string;
+  /** Stable identity of the off-page connection this connector carries. */
+  off_page_connection_id: string;
+  /** Present on first-class signal objects only. */
+  signal: EngineeringSignalDetail | null;
 };
 
 export type EngineeringGraphFinding = {
@@ -475,6 +501,7 @@ export type EngineeringGraphCounts = {
   equipment: number;
   valves: number;
   instruments: number;
+  signals: number;
   lines: number;
   junctions: number;
   off_page_connectors: number;
@@ -482,17 +509,23 @@ export type EngineeringGraphCounts = {
   graphics: number;
   objects: number;
   edges: number;
-  signal_links: number;
+  process_edges: number;
+  signal_edges: number;
   errors: number;
   warnings: number;
   info: number;
 };
 
+/** Process flow and instrument wiring are separate edge classes. */
+export type EngineeringEdgeClass = "process" | "signal";
+
 export type TopologyEdge = {
   connector_id: string;
-  pipeline_object_id: string;
-  source_object_id: string;
-  target_object_id: string;
+  edge_class: EngineeringEdgeClass;
+  pipeline_engineering_id: string;
+  signal_engineering_id: string;
+  source_engineering_id: string;
+  target_engineering_id: string;
   source_port_id: string;
   target_port_id: string;
   medium: string;
@@ -503,7 +536,7 @@ export type TopologyEdge = {
 
 export type EngineeringGraph = {
   schema: "pid-agent.engineering-graph";
-  version: 1;
+  version: 2;
   builder_version: number;
   document_id: string;
   document_name: string;
@@ -512,7 +545,7 @@ export type EngineeringGraph = {
   counts: EngineeringGraphCounts;
   objects: EngineeringObject[];
   edges: TopologyEdge[];
-  signal_links: Array<{ connector_id: string; source_object_id: string; target_object_id: string; medium: string; instrument_object_ids: string[]; classification: string }>;
+  signals: string[];
   off_page_object_ids: string[];
   connectivity_components: string[][];
   findings: EngineeringGraphFinding[];
@@ -520,7 +553,7 @@ export type EngineeringGraph = {
 
 export type EngineeringTraceStep = {
   depth: number;
-  object_id: string;
+  engineering_id: string;
   kind: EngineeringObjectKind;
   via_connector_id: string;
   direction: "upstream" | "downstream" | "undirected" | "origin";
@@ -529,10 +562,13 @@ export type EngineeringTraceStep = {
 export type EngineeringTraceResult = {
   document_id: string;
   revision: number;
-  origin_object_id: string;
+  origin_engineering_id: string;
+  /** The reference the caller used, when it was not already the identity. */
+  resolved_from: string;
   direction: "upstream" | "downstream" | "both";
+  edge_class: EngineeringEdgeClass;
   steps: EngineeringTraceStep[];
-  reached_object_ids: string[];
+  reached_engineering_ids: string[];
   traversed_pipeline_ids: string[];
   truncated: boolean;
 };
@@ -558,6 +594,7 @@ export type ProjectIndexEntry = {
     equipment: number;
     valves: number;
     instruments: number;
+    signals: number;
     lines: number;
     off_page_connectors: number;
     errors: number;
@@ -567,9 +604,38 @@ export type ProjectIndexEntry = {
   stale_reasons: string[];
 };
 
+/** How a cross-drawing connection was matched (tags only ever cross-check). */
+export type OffPageConnectionMatch =
+  | "reciprocal_declaration"
+  | "reciprocal_declaration+service"
+  | "service_convention"
+  | "ambiguous"
+  | "unresolved";
+
+export type OffPageConnection = {
+  /** Symmetric, tag-free identity derived from the two stable ends. */
+  connection_id: string;
+  source_document_id: string;
+  source_engineering_id: string;
+  source_tag: string;
+  source_connection_endpoint_id: string;
+  target_document_id: string;
+  target_engineering_id: string;
+  target_tag: string;
+  target_connection_endpoint_id: string;
+  direction: "in" | "out" | "";
+  service: string;
+  line_engineering_ids: string[];
+  resolved: boolean;
+  matched_by: OffPageConnectionMatch;
+  tag_agrees: boolean;
+  target_document_found: boolean;
+  declared_by_document_ids: string[];
+};
+
 export type ProjectEngineeringGraph = {
   schema: "pid-agent.project-engineering-index";
-  version: 1;
+  version: 2;
   generated_at: string;
   freshness: "cheap" | "verified";
   document_count: number;
@@ -578,17 +644,21 @@ export type ProjectEngineeringGraph = {
   unindexed_document_ids: string[];
   totals: EngineeringGraphCounts;
   documents: ProjectIndexEntry[];
-  cross_document_links: Array<{
-    source_document_id: string;
-    source_object_id: string;
-    source_tag: string;
-    direction: "in" | "out" | "";
-    target_document_id: string;
-    target_document_found: boolean;
-    resolved: boolean;
-    matching_object_ids: string[];
-  }>;
+  off_page_connections: OffPageConnection[];
   findings: EngineeringGraphFinding[];
+};
+
+/** One hit from the project-wide engineering-object lookup. */
+export type EngineeringObjectMatch = {
+  document_id: string;
+  document_name: string;
+  revision: number;
+  engineering_id: string;
+  kind: EngineeringObjectKind;
+  tag: string;
+  tag_key: string;
+  identity_basis: EngineeringIdentityBasis;
+  resolved_from: string;
 };
 
 export type ProjectIndexRebuildReport = {

@@ -11,6 +11,7 @@ import type {
   ImportResult,
   ProjectSettings,
   EngineeringGraph,
+  EngineeringObjectMatch,
   EngineeringReport,
   EngineeringTraceResult,
   ProjectEngineeringGraph,
@@ -362,14 +363,18 @@ export const api = {
     request<EngineeringGraph>(`/documents/${id}/engineering-graph`),
   getEngineeringTrace: (
     id: string,
-    objectId: string,
+    ref: string,
     direction: "upstream" | "downstream" | "both" = "both",
   ) => request<EngineeringTraceResult>(
     `/documents/${encodeURIComponent(id)}/engineering-graph/trace`
-    + `?object_id=${encodeURIComponent(objectId)}&direction=${direction}`,
+    + `?ref=${encodeURIComponent(ref)}&direction=${direction}`,
   ),
   getProjectEngineeringGraph: () =>
     request<ProjectEngineeringGraph>("/project/engineering-graph"),
+  findEngineeringObjects: (ref: string, limit = 50) =>
+    request<EngineeringObjectMatch[]>(
+      `/project/engineering-objects?ref=${encodeURIComponent(ref)}&limit=${limit}`,
+    ),
   rebuildProjectIndex: (force = false) =>
     request<ProjectIndexRebuildReport>(`/project/index/rebuild?force=${force ? "true" : "false"}`, {
       method: "POST",

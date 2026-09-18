@@ -211,7 +211,7 @@ button:focus-visible, a:focus-visible { outline: none; box-shadow: var(--focus-r
 
 /* ---------- Right panel ---------- */
 
-.right-panel-tabs { flex: 0 0 auto; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border-bottom: 1px solid var(--border); background: var(--panel); }
+.right-panel-tabs { flex: 0 0 auto; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); border-bottom: 1px solid var(--border); background: var(--panel); }
 .right-panel-tabs button { min-width: 0; display: flex; align-items: center; justify-content: center; gap: 4px; border: 0; border-bottom: 2px solid transparent; padding: 11px 4px 9px; color: var(--text-3); background: transparent; cursor: pointer; font-size: 11px; font-weight: 500; white-space: nowrap; }
 .right-panel-tabs button:hover { color: var(--text-2); }
 .right-panel-tabs button.active { color: var(--accent-strong); border-bottom-color: var(--accent); font-weight: 650; }
@@ -541,6 +541,8 @@ html[data-e2e="true"] textarea {
 .graph-project-documents li em, .graph-cross-links li em { color: #94a3b8; font-size: 9px; font-style: normal; }
 .graph-project-documents li code, .graph-cross-links li code { color: var(--text-3); font-size: 9px; }
 .graph-project-documents li small { color: #92400e; font-size: 9px; }
+.graph-cross-links li { flex-wrap: wrap; }
+.graph-cross-links li code:last-child { flex-basis: 100%; }
 .graph-cross-links li.resolved strong { color: #166534; }
 .graph-cross-links li.unresolved strong { color: #991b1b; }
 .graph-stale { color: #92400e; }

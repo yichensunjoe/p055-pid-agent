@@ -17,9 +17,12 @@ from .agent_semantic_models import (
     SemanticAgentApplyRequest,
     SemanticAgentPlanResult,
 )
+from .api_harness import _raise_harness_error
 from .api_v2 import _apply_transaction_with_details
 from .diagnostics import DiagnosticLogger
 from .flow_topology import build_agent_harness_context
+from .harness import AgentHarnessService
+from .harness_models import AgentSessionCreateRequest
 from .llm import PlannerError
 from .models import AgentPlan, TransactionRequest, TransactionResult
 from .permissive_semantic_compiler import PermissiveSemanticTransactionCompiler
@@ -114,6 +117,7 @@ def _operation_types(plan, compiled) -> dict[str, Any]:
 
 
 def _result(
+    session_id: str,
     plan,
     compiled,
     *,
@@ -126,6 +130,7 @@ def _result(
         else None
     )
     return SemanticAgentPlanResult(
+        session_id=session_id,
         plan=plan,
         compiled_plan=compiled_plan,
         assessment=compiled.assessment,
@@ -167,9 +172,28 @@ def create_semantic_agent_router(
     service: DocumentService,
     planner: SemanticAgentPlanner,
     diagnostics: DiagnosticLogger | None = None,
+    harness: AgentHarnessService | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api/v2", tags=["P&ID-Agent semantic planning"])
     compiler = PermissiveSemanticTransactionCompiler(service)
+    harness = harness or AgentHarnessService(
+        service=service,
+        store=service.store,
+        registry=get_default_tool_registry(),
+        diagnostics=diagnostics,
+    )
+
+    def start_session(document_id: str, request: VisionPlanningRequest):
+        provider = request.provider
+        return harness.create_session(
+            AgentSessionCreateRequest(
+                document_id=document_id,
+                actor="web-user",
+                provider=provider.base_url if provider and provider.base_url else "",
+                model=provider.model if provider and provider.model else "",
+                metadata={"surface": "rest", "workflow": "semantic-agent"},
+            )
+        )
 
     @router.get("/agent/semantic-tool-schema")
     def semantic_tool_schema():
@@ -199,6 +223,10 @@ def create_semantic_agent_router(
     )
     def plan_semantic_transaction(document_id: str, request: VisionAgentGenerateRequest):
         started = perf_counter()
+        try:
+            session = start_session(document_id, request)
+        except Exception as exc:
+            return _raise_harness_error(exc)
         if diagnostics is not None:
             diagnostics.emit(
                 "llm.semantic_plan.started",
@@ -243,7 +271,7 @@ def create_semantic_agent_router(
                 affected_element_ids=compiled.assessment.affected_element_ids,
                 **_operation_types(plan, compiled),
             )
-        return _result(plan, compiled, attempt=0)
+        return _result(session.id, plan, compiled, attempt=0)
 
     @router.post("/documents/{document_id}/agent/plan-v2-stream")
     async def plan_semantic_transaction_stream(
@@ -251,6 +279,7 @@ def create_semantic_agent_router(
         request: VisionAgentGenerateRequest,
     ):
         try:
+            session = start_session(document_id, request)
             prepared_request = _with_harness_context(service, document_id, request)
         except DocumentNotFoundError as exc:
             raise HTTPException(status_code=404, detail=f"document not found: {exc.args[0]}") from exc
@@ -289,7 +318,7 @@ def create_semantic_agent_router(
                 compiled = _enforce_visible_output_requirement(
                     service, document_id, request.require_visible_output, compiled
                 )
-                res = _result(plan, compiled, attempt=0)
+                res = _result(session.id, plan, compiled, attempt=0)
                 yield f"event: complete\ndata: {json.dumps(res.model_dump(mode='json'), ensure_ascii=False)}\n\n"
             else:
                 try:
@@ -298,7 +327,7 @@ def create_semantic_agent_router(
                     compiled = _enforce_visible_output_requirement(
                         service, document_id, request.require_visible_output, compiled
                     )
-                    res = _result(plan, compiled, attempt=0)
+                    res = _result(session.id, plan, compiled, attempt=0)
                     yield f"event: complete\ndata: {json.dumps(res.model_dump(mode='json'), ensure_ascii=False)}\n\n"
                 except Exception as exc:
                     yield f"event: error\ndata: {json.dumps({'message': str(exc)}, ensure_ascii=False)}\n\n"
@@ -323,6 +352,14 @@ def create_semantic_agent_router(
     ):
         started = perf_counter()
         try:
+            provider = request.provider
+            session = harness.ensure_session(
+                document_id,
+                session_id=request.session_id,
+                actor="web-user",
+                provider=provider.base_url if provider and provider.base_url else "",
+                model=provider.model if provider and provider.model else "",
+            )
             failed = compiler.compile(document_id, request.failed_plan.transaction)
             failed = _enforce_visible_output_requirement(
                 service, document_id, request.require_visible_output, failed
@@ -382,6 +419,7 @@ def create_semantic_agent_router(
                 **_operation_types(plan, compiled),
             )
         return _result(
+            session.id,
             plan,
             compiled,
             attempt=request.attempt,
@@ -394,9 +432,30 @@ def create_semantic_agent_router(
     )
     def apply_semantic_plan(document_id: str, request: SemanticAgentApplyRequest):
         started = perf_counter()
+        intent = {"transaction": request.transaction.model_dump(mode="json")}
+        try:
+            authorized = harness.authorize(
+                session_id=request.session_id,
+                tool_name="apply_compiled_agent_transaction",
+                document_id=document_id,
+                intent=intent,
+                approval_id=request.approval_id,
+                base_revision=request.transaction.expected_revision,
+                metadata={
+                    "surface": "rest",
+                    "plan_id": request.plan_id,
+                    "parent_plan_id": request.parent_plan_id,
+                    "attempt": request.attempt,
+                },
+            )
+        except Exception as exc:
+            return _raise_harness_error(exc)
+
         if diagnostics is not None:
             diagnostics.emit(
                 "llm.semantic_apply.started",
+                session_id=request.session_id,
+                approval_id=request.approval_id,
                 document_id=document_id,
                 plan_id=request.plan_id,
                 parent_plan_id=request.parent_plan_id,
@@ -414,9 +473,15 @@ def create_semantic_agent_router(
                 diagnostics=diagnostics,
             )
         except (DocumentNotFoundError, InvalidOperationError, RevisionConflictError) as exc:
+            harness.fail_tool_call(
+                authorized,
+                error_code=getattr(exc, "code", type(exc).__name__),
+            )
             if diagnostics is not None:
                 diagnostics.emit(
                     "llm.semantic_apply.rejected",
+                    session_id=request.session_id,
+                    approval_id=request.approval_id,
                     document_id=document_id,
                     plan_id=request.plan_id,
                     parent_plan_id=request.parent_plan_id,
@@ -425,9 +490,25 @@ def create_semantic_agent_router(
                     error=exc,
                 )
             return _raise_service_error(exc)
+
+        harness.complete_tool_call(
+            authorized,
+            result_revision=result.document.revision,
+            metadata={
+                "applied_operations": result.applied_operations,
+                "transaction_label": request.transaction.label,
+            },
+        )
+        harness.complete_session(
+            request.session_id,
+            end_revision=result.document.revision,
+            status="completed",
+        )
         if diagnostics is not None:
             diagnostics.emit(
                 "llm.semantic_apply.completed",
+                session_id=request.session_id,
+                approval_id=request.approval_id,
                 document_id=document_id,
                 plan_id=request.plan_id,
                 parent_plan_id=request.parent_plan_id,

@@ -2,19 +2,14 @@
 
 > 交接文档：每次开新会话先读本文件。更新规则见 `AGENTS.md`「HANDOFF 交接规则」。
 
-## 当前状态（2026-08-21）
+## 当前状态（2026-09-18）
 
-- 已完成：左侧侧边栏双容器滚动冲突根除（消除内部嵌套限高，外层统一滚动与全域鼠标滚轮穿透）。
-- 已完成：左侧面板导航分栏（`全部` / `📁 图纸 (N)` / `📐 图例`）与一键折叠全部/展开全部支持。
-- 已完成：左下角单位图例自动过滤基础图元（由顶部工具栏专职收纳，单位图例专注于工业工艺设备/阀门）。
-- 已完成：Ollama / MiniMax M3 Cloud / DeepSeek / Kimi 等模型端到端真实联调与流式生成验证（100.0 分高质量出图）。
-- 已完成：彻底解决大模型流式传输阻塞与 Starlette TaskGroup 500 报错（消除预检同步 post，重构为原生 ASGI 中间件架构）。
-- 已完成：基础图元免属性配置弹窗直接放置，并在顶部工具栏新增 `BasicShapesToolbar`（分类收纳与直接拖拽至画布）。
-- 已完成：大模型实时思考流（Reasoning / CoT）与草案内容双流式传输（`plan-v2-stream` / `AgentStreamingViewer.tsx`），支持打字动态与思维链回溯。
-- 已完成：左侧项目分类文件夹（树状折叠/新建/重命名/删除/下拉跨分类移动/搜索清空）与新建图纸归类集成。
-- 质量门槛：后端 pytest **271 passed**，ruff check 0 报错，前端 npm test **98 passed**，npm run build & build:e2e 通过，Playwright e2e **42 passed 100% 全绿**。
-- 下一步：① 准备面向买家的标准快速部署章节文档；② 数据迁移与备份脚本演练。
-- 备注：前端与后端服务持续运行（`http://localhost:5173` / `http://127.0.0.1:8000`）。
+- 已完成：新增根目录 `PROJECT_CHARTER.md` v1.0.0，确立 P&ID-Agent 向 AgentCAD Engineering Drawing Harness 演进的长期主约束。
+- 已完成：明确不可变核心——工程交付优先、semantic-first、LLM 通过受控 tools 修改工程模型、确定性 validator 包围概率模型、全量 audit/rollback、model-agnostic、正式 release 必须保留人工专业审批。
+- 已完成：任务书定义 P&ID Semantic IR、Tool Registry、权限等级、Approval Gate、Rule Engine、确定性布局/路由、项目上下文、跨文档 Engineering Graph、工程 release gates、benchmark、未来模型 Replanning Governance 与 M0-M10 里程碑。
+- 已完成：AGENTS.md 和 README.md 接入 Charter，保证后续模型在重大规划/重构前强制读取。
+- 下一步建议：从 Charter Priority 0 开始，首先把现有 TransactionRequest 上层抽象为统一 Tool Registry，再加入 Agent Session、Permission/Approval、Semantic Diff 和 Audit。
+- 备注：本轮是文档与项目治理变更，未修改业务代码或数据库，未重新执行代码测试；现有功能状态仍以历史 HANDOFF 与实际测试为准。
 
 ## 近期轮次（最新在上，保留全部）
 - 2026-09-18（总体技术任务书与 AgentCAD Harness 长期主线）：新增 `PROJECT_CHARTER.md` v1.0.0（约 2.45 万字符），把最终“经工程校核批准后可进入施工阶段交付”的目标固化为 canonical charter；明确 semantic IR、受控 tools、validator、permission/approval、audit/provenance、project graph、release gates、benchmark 和 M0-M10；同步更新 AGENTS.md 强制未来模型先读 Charter，并在 README 建立入口。下一步优先 T0.1 Tool Registry → T0.2 Session → T0.3 Permission/Approval → T0.4 Semantic Diff → T0.5 Audit。本轮仅文档治理，无业务代码变更、未重跑测试。

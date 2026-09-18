@@ -506,6 +506,115 @@ def test_tag_only_convention_match_is_labelled_as_such(
     assert connection.resolved is True
     assert connection.matched_by == "service_convention"
     assert "IR_CROSS_DOC_CONVENTION_MATCH" in [finding.code for finding in project.findings]
+    # Only doc_a declared where the line continues: the convention match must not
+    # credit doc_b with a declaration it never made.
+    assert connection.declared_by_document_ids == ["doc_a"]
+
+
+def test_unique_reverse_connector_with_a_different_service_stays_unresolved(
+    store: SQLiteDocumentStore, service: ProjectIndexService
+) -> None:
+    """One lone reverse OPC is not evidence a line continues into another drawing.
+
+    Pairing PL-1001 with PL-9999 because it happens to be the only candidate would
+    invent a cross-drawing connection, which is worse than admitting the connection
+    is unresolved.
+    """
+
+    _save(
+        store,
+        _document(
+            "doc_a",
+            [_opc("doc_a", element_id="opc_out", tag="PL-1001", direction="out", target="doc_b")],
+        ),
+    )
+    _save(
+        store,
+        _document(
+            "doc_b",
+            [_opc("doc_b", element_id="opc_in", tag="PL-9999", direction="in", target="")],
+        ),
+    )
+    service.rebuild_all()
+
+    project = service.project_graph()
+    connection = next(
+        item for item in project.off_page_connections if item.source_document_id == "doc_a"
+    )
+    assert connection.resolved is False
+    assert connection.matched_by == "unresolved"
+    assert connection.target_engineering_id == ""
+    assert connection.target_connection_endpoint_id == ""
+    assert connection.tag_agrees is False
+    assert connection.declared_by_document_ids == ["doc_a"]
+    # An unresolved connection still gets a stable, tag-free identity.
+    assert connection.connection_id.startswith("opc_conn_")
+    assert "pl-1001" not in connection.connection_id.casefold()
+
+    codes = [finding.code for finding in project.findings]
+    assert "IR_CROSS_DOC_UNRESOLVED" in codes
+    assert "IR_CROSS_DOC_CONVENTION_MATCH" not in codes
+    assert "IR_CROSS_DOC_AMBIGUOUS" not in codes
+
+
+def test_convention_match_normalises_whitespace_and_case_but_not_typos(
+    store: SQLiteDocumentStore, service: ProjectIndexService
+) -> None:
+    """Service comparison tolerates padding and case, and nothing else."""
+
+    _save(
+        store,
+        _document(
+            "doc_a",
+            [_opc("doc_a", element_id="opc_out", tag="PL-1001", direction="out", target="doc_b")],
+        ),
+    )
+    _save(
+        store,
+        _document(
+            "doc_b",
+            [_opc("doc_b", element_id="opc_in", tag=" pl-1001 ", direction="in", target="")],
+        ),
+    )
+    _save(
+        store,
+        _document(
+            "doc_c",
+            [_opc("doc_c", element_id="opc_out", tag="PL-2002", direction="out", target="doc_d")],
+        ),
+    )
+    _save(
+        store,
+        _document(
+            "doc_d",
+            # Same service with the separator dropped: a different identifier.
+            [
+                _opc(
+                    "doc_d",
+                    element_id="opc_in",
+                    tag="PL2002",
+                    direction="in",
+                    target="",
+                )
+            ],
+        ),
+    )
+    service.rebuild_all()
+
+    by_source = {
+        item.source_document_id: item for item in service.project_graph().off_page_connections
+    }
+    tolerant = by_source["doc_a"]
+    # The derived layer already trims the label; the resolver\u2019s job is to compare it
+    # case-insensitively rather than to refuse an otherwise identical service.
+    assert tolerant.target_tag == "pl-1001"
+    assert tolerant.tag_agrees is True
+    assert tolerant.resolved is True
+    assert tolerant.matched_by == "service_convention"
+
+    strict = by_source["doc_c"]
+    assert strict.resolved is False
+    assert strict.matched_by == "unresolved"
 
 
 def test_unresolved_and_ambiguous_connections_are_reported(

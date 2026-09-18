@@ -129,17 +129,30 @@ nominal diameter, and attributes the aggregated length. Untagged connectors form
 single-connector pipelines keyed by element id.
 
 An off-page connector names the drawing it continues into (`target_document_id`)
-and the stable identity of the connection it carries (`off_page_connection_id`, a
-`opc_conn_…` id used consistently on both ends). The project index resolves the
-reciprocal end into one `OffPageConnection` whose `connection_id` is **symmetric and
-tag-free** — derived from the two stable object ids — so editing a tag or a line
-number on either side does not create a new connection identity. The declared
-service/tag is a cross-check and tie-breaker only (`tag_agrees`, `matched_by`), and
-the convention fallback (same tag, opposite direction) is labelled as such
-(`reciprocal_declaration+service`) instead of being passed off as a declaration.
-Two connectors declaring the same connection identity are reported
-(`IR_OPC_CONNECTION_ID_DUPLICATE`); an unrestricted off-page connector with no
-target is reported (`IR_OPC_TARGET_MISSING`), never guessed.
+and the stable identity of the connection it carries (`off_page_connection_id`,
+derived from a declared `connection_id` when the drawing provides one). Two ends
+agree on that endpoint id only when the drawing declares it; what is *always*
+symmetric is the `connection_id` the project index derives from the two stable
+object ends — a `pair` id while the connection is resolved, an `open` id while it is
+not — so editing a tag or a line number on either side does not create a new
+connection identity.
+
+Resolution is deliberately conservative, because a fabricated cross-drawing
+connection is worse than an admitted unresolved one:
+
+| evidence | `matched_by` | outcome |
+| --- | --- | --- |
+| the candidate declares this drawing as its target (opposite direction) | `reciprocal_declaration` | resolved; a differing service is reported (`IR_CROSS_DOC_TAG_MISMATCH`) but does not reject the link |
+| several reciprocal candidates, exactly one shares the service | `reciprocal_declaration+service` | resolved, tagged as a tie-break |
+| several reciprocal candidates, none or several share the service | `ambiguous` | **not** resolved (`IR_CROSS_DOC_AMBIGUOUS`) |
+| no reciprocal declaration, exactly one opposite-direction candidate with the **same normalised service** | `service_convention` | resolved, labelled as a convention — and only the declaring side is credited in `declared_by_document_ids` |
+| no reciprocal declaration, several same-service candidates | `ambiguous` | **not** resolved (`IR_CROSS_DOC_AMBIGUOUS`) |
+| no reciprocal declaration, no same-service candidate (even if exactly one reverse connector exists) | `unresolved` | **not** resolved (`IR_CROSS_DOC_UNRESOLVED`) — a lone reverse connector with a different service is never paired |
+
+Service comparison normalises surrounding whitespace and case only: `PL-1001` and
+`pl-1001` agree, `PL1001` does not. Two connectors declaring the same connection
+identity are reported (`IR_OPC_CONNECTION_ID_DUPLICATE`); an off-page connector with
+no target is reported (`IR_OPC_TARGET_MISSING`), never guessed.
 
 ## 4. Topology, finding, tracing
 
@@ -273,9 +286,10 @@ a proof that no Python code can ever reach `Store` directly.
   layer (`LINE_TAG_MISSING`, `TAG_DUPLICATE`) is the current guard, and a future rule
   engine should own stricter line-break/continuation semantics.
 * Cross-document resolution needs a declared `target_document_id` (or an explicit
-  connection identity). Off-page connectors without one are reported, never guessed,
-  and the same-tag convention fallback is labelled `reciprocal_declaration+service`
-  so a convention match is never mistaken for a declaration.
+  connection identity). Off-page connectors without one are reported, never guessed;
+  the only non-declared evidence accepted is a same-normalised-service convention
+  match with exactly one candidate, labelled `service_convention` so it is never
+  mistaken for a declaration.
 * The index is per SQLite database; multi-user concurrent rebuilds serialize on the
   store lock rather than coordinating a distributed cache.
 * The web UI consumes the graph read-only (viewer + trace + project index). The

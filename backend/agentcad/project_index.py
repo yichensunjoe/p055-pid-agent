@@ -23,9 +23,13 @@ Declared design constraints
   connection between two drawings is identified by the *stable engineering ids* of
   its two ends (``opc_conn_…``, symmetric in the pair), so renaming a line number
   never changes which connection it is. Reciprocal declarations
-  (``target_document_id`` on both ends) are the primary matching evidence; the
-  declared service tag is only a cross-check and a tie-breaker, and a convention
-  fallback (same tag, opposite direction) is labelled as such.
+  (``target_document_id`` on both ends) are the primary matching evidence, and a
+  differing service is a warning rather than a rejection. The only other accepted
+  evidence is an explicit convention fallback: **same normalised service, opposite
+  direction, exactly one candidate**. A lone reverse connector whose service does
+  not match is *never* paired — a fabricated cross-drawing connection is worse than
+  an admitted unresolved one (Charter §6: heuristics may not invent engineering
+  semantics).
 * **Deterministic.** Building the same document always produces the same graph hash,
   so the index can be rebuilt at any time without changing the answer.
 * **Not audited.** The index changes no engineering model; auditing a recomputable
@@ -176,6 +180,19 @@ class ProjectEngineeringGraph(StrictModel):
     documents: list[ProjectIndexEntry]
     off_page_connections: list[OffPageConnection]
     findings: list[GraphFinding]
+
+
+def _same_service(first: str, second: str) -> bool:
+    """Whether two connectors declare the same service/line identifier.
+
+    Conservative on purpose: only surrounding whitespace and case are normalised, so
+    ``PL-1001`` and `` pl-1001 `` agree while ``PL-1001`` and ``PL1001`` stay
+    different services. Two OPCs may only be paired by convention when this holds.
+    """
+
+    left = first.strip().casefold()
+    right = second.strip().casefold()
+    return bool(left) and left == right
 
 
 def rebuild_with_evidence(
@@ -665,11 +682,15 @@ class ProjectIndexService:
     ) -> tuple[list[OffPageConnection], list[GraphFinding]]:
         """Resolve cross-drawing connections into stable, tag-free identities.
 
-        Each declared end is resolved against the target drawing. Reciprocal
-        declarations come first; the declared service tag is only a cross-check and a
-        tie-breaker; a same-tag/opposite-direction convention match is accepted but
-        labelled. The result is deduplicated by ``connection_id`` so a mutually
-        declared connection appears exactly once with both ends filled in.
+        Each declared end is resolved against the target drawing. A reciprocal
+        declaration (the candidate names this drawing) is the strong evidence and is
+        accepted even when the two services disagree (reported as
+        ``IR_CROSS_DOC_TAG_MISMATCH``). Without one, the only accepted evidence is a
+        same-normalised-service/opposite-direction convention match, and it is
+        labelled ``service_convention``; a unique reverse connector with a different
+        service stays unresolved instead of being guessed. The result is deduplicated
+        by ``connection_id`` so a mutually declared connection appears exactly once
+        with both ends filled in.
         """
 
         opc_by_document = self._opc_objects(graphs)
@@ -791,12 +812,20 @@ class ProjectIndexService:
         obj: EngineeringObject = side["object"]
         target_document_id: str = side["target_document_id"]
         candidates = opc_by_document.get(target_document_id, [])
+        # Direction-less ends stay eligible in either orientation, matching the way
+        # the drawing itself treats an unspecified OPC direction.
         opposite = [
             candidate
             for candidate in candidates
-            if obj.tag and candidate.tag and candidate.opc_direction != obj.opc_direction
+            if candidate.opc_direction != obj.opc_direction
         ]
-        reciprocal = [candidate for candidate in opposite if candidate.target_document_id == side["document_id"]]
+        # A declaration is the strong evidence and needs no tag: the candidate names
+        # this drawing as where it continues.
+        reciprocal = [
+            candidate
+            for candidate in opposite
+            if candidate.target_document_id == side["document_id"]
+        ]
         matched: EngineeringObject | None = None
         matched_by: ConnectionMatch = "unresolved"
         if len(reciprocal) == 1:
@@ -804,24 +833,26 @@ class ProjectIndexService:
             matched_by = "reciprocal_declaration"
         elif reciprocal:
             service_matches = [
-                candidate
-                for candidate in reciprocal
-                if obj.tag and candidate.tag and candidate.tag.casefold() == obj.tag.casefold()
+                candidate for candidate in reciprocal if _same_service(obj.tag, candidate.tag)
             ]
             if len(service_matches) == 1:
                 matched = service_matches[0]
                 matched_by = "reciprocal_declaration+service"
             else:
                 matched_by = "ambiguous"
-        elif len(opposite) == 1:
-            matched = opposite[0]
-            matched_by = "service_convention"
-        elif opposite:
-            matched_by = "ambiguous"
+        else:
+            # Convention fallback: same service, opposite direction, exactly one
+            # candidate. Anything else is reported as unresolved rather than guessed.
+            service_matches = [
+                candidate for candidate in opposite if _same_service(obj.tag, candidate.tag)
+            ]
+            if len(service_matches) == 1:
+                matched = service_matches[0]
+                matched_by = "service_convention"
+            elif service_matches:
+                matched_by = "ambiguous"
 
-        tag_agrees = bool(
-            matched and obj.tag and matched.tag and matched.tag.casefold() == obj.tag.casefold()
-        )
+        tag_agrees = _same_service(obj.tag, matched.tag) if matched else False
         return OffPageConnection(
             connection_id=(
                 off_page_connection_pair_id(obj.engineering_id, matched.engineering_id)
@@ -843,8 +874,13 @@ class ProjectIndexService:
             matched_by=matched_by,
             tag_agrees=tag_agrees,
             target_document_found=bool(side["target_found"]),
+            # Only a reciprocal declaration means the other drawing declared this
+            # connection too; a convention match must not credit it with a
+            # declaration it never made.
             declared_by_document_ids=sorted(
-                {side["document_id"], target_document_id} if matched else {side["document_id"]}
+                {side["document_id"], target_document_id}
+                if matched_by in {"reciprocal_declaration", "reciprocal_declaration+service"}
+                else {side["document_id"]}
             ),
         )
 
@@ -885,11 +921,7 @@ class ProjectIndexService:
             ),
             resolved=True,
             matched_by=resolution.matched_by,
-            tag_agrees=bool(
-                source.source_tag
-                and target.source_tag
-                and source.source_tag.casefold() == target.source_tag.casefold()
-            ),
+            tag_agrees=_same_service(source.source_tag, target.source_tag),
             target_document_found=True,
             declared_by_document_ids=sorted(
                 set(source.declared_by_document_ids) | set(target.declared_by_document_ids)

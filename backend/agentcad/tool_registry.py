@@ -227,7 +227,7 @@ def get_default_tool_registry() -> ToolRegistry:
                 preview_supported=True,
                 idempotency="depends_on_revision",
                 audit_event="tool.apply_compiled_agent_transaction",
-                surfaces=["rest", "agent"],
+                surfaces=["mcp", "rest", "agent"],
                 tags=["apply", "compiled", "engineering-change"],
             ),
             ToolDefinition(

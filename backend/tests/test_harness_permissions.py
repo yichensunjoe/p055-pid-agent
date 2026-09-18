@@ -97,17 +97,9 @@ def test_engineering_change_requires_exact_one_time_approval(tmp_path: Path):
         base_revision=0,
     )
     harness.complete_tool_call(authorized, result_revision=1)
-    harness.complete_session(session.id, end_revision=1)
 
-    audit = harness.audit(session.id)
-    assert audit.session.status == "completed"
-    assert audit.session.start_revision == 0
-    assert audit.session.end_revision == 1
-    assert audit.approvals[0].status == "consumed"
-    assert audit.approvals[0].resolved_by == "engineer"
-    assert [call.status for call in audit.tool_calls] == ["rejected", "completed"]
-    assert audit.tool_calls[0].error_code == "tool_approval_required"
-
+    # The approval is already consumed while the session is still active, so replay
+    # must fail specifically because the approval is one-time-use.
     with pytest.raises(ToolApprovalRequiredError):
         harness.authorize(
             session_id=session.id,
@@ -117,6 +109,16 @@ def test_engineering_change_requires_exact_one_time_approval(tmp_path: Path):
             approval_id=approval.id,
             base_revision=0,
         )
+
+    harness.complete_session(session.id, end_revision=1)
+    audit = harness.audit(session.id)
+    assert audit.session.status == "completed"
+    assert audit.session.start_revision == 0
+    assert audit.session.end_revision == 1
+    assert audit.approvals[0].status == "consumed"
+    assert audit.approvals[0].resolved_by == "engineer"
+    assert [call.status for call in audit.tool_calls] == ["rejected", "completed"]
+    assert audit.tool_calls[0].error_code == "tool_approval_required"
 
 
 def test_allow_tool_does_not_require_approval(tmp_path: Path):

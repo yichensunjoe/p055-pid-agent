@@ -12,7 +12,6 @@ from .harness import (
     ToolIntentMismatchError,
     ToolPermissionDeniedError,
 )
-from .service import DocumentNotFoundError
 from .harness_models import (
     AgentSession,
     AgentSessionAudit,
@@ -21,6 +20,7 @@ from .harness_models import (
     ToolApprovalCreateRequest,
     ToolApprovalResolveRequest,
 )
+from .service import DocumentNotFoundError
 
 
 def _raise_harness_error(exc: Exception):
@@ -30,7 +30,11 @@ def _raise_harness_error(exc: Exception):
     ):
         raise HTTPException(
             status_code=404,
-            detail={"error": exc.code, "message": str(exc), "retryable": False},
+            detail={
+                "error": getattr(exc, "code", "document_not_found"),
+                "message": str(exc),
+                "retryable": False,
+            },
         ) from exc
     if isinstance(exc, ToolPermissionDeniedError):
         raise HTTPException(

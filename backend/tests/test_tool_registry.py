@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from fastapi.testclient import TestClient
 import pytest
+from fastapi.testclient import TestClient
 
 from agentcad.agent_semantic_models import SemanticTransaction
 from agentcad.config import Settings

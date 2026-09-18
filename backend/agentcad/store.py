@@ -14,6 +14,7 @@ from .database_recovery import (
 from .database_recovery import (
     initialize_database,
 )
+from .harness_models import AgentSession, ToolApproval, ToolCallRecord
 from .models import Document, DocumentSummary, HistoryEntry
 from .project_io import ProjectSettings
 
@@ -329,4 +330,217 @@ class SQLiteDocumentStore:
                 details = {"decode_error": True}
             item["details"] = details if isinstance(details, dict) else {}
             result.append(item)
+        return result
+
+
+    def create_agent_session(self, session: AgentSession) -> None:
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO agent_sessions (
+                    id, document_id, actor, project_id, provider, model,
+                    start_revision, end_revision, status, created_at, updated_at, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    session.id,
+                    session.document_id,
+                    session.actor,
+                    session.project_id,
+                    session.provider,
+                    session.model,
+                    session.start_revision,
+                    session.end_revision,
+                    session.status,
+                    session.created_at.isoformat(),
+                    session.updated_at.isoformat(),
+                    self._encode(session.metadata),
+                ),
+            )
+
+    def get_agent_session(self, session_id: str) -> AgentSession | None:
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT id, document_id, actor, project_id, provider, model,
+                       start_revision, end_revision, status, created_at, updated_at, metadata_json
+                FROM agent_sessions WHERE id = ?
+                """,
+                (session_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        payload = dict(row)
+        payload["metadata"] = json.loads(payload.pop("metadata_json") or "{}")
+        return AgentSession.model_validate(payload)
+
+    def update_agent_session(self, session: AgentSession) -> None:
+        with self._lock, self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE agent_sessions SET
+                    actor = ?, project_id = ?, provider = ?, model = ?,
+                    start_revision = ?, end_revision = ?, status = ?,
+                    updated_at = ?, metadata_json = ?
+                WHERE id = ?
+                """,
+                (
+                    session.actor,
+                    session.project_id,
+                    session.provider,
+                    session.model,
+                    session.start_revision,
+                    session.end_revision,
+                    session.status,
+                    session.updated_at.isoformat(),
+                    self._encode(session.metadata),
+                    session.id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(f"agent session not found: {session.id}")
+
+    def create_tool_approval(self, approval: ToolApproval) -> None:
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO agent_approvals (
+                    id, session_id, tool_name, document_id, intent_hash, status,
+                    requested_by, resolved_by, reason, note, created_at, resolved_at, consumed_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    approval.id,
+                    approval.session_id,
+                    approval.tool_name,
+                    approval.document_id,
+                    approval.intent_hash,
+                    approval.status,
+                    approval.requested_by,
+                    approval.resolved_by,
+                    approval.reason,
+                    approval.note,
+                    approval.created_at.isoformat(),
+                    approval.resolved_at.isoformat() if approval.resolved_at else None,
+                    approval.consumed_at.isoformat() if approval.consumed_at else None,
+                ),
+            )
+
+    def get_tool_approval(self, approval_id: str) -> ToolApproval | None:
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT id, session_id, tool_name, document_id, intent_hash, status,
+                       requested_by, resolved_by, reason, note, created_at, resolved_at, consumed_at
+                FROM agent_approvals WHERE id = ?
+                """,
+                (approval_id,),
+            ).fetchone()
+        return ToolApproval.model_validate(dict(row)) if row is not None else None
+
+    def update_tool_approval(self, approval: ToolApproval) -> None:
+        with self._lock, self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE agent_approvals SET
+                    status = ?, resolved_by = ?, reason = ?, note = ?,
+                    resolved_at = ?, consumed_at = ?
+                WHERE id = ?
+                """,
+                (
+                    approval.status,
+                    approval.resolved_by,
+                    approval.reason,
+                    approval.note,
+                    approval.resolved_at.isoformat() if approval.resolved_at else None,
+                    approval.consumed_at.isoformat() if approval.consumed_at else None,
+                    approval.id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(f"tool approval not found: {approval.id}")
+
+    def list_tool_approvals(self, session_id: str) -> list[ToolApproval]:
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT id, session_id, tool_name, document_id, intent_hash, status,
+                       requested_by, resolved_by, reason, note, created_at, resolved_at, consumed_at
+                FROM agent_approvals
+                WHERE session_id = ?
+                ORDER BY created_at ASC, id ASC
+                """,
+                (session_id,),
+            ).fetchall()
+        return [ToolApproval.model_validate(dict(row)) for row in rows]
+
+    def create_tool_call(self, record: ToolCallRecord) -> None:
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO agent_tool_calls (
+                    id, session_id, tool_name, document_id, permission, risk, approval_id,
+                    intent_hash, base_revision, result_revision, status, error_code,
+                    started_at, completed_at, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.id,
+                    record.session_id,
+                    record.tool_name,
+                    record.document_id,
+                    record.permission,
+                    record.risk,
+                    record.approval_id,
+                    record.intent_hash,
+                    record.base_revision,
+                    record.result_revision,
+                    record.status,
+                    record.error_code,
+                    record.started_at.isoformat(),
+                    record.completed_at.isoformat() if record.completed_at else None,
+                    self._encode(record.metadata),
+                ),
+            )
+
+    def update_tool_call(self, record: ToolCallRecord) -> None:
+        with self._lock, self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE agent_tool_calls SET
+                    approval_id = ?, result_revision = ?, status = ?, error_code = ?,
+                    completed_at = ?, metadata_json = ?
+                WHERE id = ?
+                """,
+                (
+                    record.approval_id,
+                    record.result_revision,
+                    record.status,
+                    record.error_code,
+                    record.completed_at.isoformat() if record.completed_at else None,
+                    self._encode(record.metadata),
+                    record.id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(f"tool call not found: {record.id}")
+
+    def list_tool_calls(self, session_id: str) -> list[ToolCallRecord]:
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT id, session_id, tool_name, document_id, permission, risk, approval_id,
+                       intent_hash, base_revision, result_revision, status, error_code,
+                       started_at, completed_at, metadata_json
+                FROM agent_tool_calls
+                WHERE session_id = ?
+                ORDER BY started_at ASC, id ASC
+                """,
+                (session_id,),
+            ).fetchall()
+        result: list[ToolCallRecord] = []
+        for row in rows:
+            payload = dict(row)
+            payload["metadata"] = json.loads(payload.pop("metadata_json") or "{}")
+            result.append(ToolCallRecord.model_validate(payload))
         return result

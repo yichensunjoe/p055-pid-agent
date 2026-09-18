@@ -448,6 +448,17 @@ html[data-e2e="true"] textarea {
 .app-shell[data-theme="dark"] .document-import-error { color: #fecaca; background: #450a0a; }
 .app-shell[data-theme="dark"] .document-import-error button { border-color: #7f1d1d; color: #fecaca; background: #0f172a; }
 
+/* ---------- CAD (DWG/DXF) import ---------- */
+
+.cad-import-hint { margin: 0 0 8px; border: 1px solid var(--border); border-radius: var(--radius-s); padding: 6px 8px; color: var(--text-3); background: var(--panel-2); font-size: 10px; line-height: 1.45; }
+.cad-import-report { display: flex; flex-direction: column; gap: 7px; margin-bottom: 8px; border: 1px solid var(--border); border-left: 3px solid var(--accent-border); border-radius: var(--radius-m); padding: 8px; background: var(--panel-2); }
+.cad-import-report-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.cad-import-report-head strong { min-width: 0; color: var(--text); font-size: 11px; overflow-wrap: anywhere; }
+.cad-import-report-head button { flex-shrink: 0; border: 1px solid var(--border-strong); border-radius: 5px; padding: 3px 7px; color: var(--text-2); background: var(--panel); cursor: pointer; font-size: 10px; }
+.cad-import-report-body { display: flex; flex-direction: column; gap: 4px; margin: 0; padding-left: 15px; color: var(--text-2); font-size: 10px; line-height: 1.5; }
+.cad-import-report-body li { overflow-wrap: anywhere; }
+.cad-import-report-note { margin: 0; color: var(--text-3); font-size: 10px; line-height: 1.45; }
+
 /* ---------- Export panel ---------- */
 
 .export-panel { border-top: 1px solid var(--border); margin-top: 12px; padding-top: 12px; }

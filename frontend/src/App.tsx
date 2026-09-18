@@ -24,6 +24,7 @@ import { LayerSystemPanel } from "./editor/LayerSystemPanel";
 import { PropertyInspector } from "./editor/PropertyInspector";
 import { SymbolPalette } from "./editor/SymbolPalette";
 import { api, ApiError, clearServiceAccessToken, downloadApiResource, getServiceAccessToken, setServiceAccessToken, type ProviderConfig, type ProviderTestResult } from "./api";
+import { CAD_ACCEPT, cadReportLines, dwgConverterHint, isCadFileName, type CadCapabilities } from "./cadImport";
 import { documentDeletionConfirmation } from "./documentDeletion";
 import {
   PROVIDER_PRESETS,
@@ -197,8 +198,12 @@ export default function App() {
   const [leftPanelTab, setLeftPanelTab] = useState<"all" | "documents" | "symbols">("all");
   const [namedViews, setNamedViews] = useState<NamedCanvasView[]>([]);
   const [importError, setImportError] = useState("");
+  const [cadReport, setCadReport] = useState<{ title: string; documentId: string | null; lines: string[] } | null>(null);
+  const [cadCapabilities, setCadCapabilities] = useState<CadCapabilities | null>(null);
   const documentImportRef = useRef<HTMLInputElement>(null);
   const projectImportRef = useRef<HTMLInputElement>(null);
+  const cadImportRef = useRef<HTMLInputElement>(null);
+  const cadPlanRef = useRef<HTMLInputElement>(null);
   const planningAbortControllerRef = useRef<AbortController | null>(null);
   const testProviderAbortControllerRef = useRef<AbortController | null>(null);
   const discoverModelsAbortControllerRef = useRef<AbortController | null>(null);
@@ -236,6 +241,15 @@ export default function App() {
   };
 
   useEffect(() => { void state.loadWorkspace(); }, []);
+  // Ask once what this installation can decode. A failure here is not an error the user
+  // needs: the import still works for DXF, and the backend answers per-request anyway.
+  useEffect(() => {
+    let cancelled = false;
+    void api.cadImportCapabilities()
+      .then((capabilities) => { if (!cancelled) setCadCapabilities(capabilities); })
+      .catch(() => { if (!cancelled) setCadCapabilities(null); });
+    return () => { cancelled = true; };
+  }, []);
   useEffect(() => {
     if (import.meta.env.MODE !== "e2e") return;
     return installE2EBridge(() => pendingPlan, setPendingPlan);
@@ -733,6 +747,43 @@ export default function App() {
     }
   };
 
+  /**
+   * DWG/DXF intake. Two deliberate behaviours:
+   *
+   *  - the file never leaves the client unless its extension is a CAD format, so a
+   *    mistyped upload is refused instantly instead of after a 900 KB round trip;
+   *  - the resulting report is kept in the panel. "Imported" is not the same claim as
+   *    "reproduced faithfully", and the user is the one who has to judge that.
+   */
+  const importCadFile = async (file: File | undefined, mode: "import" | "plan") => {
+    if (!file) return;
+    setImportError("");
+    setCadReport(null);
+    if (!isCadFileName(file.name)) {
+      setImportError(`请选择 DWG 或 DXF 图纸（当前文件：${file.name}）`);
+      return;
+    }
+    try {
+      if (mode === "plan") {
+        const dryRun = await api.planCadDrawing(file);
+        setCadReport({
+          title: `解析结果 · ${file.name}（未写入）`,
+          documentId: null,
+          lines: cadReportLines(dryRun.report),
+        });
+        return;
+      }
+      const result = await state.importCadDrawing(file);
+      setCadReport({
+        title: `已导入 ${result.document_name}`,
+        documentId: result.document_id,
+        lines: cadReportLines(result.report),
+      });
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : String(error));
+    }
+  };
+
   const executePaletteCommand = (command: PaletteCommand) => {
     if (command.elementId) {
       focusCanvasElement(command.elementId);
@@ -839,10 +890,47 @@ export default function App() {
               <div className="document-import-actions">
                 <button type="button" data-testid="import-document-json" disabled={state.importing} onClick={() => documentImportRef.current?.click()}>导入 JSON</button>
                 <button type="button" data-testid="import-project-package" disabled={state.importing} onClick={() => projectImportRef.current?.click()}>导入项目包</button>
+                <button
+                  type="button"
+                  data-testid="import-cad-drawing"
+                  disabled={state.importing}
+                  title={dwgConverterHint(cadCapabilities) || "导入 DWG / DXF 图纸，原样复现几何并打开"}
+                  onClick={() => cadImportRef.current?.click()}
+                >
+                  导入 DWG/DXF
+                </button>
+                <button
+                  type="button"
+                  data-testid="plan-cad-drawing"
+                  disabled={state.importing}
+                  title="只解析并报告图面内容，不写入任何文档"
+                  onClick={() => cadPlanRef.current?.click()}
+                >
+                  仅解析图纸
+                </button>
                 <input ref={documentImportRef} data-testid="import-document-input" type="file" accept="application/json,.json" hidden onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; void importJsonFile(file, "document"); }} />
                 <input ref={projectImportRef} data-testid="import-project-input" type="file" accept="application/json,.json" hidden onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; void importJsonFile(file, "project"); }} />
+                <input ref={cadImportRef} data-testid="import-cad-input" type="file" accept={CAD_ACCEPT} hidden onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; void importCadFile(file, "import"); }} />
+                <input ref={cadPlanRef} data-testid="plan-cad-input" type="file" accept={CAD_ACCEPT} hidden onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; void importCadFile(file, "plan"); }} />
               </div>
+              {dwgConverterHint(cadCapabilities) ? <p className="cad-import-hint" data-testid="cad-import-hint">{dwgConverterHint(cadCapabilities)}</p> : null}
               {importError || state.error ? <div className="document-import-error" role="alert"><span>{importError || state.error}</span><button type="button" onClick={() => { setImportError(""); state.clearError(); }}>关闭</button></div> : null}
+              {cadReport ? (
+                <div className="cad-import-report" data-testid="cad-import-report">
+                  <div className="cad-import-report-head">
+                    <strong data-testid="cad-import-report-title">{cadReport.title}</strong>
+                    <button type="button" data-testid="cad-import-report-close" onClick={() => setCadReport(null)}>关闭报告</button>
+                  </div>
+                  <ul data-testid="cad-import-report-body">
+                    {cadReport.lines.map((line, index) => (
+                      <li key={`${index}-${line.slice(0, 12)}`} data-testid={`cad-import-report-line-${index}`}>{line}</li>
+                    ))}
+                  </ul>
+                  <p className="cad-import-report-note">
+                    导入只复现图面几何与图层，不推断管线、设备或仪表语义；未列出的 CAD 构造仍未被表达。
+                  </p>
+                </div>
+              ) : null}
               <details className="service-access-settings">
                 <summary>共享部署访问令牌</summary>
                 <label>Service token

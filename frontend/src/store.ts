@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { api } from "./api";
+import type { CadImportOptions, CadImportResult } from "./cadImport";
 import { nextDocumentIdAfterDeletion } from "./documentDeletion";
 import { mutationOriginCanApply, mutationResponseCanApply, type WorkspaceMutationOrigin } from "./storeRequestGuard";
 import {
@@ -130,6 +131,7 @@ type State = {
   deleteDocument: (id: string) => Promise<void>;
   importDocumentPayload: (payload: unknown) => Promise<void>;
   importProjectPackagePayload: (payload: unknown) => Promise<void>;
+  importCadDrawing: (file: File, options?: CadImportOptions) => Promise<CadImportResult>;
   clearError: () => void;
   openDocument: (id: string) => Promise<void>;
   setTool: (tool: Tool) => void;
@@ -451,6 +453,37 @@ export const useWorkspace = create<State>((set, get) => ({
       });
       throw error;
     }
+  },
+
+  /**
+   * Import a DWG/DXF file as a new document and open it.
+   *
+   * The import is one governed write on the backend (audited, revisioned, undoable);
+   * here we only have to keep the client honest: the document list is refetched before
+   * selecting the new document, and a failure leaves the current document untouched
+   * instead of half-swapping the workspace.
+   */
+  importCadDrawing: async (file, options) => {
+    set({ importing: true, error: null, syncState: "checking", syncMessage: `正在导入 ${file.name}…` });
+    let result: CadImportResult;
+    try {
+      result = await api.importCadDrawing(file, options);
+    } catch (error) {
+      set({
+        error: messageFromError(error),
+        importing: false,
+        syncState: "error",
+        syncMessage: "CAD 导入失败，现有工程未修改",
+      });
+      throw error;
+    }
+    set({
+      documents: await api.listDocuments(),
+      importing: false,
+      syncMessage: `已导入 ${result.document_name} · r${result.revision}`,
+    });
+    await get().openDocument(result.document_id);
+    return result;
   },
 
   importProjectPackagePayload: async (payload) => {

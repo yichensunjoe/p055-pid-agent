@@ -1,5 +1,11 @@
 import type { AgentImagePayload } from "./agent/visionImageTypes";
 import type {
+  CadCapabilities,
+  CadDryRun,
+  CadImportOptions,
+  CadImportResult,
+} from "./cadImport";
+import type {
   DraftingOptions,
   DraftingPreview,
   DraftingReport,
@@ -251,19 +257,7 @@ function normalizeEditorResponse<T>(payload: T): T {
   return (normalized ?? payload) as T;
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  let response: Response;
-  try {
-    response = await authorizedFetch(`${API_ROOT}${path}`, {
-      ...init,
-      headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
-    });
-  } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") {
-      throw new ApiError("已手动停止操作", { status: 0, code: "aborted" });
-    }
-    throw error;
-  }
+async function readResponse<T>(response: Response): Promise<T> {
   const requestId = response.headers.get("X-PID-Agent-Request-ID") || undefined;
   if (!response.ok) {
     const fallback = `${response.status} ${response.statusText}`;
@@ -285,6 +279,65 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
   if (response.status === 204) return undefined as T;
   return normalizeEditorResponse(await response.json() as T);
+}
+
+async function send<T>(path: string, init?: RequestInit): Promise<T> {
+  let response: Response;
+  try {
+    response = await authorizedFetch(`${API_ROOT}${path}`, init);
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new ApiError("已手动停止操作", { status: 0, code: "aborted" });
+    }
+    throw error;
+  }
+  return readResponse<T>(response);
+}
+
+function request<T>(path: string, init?: RequestInit): Promise<T> {
+  return send<T>(path, {
+    ...init,
+    headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+  });
+}
+
+/**
+ * Upload a file body. A CAD source is sent as-is (raw octet stream) rather than as a
+ * multipart form: the backend reads the request body directly, and a browser hands us
+ * the ``File`` as a ``Blob`` for free — no encoding step, no base64 blow-up.
+ */
+function upload<T>(path: string, body: Blob, contentType = "application/octet-stream"): Promise<T> {
+  return send<T>(path, {
+    method: "POST",
+    headers: { "Content-Type": contentType },
+    body,
+  });
+}
+
+/**
+ * Query string for a CAD import. Only non-default options are sent, so the request URL
+ * records the decisions that were actually made instead of echoing the backend defaults.
+ *
+ * It lives here rather than in ``cadImport.ts`` because that module is imported by the
+ * cad panel helpers as well, and ``api.ts`` must stay loadable as a self-contained module
+ * (the unit tests import it directly under node's type stripping).
+ */
+export function cadImportQuery(filename: string, options: CadImportOptions = {}): string {
+  const params = new URLSearchParams();
+  params.set("filename", filename || "drawing");
+  if (options.name) params.set("name", options.name);
+  if (options.frame) params.set("frame", options.frame.join(","));
+  if (options.layers?.length) params.set("layers", options.layers.join(","));
+  if (options.includeText === false) params.set("include_text", "false");
+  if (options.fills === "skip") params.set("fills", "skip");
+  if (options.unitScale !== undefined && options.unitScale !== 1) {
+    params.set("unit_scale", String(options.unitScale));
+  }
+  if (options.curveSegments !== undefined && options.curveSegments !== 24) {
+    params.set("curve_segments", String(options.curveSegments));
+  }
+  if (options.preserveColors === false) params.set("preserve_colors", "false");
+  return params.toString();
 }
 
 function providerPayload(provider?: ProviderConfig): ProviderConfig | undefined {
@@ -405,6 +458,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+  cadImportCapabilities: () => request<CadCapabilities>("/imports/cad/capabilities"),
+  planCadDrawing: (file: File, options?: CadImportOptions) =>
+    upload<CadDryRun>(`/imports/cad/plan?${cadImportQuery(file.name, options)}`, file),
+  importCadDrawing: (file: File, options?: CadImportOptions) =>
+    upload<CadImportResult>(`/imports/cad?${cadImportQuery(file.name, options)}`, file),
   getProjectSettings: () => request<ProjectSettings>("/project/settings"),
   updateProjectSettings: (settings: ProjectSettings) => request<ProjectSettings>("/project/settings", {
     method: "PUT",

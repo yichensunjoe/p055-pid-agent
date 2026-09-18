@@ -10,6 +10,8 @@ from .agent_semantic_models import SemanticTransaction
 from .auto_layout_engine import AutoLayoutEngine
 from .config import Settings
 from .diagnostics import DiagnosticLogger
+from .harness import AgentHarnessService
+from .harness_models import AgentSessionCreateRequest, ToolApprovalCreateRequest, ToolApprovalResolveRequest
 from .history_diff import build_history_details
 from .layout_models import AutoLayoutRequest
 from .models import CreateDocumentRequest, TransactionRequest
@@ -126,6 +128,11 @@ def main() -> None:
     service = build_service(settings)
     semantic_compiler = SemanticTransactionCompiler(service)
     layout_engine = AutoLayoutEngine(service)
+    harness = AgentHarnessService(
+        service=service,
+        store=service.store,
+        registry=get_default_tool_registry(),
+    )
     diagnostics_path = settings.diagnostics_path or settings.database_path.with_suffix(
         ".diagnostics.jsonl"
     )
@@ -196,6 +203,63 @@ def main() -> None:
         return _tool_registry_catalog()
 
     @mcp.tool()
+    def start_agent_session(
+        document_id: str,
+        actor: str = "mcp-agent",
+        provider: str = "",
+        model: str = "",
+    ) -> dict[str, Any]:
+        """Start a persisted Agent harness session for one document."""
+        return harness.create_session(
+            AgentSessionCreateRequest(
+                document_id=document_id,
+                actor=actor,
+                provider=provider,
+                model=model,
+                metadata={"surface": "mcp"},
+            )
+        ).model_dump(mode="json")
+
+    @mcp.tool()
+    def request_agent_tool_approval(
+        session_id: str,
+        document_id: str,
+        tool_name: str,
+        intent: dict[str, Any],
+        requested_by: str = "mcp-user",
+        reason: str = "",
+    ) -> dict[str, Any]:
+        """Create an approval bound to an exact session/tool/document/intent hash."""
+        return harness.request_approval(
+            session_id,
+            ToolApprovalCreateRequest(
+                tool_name=tool_name,
+                document_id=document_id,
+                intent=intent,
+                requested_by=requested_by,
+                reason=reason,
+            ),
+        ).model_dump(mode="json")
+
+    @mcp.tool()
+    def resolve_agent_tool_approval(
+        approval_id: str,
+        approved: bool,
+        actor: str = "mcp-user",
+        note: str = "",
+    ) -> dict[str, Any]:
+        """Approve or reject a pending Agent tool request."""
+        return harness.resolve_approval(
+            approval_id,
+            ToolApprovalResolveRequest(approved=approved, actor=actor, note=note),
+        ).model_dump(mode="json")
+
+    @mcp.tool()
+    def get_agent_session_audit(session_id: str) -> dict[str, Any]:
+        """Return persisted approvals and tool-call provenance for one session."""
+        return harness.audit(session_id).model_dump(mode="json")
+
+    @mcp.tool()
     def get_transaction_schema() -> dict[str, Any]:
         """Return the low-level atomic transaction JSON Schema."""
         return TransactionRequest.model_json_schema()
@@ -233,15 +297,42 @@ def main() -> None:
     def apply_agent_transaction(
         document_id: str,
         transaction: SemanticTransaction,
+        session_id: str,
+        approval_id: str,
     ) -> dict[str, Any]:
-        """Compile, validate and atomically apply a semantic transaction."""
+        """Compile, validate and atomically apply an explicitly approved semantic transaction."""
+        authorized = harness.authorize(
+            session_id=session_id,
+            tool_name="apply_agent_transaction",
+            document_id=document_id,
+            intent={"transaction": transaction.model_dump(mode="json")},
+            approval_id=approval_id,
+            base_revision=transaction.expected_revision,
+            metadata={"surface": "mcp"},
+        )
         compiled = semantic_compiler.compile(document_id, transaction)
         if compiled.transaction is None:
+            harness.fail_tool_call(authorized, error_code="semantic_compile_invalid")
             return {"applied": False, "assessment": compiled.assessment.model_dump(mode="json")}
+        try:
+            result = _apply_with_history(service, diagnostics, document_id, compiled.transaction)
+        except Exception as exc:
+            harness.fail_tool_call(
+                authorized,
+                error_code=getattr(exc, "code", type(exc).__name__),
+            )
+            raise
+        revision = result["document"]["revision"]
+        harness.complete_tool_call(
+            authorized,
+            result_revision=revision,
+            metadata={"compiled_operation_count": compiled.assessment.compiled_operation_count},
+        )
+        harness.complete_session(session_id, end_revision=revision, status="completed")
         return {
             "applied": True,
             "assessment": compiled.assessment.model_dump(mode="json"),
-            "result": _apply_with_history(service, diagnostics, document_id, compiled.transaction),
+            "result": result,
         }
 
     @mcp.tool()
@@ -264,10 +355,37 @@ def main() -> None:
         return preview.model_dump(mode="json")
 
     @mcp.tool()
-    def apply_auto_layout(document_id: str, options: AutoLayoutRequest) -> dict[str, Any]:
-        """Preview and atomically apply topology-aware layout when the generated transaction is non-empty."""
+    def apply_auto_layout(
+        document_id: str,
+        options: AutoLayoutRequest,
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Apply reversible auto-layout through the Harness allow-policy and audit path."""
+        session = harness.ensure_session(
+            document_id,
+            session_id=session_id,
+            actor="mcp-agent",
+        )
+        authorized = harness.authorize(
+            session_id=session.id,
+            tool_name="apply_auto_layout",
+            document_id=document_id,
+            intent={"options": options.model_dump(mode="json")},
+            base_revision=options.expected_revision,
+            metadata={"surface": "mcp"},
+        )
         preview = layout_engine.preview(document_id, options)
         if preview.transaction is None:
+            harness.complete_tool_call(
+                authorized,
+                result_revision=preview.current_revision,
+                metadata={"applied": False},
+            )
+            harness.complete_session(
+                session.id,
+                end_revision=preview.current_revision,
+                status="completed",
+            )
             return {"applied": False, "preview": preview.model_dump(mode="json")}
         return {
             "applied": True,

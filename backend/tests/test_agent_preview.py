@@ -25,6 +25,33 @@ def make_client(tmp_path: Path) -> TestClient:
     return TestClient(app)
 
 
+def approve_agent_transaction(
+    client: TestClient,
+    document_id: str,
+    transaction: dict,
+) -> tuple[str, str]:
+    session = client.post(
+        "/api/v2/agent/sessions",
+        json={"document_id": document_id, "actor": "test-engineer"},
+    ).json()
+    approval = client.post(
+        f"/api/v2/agent/sessions/{session['id']}/approvals",
+        json={
+            "tool_name": "apply_compiled_agent_transaction",
+            "document_id": document_id,
+            "intent": {"transaction": transaction},
+            "requested_by": "test-engineer",
+            "reason": "Test reviewed Agent transaction",
+        },
+    ).json()
+    resolved = client.post(
+        f"/api/v2/agent/approvals/{approval['id']}/resolve",
+        json={"approved": True, "actor": "test-engineer", "note": "Approved in test"},
+    )
+    assert resolved.status_code == 200
+    return session["id"], approval["id"]
+
+
 def test_transaction_validation_does_not_write_and_locates_operation(tmp_path: Path):
     client = make_client(tmp_path)
     document = client.post("/api/v2/documents", json={"name": "Validate"}).json()
@@ -118,8 +145,12 @@ def test_agent_dry_run_then_confirm_records_llm_history(tmp_path: Path, monkeypa
     assert still_unchanged["revision"] == 0
     assert still_unchanged["elements"] == []
 
+    session_id, approval_id = approve_agent_transaction(
+        client, document["id"], transaction
+    )
     applied = client.post(
         f"/api/v2/documents/{document['id']}/agent/apply",
+        params={"session_id": session_id, "approval_id": approval_id},
         json=transaction,
     )
 
@@ -155,18 +186,23 @@ def test_agent_confirm_rejects_stale_preview(tmp_path: Path):
         },
     )
 
+    stale_transaction = TransactionRequest(
+        expected_revision=0,
+        label="Stale agent plan",
+        operations=[
+            UpdateElementOperation(
+                element_id="human_change",
+                patch={"text": "overwritten"},
+            )
+        ],
+    ).model_dump(mode="json")
+    session_id, approval_id = approve_agent_transaction(
+        client, document["id"], stale_transaction
+    )
     stale = client.post(
         f"/api/v2/documents/{document['id']}/agent/apply",
-        json=TransactionRequest(
-            expected_revision=0,
-            label="Stale agent plan",
-            operations=[
-                UpdateElementOperation(
-                    element_id="human_change",
-                    patch={"text": "overwritten"},
-                )
-            ],
-        ).model_dump(mode="json"),
+        params={"session_id": session_id, "approval_id": approval_id},
+        json=stale_transaction,
     )
 
     assert stale.status_code == 409

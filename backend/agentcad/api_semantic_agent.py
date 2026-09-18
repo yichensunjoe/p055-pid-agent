@@ -25,6 +25,7 @@ from .llm import PlannerError
 from .models import AgentPlan, TransactionRequest, TransactionResult
 from .permissive_semantic_compiler import PermissiveSemanticTransactionCompiler
 from .semantic_planner import SemanticAgentPlanner
+from .tool_registry import get_default_tool_registry
 from .service import (
     DocumentNotFoundError,
     DocumentService,
@@ -173,14 +174,8 @@ def create_semantic_agent_router(
 
     @router.get("/agent/semantic-tool-schema")
     def semantic_tool_schema():
-        return {
-            "name": "plan_pid_agent_semantic_transaction",
-            "description": (
-                "Use safe high-level operations for symbol replacement, connector reconnection, "
-                "port-to-port connections and connection-aware deletion."
-            ),
-            "input_schema": SemanticTransaction.model_json_schema(),
-        }
+        definition = get_default_tool_registry().require("plan_pid_agent_semantic_transaction")
+        return definition.llm_tool_schema()
 
     @router.get("/documents/{document_id}/agent/harness-context")
     def agent_harness_context(document_id: str):

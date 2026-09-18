@@ -139,8 +139,29 @@ export function AutomaticAgentRunner({
     }
     assertRunContext(origin, result, true);
     setPhase("正在应用有效事务…");
+    const sessionId = result.session_id
+      ?? (await api.createAgentSession(origin.documentId, {
+        actor: "web-user",
+        provider: provider.base_url ?? "",
+        model: provider.model ?? "",
+        metadata: { surface: "web", workflow: "automatic-agent-confirmed-apply" },
+      })).id;
+    const requestedApproval = await api.requestToolApproval(
+      sessionId,
+      "apply_compiled_agent_transaction",
+      origin.documentId,
+      { transaction: compiled.transaction },
+      "自动规划已完成，等待用户显式确认后应用。",
+    );
+    const approval = await api.resolveToolApproval(
+      requestedApproval.id,
+      true,
+      "用户点击确认按钮批准本次工程变更。",
+    );
     const applied = await api.applySemanticAgentPlan(
       origin.documentId,
+      sessionId,
+      approval.id,
       result.plan.plan_id,
       result.parent_plan_id,
       result.attempt,
@@ -250,6 +271,7 @@ export function AutomaticAgentRunner({
           origin.revision,
           prompt.trim(),
           context,
+          result.session_id,
           result.plan,
           nextAttempt,
           provider,
@@ -265,13 +287,14 @@ export function AutomaticAgentRunner({
       assertRunContext(origin, result, true);
       if (cancelRequested.current) throw new Error("自动执行已停止");
       if (!result.compiled_plan) throw new Error("有效计划缺少编译事务");
-      if (containsHighRiskOperation(result.plan.transaction.operations)) {
-        setPendingApproval({ result, origin });
-        setMessage("计划已通过校验，但包含删除或清空操作，需要确认后应用");
-        setPhase("");
-        return;
-      }
-      await applyResult(result, origin);
+      setPendingApproval({ result, origin });
+      setMessage(
+        containsHighRiskOperation(result.plan.transaction.operations)
+          ? "计划已通过校验，包含删除或清空操作；Harness 要求人工确认后应用"
+          : "计划已通过校验；工程变更需要人工确认后应用",
+      );
+      setPhase("");
+      return;
     } catch (error) {
       if (cancelRequested.current) {
         setMessage("自动执行已手动停止。");
@@ -332,9 +355,9 @@ export function AutomaticAgentRunner({
         onStop={stopRun}
       />
       {message ? <div className={`automatic-agent-result ${message.startsWith("生成成功") ? "success" : message.includes("需要确认") ? "warning" : "error"}`}>{message}</div> : null}
-      {pendingApproval ? <div className="automatic-agent-approval"><button type="button" className="confirm" disabled={running} onClick={() => void confirmHighRisk()}>确认应用高风险事务</button><button type="button" disabled={running} onClick={() => setPendingApproval(null)}>放弃</button></div> : null}
+      {pendingApproval ? <div className="automatic-agent-approval"><button type="button" className="confirm" disabled={running} onClick={() => void confirmHighRisk()}>确认并批准工程变更</button><button type="button" disabled={running} onClick={() => setPendingApproval(null)}>放弃</button></div> : null}
       {trace.length ? <details className="automatic-agent-trace"><summary>执行轨迹 · {trace.length} 次规划</summary><ol>{trace.map((entry) => <li key={entry.planId}><code>attempt {entry.attempt}</code><span>{entry.valid ? "通过" : entry.issueCodes.join(", ") || "未通过"}</span></li>)}</ol></details> : null}
-      <p className="group-hint">相同结构化错误再次出现时会提前停止，避免模型在两个错误之间循环。删除元素、删除分组或清空文档不会自动应用。</p>
+      <p className="group-hint">相同结构化错误再次出现时会提前停止，避免模型在两个错误之间循环。所有工程变更均需通过 Harness Approval Gate；删除、清空等高风险操作会额外标记风险。</p>
     </section>
   );
 }

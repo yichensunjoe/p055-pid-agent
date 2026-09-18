@@ -155,6 +155,7 @@ def test_rest_agent_apply_is_blocked_until_exact_approval(tmp_path: Path):
         "operations": [{"op": "clear_document"}],
         "expected_revision": 0,
         "label": "Approved clear",
+        "source": None,
     }
 
     session_response = client.post(

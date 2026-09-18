@@ -1,6 +1,39 @@
 # REUSE_AND_PITFALL_LOG — P055-PID-Agent
 
 
+## 2026-09-18 · 派生图层永远只能“可证明地新鲜”（P055-PID-Agent）
+
+- 场景：M2 需要把工程语义图做成可复用的项目级产物（跨图 OPC、项目统计、后续 Agent context），但持久化缓存一旦被当成真值，就会出现“索引说 3 台泵、图纸实际 4 台”的静默错误——这类错误在工程交付里比崩溃更危险。
+- 结论做法：缓存行同时保存 `revision + content_hash + builder_version`；新鲜度分两级且**命名诚实**：只有比较 revision 的叫 `fresh`（必要条件），真正重算 content hash 的才叫 `verified_fresh`（承诺）；失效原因逐条列出（`revision_changed` / `content_hash_changed` / `builder_version_changed` / `document_deleted`）；读取入口 `graph()` 先验证再返回，发现过期就重建；项目级读入口把过期/孤儿行变成 `IR_INDEX_STALE` / `IR_INDEX_ORPHAN` finding，而不是把旧数字当新数字返回。
+- 关键经验：**派生数据要么可证明新鲜，要么显式承认过期**，没有第三种状态。“缓存命中率”不能凌驾于“工程数字不能错”。同时：缓存不进审计链（可重算的东西不是证据），但**显式重建命令要审计**（“谁在什么时候重算了项目索引”是真实运维事实）。
+- 实施细节：`document_content_hash` 只哈希工程内容（元素/图层/系统，剔除 style），因此改颜色不让索引失效、改位号一定失效；`builder_version` 变化令所有行失效，避免“新旧逻辑混合的图”。
+
+## 2026-09-18 · 工程标识应由 tag 决定，重复 tag 必须报错而不是合并（P055-PID-Agent）
+
+- 场景：工程对象需要跨 revision、跨导入/导出的稳定身份，但 element id 是随机的（导入会重新生成）；而真实图纸又常出现重复位号。
+- 结论做法：对象 id 优先由工程位号派生（`valve:hv-101`），无位号时降级为 element id，并用 `identity_scope`（`tag` / `element`）如实标注用的是哪一种；同一文档内重复 tag **绝不合并**，第二个及之后按 element id 排序加确定性 `#2`/`#3`，同时报 `IR_DUPLICATE_IDENTITY`。
+- 关键经验：图上两个阀共用位号是**工程缺陷**，不是别名机会；把“看起来一样的对象”合并成一个是把缺陷藏起来。身份降级要写在数据里（`identity_scope`），不要藏在文档里。
+- 附带收益：测试可以断言“重导入后对象 id 集合不变”，这正是 IR 能否作为长期工程主线的根本判据。
+
+## 2026-09-18 · 别让结构启发式凭空造出工程语义（P055-PID-Agent）
+
+- 场景：信号线分类很容易写成“一端接仪表就是信号”，但 P&ID 上的**工艺引压/取样点**同样一端接仪表——按该规则会把工艺管线误判成信号。
+- 结论做法：信号分类以**显式介质命名**为主（signal/electric/pneumatic/impulse/信号/电/气动…），仅保留一条保守结构规则（两端都是仪表对象）；其余一律留在 process，并把纯结构判断（如“已声明信号却没接仪表”）变成 finding 交给审查。
+- 关键经验：启发式可以**发现问题**，不可以**创造语义**；宁少勿多，漏判会被人看到，误判会被 Agent 当真。
+
+## 2026-09-18 · 用“活体枚举 + 声明式契约”证明没有隐藏写路径（P055-PID-Agent）
+
+- 场景：T0.5 后写路径都接上了审计与权限门，但没人能保证以后新加的 endpoint 不会绕过去；靠代码评审回答“还有没有旁路”不可持续。
+- 结论做法：新增 `surface_contract.py`（声明式数据，不在导入时授予任何权限）+ 测试从**实时 OpenAPI schema 与实时 MCP 源文件**枚举全部 mutating 路由和 tool 名，双向比对：未声明 → 失败，声明了不存在 → 也失败；“声明为只读”的路由必须附带一个**否定测试**证明它真的不写（例如 `canvas-grid` 不产生 revision）。
+- 关键经验：治理机制要能被机器反证。声明式契约 + 活体枚举 + 否定测试，三件套缺一不可；否则契约文件本身会先腐烂。
+
+## 2026-09-18 · 测试里的版本号硬编码会把“旧迁移测试”变成假测试（P055-PID-Agent）
+
+- 场景：v3 迁移测试写的是 `PRAGMA user_version=CURRENT_SCHEMA_VERSION - 1`；schema 从 v4 涨到 v5 后，该测试实际构造的是“谎称 v4 但缺 audit_records”的不可能数据库，迁移直接报缺表——测试失败暴露了它一直没有真正测试 v3→v4。
+- 结论做法：迁移测试必须**显式写出目标旧版本号**（`user_version=3` / `user_version=4`）并构造该版本真实具备的表结构；对每个新增 schema 版本补一条“旧版本 → 当前版本”的迁移测试，并断言迁移不会凭空回填历史数据（不伪造证据）。
+- 关键经验：测试里凡是“相对当前版本推算出来的历史”，都会随着版本上涨而失真，但未必立刻报错；这类隐式耦合应在 review 时直接改写为显式常量。
+
+
 ## 2026-09-18 · 审批对象要从 JSON Patch 升级为 Semantic Diff（P055-PID-Agent）
 
 - 场景：Approval Gate 已能严格绑定 exact intent，但工程师若只能看到原始 TransactionRequest / JSON patch，仍然很难判断“到底改了什么工程内容”。
@@ -288,3 +321,17 @@
 **适用场景**：大型未提交工作批次接管、绘图质量检查模块几何正确性、前端 node:test 测试环境识别。
 
 （已同步总库 2026-08-06）
+
+## 2026-09-18 · e2e 套件会清库：不能用活的项目库跑验收（P055-PID-Agent）
+
+- 场景：想在本机顺手跑 Playwright 验收新面板，`frontend/e2e/fixtures.ts` 的 `resetDocuments()` 会遍历 `GET /documents` 并逐个 DELETE，目标是"测试数据库"。
+- 事实：`playwright.config.ts` 的 webServer 用固定的 8000/4173 且 `reuseExistingServer:false`；本机 8000 被另一个工作区的常驻后端占用，而那个后端连的是**共享的本机 dev 数据库**（35 张真实图纸）。一旦"临时改 baseURL 指向活服务"跑 e2e，就会把用户图纸清空。
+- 结论做法：不要在共享/活数据库上跑 e2e；e2e 只在隔离 DB 的 CI 环境执行。本轮因此**未执行** e2e，改为在 Preview 里手工验证同一批 `data-testid`（面板、findings、trace、项目索引、跨图链接）并把结论如实写进 HANDOFF，而不是写成"e2e 通过"。
+- 关键经验：验收脚本的破坏性要先读一遍（`resetDocuments`）再决定能不能跑；"我没跑"必须和"我没验证"区分开——手工在活界面点过并截图，与套件绿灯是两种证据，报告里要写清楚是哪一种。
+
+## 2026-09-18 · 嵌套 subcommand 的 `--database` 必须写在子命令之前（P055-PID-Agent）
+
+- 场景：`pid-agent project-index rebuild --database X` 报 `unrecognized arguments`，而 `pid-agent project-index --database X rebuild` 正常。
+- 原因：`--database` 注册在父 parser（与既有 `audit` 命令一致），argparse 要求父级可选参数出现在子命令之前。
+- 结论做法：沿用现约定不改 CLI 结构；在脚本/文档示例里固定写成 `pid-agent <group> --database <path> <subcommand>`；CI 用默认路径时不涉及。
+- 关键经验：给嵌套命令写文档或写脚本时，先在终端实跑一次顺序，别凭直觉拼参数；这类失败出现在**演练脚本**里（而不是单测里），最容易被误判成代码 bug。

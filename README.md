@@ -144,6 +144,12 @@ pytest -q
 ruff check backend
 pid-agent quality-harness
 
+# 审计证据与工程语义图层
+pid-agent audit verify
+pid-agent audit trail --limit 20
+pid-agent engineering-graph <document_id> --summary
+pid-agent project-index rebuild
+
 # 前端单测、构建和浏览器验收
 cd frontend
 npm test
@@ -299,6 +305,16 @@ GET    /api/v2/documents/{document_id}/export-v2.pdf
 GET    /api/v2/documents/{document_id}/export-v2.dxf
 GET    /api/v2/documents/{document_id}/engineering-report
 GET    /api/v2/documents/{document_id}/engineering-report/{kind}.csv
+GET    /api/v2/documents/{document_id}/engineering-graph
+GET    /api/v2/documents/{document_id}/engineering-graph/trace?object_id=&direction=
+GET    /api/v2/documents/{document_id}/project-index
+GET    /api/v2/project/engineering-graph
+POST   /api/v2/project/index/rebuild
+GET    /api/v2/audit/records
+GET    /api/v2/audit/verify
+GET    /api/v2/audit/export
+GET    /api/v2/documents/{document_id}/audit
+GET    /api/v2/documents/{document_id}/history/{revision}/evidence
 POST   /api/v2/documents/{document_id}/agent/generate
 GET    /api/v2/symbols
 GET    /api/v2/agent/tools
@@ -311,7 +327,7 @@ GET    /api/v2/agent/tool-schema
 
 JSON 格式、冲突策略、原子失败语义、浏览器操作和 Python Client 示例见 [`docs/project-json-import.md`](docs/project-json-import.md)。
 
-PDF 图幅、分页、标题栏、预览和 Python Client 用法见 [`docs/pdf-print-export.md`](docs/pdf-print-export.md)。DXF 图层、单位、坐标、XDATA 和 CAD 交换说明见 [`docs/dxf-export.md`](docs/dxf-export.md)。设备表、管线表、仪表索引、规则代码和 CSV/Python Client 用法见 [`docs/engineering-reports.md`](docs/engineering-reports.md)。
+PDF 图幅、分页、标题栏、预览和 Python Client 用法见 [`docs/pdf-print-export.md`](docs/pdf-print-export.md)。DXF 图层、单位、坐标、XDATA 和 CAD 交换说明见 [`docs/dxf-export.md`](docs/dxf-export.md)。设备表、管线表、仪表索引、规则代码和 CSV/Python Client 用法见 [`docs/engineering-reports.md`](docs/engineering-reports.md)。工程对象、管线聚合、跨图连接、工程索引新鲜度和 tracing 见 [`docs/engineering-semantic-graph.md`](docs/engineering-semantic-graph.md)。变更归因、哈希链、证据包和审批绑定见 [`docs/audit-and-provenance.md`](docs/audit-and-provenance.md)。
 
 `/api/v1` 主要旧端点仍由新文档引擎提供兼容。
 
@@ -347,11 +363,15 @@ reports/                # 本地质量/模型运行产物
 pid-agent quality-harness
 pytest -q
 ruff check backend
+pid-agent audit verify
+pid-agent project-index rebuild
 cd frontend
 npm test
 npm run build
 npm run test:e2e
 ```
+
+`pid-agent engineering-graph <document_id> --summary` 可在终端直接查看一张图纸的工程对象、拓扑规模与 findings，并在存在 error finding 时以退出码 2 结束；`pid-agent project-index rebuild|list|project` 同理（有非新鲜索引时退出码 2）。
 
 Playwright 安装、headed 模式、视觉基线更新和 trace 查看方式见 [`docs/browser-e2e-visual-acceptance.md`](docs/browser-e2e-visual-acceptance.md)。
 无需模型或 API Key 的图例、拓扑和 Agent 事务验收见 [`docs/offline-quality-harness.md`](docs/offline-quality-harness.md)。

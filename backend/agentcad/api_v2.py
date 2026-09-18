@@ -8,7 +8,9 @@ from typing import Annotated, Any
 from fastapi import APIRouter, HTTPException, Query, Response, status
 from pydantic import ValidationError
 
+from .api_harness import _raise_harness_error
 from .diagnostics import DiagnosticLogger
+from .harness import AgentHarnessService
 from .history_diff import build_history_details
 from .llm import OpenAICompatiblePlanner, PlannerError
 from .models import (
@@ -147,6 +149,7 @@ def create_v2_router(
     planner: OpenAICompatiblePlanner,
     diagnostics: DiagnosticLogger | None = None,
     version: str = "unknown",
+    harness: AgentHarnessService | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api/v2", tags=["P&ID-Agent v2"])
 
@@ -558,14 +561,8 @@ def create_v2_router(
 
     @router.get("/agent/tool-schema")
     def agent_tool_schema():
-        return {
-            "name": "apply_pid_agent_transaction",
-            "description": (
-                "Apply an atomic, validated set of drawing operations to one P&ID-Agent document. "
-                "Use scene-summary first when modifying an existing drawing."
-            ),
-            "input_schema": TransactionRequest.model_json_schema(),
-        }
+        definition = get_default_tool_registry().require("apply_compiled_agent_transaction")
+        return definition.llm_tool_schema()
 
     @router.post(
         "/documents/{document_id}/agent/generate",
@@ -605,6 +602,18 @@ def create_v2_router(
                         affected_element_ids=validation["affected_element_ids"],
                     )
                 return AgentGenerateResult(plan=plan)
+            if harness is not None:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "error": "tool_approval_required",
+                        "message": (
+                            "Direct generate-and-apply is disabled by the Harness permission gate. "
+                            "Use dry_run planning, request approval, then call the apply endpoint."
+                        ),
+                        "retryable": False,
+                    },
+                )
             result = _apply_transaction_with_details(
                 service,
                 document_id,
@@ -650,15 +659,70 @@ def create_v2_router(
         "/documents/{document_id}/agent/apply",
         response_model=TransactionResult,
     )
-    def apply_agent_plan(document_id: str, request: TransactionRequest):
-        return _call(
-            _apply_transaction_with_details,
-            service,
-            document_id,
-            request,
-            source="llm",
-            diagnostics=diagnostics,
+    def apply_agent_plan(
+        document_id: str,
+        request: TransactionRequest,
+        session_id: Annotated[str | None, Query()] = None,
+        approval_id: Annotated[str | None, Query()] = None,
+    ):
+        if harness is None:
+            return _call(
+                _apply_transaction_with_details,
+                service,
+                document_id,
+                request,
+                source="llm",
+                diagnostics=diagnostics,
+            )
+        if not session_id:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "tool_approval_required",
+                    "message": "Agent apply requires an active harness session and explicit approval.",
+                    "retryable": False,
+                },
+            )
+        intent = {"transaction": request.model_dump(mode="json")}
+        try:
+            authorized = harness.authorize(
+                session_id=session_id,
+                tool_name="apply_compiled_agent_transaction",
+                document_id=document_id,
+                intent=intent,
+                approval_id=approval_id,
+                base_revision=request.expected_revision,
+                metadata={"surface": "rest", "endpoint": "agent/apply"},
+            )
+        except Exception as exc:
+            return _raise_harness_error(exc)
+        try:
+            result = _apply_transaction_with_details(
+                service,
+                document_id,
+                request,
+                source="llm",
+                diagnostics=diagnostics,
+            )
+        except Exception as exc:
+            harness.fail_tool_call(
+                authorized,
+                error_code=getattr(exc, "code", type(exc).__name__),
+            )
+            if isinstance(exc, (DocumentNotFoundError, InvalidOperationError, RevisionConflictError)):
+                return _raise_service_error(exc)
+            raise
+        harness.complete_tool_call(
+            authorized,
+            result_revision=result.document.revision,
+            metadata={"applied_operations": result.applied_operations},
         )
+        harness.complete_session(
+            session_id,
+            end_revision=result.document.revision,
+            status="completed",
+        )
+        return result
 
     return router
 

@@ -4,16 +4,20 @@
 
 ## 当前状态（2026-09-18）
 
-- 已完成 Charter Priority 0 / T0.1 第一阶段：新增 `backend/agentcad/tool_registry.py`，把已实现 Agent 能力集中为 canonical Tool Registry。
-- Tool Definition 已机器化描述 input/output schema、permission（allow/ask/deny）、risk、side effect、preview、idempotency、audit event、surface 和 tags；重复工具名会拒绝注册。
-- REST 新增 `GET /api/v2/agent/tools`；MCP 新增 `get_tool_registry`；既有 `/agent/semantic-tool-schema` 改为从同一 registry 派生，避免 REST/MCP/Agent schema 漂移。
-- 第一批仅登记真实存在的能力：document/scene/history inspect、transaction analyze/validate、semantic plan/compile/apply、auto-layout preview/apply、undo/redo；未实现的 Charter 工具没有伪登记。
-- `apply_agent_transaction` 当前声明为 `ask + engineering_change`；auto-layout/undo/redo 为可回滚 `draft_edit`。本阶段是策略元数据，尚未做统一 permission enforcement。
-- 已新增 `backend/tests/test_tool_registry.py` 和 `docs/tool-registry.md`；CI 已由 main push 触发，最终结果以最新 workflow run 为准。
-- 下一步：T0.2 Agent Session + T0.3 Permission/Approval Gate，使 Tool Registry 的 permission/audit 元数据真正参与执行，而不只是 catalog。
-- 备注：本轮未修改数据库 schema，也未改变 DocumentService/TransactionRequest 的原子写入边界。
+- 已完成 Charter Priority 0 / T0.1–T0.3 的首个可执行闭环：Canonical Tool Registry + Agent Session + Permission/Approval Gate。
+- Tool Registry 已统一描述 schema、permission、risk、side-effect、preview、idempotency、audit event 和 surface；Agent/MCP/REST 共享同一能力定义。
+- 数据库升级至 schema v3，新增 `agent_sessions`、`agent_approvals`、`agent_tool_calls`，持久记录 actor、provider/model、start/end revision、approval、intent hash、tool call status 和 revision provenance。
+- `ask` 权限已真正执行：Agent engineering-change 写入在没有显式批准时返回阻断；批准绑定 session + tool + document + exact intent hash，成功执行后一次性 consumed，不能换事务或重放。
+- `allow` 工具（当前 auto-layout）无需批准但仍进入 session/tool-call 审计；`deny` 行为已有测试覆盖，为未来正式 release 工具保留硬阻断能力。
+- semantic `plan-v2/stream` 会创建 session，replan 续用 session，`apply-v2` 必须携带 session_id + approval_id；网页手动 Agent 与 AutomaticAgentRunner 都已改为显式人工确认后再执行工程变更。
+- MCP 的 semantic apply、low-level `apply_transaction_v2`、legacy `apply_transaction` 均已封堵绕过路径；低层事务同样需要 exact approval。普通人工编辑器的 web transaction 仍保持直接人工编辑语义，不强制走 Agent gate。
+- 已新增 `docs/agent-harness-sessions-permissions.md` 与 `backend/tests/test_harness_permissions.py`，并扩展 migration / agent preview / semantic repair / diagnostics 测试。
+- T0.1 上一轮验证：Ruff 通过、quality harness 4/4、pytest 277 passed、frontend unit/build 通过；浏览器 local E2E 当时 33 passed / 9 failed，其中 8 个为既有视觉快照基线漂移，1 个为旧测试仍寻找已变化的“重命名”按钮。当前 T0.2/T0.3 的最终 CI 正在以最新 main 提交重新验证。
+- 下一步：CI 通过核心 Harness 测试后进入 T0.4 Semantic Diff，把当前 element-level history diff 升级为工程对象级、可供审批阅读的稳定语义差异对象。
 
 ## 近期轮次（最新在上，保留全部）
+- 2026-09-18（T0.2/T0.3 Agent Session + Permission/Approval Gate）：数据库升级 schema v3，新增 sessions/approvals/tool_calls；实现 exact-intent approval hash、allow/ask/deny enforcement、one-time consume、session audit；semantic plan/replan/apply、网页手动/自动 Agent、MCP semantic/low-level apply 全部接入 Harness，封堵旧低层绕过；新增 REST/MCP 管理接口、前端显式批准、集成测试与设计文档。下一步 T0.4 Semantic Diff。
+
 - 2026-09-18（T0.1 Canonical Tool Registry）：新增统一 Tool Registry，登记 12 个现有 Harness 能力并固化 schema/permission/risk/side-effect/preview/idempotency/audit metadata；REST 新增 `/api/v2/agent/tools`，MCP 新增 `get_tool_registry`，semantic tool schema 改由 registry 派生；新增单测与设计文档。保持 DocumentService/Transaction 原子边界不变。下一步 T0.2 Session + T0.3 Permission/Approval enforcement。
 
 - 2026-09-18（总体技术任务书与 AgentCAD Harness 长期主线）：新增 `PROJECT_CHARTER.md` v1.0.0（约 2.45 万字符），把最终“经工程校核批准后可进入施工阶段交付”的目标固化为 canonical charter；明确 semantic IR、受控 tools、validator、permission/approval、audit/provenance、project graph、release gates、benchmark 和 M0-M10；同步更新 AGENTS.md 强制未来模型先读 Charter，并在 README 建立入口。下一步优先 T0.1 Tool Registry → T0.2 Session → T0.3 Permission/Approval → T0.4 Semantic Diff → T0.5 Audit。本轮仅文档治理，无业务代码变更、未重跑测试。

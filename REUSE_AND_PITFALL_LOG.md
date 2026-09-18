@@ -1,5 +1,14 @@
 # REUSE_AND_PITFALL_LOG — P055-PID-Agent
 
+
+## 2026-09-18 · Tool Registry 先做元数据层，不重写事务执行器（P055-PID-Agent）
+
+- 场景：按 PROJECT_CHARTER Priority 0 启动 Agent Harness 改造；仓库已有成熟的 DocumentService、TransactionRequest、SemanticTransactionCompiler、MCP/REST 能力，若直接重写执行路径风险很高。
+- 结论做法：先新增 canonical Tool Registry，只统一机器可读的 schema、permission、risk、side-effect、preview、idempotency、audit event 和 surface；REST、MCP、semantic planner 共用同一 catalog，现有执行器和原子事务边界保持不变。
+- 关键经验：Harness 抽象应先“包住”稳定工程内核，再逐步把 permission/session/audit 接入执行门；不要为了架构漂亮而先推翻已验证的事务系统。
+- 风险控制：只登记已有真实执行路径的工具；Charter 中尚未实现的理想工具不能先写进 registry 冒充能力。工程变更型 semantic apply 先声明 ask，下一阶段再做 enforcement。
+- 验收：增加 registry 单测、REST/semantic schema 同源测试、MCP catalog 同源测试，并由 CI 执行 ruff/quality-harness/pytest/frontend/e2e。
+
 ## 2026-09-18 · 用 Canonical Charter 约束未来模型重规划（P055-PID-Agent）
 
 - 场景：项目从“AI 可编辑的结构化 P&ID 软件”进一步明确为面向工程交付的 Agent Harness；未来模型能力会持续升级，单纯维护临时 Roadmap 容易发生目标漂移。

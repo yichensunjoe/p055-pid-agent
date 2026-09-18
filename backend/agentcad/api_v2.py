@@ -30,6 +30,12 @@ from .project_io import (
     ProjectSettings,
 )
 from .provider_discovery import discover_provider_models
+from .semantic_diff import (
+    build_semantic_diff,
+    preview_transaction_semantic_diff,
+    semantic_diff_from_history_details,
+)
+from .semantic_diff_models import SemanticDiffReport
 from .service import (
     DocumentNotFoundError,
     DocumentService,
@@ -56,6 +62,8 @@ def _record_revision_details(
         request.operations if request else None,
         action=action,
     )
+    semantic_diff = build_semantic_diff(before, after, details, service.symbols)
+    details["semantic_diff"] = semantic_diff.model_dump(mode="json")
     persisted = service.store.update_history_details(after.id, after.revision, details)
     if diagnostics is not None:
         diagnostics.emit(
@@ -209,6 +217,31 @@ def create_v2_router(
     def document_history(document_id: str, limit: int = 100):
         _call(service.get_document, document_id)
         return service.store.list_history_detailed(document_id, limit)
+
+    @router.post(
+        "/documents/{document_id}/transactions/semantic-diff",
+        response_model=SemanticDiffReport,
+    )
+    def preview_semantic_diff(document_id: str, request: TransactionRequest):
+        return _call(preview_transaction_semantic_diff, service, document_id, request)
+
+    @router.get(
+        "/documents/{document_id}/history/{revision}/semantic-diff",
+        response_model=SemanticDiffReport,
+    )
+    def revision_semantic_diff(document_id: str, revision: int):
+        _call(service.get_document, document_id)
+        entry = service.store.get_history_revision_detailed(document_id, revision)
+        if entry is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"history revision not found: {document_id}@{revision}",
+            )
+        details = entry.get("details", {})
+        stored = details.get("semantic_diff") if isinstance(details, dict) else None
+        if isinstance(stored, dict):
+            return SemanticDiffReport.model_validate(stored)
+        return semantic_diff_from_history_details(document_id, details, service.symbols)
 
     @router.get("/diagnostics/export")
     def export_diagnostics(document_id: str | None = None, limit: int = 500):

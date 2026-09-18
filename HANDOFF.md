@@ -4,14 +4,18 @@
 
 ## 当前状态（2026-09-18）
 
-- 已完成：新增根目录 `PROJECT_CHARTER.md` v1.0.0，确立 P&ID-Agent 向 AgentCAD Engineering Drawing Harness 演进的长期主约束。
-- 已完成：明确不可变核心——工程交付优先、semantic-first、LLM 通过受控 tools 修改工程模型、确定性 validator 包围概率模型、全量 audit/rollback、model-agnostic、正式 release 必须保留人工专业审批。
-- 已完成：任务书定义 P&ID Semantic IR、Tool Registry、权限等级、Approval Gate、Rule Engine、确定性布局/路由、项目上下文、跨文档 Engineering Graph、工程 release gates、benchmark、未来模型 Replanning Governance 与 M0-M10 里程碑。
-- 已完成：AGENTS.md 和 README.md 接入 Charter，保证后续模型在重大规划/重构前强制读取。
-- 下一步建议：从 Charter Priority 0 开始，首先把现有 TransactionRequest 上层抽象为统一 Tool Registry，再加入 Agent Session、Permission/Approval、Semantic Diff 和 Audit。
-- 备注：本轮是文档与项目治理变更，未修改业务代码或数据库，未重新执行代码测试；现有功能状态仍以历史 HANDOFF 与实际测试为准。
+- 已完成 Charter Priority 0 / T0.1 第一阶段：新增 `backend/agentcad/tool_registry.py`，把已实现 Agent 能力集中为 canonical Tool Registry。
+- Tool Definition 已机器化描述 input/output schema、permission（allow/ask/deny）、risk、side effect、preview、idempotency、audit event、surface 和 tags；重复工具名会拒绝注册。
+- REST 新增 `GET /api/v2/agent/tools`；MCP 新增 `get_tool_registry`；既有 `/agent/semantic-tool-schema` 改为从同一 registry 派生，避免 REST/MCP/Agent schema 漂移。
+- 第一批仅登记真实存在的能力：document/scene/history inspect、transaction analyze/validate、semantic plan/compile/apply、auto-layout preview/apply、undo/redo；未实现的 Charter 工具没有伪登记。
+- `apply_agent_transaction` 当前声明为 `ask + engineering_change`；auto-layout/undo/redo 为可回滚 `draft_edit`。本阶段是策略元数据，尚未做统一 permission enforcement。
+- 已新增 `backend/tests/test_tool_registry.py` 和 `docs/tool-registry.md`；CI 已由 main push 触发，最终结果以最新 workflow run 为准。
+- 下一步：T0.2 Agent Session + T0.3 Permission/Approval Gate，使 Tool Registry 的 permission/audit 元数据真正参与执行，而不只是 catalog。
+- 备注：本轮未修改数据库 schema，也未改变 DocumentService/TransactionRequest 的原子写入边界。
 
 ## 近期轮次（最新在上，保留全部）
+- 2026-09-18（T0.1 Canonical Tool Registry）：新增统一 Tool Registry，登记 12 个现有 Harness 能力并固化 schema/permission/risk/side-effect/preview/idempotency/audit metadata；REST 新增 `/api/v2/agent/tools`，MCP 新增 `get_tool_registry`，semantic tool schema 改由 registry 派生；新增单测与设计文档。保持 DocumentService/Transaction 原子边界不变。下一步 T0.2 Session + T0.3 Permission/Approval enforcement。
+
 - 2026-09-18（总体技术任务书与 AgentCAD Harness 长期主线）：新增 `PROJECT_CHARTER.md` v1.0.0（约 2.45 万字符），把最终“经工程校核批准后可进入施工阶段交付”的目标固化为 canonical charter；明确 semantic IR、受控 tools、validator、permission/approval、audit/provenance、project graph、release gates、benchmark 和 M0-M10；同步更新 AGENTS.md 强制未来模型先读 Charter，并在 README 建立入口。下一步优先 T0.1 Tool Registry → T0.2 Session → T0.3 Permission/Approval → T0.4 Semantic Diff → T0.5 Audit。本轮仅文档治理，无业务代码变更、未重跑测试。
 
 - 2026-08-21（全项目代码 Review：质量声明核验 + 安全/性能深审）：实测核验 pytest 271✓ / npm test 98✓ / build✓；**ruff 实测 9 错**（security.py F821×8 缺 `Any` 导入 + F841×1），与「ruff 0 报错」声明不符；e2e 因 8000 端口被常驻后端占用未复跑。关键发现：🔴 security.py `_handle_asgi` 仅校验 Content-Length 头，chunked 请求可绕过 body 大小上限（F841 未使用变量即烂尾证据）；🔴 验收矩阵链路（api_acceptance→model_acceptance）未注入 ProviderNetworkPolicy，shared 模式下该端点可作 SSRF 跳板（llm.py 默认 local 策略放行全部地址）；🟡 长 SSE 流全程占用并发信号量槽（默认32）；🟡 前端 EditorCanvas pointermove 触发整画布重渲染、api.ts SSE `.trim()` 吞流式空白、main.tsx 挂载 4 个 MutationObserver 旁路补丁组件、store/SSE 解析零单测覆盖。下一步：① 补 `from typing import Any` 清零 ruff；② ASGI 路径落地真实 body 限制；③ create_acceptance_router 注入 provider_policy；④ 按 Top5 清单治理前端渲染与旁路组件。

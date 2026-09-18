@@ -408,19 +408,72 @@ def main() -> None:
             "result": result,
         }
 
+    def _apply_low_level_with_approval(
+        document_id: str,
+        transaction: TransactionRequest,
+        session_id: str,
+        approval_id: str,
+        *,
+        tool_surface: str,
+    ) -> dict:
+        authorized = harness.authorize(
+            session_id=session_id,
+            tool_name="apply_compiled_agent_transaction",
+            document_id=document_id,
+            intent={"transaction": transaction.model_dump(mode="json")},
+            approval_id=approval_id,
+            base_revision=transaction.expected_revision,
+            metadata={"surface": "mcp", "legacy_tool": tool_surface},
+        )
+        try:
+            result = _apply_with_history(service, diagnostics, document_id, transaction)
+        except Exception as exc:
+            harness.fail_tool_call(
+                authorized,
+                error_code=getattr(exc, "code", type(exc).__name__),
+            )
+            raise
+        revision = result["document"]["revision"]
+        harness.complete_tool_call(
+            authorized,
+            result_revision=revision,
+            metadata={"applied_operations": len(transaction.operations)},
+        )
+        harness.complete_session(session_id, end_revision=revision, status="completed")
+        return result
+
     @mcp.tool()
     def apply_transaction_v2(
         document_id: str,
         transaction: TransactionRequest,
+        session_id: str,
+        approval_id: str,
     ) -> dict:
-        """Apply a structured low-level atomic P&ID-Agent transaction."""
-        return _apply_with_history(service, diagnostics, document_id, transaction)
+        """Apply a low-level transaction only after exact Harness approval."""
+        return _apply_low_level_with_approval(
+            document_id,
+            transaction,
+            session_id,
+            approval_id,
+            tool_surface="apply_transaction_v2",
+        )
 
     @mcp.tool()
-    def apply_transaction(document_id: str, transaction_json: str) -> dict:
-        """Legacy string-based transaction tool. Prefer apply_agent_transaction or apply_transaction_v2."""
+    def apply_transaction(
+        document_id: str,
+        transaction_json: str,
+        session_id: str,
+        approval_id: str,
+    ) -> dict:
+        """Legacy JSON transaction entrypoint; still requires exact Harness approval."""
         transaction = TransactionRequest.model_validate(json.loads(transaction_json))
-        return _apply_with_history(service, diagnostics, document_id, transaction)
+        return _apply_low_level_with_approval(
+            document_id,
+            transaction,
+            session_id,
+            approval_id,
+            tool_surface="apply_transaction",
+        )
 
     @mcp.tool()
     def list_symbols() -> list[dict]:

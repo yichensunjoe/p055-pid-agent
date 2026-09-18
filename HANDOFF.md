@@ -4,18 +4,20 @@
 
 ## 当前状态（2026-09-18）
 
-- 已完成 Charter Priority 0 / T0.1–T0.3 的首个可执行闭环：Canonical Tool Registry + Agent Session + Permission/Approval Gate。
-- Tool Registry 已统一描述 schema、permission、risk、side-effect、preview、idempotency、audit event 和 surface；Agent/MCP/REST 共享同一能力定义。
-- 数据库升级至 schema v3，新增 `agent_sessions`、`agent_approvals`、`agent_tool_calls`，持久记录 actor、provider/model、start/end revision、approval、intent hash、tool call status 和 revision provenance。
-- `ask` 权限已真正执行：Agent engineering-change 写入在没有显式批准时返回阻断；批准绑定 session + tool + document + exact intent hash，成功执行后一次性 consumed，不能换事务或重放。
-- `allow` 工具（当前 auto-layout）无需批准但仍进入 session/tool-call 审计；`deny` 行为已有测试覆盖，为未来正式 release 工具保留硬阻断能力。
-- semantic `plan-v2/stream` 会创建 session，replan 续用 session，`apply-v2` 必须携带 session_id + approval_id；网页手动 Agent 与 AutomaticAgentRunner 都已改为显式人工确认后再执行工程变更。
-- MCP 的 semantic apply、low-level `apply_transaction_v2`、legacy `apply_transaction` 均已封堵绕过路径；低层事务同样需要 exact approval。普通人工编辑器的 web transaction 仍保持直接人工编辑语义，不强制走 Agent gate。
-- 已新增 `docs/agent-harness-sessions-permissions.md` 与 `backend/tests/test_harness_permissions.py`，并扩展 migration / agent preview / semantic repair / diagnostics 测试。
-- T0.1 上一轮验证：Ruff 通过、quality harness 4/4、pytest 277 passed、frontend unit/build 通过；浏览器 local E2E 当时 33 passed / 9 failed，其中 8 个为既有视觉快照基线漂移，1 个为旧测试仍寻找已变化的“重命名”按钮。当前 T0.2/T0.3 的最终 CI 正在以最新 main 提交重新验证。
-- 下一步：CI 通过核心 Harness 测试后进入 T0.4 Semantic Diff，把当前 element-level history diff 升级为工程对象级、可供审批阅读的稳定语义差异对象。
+- 已完成 Charter Priority 0 / T0.1–T0.4 首轮：Canonical Tool Registry、Agent Session、Permission/Approval Gate、Semantic Engineering Diff。
+- Tool Registry 已统一 schema/permission/risk/side-effect/preview/idempotency/audit/surface；Agent/MCP/REST 共用能力定义。
+- SQLite schema v3 已持久化 `agent_sessions`、`agent_approvals`、`agent_tool_calls`；approval 严格绑定 session + tool + document + canonical intent hash，成功执行后 consumed，旧 MCP/REST Agent mutation 旁路已封堵。
+- semantic `plan-v2/stream` 创建 session，replan 续用，apply-v2 需要 session_id + approval_id；网页手动和自动 Agent 都在工程写入前停在人工确认点。
+- T0.4 新增 `semantic_diff.py` / `semantic_diff_models.py`：将 raw before/after snapshot 转成 equipment/valve/instrument/pipeline 等工程对象级差异，输出 field delta、change type、human-readable summary 与 risk_hint。
+- REST 新增无写入 `POST /documents/{id}/transactions/semantic-diff` 与按 revision 查询 `GET /documents/{id}/history/{revision}/semantic-diff`；MCP 新增 `preview_semantic_diff`。新 revision 的 history details 会持久保存 Semantic Diff。
+- Semantic Diff 的 `risk_hint` 仅为 deterministic review hint，不替代未来 Rule Engine / safety rules 的正式工程风险判断。
+- 最新核心验证（T0.4 代码提交）：Ruff **All checks passed**；offline quality harness **4/4 passed**；backend pytest **286 passed**；frontend unit test/build **passed**。
+- Browser Playwright 仍以仓库既有 local visual baseline 问题为主要待核项；此前确认 8 个 screenshot baseline 漂移 + 1 个旧“重命名”按钮定位问题，不将其误报为 Harness 后端失败。最新 browser run 继续验证中/后续按实际结果更新。
+- 下一步：T0.5 Audit / Provenance，把 approval 与 Semantic Diff / diff hash / validation evidence 绑定，形成 session → approval → tool call → revision 的完整工程变更证据链。
 
 ## 近期轮次（最新在上，保留全部）
+- 2026-09-18（T0.4 Semantic Engineering Diff）：新增工程语义 diff 模型/引擎，支持 valve/equipment/instrument/pipeline/junction/annotation 等实体分类、field delta、layout/reroute/engineering-property change 分类与 risk hint；提供 transaction 无写入 preview、revision 历史持久化和 REST/MCP 查询；新增 4 组 diff 测试。核心 CI：Ruff✓、quality harness 4/4✓、pytest 286✓、frontend unit/build✓。下一步 T0.5 Approval + Diff + Validation Evidence provenance。
+
 - 2026-09-18（T0.2/T0.3 Agent Session + Permission/Approval Gate）：数据库升级 schema v3，新增 sessions/approvals/tool_calls；实现 exact-intent approval hash、allow/ask/deny enforcement、one-time consume、session audit；semantic plan/replan/apply、网页手动/自动 Agent、MCP semantic/low-level apply 全部接入 Harness，封堵旧低层绕过；新增 REST/MCP 管理接口、前端显式批准、集成测试与设计文档。下一步 T0.4 Semantic Diff。
 
 - 2026-09-18（T0.1 Canonical Tool Registry）：新增统一 Tool Registry，登记 12 个现有 Harness 能力并固化 schema/permission/risk/side-effect/preview/idempotency/audit metadata；REST 新增 `/api/v2/agent/tools`，MCP 新增 `get_tool_registry`，semantic tool schema 改由 registry 派生；新增单测与设计文档。保持 DocumentService/Transaction 原子边界不变。下一步 T0.2 Session + T0.3 Permission/Approval enforcement。

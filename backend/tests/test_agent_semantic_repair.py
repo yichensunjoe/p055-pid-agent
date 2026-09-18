@@ -299,6 +299,7 @@ def test_invalid_semantic_plan_can_be_replanned_without_writing(tmp_path: Path, 
     repaired = client.post(
         f"/api/v2/documents/{seeded.id}/agent/replan",
         json={
+            "session_id": preview_payload["session_id"],
             "prompt": "replace the selected valve",
             "expected_revision": seeded.revision,
             "failed_plan": preview_payload["plan"],
@@ -311,9 +312,33 @@ def test_invalid_semantic_plan_can_be_replanned_without_writing(tmp_path: Path, 
     assert repaired_payload["parent_plan_id"] == preview_payload["plan"]["plan_id"]
     assert repaired_payload["compiled_plan"] is not None
 
+    compiled_transaction = repaired_payload["compiled_plan"]["transaction"]
+    approval = client.post(
+        f"/api/v2/agent/sessions/{repaired_payload['session_id']}/approvals",
+        json={
+            "tool_name": "apply_compiled_agent_transaction",
+            "document_id": seeded.id,
+            "intent": {"transaction": compiled_transaction},
+            "requested_by": "test-engineer",
+            "reason": "Apply repaired semantic plan",
+        },
+    ).json()
+    resolved = client.post(
+        f"/api/v2/agent/approvals/{approval['id']}/resolve",
+        json={"approved": True, "actor": "test-engineer"},
+    )
+    assert resolved.status_code == 200
+
     applied = client.post(
-        f"/api/v2/documents/{seeded.id}/agent/apply",
-        json=repaired_payload["compiled_plan"]["transaction"],
+        f"/api/v2/documents/{seeded.id}/agent/apply-v2",
+        json={
+            "session_id": repaired_payload["session_id"],
+            "approval_id": approval["id"],
+            "plan_id": repaired_payload["plan"]["plan_id"],
+            "parent_plan_id": repaired_payload["parent_plan_id"],
+            "attempt": repaired_payload["attempt"],
+            "transaction": compiled_transaction,
+        },
     )
     assert applied.status_code == 200
     assert applied.json()["document"]["revision"] == seeded.revision + 1

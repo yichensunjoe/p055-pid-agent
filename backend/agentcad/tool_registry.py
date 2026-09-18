@@ -12,6 +12,7 @@ from .agent_semantic_models import (
 )
 from .layout_models import AutoLayoutPreview, AutoLayoutRequest
 from .models import Document, StrictModel, TransactionRequest
+from .semantic_diff_models import SemanticDiffReport
 
 ToolPermission = Literal["allow", "ask", "deny"]
 ToolRisk = Literal["read", "draft_edit", "engineering_change", "critical_change", "release"]
@@ -169,6 +170,21 @@ def get_default_tool_registry() -> ToolRegistry:
                 audit_event="tool.analyze_transaction",
                 surfaces=["mcp", "rest", "agent"],
                 tags=["validate", "transaction", "preview"],
+            ),
+            ToolDefinition(
+                name="preview_semantic_diff",
+                description=(
+                    "Preview an engineering-oriented semantic diff for a proposed "
+                    "transaction without modifying the document."
+                ),
+                input_schema=LowLevelTransactionToolInput.model_json_schema(),
+                output_schema=SemanticDiffReport.model_json_schema(),
+                permission="allow",
+                risk="read",
+                preview_supported=True,
+                audit_event="tool.preview_semantic_diff",
+                surfaces=["mcp", "rest", "agent"],
+                tags=["inspect", "diff", "engineering", "approval"],
             ),
             ToolDefinition(
                 name="validate_transaction",

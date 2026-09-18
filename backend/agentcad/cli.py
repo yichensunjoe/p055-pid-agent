@@ -34,6 +34,132 @@ def _json_payload(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, indent=2, default=str)
 
 
+def _run_audit_command(args: argparse.Namespace) -> None:
+    """Read-only audit / provenance commands.
+
+    The chain is only ever appended by engineering write paths; these commands exist so
+    an engineer or CI job can verify and export evidence without the HTTP API.
+    """
+    from .service import DocumentService, revision_snapshot  # noqa: F401
+    from .store import SQLiteDocumentStore
+    from .symbols import SymbolRegistry
+
+    database = args.database or _default_database_path()
+    service = DocumentService(SQLiteDocumentStore(Path(database)), SymbolRegistry())
+
+    if args.audit_command == "verify":
+        verification = service.audit.verify_chain()
+        payload = _json_payload(verification.model_dump(mode="json"))
+        if args.output:
+            args.output.write_text(payload + "\n", encoding="utf-8")
+        print(payload)
+        raise SystemExit(0 if verification.ok else 2)
+
+    if args.audit_command == "trail":
+        records = service.audit.audit_trail(
+            document_id=args.document,
+            event_type=args.event,
+            actor=args.actor,
+            status=args.status,
+            limit=args.limit,
+        )
+        print(_json_payload([record.model_dump(mode="json") for record in records]))
+        return
+
+    if args.audit_command == "evidence":
+        evidence = service.audit.revision_evidence(args.document_id, args.revision)
+        print(_json_payload(evidence.model_dump(mode="json")))
+        return
+
+    package = service.audit.export_package(
+        document_id=args.document,
+        limit=args.limit,
+    )
+    args.output.write_text(
+        json.dumps(package, ensure_ascii=False, indent=2, default=str) + "\n",
+        encoding="utf-8",
+    )
+    print(
+        _json_payload(
+            {
+                "output": str(args.output),
+                "records": len(package["records"]),
+                "chain_ok": package["verification"]["ok"],
+            }
+        )
+    )
+
+
+def _run_engineering_graph_command(args: argparse.Namespace) -> None:
+    """Derive the engineering semantic graph of one drawing.
+
+    Read-only: the database is only opened for reading, so this is safe to run against
+    a live project database from a terminal or a CI job.
+    """
+    from .engineering_ir import build_engineering_graph
+    from .store import SQLiteDocumentStore
+    from .symbols import SymbolRegistry
+
+    database = args.database or _default_database_path()
+    stored = SQLiteDocumentStore(Path(database)).get(args.document_id)
+    if stored is None:
+        raise SystemExit(f"document not found: {args.document_id}")
+    graph = build_engineering_graph(stored.document, SymbolRegistry())
+    payload = graph.model_dump(mode="json", by_alias=True)
+    if args.summary:
+        payload = {
+            "schema": payload["schema"],
+            "version": payload["version"],
+            "document_id": payload["document_id"],
+            "document_name": payload["document_name"],
+            "revision": payload["revision"],
+            "content_hash": payload["content_hash"],
+            "counts": payload["counts"],
+            "findings": payload["findings"],
+            "off_page_object_ids": payload["off_page_object_ids"],
+            "connectivity_components": len(payload["connectivity_components"]),
+        }
+    text = _json_payload(payload)
+    if args.output:
+        args.output.write_text(text + "\n", encoding="utf-8")
+    print(text)
+    raise SystemExit(0 if graph.counts.errors == 0 else 2)
+
+
+def _run_project_index_command(args: argparse.Namespace) -> None:
+    """Inspect or rebuild the derived project engineering index."""
+    from .project_index import ProjectIndexService
+    from .store import SQLiteDocumentStore
+    from .symbols import SymbolRegistry
+
+    database = args.database or _default_database_path()
+    store = SQLiteDocumentStore(Path(database))
+    project_index = ProjectIndexService(store, SymbolRegistry())
+
+    if args.index_command == "rebuild":
+        report = project_index.rebuild_all(force=args.force, built_by="cli")
+        payload = report.model_dump(mode="json", by_alias=True)
+        stale_after = report.stale_after
+    elif args.index_command == "list":
+        entries = project_index.list_entries()
+        payload = [entry.model_dump(mode="json") for entry in entries]
+        stale_after = [
+            entry.document_id
+            for entry in entries
+            if entry.staleness in {"stale", "missing_document", "builder_outdated"}
+        ]
+    else:
+        project = project_index.project_graph()
+        payload = project.model_dump(mode="json", by_alias=True)
+        stale_after = project.stale_document_ids
+
+    text = _json_payload(payload)
+    if args.output:
+        args.output.write_text(text + "\n", encoding="utf-8")
+    print(text)
+    raise SystemExit(0 if not stale_after else 2)
+
+
 def _run_database_command(args: argparse.Namespace) -> None:
     from .database_recovery import (
         DatabaseRecoveryError,
@@ -166,6 +292,79 @@ def main(argv: list[str] | None = None) -> None:
     )
     quality_parser.add_argument("--output", type=Path, default=None, help="Optional JSON report path")
 
+    audit_parser = subparsers.add_parser(
+        "audit",
+        help="Read the append-only audit / provenance chain (verify, trail, export)",
+    )
+    _add_database_argument(audit_parser)
+    audit_subparsers = audit_parser.add_subparsers(dest="audit_command", required=True)
+    audit_verify_parser = audit_subparsers.add_parser(
+        "verify", help="Recompute the whole hash chain and report divergences"
+    )
+    audit_verify_parser.add_argument(
+        "--output", type=Path, default=None, help="Optional JSON report path"
+    )
+    audit_trail_parser = audit_subparsers.add_parser(
+        "trail", help="Print audit records, newest first, with optional filters"
+    )
+    audit_trail_parser.add_argument("--document", default=None, help="Filter by document id")
+    audit_trail_parser.add_argument("--event", default=None, help="Filter by event type")
+    audit_trail_parser.add_argument("--actor", default=None, help="Filter by actor")
+    audit_trail_parser.add_argument("--status", default=None, help="Filter by status")
+    audit_trail_parser.add_argument("--limit", type=int, default=200)
+    audit_export_parser = audit_subparsers.add_parser(
+        "export", help="Write a review evidence package (records + verification)"
+    )
+    audit_export_parser.add_argument("--document", default=None, help="Limit to one document")
+    audit_export_parser.add_argument("--limit", type=int, default=1000)
+    audit_export_parser.add_argument("--output", type=Path, required=True, help="Destination JSON file")
+    audit_evidence_parser = audit_subparsers.add_parser(
+        "evidence", help="Print the evidence bound to one document revision"
+    )
+    audit_evidence_parser.add_argument("document_id")
+    audit_evidence_parser.add_argument("revision", type=int)
+
+    graph_parser = subparsers.add_parser(
+        "engineering-graph",
+        help="Derive the engineering semantic graph of one drawing (objects/topology/findings)",
+    )
+    _add_database_argument(graph_parser)
+    graph_parser.add_argument("document_id")
+    graph_parser.add_argument(
+        "--summary",
+        action="store_true",
+        help="Print counts and findings only, without the object list",
+    )
+    graph_parser.add_argument("--output", type=Path, default=None, help="Optional JSON report path")
+
+    index_parser = subparsers.add_parser(
+        "project-index",
+        help="Inspect or rebuild the derived project engineering index",
+    )
+    _add_database_argument(index_parser)
+    index_subparsers = index_parser.add_subparsers(dest="index_command", required=True)
+    index_rebuild_parser = index_subparsers.add_parser(
+        "rebuild", help="Rebuild every document's derived engineering graph"
+    )
+    index_rebuild_parser.add_argument(
+        "--force", action="store_true", help="Rebuild even when the row is already fresh"
+    )
+    index_rebuild_parser.add_argument(
+        "--output", type=Path, default=None, help="Optional JSON report path"
+    )
+    index_list_parser = index_subparsers.add_parser(
+        "list", help="List index rows with revision-based freshness"
+    )
+    index_list_parser.add_argument(
+        "--output", type=Path, default=None, help="Optional JSON report path"
+    )
+    index_project_parser = index_subparsers.add_parser(
+        "project", help="Print the project-wide engineering graph"
+    )
+    index_project_parser.add_argument(
+        "--output", type=Path, default=None, help="Optional JSON report path"
+    )
+
     args = parser.parse_args(argv)
     if args.command == "serve":
         import uvicorn
@@ -199,6 +398,12 @@ def main(argv: list[str] | None = None) -> None:
             Path(args.output).write_text(payload + "\n", encoding="utf-8")
         print(payload)
         raise SystemExit(0 if report.accepted else 2)
+    elif args.command == "audit":
+        _run_audit_command(args)
+    elif args.command == "engineering-graph":
+        _run_engineering_graph_command(args)
+    elif args.command == "project-index":
+        _run_project_index_command(args)
     elif args.command == "quality-harness":
         from .quality_harness import run_quality_harness, symbol_load_failure_report
         from .symbols import SymbolCatalogLoadError, SymbolRegistry

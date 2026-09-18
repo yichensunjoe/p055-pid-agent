@@ -14,8 +14,10 @@ from fastapi.staticfiles import StaticFiles
 from . import __version__
 from .api import create_v1_compat_router, create_v2_router
 from .api_acceptance import create_acceptance_router
+from .api_audit import create_audit_router
 from .api_documents import create_documents_router
 from .api_dxf import create_dxf_router
+from .api_engineering import create_engineering_router
 from .api_export import _max_export_pixels, create_export_router
 from .api_harness import create_harness_router
 from .api_layout import create_layout_router
@@ -25,7 +27,13 @@ from .config import Settings
 from .diagnostics import DiagnosticLogger
 from .harness import AgentHarnessService
 from .llm import OpenAICompatiblePlanner
+from .project_index import ProjectIndexService
 from .provider_security import ProviderNetworkPolicy
+from .request_context import (
+    RequestContext,
+    bind_request_context,
+    reset_request_context,
+)
 from .security import RequestBoundary, redact_query_string
 from .service import DocumentService
 from .store import SQLiteDocumentStore
@@ -65,6 +73,14 @@ class RequestDiagnosticsASGIMiddleware:
             path=path,
             query=redact_query_string(query_string),
             client=client_host,
+        )
+        context_token = bind_request_context(
+            RequestContext(
+                request_id=request_id,
+                method=method,
+                path=path,
+                client=client_host or "",
+            )
         )
 
         legacy_prefix = "/api/v2/documents/"
@@ -147,6 +163,8 @@ class RequestDiagnosticsASGIMiddleware:
                 error=exc,
             )
             raise
+        finally:
+            reset_request_context(context_token)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -185,6 +203,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         registry=get_default_tool_registry(),
         diagnostics=diagnostics,
     )
+    project_index = ProjectIndexService(store=store, registry=symbols)
 
     shared = settings.deployment_mode == "shared"
     app = FastAPI(
@@ -200,6 +219,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = settings
     app.state.provider_policy = provider_policy
     app.state.harness = harness
+    app.state.project_index = project_index
 
     def json_safe(value):
         if isinstance(value, float) and not isfinite(value):
@@ -258,7 +278,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(create_v2_router(service, planner, diagnostics, VERSION, harness))
     app.include_router(create_documents_router(service))
     app.include_router(create_harness_router(harness))
-    app.include_router(create_acceptance_router(symbols, diagnostics))
+    app.include_router(
+        create_acceptance_router(
+            symbols,
+            diagnostics,
+            provider_policy=provider_policy,
+            audit=service.audit,
+        )
+    )
+    app.include_router(create_audit_router(service))
+    app.include_router(create_engineering_router(service, project_index))
     app.include_router(create_export_router(service, diagnostics))
     app.include_router(create_dxf_router(service, diagnostics))
     app.include_router(create_layout_router(service, diagnostics))

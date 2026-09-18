@@ -7,20 +7,23 @@ from typing import Any
 from . import __version__
 from .agent_semantic import analyze_transaction as analyze_low_level
 from .agent_semantic_models import SemanticTransaction
+from .audit import request_audit_context
 from .auto_layout_engine import AutoLayoutEngine
 from .config import Settings
 from .diagnostics import DiagnosticLogger
+from .engineering_ir import build_engineering_graph
 from .harness import AgentHarnessService
 from .harness_models import (
     AgentSessionCreateRequest,
     ToolApprovalCreateRequest,
     ToolApprovalResolveRequest,
 )
-from .history_diff import build_history_details
 from .layout_models import AutoLayoutRequest
 from .models import CreateDocumentRequest, TransactionRequest
+from .project_index import ProjectIndexService, rebuild_with_evidence
+from .revision_diagnostics import emit_revision_diagnostics
 from .semantic_compiler_engine import SemanticTransactionCompiler
-from .semantic_diff import build_semantic_diff, preview_transaction_semantic_diff
+from .semantic_diff import preview_transaction_semantic_diff
 from .service import DocumentService, InvalidOperationError
 from .store import SQLiteDocumentStore
 from .symbols import SymbolRegistry
@@ -86,45 +89,40 @@ def _server_info(
     }
 
 
-def _apply_with_history(
-    service: DocumentService,
+def _apply_governed(
+    harness: AgentHarnessService,
     diagnostics: DiagnosticLogger,
     document_id: str,
     transaction: TransactionRequest,
+    *,
+    authorized,
+    metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    before = service.get_document(document_id)
-    result = service.apply_transaction(document_id, transaction, source="mcp")
-    details = build_history_details(
-        before,
-        result.document,
-        transaction.operations,
-        action="transaction",
-    )
-    details["semantic_diff"] = build_semantic_diff(
-        before,
-        result.document,
-        details,
-        service.symbols,
-    ).model_dump(mode="json")
-    persisted = service.store.update_history_details(
+    """Apply one approved MCP tool call through the single governed write path.
+
+    MCP must not have its own write path: revision, semantic diff, audit record and
+    harness close-out (tool call completed, approval consumed, session closed) all
+    commit inside one SQLite transaction, exactly as on every other surface.
+    """
+    result = harness.apply_authorized(
+        authorized,
         document_id,
-        result.document.revision,
-        details,
+        transaction,
+        metadata=metadata,
     )
-    diagnostics.emit(
-        "document.revision.created",
-        document_id=document_id,
-        base_revision=before.revision,
-        revision=result.document.revision,
-        source="mcp",
+    emit_revision_diagnostics(
+        harness.service,
+        result.document,
         action="transaction",
+        source="mcp",
+        diagnostics=diagnostics,
         label=transaction.label,
         operation_count=len(transaction.operations),
-        affected_element_ids=details["affected_element_ids"],
-        added_element_ids=details["added_element_ids"],
-        updated_element_ids=details["updated_element_ids"],
-        deleted_element_ids=details["deleted_element_ids"],
-        history_details_persisted=persisted,
+        extra={
+            "session_id": authorized.session.id,
+            "approval_id": authorized.record.approval_id,
+            "tool_call_id": authorized.record.id,
+        },
     )
     return result.model_dump(mode="json")
 
@@ -139,6 +137,7 @@ def main() -> None:
     service = build_service(settings)
     semantic_compiler = SemanticTransactionCompiler(service)
     layout_engine = AutoLayoutEngine(service)
+    project_index = ProjectIndexService(service.store, service.symbols)
     harness = AgentHarnessService(
         service=service,
         store=service.store,
@@ -179,16 +178,15 @@ def main() -> None:
     ) -> dict:
         """Create a new editable P&ID document."""
         document = service.create_document(
-            CreateDocumentRequest(name=name, width=width, height=height), source="mcp"
-        )
-        diagnostics.emit(
-            "document.created",
-            document_id=document.id,
-            revision=document.revision,
-            name=document.name,
-            width=document.canvas.width,
-            height=document.canvas.height,
+            CreateDocumentRequest(name=name, width=width, height=height),
             source="mcp",
+            audit=request_audit_context(
+                "create_document",
+                actor="mcp-agent",
+                surface="mcp",
+                label=f"Create document: {name}",
+                metadata={"surface": "mcp"},
+            ),
         )
         return document.model_dump(mode="json")
 
@@ -271,6 +269,37 @@ def main() -> None:
         return harness.audit(session_id).model_dump(mode="json")
 
     @mcp.tool()
+    def get_audit_trail(
+        document_id: str | None = None,
+        event_type: str | None = None,
+        actor: str | None = None,
+        status: str | None = None,
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        """Read the append-only audit trail (read-only; it is only ever appended by
+        engineering write paths)."""
+        return [
+            record.model_dump(mode="json")
+            for record in service.audit.audit_trail(
+                document_id=document_id,
+                event_type=event_type,
+                actor=actor,
+                status=status,
+                limit=limit,
+            )
+        ]
+
+    @mcp.tool()
+    def verify_audit_chain() -> dict[str, Any]:
+        """Recompute the whole audit hash chain and report any divergence."""
+        return service.audit.verify_chain().model_dump(mode="json")
+
+    @mcp.tool()
+    def get_revision_evidence(document_id: str, revision: int) -> dict[str, Any]:
+        """Return the audit record, semantic diff and validation evidence for one revision."""
+        return service.audit.revision_evidence(document_id, revision).model_dump(mode="json")
+
+    @mcp.tool()
     def get_transaction_schema() -> dict[str, Any]:
         """Return the low-level atomic transaction JSON Schema."""
         return TransactionRequest.model_json_schema()
@@ -338,20 +367,20 @@ def main() -> None:
             harness.fail_tool_call(authorized, error_code="semantic_compile_invalid")
             return {"applied": False, "assessment": compiled.assessment.model_dump(mode="json")}
         try:
-            result = _apply_with_history(service, diagnostics, document_id, compiled.transaction)
+            result = _apply_governed(
+                harness,
+                diagnostics,
+                document_id,
+                compiled.transaction,
+                authorized=authorized,
+                metadata={"compiled_operation_count": compiled.assessment.compiled_operation_count},
+            )
         except Exception as exc:
             harness.fail_tool_call(
                 authorized,
                 error_code=getattr(exc, "code", type(exc).__name__),
             )
             raise
-        revision = result["document"]["revision"]
-        harness.complete_tool_call(
-            authorized,
-            result_revision=revision,
-            metadata={"compiled_operation_count": compiled.assessment.compiled_operation_count},
-        )
-        harness.complete_session(session_id, end_revision=revision, status="completed")
         return {
             "applied": True,
             "assessment": compiled.assessment.model_dump(mode="json"),
@@ -411,20 +440,20 @@ def main() -> None:
             )
             return {"applied": False, "preview": preview.model_dump(mode="json")}
         try:
-            result = _apply_with_history(service, diagnostics, document_id, preview.transaction)
+            result = _apply_governed(
+                harness,
+                diagnostics,
+                document_id,
+                preview.transaction,
+                authorized=authorized,
+                metadata={"applied": True, "options": options.model_dump(mode="json")},
+            )
         except Exception as exc:
             harness.fail_tool_call(
                 authorized,
                 error_code=getattr(exc, "code", type(exc).__name__),
             )
             raise
-        revision = result["document"]["revision"]
-        harness.complete_tool_call(
-            authorized,
-            result_revision=revision,
-            metadata={"applied": True},
-        )
-        harness.complete_session(session.id, end_revision=revision, status="completed")
         return {
             "applied": True,
             "preview": preview.model_dump(mode="json"),
@@ -449,21 +478,20 @@ def main() -> None:
             metadata={"surface": "mcp", "legacy_tool": tool_surface},
         )
         try:
-            result = _apply_with_history(service, diagnostics, document_id, transaction)
+            return _apply_governed(
+                harness,
+                diagnostics,
+                document_id,
+                transaction,
+                authorized=authorized,
+                metadata={"legacy_tool": tool_surface},
+            )
         except Exception as exc:
             harness.fail_tool_call(
                 authorized,
                 error_code=getattr(exc, "code", type(exc).__name__),
             )
             raise
-        revision = result["document"]["revision"]
-        harness.complete_tool_call(
-            authorized,
-            result_revision=revision,
-            metadata={"applied_operations": len(transaction.operations)},
-        )
-        harness.complete_session(session_id, end_revision=revision, status="completed")
-        return result
 
     @mcp.tool()
     def apply_transaction_v2(
@@ -497,6 +525,53 @@ def main() -> None:
             approval_id,
             tool_surface="apply_transaction",
         )
+
+    @mcp.tool()
+    def get_engineering_graph(document_id: str) -> dict:
+        """Read the derived engineering semantic graph (objects, topology, findings)."""
+        document = service.get_document(document_id)
+        graph = build_engineering_graph(document, service.symbols)
+        return graph.model_dump(mode="json", by_alias=True)
+
+    @mcp.tool()
+    def trace_engineering_object(
+        document_id: str,
+        object_id: str,
+        direction: str = "both",
+        max_depth: int = 64,
+    ) -> dict:
+        """Trace upstream/downstream engineering objects from one object id."""
+        if direction not in {"upstream", "downstream", "both"}:
+            raise InvalidOperationError(
+                f"direction must be upstream, downstream or both, got {direction!r}"
+            )
+        document = service.get_document(document_id)
+        graph = build_engineering_graph(document, service.symbols)
+        try:
+            result = trace_engineering_object(
+                graph, object_id, direction=direction, max_depth=max_depth  # type: ignore[arg-type]
+            )
+        except KeyError as exc:
+            raise InvalidOperationError(str(exc)) from exc
+        return result.model_dump(mode="json")
+
+    @mcp.tool()
+    def get_project_engineering_graph() -> dict:
+        """Read the project-wide derived engineering graph built from the index."""
+        return project_index.project_graph().model_dump(mode="json", by_alias=True)
+
+    @mcp.tool()
+    def rebuild_project_index(force: bool = False) -> dict:
+        """Rebuild the derived project index; never changes a drawing."""
+
+        report = rebuild_with_evidence(
+            project_index,
+            service.audit,
+            force=force,
+            actor="mcp-client",
+            surface="mcp",
+        )
+        return report.model_dump(mode="json", by_alias=True)
 
     @mcp.tool()
     def list_symbols() -> list[dict]:

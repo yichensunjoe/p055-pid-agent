@@ -117,8 +117,21 @@ def test_engineering_change_requires_exact_one_time_approval(tmp_path: Path):
     assert audit.session.end_revision == 1
     assert audit.approvals[0].status == "consumed"
     assert audit.approvals[0].resolved_by == "engineer"
-    assert [call.status for call in audit.tool_calls] == ["rejected", "completed"]
-    assert audit.tool_calls[0].error_code == "tool_approval_required"
+    # Every refusal is evidence: no-approval, intent mismatch and one-time-use replay
+    # each leave a rejected tool call, and the two tool calls are chained in order.
+    assert [call.status for call in audit.tool_calls] == [
+        "rejected",
+        "rejected",
+        "completed",
+        "rejected",
+    ]
+    assert [call.error_code for call in audit.tool_calls] == [
+        "tool_approval_required",
+        "tool_intent_mismatch",
+        "",
+        "tool_approval_consumed",
+    ]
+    assert [call.result_revision for call in audit.tool_calls] == [None, None, 1, None]
 
 
 def test_allow_tool_does_not_require_approval(tmp_path: Path):

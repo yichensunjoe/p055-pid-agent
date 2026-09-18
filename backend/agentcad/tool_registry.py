@@ -10,8 +10,10 @@ from .agent_semantic_models import (
     CompiledSemanticTransaction,
     SemanticTransaction,
 )
+from .engineering_ir import EngineeringGraph, TraceResult
 from .layout_models import AutoLayoutPreview, AutoLayoutRequest
 from .models import Document, StrictModel, TransactionRequest
+from .project_index import ProjectEngineeringGraph, RebuildReport
 from .semantic_diff_models import SemanticDiffReport
 
 ToolPermission = Literal["allow", "ask", "deny"]
@@ -42,6 +44,16 @@ class AutoLayoutToolInput(DocumentToolInput):
 
 class RevisionToolInput(DocumentToolInput):
     expected_revision: int | None = Field(default=None, ge=0)
+
+
+class EngineeringTraceToolInput(DocumentToolInput):
+    object_id: str
+    direction: Literal["upstream", "downstream", "both"] = "both"
+    max_depth: int = Field(default=64, ge=1, le=256)
+
+
+class ProjectIndexRebuildToolInput(StrictModel):
+    force: bool = False
 
 
 class ToolDefinition(StrictModel):
@@ -122,6 +134,118 @@ def get_default_tool_registry() -> ToolRegistry:
     return ToolRegistry(
         [
             ToolDefinition(
+                name="create_document",
+                description="Create a new empty engineering document.",
+                input_schema=_object_schema("Document name and canvas size."),
+                output_schema=Document.model_json_schema(),
+                permission="allow",
+                risk="draft_edit",
+                has_side_effect=True,
+                idempotency="non_idempotent",
+                audit_event="tool.create_document",
+                surfaces=["mcp", "rest"],
+                tags=["document", "create", "engineering-change"],
+            ),
+            ToolDefinition(
+                name="delete_document",
+                description=(
+                    "Delete an entire engineering document at an expected revision. "
+                    "The deletion keeps its audit evidence, which outlives the document."
+                ),
+                input_schema=RevisionToolInput.model_json_schema(),
+                output_schema=_object_schema("Deletion confirmation."),
+                permission="ask",
+                risk="critical_change",
+                has_side_effect=True,
+                idempotency="non_idempotent",
+                audit_event="tool.delete_document",
+                surfaces=["rest"],
+                tags=["document", "delete", "critical-change"],
+            ),
+            ToolDefinition(
+                name="apply_web_transaction",
+                description=(
+                    "Apply one atomic edit made by the human editor UI. This is a "
+                    "deliberate, human-driven change, so it is allowed without an "
+                    "agent approval but is fully attributed and audited."
+                ),
+                input_schema=LowLevelTransactionToolInput.model_json_schema(),
+                output_schema=_object_schema("Applied TransactionResult and provenance."),
+                permission="allow",
+                risk="draft_edit",
+                has_side_effect=True,
+                preview_supported=True,
+                idempotency="depends_on_revision",
+                audit_event="tool.apply_web_transaction",
+                surfaces=["rest"],
+                tags=["apply", "editor", "engineering-change"],
+            ),
+            ToolDefinition(
+                name="rename_document",
+                description="Rename an engineering document at an expected revision.",
+                input_schema=RevisionToolInput.model_json_schema(),
+                output_schema=Document.model_json_schema(),
+                permission="allow",
+                risk="draft_edit",
+                has_side_effect=True,
+                idempotency="non_idempotent",
+                audit_event="tool.rename_document",
+                surfaces=["rest"],
+                tags=["document", "metadata"],
+            ),
+            ToolDefinition(
+                name="move_document_folder",
+                description="Move a document to a project folder at an expected revision.",
+                input_schema=RevisionToolInput.model_json_schema(),
+                output_schema=Document.model_json_schema(),
+                permission="allow",
+                risk="draft_edit",
+                has_side_effect=True,
+                idempotency="non_idempotent",
+                audit_event="tool.move_document_folder",
+                surfaces=["rest"],
+                tags=["document", "metadata"],
+            ),
+            ToolDefinition(
+                name="import_document_payload",
+                description="Import an exported document payload into the project store.",
+                input_schema=_object_schema("Exported document payload plus conflict policy."),
+                output_schema=_object_schema("Imported document ids and id remapping."),
+                permission="ask",
+                risk="draft_edit",
+                has_side_effect=True,
+                idempotency="non_idempotent",
+                audit_event="tool.import_document_payload",
+                surfaces=["rest"],
+                tags=["import", "project"],
+            ),
+            ToolDefinition(
+                name="import_project_payload",
+                description="Import a full project package into the project store.",
+                input_schema=_object_schema("Exported project package plus conflict policy."),
+                output_schema=_object_schema("Imported document ids and id remapping."),
+                permission="ask",
+                risk="draft_edit",
+                has_side_effect=True,
+                idempotency="non_idempotent",
+                audit_event="tool.import_project_payload",
+                surfaces=["rest"],
+                tags=["import", "project"],
+            ),
+            ToolDefinition(
+                name="update_project_settings",
+                description="Update project-level settings (name, standard, revision metadata).",
+                input_schema=_object_schema("Project settings document."),
+                output_schema=_object_schema("Persisted project settings."),
+                permission="allow",
+                risk="draft_edit",
+                has_side_effect=True,
+                idempotency="non_idempotent",
+                audit_event="tool.update_project_settings",
+                surfaces=["rest"],
+                tags=["project", "metadata"],
+            ),
+            ToolDefinition(
                 name="get_document",
                 description="Read the complete current structured P&ID document.",
                 input_schema=DocumentToolInput.model_json_schema(),
@@ -170,6 +294,67 @@ def get_default_tool_registry() -> ToolRegistry:
                 audit_event="tool.analyze_transaction",
                 surfaces=["mcp", "rest", "agent"],
                 tags=["validate", "transaction", "preview"],
+            ),
+            ToolDefinition(
+                name="get_engineering_graph",
+                description=(
+                    "Derive the engineering semantic graph of one drawing: equipment, "
+                    "valves, instruments, pipelines, junctions, off-page connectors, "
+                    "signals, topology edges and findings. Read-only; the graph is "
+                    "derived from the document and never replaces it."
+                ),
+                input_schema=DocumentToolInput.model_json_schema(),
+                output_schema=EngineeringGraph.model_json_schema(),
+                permission="allow",
+                risk="read",
+                audit_event="tool.get_engineering_graph",
+                surfaces=["mcp", "rest", "agent"],
+                tags=["inspect", "engineering", "semantic", "graph"],
+            ),
+            ToolDefinition(
+                name="trace_engineering_object",
+                description=(
+                    "Trace upstream/downstream engineering objects from one object id, "
+                    "honouring declared flow direction. Read-only."
+                ),
+                input_schema=EngineeringTraceToolInput.model_json_schema(),
+                output_schema=TraceResult.model_json_schema(),
+                permission="allow",
+                risk="read",
+                audit_event="tool.trace_engineering_object",
+                surfaces=["mcp", "rest", "agent"],
+                tags=["inspect", "topology", "trace"],
+            ),
+            ToolDefinition(
+                name="get_project_engineering_graph",
+                description=(
+                    "Read the project-wide derived engineering graph: per-document "
+                    "counts and freshness plus cross-document off-page connections."
+                ),
+                input_schema=_object_schema("No input; the project is the scope."),
+                output_schema=ProjectEngineeringGraph.model_json_schema(),
+                permission="allow",
+                risk="read",
+                audit_event="tool.get_project_engineering_graph",
+                surfaces=["mcp", "rest", "agent"],
+                tags=["inspect", "project", "engineering", "graph"],
+            ),
+            ToolDefinition(
+                name="rebuild_project_index",
+                description=(
+                    "Rebuild the derived project engineering index. Deterministic and "
+                    "idempotent: it recomputes cached engineering graphs from the "
+                    "current documents and cannot change a drawing."
+                ),
+                input_schema=ProjectIndexRebuildToolInput.model_json_schema(),
+                output_schema=RebuildReport.model_json_schema(),
+                permission="allow",
+                risk="draft_edit",
+                has_side_effect=True,
+                idempotency="idempotent",
+                audit_event="engineering.index.rebuilt",
+                surfaces=["mcp", "rest", "agent"],
+                tags=["engineering", "index", "derived", "cache", "cli"],
             ),
             ToolDefinition(
                 name="preview_semantic_diff",

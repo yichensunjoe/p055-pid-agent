@@ -12,6 +12,7 @@ from pydantic import Field
 
 from .agent_semantic_models import SemanticAgentPlan
 from .diagram_quality import analyze_diagram_quality
+from .engineering_ir import TOPO_KINDS
 from .models import (
     AddElementOperation,
     ConnectorElement,
@@ -925,6 +926,214 @@ def _drafting_quality_case(symbols: SymbolRegistry) -> QualityHarnessCaseResult:
     )
 
 
+def _engineering_graph_case(symbols: SymbolRegistry) -> QualityHarnessCaseResult:
+    """Offline (model-free) golden contract for the M2 engineering semantic graph.
+
+    Builds a real drawing through the service layer, derives the graph, and checks the
+    invariants every downstream surface relies on: deterministic identity, no silent
+    merge of duplicate tags, closed topology references, an exact partition of process
+    objects into connectivity groups, a flow-aware trace, and an index that detects
+    and repairs its own staleness without touching engineering content.
+    """
+
+    from .engineering_ir import build_engineering_graph, graph_fingerprint, trace_engineering_object
+    from .project_index import ProjectIndexService
+
+    through, inlet_id, outlet_id = _through_symbol(symbols)
+    with TemporaryDirectory(prefix="pid-agent-quality-graph-") as directory:
+        store = SQLiteDocumentStore(Path(directory) / "graph.db")
+        service = DocumentService(store, symbols)
+        document = service.create_document(
+            CreateDocumentRequest(name="Offline engineering-graph harness"),
+            source="system",
+        )
+        source = _symbol_element("graph_source", through, 120, 280, "EQ-101")
+        source_out = service._symbol_port_point(source, outlet_id)
+        inlet = next(port for port in through.ports if port.id == inlet_id)
+        target = _symbol_element(
+            "graph_target",
+            through,
+            720,
+            source_out.y - inlet.y,
+            "EQ-102",
+        )
+        duplicate_tag = _symbol_element("graph_duplicate", through, 320, 760, "EQ-101")
+        seeded = service.apply_transaction(
+            document.id,
+            TransactionRequest(
+                expected_revision=document.revision,
+                source="system",
+                label="Seed engineering-graph harness",
+                operations=[
+                    AddElementOperation(element=source),
+                    AddElementOperation(element=target),
+                    AddElementOperation(element=duplicate_tag),
+                ],
+            ),
+            source="system",
+        ).document
+        target_in = service._symbol_port_point(target, inlet_id)
+        document = service.apply_transaction(
+            document.id,
+            TransactionRequest(
+                expected_revision=seeded.revision,
+                source="system",
+                label="Connect the two tagged equipment objects",
+                operations=[
+                    AddElementOperation(
+                        element=ConnectorElement(
+                            id="graph_pipe",
+                            points=[source_out, target_in],
+                            source=ConnectorEndpoint(
+                                element_id=source.id, port_id=outlet_id, point=source_out
+                            ),
+                            target=ConnectorEndpoint(
+                                element_id=target.id, port_id=inlet_id, point=target_in
+                            ),
+                            routing="manual",
+                            process_tag="PL-1001",
+                            medium="water",
+                            nominal_diameter="DN50",
+                            flow_direction="forward",
+                        )
+                    )
+                ],
+            ),
+            source="system",
+        ).document
+
+        graph = build_engineering_graph(document, symbols)
+        object_ids = [record.object_id for record in graph.objects]
+        _require(
+            len(object_ids) == len(set(object_ids)),
+            "GRAPH_IDENTITY_NOT_UNIQUE",
+            "two engineering objects resolved to the same identity",
+        )
+        tagged = [record for record in graph.objects if record.tag == "EQ-101"]
+        _require(
+            len(tagged) == 2
+            and all(record.identity_scope == "tag" for record in tagged)
+            and len({record.object_id for record in tagged}) == 2,
+            "GRAPH_TAG_IDENTITY_MISSING",
+            "tagged objects must keep tag-scoped identity (with deterministic "
+            "disambiguation when the tag is duplicated)",
+        )
+        duplicate = [
+            finding for finding in graph.findings if finding.code == "IR_DUPLICATE_IDENTITY"
+        ]
+        _require(
+            bool(duplicate) and duplicate[0].details["count"] == 2,
+            "GRAPH_DUPLICATE_TAG_SILENTLY_MERGED",
+            "a duplicate equipment tag must be disambiguated and reported, never merged",
+        )
+        line = graph.object("line:pl-1001")
+        _require(
+            line is not None and line.element_ids == ["graph_pipe"],
+            "GRAPH_LINE_AGGREGATION_INVALID",
+            "the tagged pipeline must own its member connector",
+        )
+
+        known = set(object_ids)
+        for edge in graph.edges:
+            for endpoint in (edge.source_object_id, edge.target_object_id):
+                _require(
+                    endpoint in known or endpoint.startswith("unbound:"),
+                    "GRAPH_EDGE_ENDPOINT_MISSING",
+                    f"topology edge {edge.connector_id} references unknown object {endpoint}",
+                )
+            if edge.pipeline_object_id:
+                _require(
+                    edge.pipeline_object_id in known,
+                    "GRAPH_EDGE_PIPELINE_MISSING",
+                    f"topology edge {edge.connector_id} references a missing pipeline object",
+                )
+
+        process_objects = {
+            record.object_id for record in graph.objects if record.kind in TOPO_KINDS
+        }
+        grouped = [object_id for group in graph.connectivity_components for object_id in group]
+        _require(
+            sorted(grouped) == sorted(process_objects),
+            "GRAPH_COMPONENT_PARTITION_INVALID",
+            "connectivity groups must partition the process objects exactly once",
+        )
+
+        source_object = next(
+            record for record in graph.objects if record.primary_element_id == "graph_source"
+        )
+        target_object = next(
+            record for record in graph.objects if record.primary_element_id == "graph_target"
+        )
+        traced = trace_engineering_object(
+            graph, source_object.object_id, direction="downstream"
+        )
+        _require(
+            [step.object_id for step in traced.steps]
+            == [source_object.object_id, target_object.object_id],
+            "GRAPH_TRACE_INVALID",
+            f"downstream trace was {[step.object_id for step in traced.steps]}",
+        )
+        _require(
+            traced.traversed_pipeline_ids == ["line:pl-1001"],
+            "GRAPH_TRACE_PIPELINE_MISSING",
+            "the trace must report the pipeline it traversed",
+        )
+        _require(
+            graph_fingerprint(build_engineering_graph(document, symbols))
+            == graph_fingerprint(graph),
+            "GRAPH_NOT_DETERMINISTIC",
+            "deriving the same document twice produced a different graph",
+        )
+
+        project_index = ProjectIndexService(store, symbols)
+        report = project_index.rebuild_all()
+        _require(
+            report.rebuilt == [document.id] and report.stale_after == [],
+            "GRAPH_INDEX_REBUILD_INVALID",
+            f"unexpected rebuild report: {report.model_dump(mode='json')}",
+        )
+        entry = project_index.get_entry(document.id)
+        _require(
+            entry is not None and entry.staleness == "verified_fresh",
+            "GRAPH_INDEX_NOT_VERIFIED_FRESH",
+            "a freshly rebuilt index row must verify against the live document",
+        )
+        _require(
+            store.get(document.id).document.model_dump(mode="json")
+            == document.model_dump(mode="json"),
+            "GRAPH_INDEX_MUTATED_DOCUMENT",
+            "rebuilding the derived index must never modify the drawing",
+        )
+
+        stale = project_index.project_graph()
+        _require(
+            stale.stale_document_ids == [],
+            "GRAPH_INDEX_STALE_AFTER_REBUILD",
+            f"index still stale: {stale.stale_document_ids}",
+        )
+
+    return QualityHarnessCaseResult(
+        name="engineering_graph_contract",
+        status="passed",
+        summary=(
+            "derived graph stayed deterministic and reference-closed; duplicate tags were "
+            "disambiguated; the trace was flow-aware; the index verified fresh and left the "
+            "drawing untouched"
+        ),
+        details={
+            "through_symbol_key": through.key,
+            "object_count": len(object_ids),
+            "equipment_count": graph.counts.equipment,
+            "line_count": graph.counts.lines,
+            "edge_count": graph.counts.edges,
+            "error_findings": graph.counts.errors,
+            "content_hash": graph.content_hash,
+            "graph_hash": graph_fingerprint(graph),
+            "index_objects": entry.counts.objects if entry else 0,
+        },
+    )
+
+
 def _capture_case(
     name: str,
     runner: Callable[[SymbolRegistry], QualityHarnessCaseResult],
@@ -961,6 +1170,7 @@ def run_quality_harness(symbols: SymbolRegistry | None = None) -> QualityHarness
         _capture_case("atomic_topology_transaction", _atomic_topology_case, registry),
         _capture_case("semantic_agent_output_contract", _semantic_agent_case, registry),
         _capture_case("drafting_quality_contract", _drafting_quality_case, registry),
+        _capture_case("engineering_graph_contract", _engineering_graph_case, registry),
     ]
     passed_cases = sum(case.status == "passed" for case in cases)
     return QualityHarnessReport(

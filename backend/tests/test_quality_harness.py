@@ -11,15 +11,21 @@ def test_offline_quality_harness_passes_without_provider():
     report = run_quality_harness(SymbolRegistry())
 
     assert report.passed is True
-    assert report.total_cases == 4
-    assert report.passed_cases == 4
+    assert report.total_cases == 5
+    assert report.passed_cases == 5
     assert report.failed_cases == 0
     assert [case.name for case in report.cases] == [
         "symbol_catalog_integrity",
         "atomic_topology_transaction",
         "semantic_agent_output_contract",
         "drafting_quality_contract",
+        "engineering_graph_contract",
     ]
+    graph_case = report.cases[4]
+    # The M2 case must actually derive engineering objects, not just run.
+    assert graph_case.details["object_count"] >= 4
+    assert graph_case.details["line_count"] == 1
+    assert graph_case.details["error_findings"] == 1  # the deliberate duplicate tag
     semantic = report.cases[2]
     assert semantic.details["junction_degree"] == 3
     assert semantic.details["rejected_issue_codes"] == ["unknown_port"]

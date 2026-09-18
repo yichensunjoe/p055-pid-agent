@@ -7,9 +7,11 @@ from time import perf_counter
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import HTMLResponse
 
+from .audit import request_audit_context
 from .diagnostics import DiagnosticLogger
 from .llm import PlannerError
 from .model_acceptance import ModelMatrixReport, ModelMatrixRequest, run_model_matrix
+from .provider_security import ProviderNetworkPolicy, ProviderURLPolicyError
 from .symbols import SymbolRegistry
 
 
@@ -39,6 +41,8 @@ ACCEPTANCE_UI = get_acceptance_ui()
 def create_acceptance_router(
     symbols: SymbolRegistry,
     diagnostics: DiagnosticLogger | None = None,
+    provider_policy: ProviderNetworkPolicy | None = None,
+    audit=None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api/v2", tags=["P&ID-Agent acceptance"])
 
@@ -46,9 +50,46 @@ def create_acceptance_router(
     def model_matrix_ui():
         return get_acceptance_ui()
 
+    def _enforce_provider_policy(base_url: str | None) -> None:
+        """Apply the same provider egress boundary as the planners.
+
+        The acceptance matrix sends real prompts (and optionally diagram context) to a
+        caller-supplied provider, so it must not be able to reach a host that the
+        deployment policy denies. A denied target is recorded as audit evidence.
+        """
+        if provider_policy is None or not base_url:
+            return
+        try:
+            provider_policy.normalize_and_validate(base_url)
+        except ProviderURLPolicyError as exc:
+            if audit is not None:
+                audit.record_event(
+                    "provider.egress.blocked",
+                    request_audit_context(
+                        "acceptance.model_matrix",
+                        validation_status="invalid",
+                        validation_evidence={"provider_url_error": exc.category},
+                    ),
+                    status="rejected",
+                    error_code="provider_policy_blocked",
+                    evidence={
+                        "endpoint": "/api/v2/acceptance/model-matrix",
+                        "provider_category": exc.category,
+                    },
+                )
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "provider_policy_blocked",
+                    "message": str(exc),
+                    "retryable": False,
+                },
+            ) from exc
+
     @router.post("/acceptance/model-matrix", response_model=ModelMatrixReport)
     def model_matrix(request: ModelMatrixRequest):
         started = perf_counter()
+        _enforce_provider_policy(request.provider.base_url)
         if diagnostics is not None:
             diagnostics.emit(
                 "acceptance.model_matrix.started",

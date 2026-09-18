@@ -7,6 +7,8 @@ from datetime import UTC, datetime
 from typing import Any
 
 from .agent_semantic_models import SemanticTransaction
+from .audit import request_audit_context
+from .audit_models import AuditContext, ProvenanceState
 from .diagnostics import DiagnosticLogger
 from .harness_models import (
     AgentSession,
@@ -18,8 +20,13 @@ from .harness_models import (
     ToolCallRecord,
 )
 from .layout_models import AutoLayoutRequest
-from .models import TransactionRequest
-from .service import DocumentService
+from .models import TransactionRequest, TransactionResult
+from .service import (
+    DocumentNotFoundError,
+    DocumentService,
+    InvalidOperationError,
+    RevisionConflictError,
+)
 from .store import SQLiteDocumentStore
 from .tool_registry import ToolDefinition, ToolRegistry, get_default_tool_registry
 
@@ -127,6 +134,102 @@ class AgentHarnessService:
         self.registry = registry or get_default_tool_registry()
         self.diagnostics = diagnostics
 
+    # ------------------------------------------------------------------ governed writes
+
+    def apply_authorized(
+        self,
+        authorized: AuthorizedToolCall,
+        document_id: str,
+        transaction: TransactionRequest,
+        *,
+        intent: Any | None = None,
+        metadata: dict[str, Any] | None = None,
+        validation_evidence: dict[str, Any] | None = None,
+    ) -> TransactionResult:
+        """Execute one approved tool call through the single governed write path.
+
+        The document revision, its semantic diff, its audit record and the harness
+        close-out (tool call completed, approval consumed, session completed) commit
+        in one SQLite transaction. A failure records rejected/failed evidence and
+        never leaves a revision without provenance.
+        """
+        session = authorized.session
+        context: AuditContext = request_audit_context(
+            authorized.definition.name,
+            actor=session.actor,
+            surface="rest" if session.metadata.get("surface") != "mcp" else "mcp",
+            label=transaction.label or authorized.definition.description[:120],
+            session_id=session.id,
+            approval_id=authorized.record.approval_id,
+            tool_call_id=authorized.record.id,
+            provider=session.provider,
+            model=session.model,
+            intent_hash=authorized.record.intent_hash,
+            diff_preview_hash=self._approved_diff_preview_hash(authorized),
+            validation_status="valid",
+            validation_evidence=validation_evidence or {},
+            metadata={
+                **(metadata or {}),
+                "permission": authorized.definition.permission,
+                "risk": authorized.definition.risk,
+                "project_id": session.project_id,
+            },
+        )
+        state = ProvenanceState(
+            tool_call_id=authorized.record.id,
+            consume_approval=authorized.approval is not None,
+            close_session=True,
+            tool_call_metadata={
+                "applied_operations": len(transaction.operations),
+                "transaction_label": transaction.label,
+            },
+        )
+        try:
+            return self.service.apply_transaction(
+                document_id,
+                transaction,
+                source="llm" if context.surface == "rest" else "mcp",
+                audit=context,
+                state=state,
+            )
+        except (InvalidOperationError, RevisionConflictError, DocumentNotFoundError) as exc:
+            error_code = getattr(exc, "code", type(exc).__name__)
+            self.service.audit.record_failure(
+                context=context,
+                event_type="revision.created",
+                error_code=str(error_code),
+                document_id=document_id,
+                base_revision=transaction.expected_revision,
+                status="rejected",
+                evidence={
+                    "rejected_operation_count": len(transaction.operations),
+                    "transaction_label": transaction.label,
+                },
+                state=state,
+            )
+            raise
+
+    def _approved_diff_preview_hash(self, authorized: AuthorizedToolCall) -> str:
+        approval = authorized.approval
+        if approval is None:
+            return ""
+        return approval.diff_preview_hash
+
+    def preview_intent_diff_hash(
+        self,
+        document_id: str,
+        intent: dict[str, Any],
+    ) -> str:
+        """Best-effort semantic diff hash for the reviewed intent (never raises)."""
+        try:
+            transaction = TransactionRequest.model_validate(intent.get("transaction", {}))
+            document = self.service.get_document(document_id)
+            return self.service.audit.diff_hash_for_transaction(
+                before=document, request=transaction
+            )
+        except Exception:  # pragma: no cover - preview must never block an approval request
+            return ""
+
     def create_session(self, request: AgentSessionCreateRequest) -> AgentSession:
         document = self.service.get_document(request.document_id)
         session = AgentSession(
@@ -149,6 +252,45 @@ class AgentHarnessService:
             start_revision=session.start_revision,
         )
         return session
+
+    def transit_session(
+        self,
+        session_id: str,
+        *,
+        status: str,
+        end_revision: int | None = None,
+    ) -> AgentSession:
+        """Move a session to a terminal non-success state (cancel/fail).
+
+        Session lifecycle lives in ``agent_sessions`` plus diagnostics; the audit chain
+        records the revision attempts, so this intentionally does not append a
+        synthetic revision-created fact.
+        """
+        if status not in {"cancelled", "failed"}:
+            raise HarnessError(f"unsupported session transition: {status}", code="invalid_transition")
+        session = self.get_session(session_id)
+        if session.status != "active":
+            raise HarnessError(
+                f"agent session {session.id} is {session.status}",
+                code="agent_session_not_active",
+            )
+        updated = session.model_copy(
+            update={
+                "status": status,
+                "end_revision": end_revision if end_revision is not None else session.end_revision,
+                "updated_at": datetime.now(UTC),
+            }
+        )
+        self.store.update_agent_session(updated)
+        self._emit(
+            "agent.session.completed",
+            session_id=updated.id,
+            document_id=updated.document_id,
+            start_revision=updated.start_revision,
+            end_revision=updated.end_revision,
+            status=updated.status,
+        )
+        return updated
 
     def get_session(self, session_id: str) -> AgentSession:
         session = self.store.get_agent_session(session_id)
@@ -225,6 +367,7 @@ class AgentHarnessService:
             request.document_id,
             canonical_intent,
         )
+        diff_preview_hash = self.preview_intent_diff_hash(request.document_id, request.intent)
         approval = ToolApproval(
             session_id=session.id,
             tool_name=definition.name,
@@ -232,6 +375,8 @@ class AgentHarnessService:
             intent_hash=intent_hash,
             requested_by=request.requested_by,
             reason=request.reason,
+            diff_preview_hash=diff_preview_hash,
+            evidence=self._approval_evidence(definition, canonical_intent, diff_preview_hash),
         )
         self.store.create_tool_approval(approval)
         self._emit(
@@ -311,38 +456,63 @@ class AgentHarnessService:
             )
             raise ToolPermissionDeniedError(f"tool is denied by policy: {tool_name}")
 
+        def deny(error_code: str, error: Exception) -> None:
+            """Record the refusal, then raise. Every refusal path is reviewable.
+
+            A refusal is evidence too: a reviewer must be able to answer "who tried
+            what, against which revision, and why was it refused" even when nothing
+            was written. Recording must never mask the original error, so a failure to
+            persist the record is swallowed after the tool-call row already exists.
+            """
+            self._record_rejected_call(
+                session,
+                definition,
+                document_id,
+                intent_hash,
+                approval_id,
+                base_revision,
+                error_code,
+                metadata,
+            )
+            raise error
+
         if definition.permission == "ask":
             if not approval_id:
-                self._record_rejected_call(
-                    session,
-                    definition,
-                    document_id,
-                    intent_hash,
-                    None,
-                    base_revision,
+                deny(
                     "tool_approval_required",
-                    metadata,
-                )
-                raise ToolApprovalRequiredError(
-                    f"tool requires explicit approval before execution: {tool_name}"
+                    ToolApprovalRequiredError(
+                        f"tool requires explicit approval before execution: {tool_name}"
+                    ),
                 )
             approval = self.store.get_tool_approval(approval_id)
             if approval is None:
-                raise ToolApprovalNotFoundError(f"tool approval not found: {approval_id}")
+                deny(
+                    "tool_approval_not_found",
+                    ToolApprovalNotFoundError(f"tool approval not found: {approval_id}"),
+                )
             if (
                 approval.session_id != session.id
                 or approval.tool_name != tool_name
                 or approval.document_id != document_id
                 or approval.intent_hash != intent_hash
             ):
-                raise ToolIntentMismatchError(
-                    "approval does not match the exact session/tool/document/intent"
+                deny(
+                    "tool_intent_mismatch",
+                    ToolIntentMismatchError(
+                        "approval does not match the exact session/tool/document/intent"
+                    ),
                 )
             if approval.status == "rejected":
-                raise ToolApprovalRejectedError(f"approval was rejected: {approval_id}")
+                deny(
+                    "tool_approval_rejected",
+                    ToolApprovalRejectedError(f"approval was rejected: {approval_id}"),
+                )
             if approval.status != "approved":
-                raise ToolApprovalRequiredError(
-                    f"approval is not approved or was already consumed: {approval_id}"
+                deny(
+                    "tool_approval_consumed",
+                    ToolApprovalRequiredError(
+                        f"approval is not approved or was already consumed: {approval_id}"
+                    ),
                 )
 
         record = ToolCallRecord(
@@ -444,6 +614,63 @@ class AgentHarnessService:
             tool_calls=self.store.list_tool_calls(session_id),
         )
 
+    @staticmethod
+    def _approval_evidence(
+        definition: ToolDefinition,
+        canonical_intent: Any,
+        diff_preview_hash: str,
+    ) -> dict[str, Any]:
+        """Bounded, secret-free review metadata attached to an approval request."""
+        operations: list[str] = []
+        touched: list[str] = []
+        if isinstance(canonical_intent, dict):
+            transaction = canonical_intent.get("transaction")
+            if isinstance(transaction, dict):
+                raw_operations = transaction.get("operations")
+                if isinstance(raw_operations, list):
+                    for operation in raw_operations[:100]:
+                        if isinstance(operation, dict) and isinstance(operation.get("op"), str):
+                            operations.append(str(operation["op"]))
+                            element_id = operation.get("element_id")
+                            if isinstance(element_id, str):
+                                touched.append(element_id)
+        return {
+            "tool": definition.name,
+            "tool_risk": definition.risk,
+            "tool_permission": definition.permission,
+            "operation_types": operations,
+            "touched_element_ids": touched[:100],
+            "diff_preview_hash": diff_preview_hash,
+        }
+
+    def _tool_audit_context(
+        self,
+        *,
+        session: AgentSession,
+        definition: ToolDefinition,
+        approval_id: str | None = None,
+        tool_call_id: str | None = None,
+        intent_hash: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> AuditContext:
+        return request_audit_context(
+            definition.name,
+            actor=session.actor,
+            surface="mcp" if session.metadata.get("surface") == "mcp" else "rest",
+            label=definition.description[:120],
+            session_id=session.id,
+            approval_id=approval_id,
+            tool_call_id=tool_call_id,
+            provider=session.provider,
+            model=session.model,
+            intent_hash=intent_hash,
+            metadata={
+                **(metadata or {}),
+                "permission": definition.permission,
+                "risk": definition.risk,
+            },
+        )
+
     def _record_rejected_call(
         self,
         session: AgentSession,
@@ -472,6 +699,28 @@ class AgentHarnessService:
             metadata=metadata or {},
         )
         self.store.create_tool_call(record)
+        # Chain the denial itself: "who tried what, and why it was refused" must be
+        # reviewable evidence, not only present in the harness tables.
+        self.service.audit.record_rejection(
+            self._tool_audit_context(
+                session=session,
+                definition=definition,
+                approval_id=approval_id,
+                tool_call_id=record.id,
+                intent_hash=intent_hash,
+                metadata=metadata,
+            ),
+            event_type="permission.rejected",
+            error_code=error_code,
+            document_id=document_id,
+            base_revision=base_revision,
+            evidence={
+                "tool_permission": definition.permission,
+                "tool_risk": definition.risk,
+                "intent_hash": intent_hash,
+                "authorized": False,
+            },
+        )
         self._emit(
             definition.audit_event + ".rejected",
             tool_call_id=record.id,

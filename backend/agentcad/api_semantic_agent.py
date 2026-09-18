@@ -18,7 +18,6 @@ from .agent_semantic_models import (
     SemanticAgentPlanResult,
 )
 from .api_harness import _raise_harness_error
-from .api_v2 import _apply_transaction_with_details
 from .diagnostics import DiagnosticLogger
 from .flow_topology import build_agent_harness_context
 from .harness import AgentHarnessService
@@ -26,6 +25,7 @@ from .harness_models import AgentSessionCreateRequest
 from .llm import PlannerError
 from .models import AgentPlan, TransactionRequest, TransactionResult
 from .permissive_semantic_compiler import PermissiveSemanticTransactionCompiler
+from .revision_diagnostics import emit_revision_diagnostics
 from .semantic_planner import SemanticAgentPlanner
 from .service import (
     DocumentNotFoundError,
@@ -465,18 +465,24 @@ def create_semantic_agent_router(
                 compiled_operation_types=[item.op for item in request.transaction.operations],
             )
         try:
-            result = _apply_transaction_with_details(
-                service,
+            result = harness.apply_authorized(
+                authorized,
                 document_id,
                 request.transaction,
-                source="llm",
-                diagnostics=diagnostics,
+                metadata={
+                    "surface": "rest",
+                    "endpoint": "agent/apply-v2",
+                    "plan_id": request.plan_id,
+                    "parent_plan_id": request.parent_plan_id,
+                    "attempt": request.attempt,
+                },
+                validation_evidence={
+                    "tool": "apply_compiled_agent_transaction",
+                    "operation_count": len(request.transaction.operations),
+                    "plan_id": request.plan_id,
+                },
             )
         except (DocumentNotFoundError, InvalidOperationError, RevisionConflictError) as exc:
-            harness.fail_tool_call(
-                authorized,
-                error_code=getattr(exc, "code", type(exc).__name__),
-            )
             if diagnostics is not None:
                 diagnostics.emit(
                     "llm.semantic_apply.rejected",
@@ -490,19 +496,18 @@ def create_semantic_agent_router(
                     error=exc,
                 )
             return _raise_service_error(exc)
-
-        harness.complete_tool_call(
-            authorized,
-            result_revision=result.document.revision,
-            metadata={
-                "applied_operations": result.applied_operations,
-                "transaction_label": request.transaction.label,
+        emit_revision_diagnostics(
+            service,
+            result.document,
+            action="transaction",
+            source="llm",
+            diagnostics=diagnostics,
+            label=request.transaction.label,
+            operation_count=len(request.transaction.operations),
+            extra={
+                "session_id": request.session_id,
+                "approval_id": request.approval_id,
             },
-        )
-        harness.complete_session(
-            request.session_id,
-            end_revision=result.document.revision,
-            status="completed",
         )
         if diagnostics is not None:
             diagnostics.emit(

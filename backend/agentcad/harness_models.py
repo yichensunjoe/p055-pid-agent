@@ -66,6 +66,10 @@ class ToolApproval(StrictModel):
     resolved_by: str | None = None
     reason: str = ""
     note: str = ""
+    # Engineering semantic diff hash of the reviewed intent (T0.5 evidence binding).
+    diff_preview_hash: str = ""
+    # Bounded, secret-free review evidence: diff counts, risk hints, target revisions.
+    evidence: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=utc_now)
     resolved_at: datetime | None = None
     consumed_at: datetime | None = None

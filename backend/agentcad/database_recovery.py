@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, BinaryIO
 from urllib.parse import quote
 
-CURRENT_SCHEMA_VERSION = 3
+CURRENT_SCHEMA_VERSION = 5
 BACKUP_FORMAT = "pid-agent.sqlite-backup"
 BACKUP_VERSION = 1
 BACKUP_DATABASE_MEMBER = "database.sqlite3"
@@ -189,6 +189,19 @@ def database_info(database_path: str | Path, *, migrate: bool = False) -> Databa
 
 def database_instance_id(database_path: str | Path) -> str:
     return database_info(database_path).instance_id
+
+
+def database_schema_version(database_path: str | Path) -> int:
+    """Read only the stored schema version without requiring an up-to-date schema."""
+    path = Path(database_path)
+    _reject_unsafe_existing_file(path, allow_missing=False)
+    try:
+        with closing(_readonly_connection(path)) as connection:
+            return _schema_version(connection)
+    except DatabaseRecoveryError:
+        raise
+    except sqlite3.DatabaseError as exc:
+        raise DatabaseIntegrityError(f"unable to read SQLite database: {exc}") from exc
 
 
 def verify_database(database_path: str | Path, *, expected_instance_id: str | None = None) -> DatabaseInfo:
@@ -638,7 +651,123 @@ def _migration_3(connection: sqlite3.Connection) -> None:
     )
 
 
-_MIGRATIONS = {1: _migration_1, 2: _migration_2, 3: _migration_3}
+def _migration_4(connection: sqlite3.Connection) -> None:
+    """Audit / provenance chain (T0.5).
+
+    ``audit_records`` deliberately has no foreign key to ``documents``: evidence for
+    a deletion must outlive the deleted document. The append-only hash chain is
+    continued inside the same transaction as the document write.
+    """
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS audit_records (
+            record_id TEXT PRIMARY KEY,
+            ordinal INTEGER NOT NULL UNIQUE,
+            recorded_at TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            actor TEXT NOT NULL,
+            surface TEXT NOT NULL,
+            tool_name TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL,
+            document_id TEXT,
+            project_id TEXT,
+            base_revision INTEGER,
+            result_revision INTEGER,
+            session_id TEXT,
+            approval_id TEXT,
+            tool_call_id TEXT,
+            provider TEXT NOT NULL DEFAULT '',
+            model TEXT NOT NULL DEFAULT '',
+            label TEXT NOT NULL DEFAULT '',
+            intent_hash TEXT NOT NULL DEFAULT '',
+            diff_hash TEXT NOT NULL DEFAULT '',
+            diff_preview_hash TEXT NOT NULL DEFAULT '',
+            diff_binding TEXT NOT NULL DEFAULT 'not_recorded',
+            validation_status TEXT NOT NULL DEFAULT 'not_run',
+            validation_hash TEXT NOT NULL DEFAULT '',
+            evidence_json TEXT NOT NULL DEFAULT '{}',
+            error_code TEXT NOT NULL DEFAULT '',
+            prev_hash TEXT NOT NULL,
+            record_hash TEXT NOT NULL,
+            chain_schema TEXT NOT NULL,
+            chain_version INTEGER NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_audit_records_document_revision "
+        "ON audit_records(document_id, result_revision DESC)"
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_audit_records_recorded_at "
+        "ON audit_records(recorded_at DESC, ordinal DESC)"
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_audit_records_session "
+        "ON audit_records(session_id, ordinal ASC)"
+    )
+    approval_columns = {
+        str(row[1]) for row in connection.execute("PRAGMA table_info(agent_approvals)").fetchall()
+    }
+    if "diff_preview_hash" not in approval_columns:
+        connection.execute(
+            "ALTER TABLE agent_approvals ADD COLUMN diff_preview_hash TEXT NOT NULL DEFAULT ''"
+        )
+    if "evidence_json" not in approval_columns:
+        connection.execute(
+            "ALTER TABLE agent_approvals ADD COLUMN evidence_json TEXT NOT NULL DEFAULT '{}'"
+        )
+
+
+def _migration_5(connection: sqlite3.Connection) -> None:
+    """Derived project engineering index (M2).
+
+    ``project_index`` caches the engineering semantic graph per document so that
+    project-wide queries (cross-document OPC links, schedules, rule rollups) do not
+    have to load and re-derive every drawing. It is a *derived cache*: every row
+    stores the document revision and the content hash it was built from, so a stale
+    row is always detectable and can never be mistaken for engineering truth. The
+    cascade keeps it consistent with document deletion when foreign keys are on;
+    ``prune`` repairs rows left behind by older databases or FK-off connections.
+    """
+
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS project_index (
+            document_id TEXT PRIMARY KEY,
+            document_name TEXT NOT NULL,
+            revision INTEGER NOT NULL,
+            content_hash TEXT NOT NULL,
+            graph_hash TEXT NOT NULL,
+            builder_version INTEGER NOT NULL,
+            object_count INTEGER NOT NULL,
+            equipment_count INTEGER NOT NULL,
+            valve_count INTEGER NOT NULL,
+            instrument_count INTEGER NOT NULL,
+            line_count INTEGER NOT NULL,
+            off_page_count INTEGER NOT NULL,
+            error_count INTEGER NOT NULL,
+            warning_count INTEGER NOT NULL,
+            graph_json TEXT NOT NULL,
+            built_at TEXT NOT NULL,
+            built_by TEXT NOT NULL DEFAULT '',
+            FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE
+        )
+        """
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_project_index_built_at "
+        "ON project_index(built_at DESC)"
+    )
+
+
+_MIGRATIONS = {
+    1: _migration_1,
+    2: _migration_2,
+    3: _migration_3,
+    4: _migration_4,
+    5: _migration_5,
+}
 
 
 def _validate_supported_schema(connection: sqlite3.Connection) -> None:
@@ -657,7 +786,17 @@ def _validate_supported_schema(connection: sqlite3.Connection) -> None:
 
 
 def _validate_required_schema(connection: sqlite3.Connection) -> None:
-    required_tables = {"documents", "document_history", "project_settings", "agent_sessions", "agent_approvals", "agent_tool_calls", _METADATA_TABLE}
+    required_tables = {
+        "documents",
+        "document_history",
+        "project_settings",
+        "agent_sessions",
+        "agent_approvals",
+        "agent_tool_calls",
+        "audit_records",
+        "project_index",
+        _METADATA_TABLE,
+    }
     missing = required_tables - _table_names(connection)
     if missing:
         raise DatabaseMigrationError(f"database schema is missing tables: {sorted(missing)}")
@@ -688,15 +827,29 @@ def _validate_required_schema(connection: sqlite3.Connection) -> None:
             "id", "document_id", "actor", "project_id", "provider", "model",
             "start_revision", "end_revision", "status", "created_at", "updated_at", "metadata_json",
         },
-        "agent_approvals": {
-            "id", "session_id", "tool_name", "document_id", "intent_hash", "status",
-            "requested_by", "resolved_by", "reason", "note", "created_at", "resolved_at",
-            "consumed_at",
-        },
+    "agent_approvals": {
+        "id", "session_id", "tool_name", "document_id", "intent_hash", "status",
+        "requested_by", "resolved_by", "reason", "note", "created_at", "resolved_at",
+        "consumed_at", "diff_preview_hash", "evidence_json",
+    },
+    "audit_records": {
+        "record_id", "ordinal", "recorded_at", "event_type", "actor", "surface",
+        "tool_name", "status", "document_id", "project_id", "base_revision",
+        "result_revision", "session_id", "approval_id", "tool_call_id", "provider",
+        "model", "label", "intent_hash", "diff_hash", "diff_preview_hash",
+        "diff_binding", "validation_status", "validation_hash", "evidence_json",
+        "error_code", "prev_hash", "record_hash", "chain_schema", "chain_version",
+    },
         "agent_tool_calls": {
             "id", "session_id", "tool_name", "document_id", "permission", "risk", "approval_id",
             "intent_hash", "base_revision", "result_revision", "status", "error_code",
             "started_at", "completed_at", "metadata_json",
+        },
+        "project_index": {
+            "document_id", "document_name", "revision", "content_hash", "graph_hash",
+            "builder_version", "object_count", "equipment_count", "valve_count",
+            "instrument_count", "line_count", "off_page_count", "error_count",
+            "warning_count", "graph_json", "built_at", "built_by",
         },
         _METADATA_TABLE: {"singleton_id", "instance_id", "created_at"},
     }

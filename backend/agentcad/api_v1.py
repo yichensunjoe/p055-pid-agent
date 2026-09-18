@@ -4,6 +4,8 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
+from .audit import request_audit_context
+from .audit_models import AuditContext
 from .legacy_models import (
     LegacyBatchRequest,
     LegacyCircleRequest,
@@ -38,12 +40,43 @@ def create_v1_compat_router(service: DocumentService) -> APIRouter:
     router = APIRouter(prefix="/api/v1", tags=["Legacy compatibility"])
     legacy_id = "doc_legacy"
 
+    def legacy_context(tool_name: str, label: str) -> AuditContext:
+        """Server-derived attribution for the legacy v1 surface.
+
+        The v1 compatibility API is not exempt from the evidence chain: every write it
+        performs is recorded as ``surface=rest`` with the legacy endpoint named, so a
+        reviewer never sees a v1 edit attributed to ``internal/system``.
+        """
+        return request_audit_context(
+            f"legacy_v1.{tool_name}",
+            actor="legacy-v1-client",
+            surface="rest",
+            label=label,
+            metadata={"surface": "legacy_v1"},
+        )
+
     def document() -> Document:
         try:
             return service.get_document(legacy_id)
         except DocumentNotFoundError:
             created = Document(id=legacy_id, name="Legacy Canvas")
-            service.store.save(StoredDocument(document=created, undo_stack=[], redo_stack=[]))
+            context = legacy_context("get_scene", "Create legacy canvas")
+            draft = service.audit.build_event(
+                "document.created",
+                context,
+                document_id=created.id,
+                result_revision=created.revision,
+                evidence={
+                    "name": created.name,
+                    "history_source": "web",
+                    "implicit": True,
+                    "reason": "legacy v1 scene accessed before any document existed",
+                },
+            )
+            service.store.save(
+                StoredDocument(document=created, undo_stack=[], redo_stack=[]),
+                audit=draft,
+            )
             return created
 
     def layer_operations(current: Document, layer_name: str):
@@ -134,6 +167,7 @@ def create_v1_compat_router(service: DocumentService) -> APIRouter:
                 expected_revision=current.revision,
                 label="Legacy API draw",
             ),
+            audit=legacy_context("draw", "Legacy API draw"),
         )
         return {
             "success": True,
@@ -253,6 +287,7 @@ def create_v1_compat_router(service: DocumentService) -> APIRouter:
             TransactionRequest(
                 operations=operations, expected_revision=current.revision, label="Legacy batch draw"
             ),
+            audit=legacy_context("draw_batch", "Legacy batch draw"),
         )
         return {
             "success": True,
@@ -294,6 +329,7 @@ def create_v1_compat_router(service: DocumentService) -> APIRouter:
                 expected_revision=current.revision,
                 label="Legacy delete",
             ),
+            audit=legacy_context("delete_primitive", "Legacy delete"),
         )
         return {
             "success": True,
@@ -315,6 +351,7 @@ def create_v1_compat_router(service: DocumentService) -> APIRouter:
             TransactionRequest(
                 operations=[ClearDocumentOperation()], expected_revision=current.revision
             ),
+            audit=legacy_context("clear", "Legacy clear"),
         )
         return {
             "success": True,
@@ -324,7 +361,9 @@ def create_v1_compat_router(service: DocumentService) -> APIRouter:
 
     @router.post("/undo")
     def undo():
-        current = service.undo(document().id)
+        current = service.undo(
+            document().id, audit=legacy_context("undo", "Legacy undo")
+        )
         return {
             "success": True,
             "data": current.model_dump(mode="json"),
@@ -334,7 +373,9 @@ def create_v1_compat_router(service: DocumentService) -> APIRouter:
 
     @router.post("/redo")
     def redo():
-        current = service.redo(document().id)
+        current = service.redo(
+            document().id, audit=legacy_context("redo", "Legacy redo")
+        )
         return {
             "success": True,
             "data": current.model_dump(mode="json"),
@@ -379,6 +420,7 @@ def create_v1_compat_router(service: DocumentService) -> APIRouter:
                 expected_revision=current.revision,
                 label="Legacy create layer",
             ),
+            audit=legacy_context("create_layer", "Legacy create layer"),
         )
         return list_layers()
 
@@ -403,6 +445,7 @@ def create_v1_compat_router(service: DocumentService) -> APIRouter:
                 expected_revision=current.revision,
                 label="Legacy delete layer",
             ),
+            audit=legacy_context("delete_layer", "Legacy delete layer"),
         )
         return list_layers()
 
@@ -425,6 +468,7 @@ def create_v1_compat_router(service: DocumentService) -> APIRouter:
                 expected_revision=current.revision,
                 label="Legacy toggle layer",
             ),
+            audit=legacy_context("toggle_layer", "Legacy toggle layer"),
         )
         updated = next(item for item in result.document.layers if item.id == layer.id)
         return {"layer": updated.name, "visible": updated.visible}

@@ -7,6 +7,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from .audit_models import AuditContext, ProvenanceState
 from .models import (
     AddElementOperation,
     AddLayerOperation,
@@ -54,6 +55,40 @@ from .symbols import SymbolRegistry
 
 EDITOR_GROUP_KEY = "editor_group_id"
 EDITOR_LOCK_KEY = "editor_locked"
+
+
+def history_source_for_context(context: AuditContext | None, fallback: HistorySource | None) -> HistorySource:
+    """Map server-derived attribution onto the legacy display column.
+
+    The ``document_history.source`` column is a UI hint only. Attribution that
+    matters for review lives in the audit record, which never reads a
+    client-supplied ``TransactionRequest.source``.
+    """
+    if context is None:
+        return fallback or "web"
+    if context.session_id and context.surface == "rest":
+        return "llm"
+    if context.surface == "mcp":
+        return "mcp"
+    if context.surface in {"cli", "internal"} and context.actor == "system":
+        return "system"
+    return "web"
+
+
+def revision_snapshot(document: Document) -> Document:
+    """Detached copy of a document, used as the ``before`` side of a provenance diff.
+
+    Adapters that mutate a document in place (rename, folder move) must capture this
+    *before* mutating, otherwise the semantic diff and the audit record would compare
+    a document with itself and report a false "no change".
+    """
+    return Document.model_validate(document.model_dump(mode="python"))
+
+
+def context_label(context: AuditContext | None, fallback: str) -> str:
+    if context is not None and context.label:
+        return context.label
+    return fallback
 
 
 def _element_edit_locked(element: Element) -> bool:
@@ -109,16 +144,42 @@ class DocumentService:
         store: SQLiteDocumentStore,
         symbols: SymbolRegistry,
         history_limit: int = 100,
+        audit=None,
     ):
         self.store = store
         self.symbols = symbols
         self.history_limit = history_limit
+        if audit is None:
+            # Deferred import: audit.py depends on semantic_diff.py, which imports
+            # this module for its error types.
+            from .audit import AuditRecorder
 
-    def create_document(self, request: CreateDocumentRequest, *, source: HistorySource = "web") -> Document:
+            audit = AuditRecorder(store=store, symbols=symbols, service=self)
+        self.audit = audit
+
+    def create_document(
+        self,
+        request: CreateDocumentRequest,
+        *,
+        source: HistorySource = "web",
+        audit: AuditContext | None = None,
+    ) -> Document:
         document = Document(
             name=request.name,
             canvas={"width": request.width, "height": request.height},
             metadata=request.metadata,
+        )
+        context = audit or AuditContext(actor="system", surface="internal", tool_name="create_document")
+        draft = self.audit.build_event(
+            "document.created",
+            context,
+            document_id=document.id,
+            result_revision=document.revision,
+            evidence={
+                "name": document.name,
+                "canvas": {"width": document.canvas.width, "height": document.canvas.height},
+                "history_source": source,
+            },
         )
         self.store.save(
             StoredDocument(document=document, undo_stack=[], redo_stack=[]),
@@ -130,6 +191,7 @@ class DocumentService:
                 label="Create document",
                 operation_count=0,
             ),
+            audit=draft,
         )
         return document
 
@@ -143,11 +205,34 @@ class DocumentService:
         self._get_stored(document_id)
         return self.store.list_history(document_id, limit)
 
-    def delete_document(self, document_id: str, expected_revision: int) -> None:
+    def delete_document(
+        self,
+        document_id: str,
+        expected_revision: int,
+        *,
+        audit: AuditContext | None = None,
+    ) -> None:
+        context = audit or AuditContext(
+            actor="system", surface="internal", tool_name="delete_document"
+        )
+        snapshot = self._get_stored(document_id).document
+        draft = self.audit.build_event(
+            "document.deleted",
+            context,
+            document_id=document_id,
+            base_revision=snapshot.revision,
+            evidence={
+                "name": snapshot.name,
+                "element_count": len(snapshot.elements),
+                "layer_count": len(snapshot.layers),
+                "system_count": len(snapshot.systems),
+            },
+        )
         try:
             deleted = self.store.delete(
                 document_id,
                 expected_revision=expected_revision,
+                audit=draft,
             )
         except StoreRevisionConflictError as exc:
             raise RevisionConflictError(str(exc)) from exc
@@ -157,8 +242,21 @@ class DocumentService:
     def get_project_settings(self) -> ProjectSettings:
         return self.store.get_project_settings()
 
-    def update_project_settings(self, settings: ProjectSettings) -> ProjectSettings:
-        return self.store.save_project_settings(settings)
+    def update_project_settings(
+        self,
+        settings: ProjectSettings,
+        *,
+        audit: AuditContext | None = None,
+    ) -> ProjectSettings:
+        context = audit or AuditContext(
+            actor="system", surface="internal", tool_name="update_project_settings"
+        )
+        draft = self.audit.build_event(
+            "project.settings_updated",
+            context,
+            evidence={"project_name": settings.name, "changed": True},
+        )
+        return self.store.save_project_settings(settings, audit=draft)
 
     def export_document_envelope(self, document_id: str):
         return document_envelope(self.get_document(document_id))
@@ -174,6 +272,7 @@ class DocumentService:
         payload: Any,
         *,
         conflict_policy: ImportConflictPolicy = "regenerate",
+        audit: AuditContext | None = None,
     ) -> ImportResult:
         document = parse_document_payload(payload)
         self._validate_import_document(document)
@@ -181,7 +280,10 @@ class DocumentService:
             [document], self.store.document_ids(), conflict_policy
         )
         try:
-            self.store.import_documents_atomic(documents)
+            self.store.import_documents_atomic(
+                documents,
+                audits=self._import_audit_drafts(documents, id_map, audit, scope="document"),
+            )
         except StoreDocumentConflictError as exc:
             raise ProjectIOError(
                 "document id conflict occurred while importing", code="document_id_conflict"
@@ -193,6 +295,7 @@ class DocumentService:
         payload: Any,
         *,
         conflict_policy: ImportConflictPolicy = "regenerate",
+        audit: AuditContext | None = None,
     ) -> ImportResult:
         package = parse_project_payload(payload)
         for document in package.documents:
@@ -201,13 +304,50 @@ class DocumentService:
             package.documents, self.store.document_ids(), conflict_policy
         )
         try:
-            self.store.import_documents_atomic(documents, project_settings=package.project)
+            self.store.import_documents_atomic(
+                documents,
+                project_settings=package.project,
+                audits=self._import_audit_drafts(documents, id_map, audit, scope="project_package"),
+            )
         except StoreDocumentConflictError as exc:
             raise ProjectIOError(
                 "document id conflict occurred while importing project package",
                 code="document_id_conflict",
             ) from exc
         return ImportResult(documents=documents, document_id_map=id_map, project=package.project)
+
+    def _import_audit_drafts(
+        self,
+        documents: list[Document],
+        id_map: dict[str, str],
+        audit: AuditContext | None,
+        *,
+        scope: str,
+    ) -> list[Any]:
+        context = audit or AuditContext(
+            actor="system", surface="internal", tool_name="import_documents"
+        )
+        drafts = []
+        for document in documents:
+            drafts.append(
+                self.audit.build_event(
+                    "document.imported",
+                    context,
+                    document_id=document.id,
+                    result_revision=document.revision,
+                    evidence={
+                        "scope": scope,
+                        "name": document.name,
+                        "element_count": len(document.elements),
+                        "original_document_id": next(
+                            (key for key, value in id_map.items() if value == document.id),
+                            document.id,
+                        ),
+                        "document_id_remapped": document.id in id_map.values(),
+                    },
+                )
+            )
+        return drafts
 
     def _validate_import_document(self, document: Document) -> None:
         element_map = {element.id: element for element in document.elements}
@@ -273,6 +413,8 @@ class DocumentService:
         transaction: TransactionRequest,
         *,
         source: HistorySource | None = None,
+        audit: AuditContext | None = None,
+        state: ProvenanceState | None = None,
     ) -> TransactionResult:
         stored = self._get_stored(document_id)
         current = stored.document
@@ -293,7 +435,26 @@ class DocumentService:
         except ValidationError as exc:
             raise InvalidOperationError(f"resulting document is invalid: {exc}") from exc
         undo_stack = [*stored.undo_stack, current.model_dump(mode="json")][-self.history_limit :]
-        history_source = source or transaction.source or "web"
+        if audit is None:
+            audit = AuditContext(
+                actor="system",
+                surface="internal",
+                tool_name="apply_transaction",
+                label=transaction.label,
+            )
+            history_source = source or transaction.source or "web"
+        else:
+            history_source = source or history_source_for_context(audit, None)
+        bundle = self.audit.build_revision_provenance(
+            before=current,
+            after=working,
+            operations=transaction.operations,
+            request=transaction,
+            action="transaction",
+            source=history_source,
+            context=audit,
+        )
+        final = self.audit.finalize_state(state, result_revision=working.revision)
         try:
             self.store.save(
                 StoredDocument(document=working, undo_stack=undo_stack, redo_stack=[]),
@@ -303,9 +464,14 @@ class DocumentService:
                     revision=working.revision,
                     source=history_source,
                     action="transaction",
-                    label=transaction.label or "Apply transaction",
+                    label=context_label(audit, transaction.label or "Apply transaction"),
                     operation_count=len(transaction.operations),
                 ),
+                history_details=bundle.history_details,
+                audit=bundle.audit,
+                tool_call=final.tool_call,
+                approval=final.approval,
+                session=final.session,
             )
         except StoreRevisionConflictError as exc:
             raise RevisionConflictError(str(exc)) from exc
@@ -321,6 +487,7 @@ class DocumentService:
         *,
         expected_revision: int | None = None,
         source: HistorySource = "web",
+        audit: AuditContext | None = None,
     ) -> Document:
         stored = self._get_stored(document_id)
         if expected_revision is not None and expected_revision != stored.document.revision:
@@ -335,6 +502,16 @@ class DocumentService:
         redo_stack = [*stored.redo_stack, stored.document.model_dump(mode="json")][
             -self.history_limit :
         ]
+        context = audit or AuditContext(actor="system", surface="internal", tool_name="undo")
+        bundle = self.audit.build_revision_provenance(
+            before=stored.document,
+            after=previous,
+            operations=None,
+            request=None,
+            action="undo",
+            source=history_source_for_context(context, source),
+            context=context,
+        )
         try:
             self.store.save(
                 StoredDocument(
@@ -346,11 +523,13 @@ class DocumentService:
                 history=HistoryEntry(
                     document_id=document_id,
                     revision=previous.revision,
-                    source=source,
+                    source=history_source_for_context(context, source),
                     action="undo",
-                    label="Undo",
+                    label=context_label(context, "Undo"),
                     operation_count=1,
                 ),
+                history_details=bundle.history_details,
+                audit=bundle.audit,
             )
         except StoreRevisionConflictError as exc:
             raise RevisionConflictError(str(exc)) from exc
@@ -362,6 +541,7 @@ class DocumentService:
         *,
         expected_revision: int | None = None,
         source: HistorySource = "web",
+        audit: AuditContext | None = None,
     ) -> Document:
         stored = self._get_stored(document_id)
         if expected_revision is not None and expected_revision != stored.document.revision:
@@ -376,6 +556,16 @@ class DocumentService:
         undo_stack = [*stored.undo_stack, stored.document.model_dump(mode="json")][
             -self.history_limit :
         ]
+        context = audit or AuditContext(actor="system", surface="internal", tool_name="redo")
+        bundle = self.audit.build_revision_provenance(
+            before=stored.document,
+            after=next_document,
+            operations=None,
+            request=None,
+            action="redo",
+            source=history_source_for_context(context, source),
+            context=context,
+        )
         try:
             self.store.save(
                 StoredDocument(
@@ -387,11 +577,13 @@ class DocumentService:
                 history=HistoryEntry(
                     document_id=document_id,
                     revision=next_document.revision,
-                    source=source,
+                    source=history_source_for_context(context, source),
                     action="redo",
-                    label="Redo",
+                    label=context_label(context, "Redo"),
                     operation_count=1,
                 ),
+                history_details=bundle.history_details,
+                audit=bundle.audit,
             )
         except StoreRevisionConflictError as exc:
             raise RevisionConflictError(str(exc)) from exc

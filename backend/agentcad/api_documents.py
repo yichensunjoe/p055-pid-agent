@@ -5,8 +5,10 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
+from .audit import request_audit_context
+from .audit_models import AuditContext
 from .models import Document, HistoryEntry
-from .service import DocumentService
+from .service import DocumentService, context_label, revision_snapshot
 from .store import StoreRevisionConflictError
 
 
@@ -60,9 +62,27 @@ def _save_document_mutation(
     *,
     previous_revision: int,
     label: str,
+    before: Document,
+    context: AuditContext,
 ) -> Document:
+    """Persist a document-level mutation (rename / folder move) with provenance.
+
+    These endpoints used to write a revision and a history row with no semantic diff
+    and no audit record, so a rename or folder move was invisible to review. They now
+    go through the same provenance builder as every other write, and the revision,
+    its diff and its audit record commit in one SQLite transaction.
+    """
     document.revision += 1
     document.updated_at = datetime.now(UTC)
+    bundle = service.audit.build_revision_provenance(
+        before=before,
+        after=document,
+        operations=None,
+        request=None,
+        action="transaction",
+        source="web",
+        context=context,
+    )
     try:
         service.store.save(
             stored,
@@ -72,9 +92,11 @@ def _save_document_mutation(
                 revision=document.revision,
                 source="web",
                 action="transaction",
-                label=label,
+                label=context_label(context, label),
                 operation_count=1,
             ),
+            history_details=bundle.history_details,
+            audit=bundle.audit,
         )
     except StoreRevisionConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -93,6 +115,7 @@ def create_documents_router(service: DocumentService) -> APIRouter:
             return document
 
         previous_revision = document.revision
+        before = revision_snapshot(document)
         stored.undo_stack.append(document.model_dump(mode="json"))
         if len(stored.undo_stack) > service.history_limit:
             stored.undo_stack = stored.undo_stack[-service.history_limit :]
@@ -104,6 +127,11 @@ def create_documents_router(service: DocumentService) -> APIRouter:
             document,
             previous_revision=previous_revision,
             label=f"Rename document to {request.name}",
+            before=before,
+            context=request_audit_context(
+                "rename_document",
+                label=f"Rename document to {request.name}",
+            ),
         )
 
     @router.put("/documents/{document_id}/folder", response_model=Document)
@@ -117,6 +145,7 @@ def create_documents_router(service: DocumentService) -> APIRouter:
             return document
 
         previous_revision = document.revision
+        before = revision_snapshot(document)
         stored.undo_stack.append(document.model_dump(mode="json"))
         if len(stored.undo_stack) > service.history_limit:
             stored.undo_stack = stored.undo_stack[-service.history_limit :]
@@ -133,6 +162,11 @@ def create_documents_router(service: DocumentService) -> APIRouter:
             document,
             previous_revision=previous_revision,
             label=f"Move document to folder {target_folder or 'root'}",
+            before=before,
+            context=request_audit_context(
+                "move_document_folder",
+                label=f"Move document to folder {target_folder or 'root'}",
+            ),
         )
 
     @router.put("/documents/{document_id}/canvas-grid", response_model=Document)

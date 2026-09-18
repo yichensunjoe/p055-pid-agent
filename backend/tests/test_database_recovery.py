@@ -128,6 +128,126 @@ def test_unversioned_legacy_database_is_migrated_without_losing_rows(tmp_path: P
     assert metadata_count == 1
 
 
+def test_v3_database_gains_audit_tables_and_a_genesis_chain(tmp_path: Path):
+    """A pre-T0.5 (schema v3) database migrates in place and starts an empty chain."""
+
+    from agentcad.audit import AuditRecorder
+    from agentcad.store import SQLiteDocumentStore as _Store
+
+    database = tmp_path / "v3.db"
+    SQLiteDocumentStore(database)
+    with sqlite3.connect(database) as connection:
+        # A genuine v3 database has neither the audit chain (v4) nor the derived
+        # project index (v5); claim exactly v3 so both migrations must run.
+        connection.execute("DROP TABLE audit_records")
+        connection.execute("DROP TABLE project_index")
+        connection.execute("PRAGMA user_version=3")
+
+    store = _Store(database)
+    with sqlite3.connect(database) as connection:
+        version = connection.execute("PRAGMA user_version").fetchone()[0]
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+    assert version == CURRENT_SCHEMA_VERSION
+    assert {"audit_records", "project_index"}.issubset(tables)
+
+    # Nothing is back-filled (the past cannot be attested retroactively), but the
+    # chain is empty-and-valid and the next write starts it at ordinal 1.
+    recorder = AuditRecorder(store=store, symbols=SymbolRegistry())
+    verification = recorder.verify_chain()
+    assert verification.ok is True
+    assert verification.record_count == 0
+
+    service = DocumentService(store, SymbolRegistry())
+    document = service.create_document(CreateDocumentRequest(name="Migrated"))
+    records = store.all_audit_records()
+    assert [record.ordinal for record in records] == [1]
+    assert records[0].document_id == document.id
+    assert service.audit.verify_chain().ok is True
+
+
+def test_v4_database_gains_the_derived_project_index(tmp_path: Path):
+    """A pre-M2 (schema v4) database gains the derived index and can rebuild it."""
+
+    from agentcad.project_index import ProjectIndexService
+
+    database = tmp_path / "v4.db"
+    SQLiteDocumentStore(database)
+    with sqlite3.connect(database) as connection:
+        connection.execute("DROP TABLE project_index")
+        connection.execute("PRAGMA user_version=4")
+
+    store = SQLiteDocumentStore(database)
+    service = DocumentService(store, SymbolRegistry())
+    document = service.create_document(CreateDocumentRequest(name="Legacy drawing"))
+    with sqlite3.connect(database) as connection:
+        version = connection.execute("PRAGMA user_version").fetchone()[0]
+        index_rows = connection.execute("SELECT COUNT(*) FROM project_index").fetchone()[0]
+    assert version == CURRENT_SCHEMA_VERSION
+    # The index is derived data: migration creates the cache empty instead of
+    # guessing what the graphs used to be.
+    assert index_rows == 0
+
+    project_index = ProjectIndexService(store, SymbolRegistry())
+    assert project_index.list_entries() == []
+    report = project_index.rebuild_all()
+    assert report.rebuilt == [document.id]
+    assert report.removed == []
+    assert store.get_project_index(document.id) is not None
+    assert service.audit.verify_chain().ok is True
+
+
+def test_backup_and_restore_preserve_the_audit_chain(tmp_path: Path):
+    from agentcad.audit import request_audit_context
+    from agentcad.models import TransactionRequest
+
+    database = tmp_path / "source.db"
+    service = DocumentService(SQLiteDocumentStore(database), SymbolRegistry())
+    document = service.create_document(CreateDocumentRequest(name="Audited"))
+    service.apply_transaction(
+        document.id,
+        TransactionRequest(
+            expected_revision=document.revision,
+            label="Add pump",
+            operations=[
+                {
+                    "op": "add_element",
+                    "element": {
+                        "type": "symbol",
+                        "symbol_key": "centrifugal_pump",
+                        "position": {"x": 10.0, "y": 20.0},
+                        "width": 60.0,
+                        "height": 40.0,
+                    },
+                }
+            ],
+        ),
+        audit=request_audit_context("apply_web_transaction"),
+    )
+    before = service.audit.verify_chain()
+
+    backup = tmp_path / "snapshot.pidbak"
+    create_backup(database, backup)
+    restored_path = tmp_path / "restored.db"
+    restore_backup(
+        backup,
+        restored_path,
+        expected_instance_id=database_info(database).instance_id,
+    )
+
+    restored = DocumentService(SQLiteDocumentStore(restored_path), SymbolRegistry())
+    after = restored.audit.verify_chain()
+    assert after.ok is True
+    assert after.record_count == before.record_count
+    assert [record.record_hash for record in restored.store.all_audit_records()] == [
+        record.record_hash for record in service.store.all_audit_records()
+    ]
+
+
 def test_newer_database_version_is_rejected(tmp_path: Path):
     database = tmp_path / "future.db"
     with sqlite3.connect(database) as connection:

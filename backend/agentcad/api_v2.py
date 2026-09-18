@@ -9,6 +9,8 @@ from fastapi import APIRouter, HTTPException, Query, Response, status
 from pydantic import ValidationError
 
 from .api_harness import _raise_harness_error
+from .audit import request_audit_context
+from .audit_models import AuditContext, ProvenanceState
 from .diagnostics import DiagnosticLogger
 from .harness import AgentHarnessService
 from .history_diff import build_history_details
@@ -30,8 +32,8 @@ from .project_io import (
     ProjectSettings,
 )
 from .provider_discovery import discover_provider_models
+from .revision_diagnostics import emit_revision_diagnostics
 from .semantic_diff import (
-    build_semantic_diff,
     preview_transaction_semantic_diff,
     semantic_diff_from_history_details,
 )
@@ -46,44 +48,6 @@ from .svg import render_png, render_svg
 from .tool_registry import get_default_tool_registry
 
 
-def _record_revision_details(
-    service: DocumentService,
-    before: Document,
-    after: Document,
-    request: TransactionRequest | None,
-    *,
-    action: str,
-    source: HistorySource,
-    diagnostics: DiagnosticLogger | None,
-) -> dict[str, Any]:
-    details = build_history_details(
-        before,
-        after,
-        request.operations if request else None,
-        action=action,
-    )
-    semantic_diff = build_semantic_diff(before, after, details, service.symbols)
-    details["semantic_diff"] = semantic_diff.model_dump(mode="json")
-    persisted = service.store.update_history_details(after.id, after.revision, details)
-    if diagnostics is not None:
-        diagnostics.emit(
-            "document.revision.created",
-            document_id=after.id,
-            base_revision=before.revision,
-            revision=after.revision,
-            source=source,
-            action=action,
-            label=request.label if request else action.title(),
-            operation_count=len(request.operations) if request else 1,
-            affected_element_ids=details["affected_element_ids"],
-            added_element_ids=details["added_element_ids"],
-            updated_element_ids=details["updated_element_ids"],
-            deleted_element_ids=details["deleted_element_ids"],
-            history_details_persisted=persisted,
-        )
-    return details
-
-
 def _apply_transaction_with_details(
     service: DocumentService,
     document_id: str,
@@ -91,17 +55,25 @@ def _apply_transaction_with_details(
     *,
     source: HistorySource,
     diagnostics: DiagnosticLogger | None,
+    audit: AuditContext | None = None,
+    state: ProvenanceState | None = None,
 ) -> TransactionResult:
-    before = service.get_document(document_id)
-    result = service.apply_transaction(document_id, request, source=source)
-    _record_revision_details(
-        service,
-        before,
-        result.document,
+    context = audit or request_audit_context("apply_web_transaction", label=request.label)
+    result = service.apply_transaction(
+        document_id,
         request,
+        source=source,
+        audit=context,
+        state=state,
+    )
+    emit_revision_diagnostics(
+        service,
+        result.document,
         action="transaction",
         source=source,
         diagnostics=diagnostics,
+        label=request.label,
+        operation_count=len(request.operations),
     )
     return result
 
@@ -187,8 +159,15 @@ def create_v2_router(
 
     @router.post("/documents", response_model=Document, status_code=status.HTTP_201_CREATED)
     def create_document(request: CreateDocumentRequest):
-        document = service.create_document(request, source="web")
+        document = service.create_document(
+            request,
+            source="web",
+            audit=request_audit_context("create_document", label=request.name),
+        )
         if diagnostics is not None:
+            record = service.store.get_audit_record_for_revision(
+                document.id, document.revision
+            )
             diagnostics.emit(
                 "document.created",
                 document_id=document.id,
@@ -197,6 +176,7 @@ def create_v2_router(
                 width=document.canvas.width,
                 height=document.canvas.height,
                 source="web",
+                audit_record_id=record.record_id if record else "",
             )
         return document
 
@@ -302,7 +282,12 @@ def create_v2_router(
         expected_revision: Annotated[int, Query(ge=0)],
     ):
         before = _call(service.get_document, document_id)
-        _call(service.delete_document, document_id, expected_revision)
+        _call(
+            service.delete_document,
+            document_id,
+            expected_revision,
+            audit=request_audit_context("delete_document", label=before.name),
+        )
         if diagnostics is not None:
             diagnostics.emit(
                 "document.deleted",
@@ -322,6 +307,11 @@ def create_v2_router(
             request,
             source="web",
             diagnostics=diagnostics,
+            audit=request_audit_context(
+                "apply_web_transaction",
+                label=request.label,
+                validation_status="valid",
+            ),
         )
 
     @router.post("/documents/{document_id}/transactions/validate")
@@ -333,23 +323,21 @@ def create_v2_router(
         document_id: str,
         expected_revision: Annotated[int | None, Query(ge=0)] = None,
     ):
-        before = _call(service.get_document, document_id)
         updated = _call(
             service.undo,
             document_id,
             expected_revision=expected_revision,
             source="web",
+            audit=request_audit_context("undo_document", label="Undo"),
         )
-        if updated.revision != before.revision:
-            _record_revision_details(
-                service,
-                before,
-                updated,
-                None,
-                action="undo",
-                source="web",
-                diagnostics=diagnostics,
-            )
+        emit_revision_diagnostics(
+            service,
+            updated,
+            action="undo",
+            source="web",
+            diagnostics=diagnostics,
+            label="Undo",
+        )
         return updated
 
     @router.post("/documents/{document_id}/redo", response_model=Document)
@@ -357,23 +345,21 @@ def create_v2_router(
         document_id: str,
         expected_revision: Annotated[int | None, Query(ge=0)] = None,
     ):
-        before = _call(service.get_document, document_id)
         updated = _call(
             service.redo,
             document_id,
             expected_revision=expected_revision,
             source="web",
+            audit=request_audit_context("redo_document", label="Redo"),
         )
-        if updated.revision != before.revision:
-            _record_revision_details(
-                service,
-                before,
-                updated,
-                None,
-                action="redo",
-                source="web",
-                diagnostics=diagnostics,
-            )
+        emit_revision_diagnostics(
+            service,
+            updated,
+            action="redo",
+            source="web",
+            diagnostics=diagnostics,
+            label="Redo",
+        )
         return updated
 
     @router.get("/documents/{document_id}/scene-summary")
@@ -419,7 +405,11 @@ def create_v2_router(
         conflict_policy: ImportConflictPolicy = "regenerate",
     ):
         try:
-            result = service.import_document_payload(payload, conflict_policy=conflict_policy)
+            result = service.import_document_payload(
+                payload,
+                conflict_policy=conflict_policy,
+                audit=request_audit_context("import_document"),
+            )
         except ProjectIOError as exc:
             raise HTTPException(
                 status_code=409 if exc.code == "document_id_conflict" else 422,
@@ -440,7 +430,10 @@ def create_v2_router(
 
     @router.put("/project/settings", response_model=ProjectSettings)
     def update_project_settings(settings: ProjectSettings):
-        return service.update_project_settings(settings)
+        return service.update_project_settings(
+            settings,
+            audit=request_audit_context("update_project_settings", label=settings.name),
+        )
 
     @router.get("/project/export.json")
     def export_project_package():
@@ -467,7 +460,11 @@ def create_v2_router(
         conflict_policy: ImportConflictPolicy = "regenerate",
     ):
         try:
-            result = service.import_project_payload(payload, conflict_policy=conflict_policy)
+            result = service.import_project_payload(
+                payload,
+                conflict_policy=conflict_policy,
+                audit=request_audit_context("import_project_package"),
+            )
         except ProjectIOError as exc:
             raise HTTPException(
                 status_code=409 if exc.code == "document_id_conflict" else 422,
@@ -699,13 +696,18 @@ def create_v2_router(
         approval_id: Annotated[str | None, Query()] = None,
     ):
         if harness is None:
-            return _call(
-                _apply_transaction_with_details,
-                service,
-                document_id,
-                request,
-                source="llm",
-                diagnostics=diagnostics,
+            # The harness is mandatory for the Agent apply route: constructing the
+            # router without one must not silently reopen an ungated engineering write.
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": "harness_unavailable",
+                    "message": (
+                        "Agent apply requires the P&ID-Agent harness; this router was "
+                        "constructed without one."
+                    ),
+                    "retryable": False,
+                },
             )
         if not session_id:
             raise HTTPException(
@@ -730,30 +732,28 @@ def create_v2_router(
         except Exception as exc:
             return _raise_harness_error(exc)
         try:
-            result = _apply_transaction_with_details(
-                service,
+            result = harness.apply_authorized(
+                authorized,
                 document_id,
                 request,
-                source="llm",
-                diagnostics=diagnostics,
+                metadata={"surface": "rest", "endpoint": "agent/apply"},
+                validation_evidence={
+                    "tool": "apply_compiled_agent_transaction",
+                    "operation_count": len(request.operations),
+                },
             )
         except Exception as exc:
-            harness.fail_tool_call(
-                authorized,
-                error_code=getattr(exc, "code", type(exc).__name__),
-            )
             if isinstance(exc, (DocumentNotFoundError, InvalidOperationError, RevisionConflictError)):
                 return _raise_service_error(exc)
             raise
-        harness.complete_tool_call(
-            authorized,
-            result_revision=result.document.revision,
-            metadata={"applied_operations": result.applied_operations},
-        )
-        harness.complete_session(
-            session_id,
-            end_revision=result.document.revision,
-            status="completed",
+        emit_revision_diagnostics(
+            service,
+            result.document,
+            action="transaction",
+            source="llm",
+            diagnostics=diagnostics,
+            label=request.label,
+            operation_count=len(request.operations),
         )
         return result
 

@@ -10,6 +10,7 @@ from .agent_semantic_models import SemanticTransaction
 from .audit import request_audit_context
 from .audit_models import AuditContext, ProvenanceState
 from .diagnostics import DiagnosticLogger
+from .drafting_models import DraftingRequest
 from .harness_models import (
     AgentSession,
     AgentSessionAudit,
@@ -103,6 +104,9 @@ def canonicalize_tool_intent(tool_name: str, intent: Any) -> Any:
     if tool_name == "apply_auto_layout":
         options = AutoLayoutRequest.model_validate(intent.get("options", {}))
         return {"options": options.model_dump(mode="json")}
+    if tool_name == "apply_deterministic_drafting":
+        request = DraftingRequest.model_validate(intent.get("request", {}))
+        return {"request": request.model_dump(mode="json")}
     return intent
 
 

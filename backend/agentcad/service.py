@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import UTC, datetime
-from math import cos, radians, sin
 from typing import Any
 
 from pydantic import ValidationError
@@ -839,22 +838,24 @@ class DocumentService:
         return ConnectorEndpoint(element_id=connectable.id, port_id=endpoint.port_id, point=point)
 
     def _symbol_port_point(self, symbol: SymbolElement, port_id: str) -> Point:
+        """Absolute point of a symbol port: the one port mapping, not a second copy.
+
+        The arithmetic lives in :mod:`agentcad.drafting_geometry` because the drafting
+        router, the drafting report and this service must agree to the last bit — a
+        symbol whose pipe ends one pixel off its declared port is a defect that would be
+        invisible until export (Charter §6.4). Imported locally: this module is the
+        bottom of the dependency stack and must not grow a cycle to keep a formula.
+        """
+
+        from .drafting_geometry import symbol_port_point
+
         definition = self.symbols.get(symbol.symbol_key)
         port = next((item for item in definition.ports if item.id == port_id), None)
         if port is None:
             raise InvalidOperationError(
                 f"unknown port '{port_id}' for symbol {symbol.id} ({symbol.symbol_key})"
             )
-        local_x = port.x * symbol.width / definition.width
-        local_y = port.y * symbol.height / definition.height
-        center_x = symbol.width / 2
-        center_y = symbol.height / 2
-        angle = radians(symbol.rotation)
-        dx = local_x - center_x
-        dy = local_y - center_y
-        rotated_x = center_x + dx * cos(angle) - dy * sin(angle)
-        rotated_y = center_y + dx * sin(angle) + dy * cos(angle)
-        return Point(x=symbol.position.x + rotated_x, y=symbol.position.y + rotated_y)
+        return symbol_port_point(symbol, port, definition)
 
     @staticmethod
     def _connectable_geometry_changed(current: Element, updated: Element) -> bool:

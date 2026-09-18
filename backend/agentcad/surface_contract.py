@@ -68,6 +68,15 @@ DRAFT_EDIT_EXCEPTIONS: dict[str, str] = {
         "elements at an expected revision. It cannot add, remove or reconnect "
         "engineering objects and is reversible with undo."
     ),
+    "apply_deterministic_drafting": (
+        "The M3 drafting pipeline: it recomputes a preview and applies it inside the "
+        "same governed transaction, so it inherits the revision check, the audit record "
+        "and the undo history. The engine itself is preview-only and provably cannot "
+        "touch connectivity: it emits update operations only, refuses to edit a locked "
+        "or out-of-scope element, and reports DRAFT_TOPOLOGY_CHANGED / "
+        "DRAFT_OUT_OF_SCOPE_CHANGE / DRAFT_LOCKED_ELEMENT_MOVED as blockers if a "
+        "result ever violated that (see tests/test_drafting_engine.py)."
+    ),
 }
 
 
@@ -184,6 +193,23 @@ HTTP_SURFACE_BINDINGS: tuple[SurfaceBinding, ...] = (
         "read",
         tool="preview_auto_layout",
         notes="Preview only; the write path is the MCP/REST apply tool.",
+    ),
+    _http(
+        "POST",
+        "/api/v2/documents/{document_id}/drafting/report",
+        "read",
+        tool="get_drafting_report",
+        notes="Drafting analysis of one drawing state; no write and no proposed edit.",
+    ),
+    _http(
+        "POST",
+        "/api/v2/documents/{document_id}/drafting/preview",
+        "read",
+        tool="preview_deterministic_drafting",
+        notes=(
+            "Returns the reproducible transaction; the write path is the ordinary "
+            "governed transaction channel, so drafting has no private write path."
+        ),
     ),
     _http(
         "POST",
@@ -357,7 +383,7 @@ def mcp(
     )
 
 
-#: Every tool exposed by the MCP server (32 tools; kept in lockstep by test).
+#: Every tool exposed by the MCP server (kept in lockstep with the live server by test).
 MCP_SURFACE_BINDINGS: tuple[SurfaceBinding, ...] = (
     mcp("get_server_info", "read"),
     mcp("get_tool_registry", "read"),
@@ -379,6 +405,14 @@ MCP_SURFACE_BINDINGS: tuple[SurfaceBinding, ...] = (
     ),
     mcp("preview_auto_layout", "read", tool="preview_auto_layout"),
     mcp("apply_auto_layout", "engineering_write", tool="apply_auto_layout", audited=True),
+    mcp("get_drafting_report", "read", tool="get_drafting_report"),
+    mcp("preview_deterministic_drafting", "read", tool="preview_deterministic_drafting"),
+    mcp(
+        "apply_deterministic_drafting",
+        "engineering_write",
+        tool="apply_deterministic_drafting",
+        audited=True,
+    ),
     mcp(
         "apply_transaction_v2",
         "engineering_write",

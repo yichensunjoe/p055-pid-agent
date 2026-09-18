@@ -10,6 +10,7 @@ from .agent_semantic_models import (
     CompiledSemanticTransaction,
     SemanticTransaction,
 )
+from .drafting_models import DraftingPreview, DraftingReport, DraftingRequest
 from .engineering_ir import EngineeringGraph, TraceResult
 from .layout_models import AutoLayoutPreview, AutoLayoutRequest
 from .models import Document, StrictModel, TransactionRequest
@@ -40,6 +41,17 @@ class SemanticTransactionToolInput(DocumentToolInput):
 
 class AutoLayoutToolInput(DocumentToolInput):
     options: AutoLayoutRequest
+
+
+class DraftingToolInput(DocumentToolInput):
+    """Input for the deterministic drafting surfaces.
+
+    ``request`` carries the whole contract (scope, locks, direction, policy), so a
+    caller can describe a regional repair, a route-only tidy-up or a full relayout
+    through one stable type.
+    """
+
+    request: DraftingRequest = Field(default_factory=DraftingRequest)
 
 
 class RevisionToolInput(DocumentToolInput):
@@ -512,6 +524,58 @@ def get_default_tool_registry() -> ToolRegistry:
                 audit_event="tool.apply_auto_layout",
                 surfaces=["mcp", "rest", "agent"],
                 tags=["layout", "routing", "draft-edit"],
+            ),
+            ToolDefinition(
+                name="get_drafting_report",
+                description=(
+                    "Measure one drawing against the drafting and drawing rules: "
+                    "addressable ports, unbridged crossings, junction degrees, collisions, "
+                    "reserved-space intrusions, lock provenance and the deterministic "
+                    "pass/fail gate. Read-only; nothing is written and no edit is proposed."
+                ),
+                input_schema=DraftingToolInput.model_json_schema(),
+                output_schema=DraftingReport.model_json_schema(),
+                permission="allow",
+                risk="read",
+                audit_event="tool.get_drafting_report",
+                surfaces=["mcp", "rest", "agent"],
+                tags=["inspect", "drafting", "quality", "gate", "cli"],
+            ),
+            ToolDefinition(
+                name="preview_deterministic_drafting",
+                description=(
+                    "Preview a deterministic drafting run (region relayout, port-aware "
+                    "routing, annotation placement, crossing bridges, collision "
+                    "relaxation) without writing: same content always produces the same "
+                    "transaction digest. Locked geometry is never moved and a stage that "
+                    "would worsen any hard drawing metric is rolled back."
+                ),
+                input_schema=DraftingToolInput.model_json_schema(),
+                output_schema=DraftingPreview.model_json_schema(),
+                permission="allow",
+                risk="draft_edit",
+                preview_supported=True,
+                idempotency="idempotent",
+                audit_event="tool.preview_deterministic_drafting",
+                surfaces=["mcp", "rest", "agent"],
+                tags=["drafting", "layout", "routing", "annotation", "preview", "cli"],
+            ),
+            ToolDefinition(
+                name="apply_deterministic_drafting",
+                description=(
+                    "Recompute and atomically apply a deterministic drafting run at an "
+                    "expected revision through the governed write path."
+                ),
+                input_schema=DraftingToolInput.model_json_schema(),
+                output_schema=_object_schema("Drafting preview and apply result."),
+                permission="allow",
+                risk="draft_edit",
+                has_side_effect=True,
+                preview_supported=True,
+                idempotency="depends_on_revision",
+                audit_event="tool.apply_deterministic_drafting",
+                surfaces=["mcp", "agent"],
+                tags=["drafting", "layout", "draft-edit"],
             ),
             ToolDefinition(
                 name="undo_document",

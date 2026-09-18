@@ -8,7 +8,14 @@ from math import hypot
 from typing import Literal
 
 from .diagram_quality import port_outward_normal
-from .layout_models import AutoLayoutMetrics, AutoLayoutPreview, AutoLayoutRequest, LayoutBounds
+from .layout_models import (
+    AutoLayoutMetrics,
+    AutoLayoutPreview,
+    AutoLayoutRequest,
+    LayoutBounds,
+    declared_lock_regions,
+    element_is_locked,
+)
 from .models import (
     ConnectorElement,
     Document,
@@ -112,6 +119,7 @@ class AutoLayoutEngine:
             system.id for system in document.systems if request.include_hidden or system.visible
         }
         locked_layer_ids = {layer.id for layer in document.layers if layer.locked}
+        locked_ids = self._locked_element_ids(document, request)
         element_map = {element.id: element for element in document.elements}
         connectable_ids = {
             element.id
@@ -136,7 +144,7 @@ class AutoLayoutEngine:
             and element.layer_id in visible_layer_ids
             and element.system_id in visible_system_ids
         ]
-        nodes = self._make_nodes(document, scope_ids, locked_layer_ids)
+        nodes = self._make_nodes(document, scope_ids, locked_layer_ids, locked_ids)
         components = self._components(scope_ids, graph_connectors)
         positions = (
             {
@@ -210,7 +218,7 @@ class AutoLayoutEngine:
                 )
                 if connector is None:
                     continue
-                if connector.layer_id in locked_layer_ids:
+                if connector.layer_id in locked_layer_ids or connector.id in locked_ids:
                     if connector.id not in skipped_locked:
                         skipped_locked.append(connector.id)
                     continue
@@ -299,6 +307,7 @@ class AutoLayoutEngine:
             rerouted_connector_ids=sorted(rerouted),
             moved_annotation_ids=sorted(moved_annotations),
             skipped_locked_element_ids=sorted(set(skipped_locked)),
+            locked_element_ids=sorted(locked_ids),
             warnings=warnings,
             metrics=metrics,
         )
@@ -313,6 +322,45 @@ class AutoLayoutEngine:
             cls._same(a.x, b.x) and cls._same(a.y, b.y)
             for a, b in zip(left, right, strict=False)
         )
+
+    def _locked_element_ids(
+        self,
+        document: Document,
+        request: AutoLayoutRequest,
+    ) -> set[str]:
+        """Resolve every source of manual lock into one set of frozen element ids.
+
+        Three sources, deliberately kept separate but honoured together:
+
+        1. ``request.locked_element_ids`` — a caller scoping one layout run.
+        2. ``element.metadata['drafting_lock']`` — a human pin made in the editor,
+           stored with the drawing so no caller (or model) has to remember it.
+        3. elements fully inside a declared ``kind='lock'`` region — "this area was
+           confirmed, arrange around it" (Charter §15 manual lock).
+
+        Locked elements are never moved, never re-routed, and are used as fixed
+        obstacles/anchors by the placement pass, so an automatic layout cannot quietly
+        destroy human-reviewed work while still tidying anything around it.
+        """
+
+        locked: set[str] = {
+            element_id for element_id in request.locked_element_ids if element_id
+        }
+        for element in document.elements:
+            if element_is_locked(element):
+                locked.add(element.id)
+        regions = declared_lock_regions(document)
+        if regions:
+            for element in document.elements:
+                rect = self._element_rect(element)
+                if rect is None:
+                    continue
+                if any(
+                    region.contains_box(rect.x1, rect.y1, rect.x2, rect.y2)
+                    for region in regions
+                ):
+                    locked.add(element.id)
+        return locked
 
     @staticmethod
     def _resolve_scope(
@@ -337,6 +385,7 @@ class AutoLayoutEngine:
         document: Document,
         scope_ids: set[str],
         locked_layer_ids: set[str],
+        locked_ids: set[str] | None = None,
     ) -> dict[str, LayoutNode]:
         result: dict[str, LayoutNode] = {}
         for element in document.elements:
@@ -354,7 +403,8 @@ class AutoLayoutEngine:
                 height=height,
                 x=x,
                 y=y,
-                locked=element.layer_id in locked_layer_ids,
+                locked=element.layer_id in locked_layer_ids
+                or (locked_ids is not None and element.id in locked_ids),
             )
         return result
 

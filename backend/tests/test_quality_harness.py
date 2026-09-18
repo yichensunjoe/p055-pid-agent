@@ -11,8 +11,8 @@ def test_offline_quality_harness_passes_without_provider():
     report = run_quality_harness(SymbolRegistry())
 
     assert report.passed is True
-    assert report.total_cases == 5
-    assert report.passed_cases == 5
+    assert report.total_cases == 6
+    assert report.passed_cases == 6
     assert report.failed_cases == 0
     assert [case.name for case in report.cases] == [
         "symbol_catalog_integrity",
@@ -20,6 +20,7 @@ def test_offline_quality_harness_passes_without_provider():
         "semantic_agent_output_contract",
         "drafting_quality_contract",
         "engineering_graph_contract",
+        "deterministic_drafting_contract",
     ]
     graph_case = report.cases[4]
     # The M2 case must actually derive engineering objects, not just run.
@@ -29,6 +30,18 @@ def test_offline_quality_harness_passes_without_provider():
     semantic = report.cases[2]
     assert semantic.details["junction_degree"] == 3
     assert semantic.details["rejected_issue_codes"] == ["unknown_port"]
+    drafting_engine = report.cases[5]
+    # The M3 case must really move geometry, honour a lock and improve the drawing.
+    assert drafting_engine.details["operation_count"] >= 1
+    assert drafting_engine.details["transaction_digest"]
+    assert drafting_engine.details["moved_element_ids"]
+    assert "draft_locked" in drafting_engine.details["locked_element_ids"]
+    assert drafting_engine.details["regressions"] == []
+    assert drafting_engine.details["score_after"] > drafting_engine.details["score_before"]
+    assert (
+        drafting_engine.details["reserved_region_intrusions_after"]
+        < drafting_engine.details["reserved_region_intrusions_before"]
+    )
 
 
 def test_catalog_harness_accepts_a_valid_dynamic_symbol(tmp_path):

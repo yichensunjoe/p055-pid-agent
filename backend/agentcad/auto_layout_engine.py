@@ -34,11 +34,18 @@ class AutoLayoutEngine(BaseAutoLayoutEngine):
             }
         )
 
-    def _make_nodes(self, document, scope_ids, locked_layer_ids):
-        nodes = super()._make_nodes(document, scope_ids, locked_layer_ids)
+    def _make_nodes(self, document, scope_ids, locked_layer_ids, locked_ids=None):
+        nodes = super()._make_nodes(document, scope_ids, locked_layer_ids, locked_ids)
         for element in document.elements:
-            if element.type != "connector" or element.layer_id not in locked_layer_ids:
+            if element.type != "connector":
                 continue
+            locked_connector = element.layer_id in locked_layer_ids or (
+                locked_ids is not None and element.id in locked_ids
+            )
+            if not locked_connector:
+                continue
+            # A frozen pipe fixes its own endpoints: moving either end would silently
+            # re-route it, so both bound elements are locked as anchors instead.
             for endpoint in (element.source, element.target):
                 if endpoint and endpoint.element_id in nodes:
                     nodes[endpoint.element_id].locked = True

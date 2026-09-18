@@ -184,6 +184,98 @@ def _run_project_index_command(args: argparse.Namespace) -> None:
     raise SystemExit(0 if not stale_after else 2)
 
 
+def _run_drafting_command(args: argparse.Namespace) -> None:
+    """Deterministic drafting from a terminal or a CI job (M3).
+
+    Read-only by design: ``report`` measures a drawing and ``preview`` returns the
+    reproducible transaction, but neither writes. ``--apply`` is deliberately absent —
+    a drawing is only changed through the governed transaction channel, so a drafting
+    run can never bypass the revision check, the permission gate or the audit record.
+
+    Exit code 2 means the drafting gate failed, so this drops straight into CI as a
+    drawing-quality gate.
+    """
+    from .drafting_engine import DraftingEngine
+    from .drafting_models import DraftingPolicy, DraftingRequest
+    from .layout_models import RegionBox
+    from .service import DocumentService
+    from .store import SQLiteDocumentStore
+    from .symbols import SymbolRegistry
+
+    database = args.database or _default_database_path()
+    service = DocumentService(SQLiteDocumentStore(Path(database)), SymbolRegistry())
+    engine = DraftingEngine(service)
+    policy = DraftingPolicy(
+        target_score=args.target_score,
+        waived_codes=list(args.waive or []),
+    )
+    region = None
+    if args.region is not None:
+        x1, y1, x2, y2 = args.region
+        region = RegionBox(x1=x1, y1=y1, x2=x2, y2=y2, label=args.region_label or "")
+    request = DraftingRequest(
+        expected_revision=args.expected_revision,
+        region=region,
+        element_ids=list(args.element or []),
+        locked_element_ids=list(args.lock or []),
+        direction=args.direction,
+        relayout=not args.no_relayout,
+        reroute_connectors=not args.no_reroute,
+        place_annotations=not args.no_annotations,
+        bridge_crossings=not args.no_bridges,
+        resolve_collisions=not args.no_collisions,
+        policy=policy,
+    )
+    if args.drafting_command == "report":
+        report = engine.report(args.document_id, request)
+        payload = report.model_dump(mode="json", by_alias=True)
+        passed = report.gate.passed
+        if args.summary:
+            payload = {
+                "schema": payload["schema"],
+                "version": payload["version"],
+                "document_id": payload["document_id"],
+                "revision": payload["revision"],
+                "content_hash": payload["content_hash"],
+                "scope_kind": payload["scope_kind"],
+                "score": payload["score"],
+                "gate": payload["gate"],
+                "findings": payload["findings"],
+                "crossings": payload["crossings"],
+                "junctions": payload["junctions"],
+                "locks": payload["locks"],
+                "port_count": len(payload["ports"]),
+            }
+    else:
+        preview = engine.preview(args.document_id, request)
+        payload = preview.model_dump(mode="json", by_alias=True)
+        passed = preview.gate.passed and not preview.metrics.regressions
+        if args.summary:
+            payload = {
+                "document_id": payload["document_id"],
+                "current_revision": payload["current_revision"],
+                "settled": payload["settled"],
+                "score_before": payload["metrics"]["before"]["score"],
+                "score_after": payload["metrics"]["after"]["score"],
+                "improvements": payload["metrics"]["improvements"],
+                "regressions": payload["metrics"]["regressions"],
+                "gate": payload["gate"],
+                "operation_count": payload["reproducibility"]["operation_count"],
+                "transaction_digest": payload["reproducibility"]["transaction_digest"],
+                "moved_element_ids": payload["moved_element_ids"],
+                "rerouted_connector_ids": payload["rerouted_connector_ids"],
+                "bridged_connector_ids": payload["bridged_connector_ids"],
+                "locked_element_ids": payload["locked_element_ids"],
+                "warnings": payload["warnings"],
+                "findings": payload["findings"],
+            }
+    text = _json_payload(payload)
+    if args.output:
+        args.output.write_text(text + "\n", encoding="utf-8")
+    print(text)
+    raise SystemExit(0 if passed else 2)
+
+
 def _run_database_command(args: argparse.Namespace) -> None:
     from .database_recovery import (
         DatabaseRecoveryError,
@@ -400,6 +492,75 @@ def main(argv: list[str] | None = None) -> None:
         "--output", type=Path, default=None, help="Optional JSON report path"
     )
 
+    drafting_parser = subparsers.add_parser(
+        "drafting",
+        help=(
+            "Deterministic drafting (M3): measure a drawing or preview a reproducible "
+            "layout/route/annotation repair without writing"
+        ),
+    )
+    _add_database_argument(drafting_parser)
+    drafting_subparsers = drafting_parser.add_subparsers(dest="drafting_command", required=True)
+    for name, help_text in (
+        ("report", "Measure ports, crossings, junctions, collisions and the gate"),
+        ("preview", "Preview a deterministic drafting transaction without writing"),
+    ):
+        sub = drafting_subparsers.add_parser(name, help=help_text)
+        sub.add_argument("document_id")
+        sub.add_argument(
+            "--expected-revision",
+            type=int,
+            default=None,
+            help="Refuse to run unless the document is at this revision",
+        )
+        sub.add_argument(
+            "--region",
+            type=float,
+            nargs=4,
+            metavar=("X1", "Y1", "X2", "Y2"),
+            default=None,
+            help="Region relayout scope",
+        )
+        sub.add_argument("--region-label", default=None, help="Label recorded for the region")
+        sub.add_argument(
+            "--element",
+            action="append",
+            default=[],
+            help="Explicit scope element id (repeatable)",
+        )
+        sub.add_argument(
+            "--lock",
+            action="append",
+            default=[],
+            help="Freeze one element for this run (repeatable)",
+        )
+        sub.add_argument(
+            "--direction",
+            choices=["horizontal", "vertical"],
+            default="horizontal",
+        )
+        sub.add_argument("--no-relayout", action="store_true", help="Route-only tidy-up")
+        sub.add_argument("--no-reroute", action="store_true")
+        sub.add_argument("--no-annotations", action="store_true")
+        sub.add_argument("--no-bridges", action="store_true")
+        sub.add_argument("--no-collisions", action="store_true")
+        sub.add_argument("--target-score", type=float, default=95, help="Gate score target")
+        sub.add_argument(
+            "--waive",
+            action="append",
+            default=[],
+            help=(
+                "Waive one finding code (repeatable). Waived findings are still "
+                "reported, marked as waived; only the gate stops blocking on them."
+            ),
+        )
+        sub.add_argument(
+            "--summary",
+            action="store_true",
+            help="Print the gate and diffs only, without the full object lists",
+        )
+        sub.add_argument("--output", type=Path, default=None, help="Optional JSON report path")
+
     args = parser.parse_args(argv)
     if args.command == "serve":
         import uvicorn
@@ -441,6 +602,8 @@ def main(argv: list[str] | None = None) -> None:
         _run_engineering_find_command(args)
     elif args.command == "project-index":
         _run_project_index_command(args)
+    elif args.command == "drafting":
+        _run_drafting_command(args)
     elif args.command == "quality-harness":
         from .quality_harness import run_quality_harness, symbol_load_failure_report
         from .symbols import SymbolCatalogLoadError, SymbolRegistry

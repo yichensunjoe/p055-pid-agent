@@ -11,6 +11,8 @@ from .audit import request_audit_context
 from .auto_layout_engine import AutoLayoutEngine
 from .config import Settings
 from .diagnostics import DiagnosticLogger
+from .drafting_engine import DraftingEngine
+from .drafting_models import DraftingRequest
 from .engineering_ir import build_engineering_graph
 from .harness import AgentHarnessService
 from .harness_models import (
@@ -137,6 +139,7 @@ def main() -> None:
     service = build_service(settings)
     semantic_compiler = SemanticTransactionCompiler(service)
     layout_engine = AutoLayoutEngine(service)
+    drafting_engine = DraftingEngine(service)
     project_index = ProjectIndexService(service.store, service.symbols)
     harness = AgentHarnessService(
         service=service,
@@ -457,6 +460,110 @@ def main() -> None:
         return {
             "applied": True,
             "preview": preview.model_dump(mode="json"),
+            "result": result,
+        }
+
+    @mcp.tool()
+    def get_drafting_report(
+        document_id: str,
+        request: DraftingRequest | None = None,
+    ) -> dict[str, Any]:
+        """Measure one drawing against the drafting rules without writing anything."""
+        report = drafting_engine.report(document_id, request or DraftingRequest())
+        diagnostics.emit(
+            "drafting.report.completed",
+            document_id=document_id,
+            revision=report.revision,
+            source="mcp",
+            scope_kind=report.scope_kind,
+            score=report.score,
+            gate_passed=report.gate.passed,
+            blocker_codes=sorted({finding.code for finding in report.gate.blockers}),
+            locked_element_ids=report.locks.locked_element_ids,
+        )
+        return report.model_dump(mode="json", by_alias=True)
+
+    @mcp.tool()
+    def preview_deterministic_drafting(
+        document_id: str,
+        request: DraftingRequest,
+    ) -> dict[str, Any]:
+        """Preview a reproducible deterministic drafting run without writing."""
+        preview = drafting_engine.preview(document_id, request)
+        diagnostics.emit(
+            "drafting.preview.completed",
+            document_id=document_id,
+            revision=preview.current_revision,
+            source="mcp",
+            operation_count=preview.reproducibility.operation_count,
+            settled=preview.settled,
+            moved_element_ids=preview.moved_element_ids,
+            rerouted_connector_ids=preview.rerouted_connector_ids,
+            locked_element_ids=preview.locked_element_ids,
+            score_before=preview.metrics.before.score,
+            score_after=preview.metrics.after.score,
+            regressions=preview.metrics.regressions,
+            gate_passed=preview.gate.passed,
+            transaction_digest=preview.reproducibility.transaction_digest,
+        )
+        return preview.model_dump(mode="json", by_alias=True)
+
+    @mcp.tool()
+    def apply_deterministic_drafting(
+        document_id: str,
+        request: DraftingRequest,
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Apply a deterministic drafting run through the Harness allow-policy and audit path."""
+        session = harness.ensure_session(
+            document_id,
+            session_id=session_id,
+            actor="mcp-agent",
+        )
+        authorized = harness.authorize(
+            session_id=session.id,
+            tool_name="apply_deterministic_drafting",
+            document_id=document_id,
+            intent={"request": request.model_dump(mode="json")},
+            base_revision=request.expected_revision,
+            metadata={"surface": "mcp"},
+        )
+        preview = drafting_engine.preview(document_id, request)
+        if preview.transaction is None:
+            harness.complete_tool_call(
+                authorized,
+                result_revision=preview.current_revision,
+                metadata={"applied": False},
+            )
+            harness.complete_session(
+                session.id,
+                end_revision=preview.current_revision,
+                status="completed",
+            )
+            return {"applied": False, "preview": preview.model_dump(mode="json", by_alias=True)}
+        try:
+            result = _apply_governed(
+                harness,
+                diagnostics,
+                document_id,
+                preview.transaction,
+                authorized=authorized,
+                metadata={
+                    "applied": True,
+                    "transaction_digest": preview.reproducibility.transaction_digest,
+                    "engine_version": preview.reproducibility.engine_version,
+                    "operation_count": preview.reproducibility.operation_count,
+                },
+            )
+        except Exception as exc:
+            harness.fail_tool_call(
+                authorized,
+                error_code=getattr(exc, "code", type(exc).__name__),
+            )
+            raise
+        return {
+            "applied": True,
+            "preview": preview.model_dump(mode="json", by_alias=True),
             "result": result,
         }
 

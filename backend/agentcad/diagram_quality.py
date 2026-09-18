@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from math import cos, radians, sin
 from typing import Any, Literal
@@ -516,7 +517,16 @@ def route_connector_points(
     document: Document,
     connector: ConnectorElement,
     registry: SymbolRegistry,
+    avoid_rects: Iterable[tuple[float, float, float, float]] | None = None,
 ) -> list[Point]:
+    """Route one connector, keeping it out of the given reserved rectangles.
+
+    ``avoid_rects`` are declared areas a route must not intrude into — reserved
+    drawing space such as a legend or title block (Charter §15). They are treated
+    exactly like an element obstacle: they penalise a candidate's score and they
+    contribute the lanes a detour can use, so a route is actually planned *around*
+    them rather than merely rejected afterwards.
+    """
     if connector.source is None or connector.target is None:
         return _simplify(connector.points)
     start = connector.source.point
@@ -555,6 +565,12 @@ def route_connector_points(
         for element in document.elements
         if element.id not in excluded and (rect := _element_rect(element)) is not None
     ]
+    obstacles.extend(
+        _Rect(float(x1), float(y1), float(x2), float(y2), "reserved").expanded(
+            max(8.0, grid / 2)
+        )
+        for x1, y1, x2, y2 in (avoid_rects or ())
+    )
     lane_margin = max(40.0, grid * 2)
     lanes_x = sorted(
         {

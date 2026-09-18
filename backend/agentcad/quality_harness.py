@@ -24,6 +24,7 @@ from .models import (
     StrictModel,
     SymbolDefinition,
     SymbolElement,
+    TextElement,
     TransactionRequest,
 )
 from .semantic_compiler_engine import SemanticTransactionCompiler
@@ -33,7 +34,9 @@ from .svg import render_svg
 from .symbols import SymbolCatalogLoadError, SymbolRegistry
 
 QUALITY_HARNESS_SCHEMA = "pid-agent.quality-harness"
-QUALITY_HARNESS_VERSION = 2
+#: Bumped whenever the case set changes: the report is a contract, and a harness that
+#: quietly grows a case is harder to compare than one that says so.
+QUALITY_HARNESS_VERSION = 3
 _IDENTIFIER = re.compile(r"^[a-z][a-z0-9_]*$")
 _SUPPORTED_SHAPES = {"line", "polyline", "rect", "circle", "path", "text"}
 _EPSILON = 1e-6
@@ -58,7 +61,7 @@ class QualityHarnessReport(StrictModel):
         default=QUALITY_HARNESS_SCHEMA,
         alias="schema",
     )
-    version: Literal[2] = QUALITY_HARNESS_VERSION
+    version: Literal[3] = QUALITY_HARNESS_VERSION
     passed: bool
     total_cases: int
     passed_cases: int
@@ -1187,6 +1190,292 @@ def _engineering_graph_case(symbols: SymbolRegistry) -> QualityHarnessCaseResult
     )
 
 
+def _text_element(
+    element_id: str,
+    x: float,
+    y: float,
+    text: str,
+    *,
+    parent_element_id: str | None = None,
+) -> TextElement:
+    return TextElement(
+        id=element_id,
+        position=Point(x=x, y=y),
+        text=text,
+        metadata={"parent_element_id": parent_element_id} if parent_element_id else {},
+    )
+
+
+def _connector_bindings(document: Document) -> dict[str, tuple]:
+    """Which port every connector end is bound to: the engineering connectivity."""
+
+    return {
+        element.id: (
+            (element.source.element_id, element.source.port_id) if element.source else None,
+            (element.target.element_id, element.target.port_id) if element.target else None,
+        )
+        for element in document.elements
+        if element.type == "connector"
+    }
+
+
+def _deterministic_drafting_case(symbols: SymbolRegistry) -> QualityHarnessCaseResult:
+    """Offline (model-free) golden contract for the M3 deterministic drafting engine.
+
+    Builds a deliberately messy drawing through the service layer (overlapping equipment,
+    a pointless pipe detour, a label sitting on a symbol, a dangling junction, a locked
+    element, a declared legend and two pipes that cross) and checks the promises the
+    engine makes: preview-only, reproducible, connectivity-preserving, lock-honouring,
+    scope-confined, monotone, and honest about what it cannot fix.
+    """
+
+    from .drafting_engine import DraftingEngine
+    from .drafting_geometry import hard_regressions, resolve_ports
+    from .drafting_models import DraftingRequest
+    from .layout_models import LayoutRegion
+
+    through, inlet_id, outlet_id = _through_symbol(symbols)
+    with TemporaryDirectory(prefix="pid-agent-quality-drafting-engine-") as directory:
+        service = DocumentService(
+            SQLiteDocumentStore(Path(directory) / "drafting_engine.db"),
+            symbols,
+        )
+        document = service.create_document(
+            CreateDocumentRequest(
+                name="Offline deterministic drafting harness",
+                metadata={
+                    "layout_regions": [
+                        LayoutRegion(
+                            kind="legend",
+                            x1=200,
+                            y1=296,
+                            x2=420,
+                            y2=420,
+                            label="legend",
+                        ).model_dump(mode="json")
+                    ]
+                },
+            ),
+            source="system",
+        )
+        source = _symbol_element("draft_source", through, 100, 300, "D-101")
+        source_out = service._symbol_port_point(source, outlet_id)
+        target = _symbol_element("draft_target", through, 520, 300, "D-102")
+        target_in = service._symbol_port_point(target, inlet_id)
+        overlapping = _symbol_element("draft_overlap", through, 150, 320, "D-103")
+        locked = _symbol_element("draft_locked", through, 100, 600, "D-104")
+        seeded = service.apply_transaction(
+            document.id,
+            TransactionRequest(
+                expected_revision=document.revision,
+                source="system",
+                label="Seed deterministic drafting harness",
+                operations=[
+                    AddElementOperation(element=source),
+                    AddElementOperation(element=target),
+                    AddElementOperation(element=overlapping),
+                    AddElementOperation(
+                        element=locked.model_copy(
+                            update={"metadata": {"drafting_lock": True}}
+                        )
+                    ),
+                    AddElementOperation(
+                        element=_text_element(
+                            "draft_label",
+                            source.position.x + 5,
+                            source.position.y + 40,
+                            "D-101",
+                            parent_element_id=source.id,
+                        )
+                    ),
+                ],
+            ),
+            source="system",
+        ).document
+        applied = service.apply_transaction(
+            seeded.id,
+            TransactionRequest(
+                expected_revision=seeded.revision,
+                source="system",
+                label="Add the process line",
+                operations=[
+                    AddElementOperation(
+                        element=ConnectorElement(
+                            id="draft_pipe",
+                            points=[
+                                source_out,
+                                Point(x=source_out.x + 40, y=source_out.y),
+                                Point(x=source_out.x + 40, y=620),
+                                Point(x=40, y=620),
+                                Point(x=40, y=target_in.y),
+                                target_in,
+                            ],
+                            source=ConnectorEndpoint(
+                                element_id=source.id,
+                                port_id=outlet_id,
+                                point=source_out,
+                            ),
+                            target=ConnectorEndpoint(
+                                element_id=target.id,
+                                port_id=inlet_id,
+                                point=target_in,
+                            ),
+                            routing="manual",
+                            process_tag="PL-HARNESS-3",
+                            medium="process",
+                            nominal_diameter="DN50",
+                            flow_direction="forward",
+                        )
+                    )
+                ],
+            ),
+            source="system",
+        ).document
+
+        engine = DraftingEngine(service)
+        request = DraftingRequest(relayout=False)
+        first = engine.preview(applied.id, request)
+        second = engine.preview(applied.id, request)
+        _require(
+            first.reproducibility.transaction_digest
+            == second.reproducibility.transaction_digest,
+            "DRAFTING_NOT_REPRODUCIBLE",
+            "two identical drafting runs produced different transaction digests",
+        )
+        _require(
+            service.get_document(applied.id).revision == applied.revision,
+            "DRAFTING_PREVIEW_WROTE",
+            "previewing a drafting run must not write the document",
+        )
+        _require(
+            first.metrics.regressions == []
+            and hard_regressions(first.metrics.before, first.metrics.after) == [],
+            "DRAFTING_METRIC_REGRESSION",
+            f"drafting made hard metrics worse: {first.metrics.regressions}",
+        )
+        _require(
+            first.metrics.after.score >= first.metrics.before.score,
+            "DRAFTING_SCORE_REGRESSION",
+            f"score fell {first.metrics.before.score} -> {first.metrics.after.score}",
+        )
+        _require(
+            "draft_locked" not in first.moved_element_ids
+            and all(
+                operation.element_id != "draft_locked"
+                for operation in (first.transaction.operations if first.transaction else [])
+            ),
+            "DRAFTING_MOVED_A_LOCKED_ELEMENT",
+            "a locked element was moved or edited by the drafting pass",
+        )
+        _require(
+            first.locks.metadata_element_ids == ["draft_locked"],
+            "DRAFTING_LOCK_PROVENANCE_MISSING",
+            f"unexpected lock provenance: {first.locks.model_dump(mode='json')}",
+        )
+        _require(
+            first.metrics.after.reserved_region_intrusions
+            < first.metrics.before.reserved_region_intrusions,
+            "DRAFTING_RESERVED_SPACE_NOT_RESPECTED",
+            "a pipe through the legend was not re-routed around it",
+        )
+
+        bindings_before = _connector_bindings(applied)
+        result = service.apply_transaction(applied.id, first.transaction).document
+        _require(
+            _connector_bindings(result) == bindings_before,
+            "DRAFTING_TOPOLOGY_CHANGED",
+            "the drafting pass re-bound a connector endpoint",
+        )
+        _require(
+            sorted(element.id for element in result.elements)
+            == sorted(element.id for element in applied.elements),
+            "DRAFTING_CHANGED_THE_ELEMENT_SET",
+            "drafting must not add or remove elements",
+        )
+        settled = engine.preview(result.id, request)
+        _require(
+            settled.transaction is None and settled.settled,
+            "DRAFTING_NOT_IDEMPOTENT",
+            "re-running drafting on its own result still produced changes",
+        )
+        ports = resolve_ports(applied, symbols)
+        _require(
+            bool(ports),
+            "DRAFTING_PORT_RESOLUTION_EMPTY",
+            "the drafting report resolved no addressable ports",
+        )
+        gate = engine.report(result.id, DraftingRequest())
+        _require(
+            gate.gate.checked_codes,
+            "DRAFTING_GATE_UNDECLARED",
+            "the drafting gate must declare the codes it checks",
+        )
+        # Declared residue. This fixture is deliberately defective in two ways drafting
+        # may not touch: one duplicated label (rewriting label text would change
+        # engineering content) and one locked element. So the contract is not "gate
+        # passes" -- it is "no geometry residue is left, and what is left the gate
+        # refuses to sign off".
+        residual = {
+            issue.code for issue in gate.gate.drawing_issues if issue.severity == "error"
+        }
+        _require(
+            not gate.gate.blockers
+            and residual <= {"DUPLICATE_LABEL", "QUALITY_SCORE_BELOW_TARGET"},
+            "DRAFTING_LEFT_GEOMETRY_UNFIXED",
+            f"drafting left geometry it should have repaired: {sorted(residual)}",
+        )
+        _require(
+            "DUPLICATE_LABEL" in residual and not gate.gate.passed,
+            "DRAFTING_RESIDUE_PASSED_THE_GATE",
+            "a duplicated label the engine must not rewrite must fail the gate, not be hidden",
+        )
+
+    return QualityHarnessCaseResult(
+        name="deterministic_drafting_contract",
+        status="passed",
+        summary=(
+            "drafting preview was reproducible, preview-only, lock-honouring, monotone "
+            "and topology-preserving; it routed around the legend, evicted the symbol "
+            "that sat on it, settled on re-run, and admitted the residue it must not fix"
+        ),
+        details={
+            "through_symbol_key": through.key,
+            "engine_version": first.reproducibility.engine_version,
+            "transaction_digest": first.reproducibility.transaction_digest,
+            "operation_count": first.reproducibility.operation_count,
+            "moved_element_ids": first.moved_element_ids,
+            "rerouted_connector_ids": first.rerouted_connector_ids,
+            "bridged_connector_ids": first.bridged_connector_ids,
+            "locked_element_ids": first.locked_element_ids,
+            "skipped_locked_element_ids": first.skipped_locked_element_ids,
+            "score_before": first.metrics.before.score,
+            "score_after": first.metrics.after.score,
+            "improvements": first.metrics.improvements,
+            "regressions": first.metrics.regressions,
+            "reserved_region_intrusions_before": first.metrics.before.reserved_region_intrusions,
+            "reserved_region_intrusions_after": first.metrics.after.reserved_region_intrusions,
+            "gate_passed": gate.gate.passed,
+            # Declared residue: whatever drafting could not legitimately fix stays visible
+            # here instead of being silently rounded off the report.
+            "residual_issue_codes": sorted(
+                {issue.code for issue in gate.gate.drawing_issues}
+            ),
+            "residual_blocker_codes": sorted(
+                {blocker.code for blocker in gate.gate.blockers}
+            ),
+            "residual_blocker_element_ids": sorted(
+                {
+                    element_id
+                    for blocker in gate.gate.blockers
+                    for element_id in blocker.element_ids
+                }
+            ),
+            "resolved_port_count": len(ports),
+            "element_count": len(result.elements),
+        },
+    )
+
+
 def _capture_case(
     name: str,
     runner: Callable[[SymbolRegistry], QualityHarnessCaseResult],
@@ -1224,6 +1513,11 @@ def run_quality_harness(symbols: SymbolRegistry | None = None) -> QualityHarness
         _capture_case("semantic_agent_output_contract", _semantic_agent_case, registry),
         _capture_case("drafting_quality_contract", _drafting_quality_case, registry),
         _capture_case("engineering_graph_contract", _engineering_graph_case, registry),
+        _capture_case(
+            "deterministic_drafting_contract",
+            _deterministic_drafting_case,
+            registry,
+        ),
     ]
     passed_cases = sum(case.status == "passed" for case in cases)
     return QualityHarnessReport(

@@ -206,6 +206,58 @@ def test_chunked_request_body_is_limited_before_handler_runs(tmp_path: Path):
     asyncio.run(run())
 
 
+def test_asgi_chunked_request_body_is_limited_before_app_runs(tmp_path: Path):
+    app_called = False
+    sent: list[dict[str, object]] = []
+
+    async def app(_scope, _receive, _send) -> None:
+        nonlocal app_called
+        app_called = True
+
+    boundary = RequestBoundary(app, settings(tmp_path, max_json_body_bytes=8))
+
+    async def run() -> None:
+        messages = iter(
+            [
+                {"type": "http.request", "body": b'{"name":', "more_body": True},
+                {"type": "http.request", "body": b'"too long"}', "more_body": False},
+            ]
+        )
+
+        async def receive() -> dict[str, object]:
+            return next(messages)
+
+        async def send(message: dict[str, object]) -> None:
+            sent.append(message)
+
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/v2/documents",
+            "raw_path": b"/api/v2/documents",
+            "query_string": b"",
+            "headers": [(b"content-type", b"application/json")],
+            "client": ("127.0.0.1", 1),
+            "server": ("test", 80),
+            "scheme": "http",
+            "http_version": "1.1",
+        }
+
+        await boundary(scope, receive, send)
+
+    asyncio.run(run())
+
+    assert app_called is False
+    start = next(message for message in sent if message["type"] == "http.response.start")
+    assert start["status"] == 413
+    body = b"".join(
+        message.get("body", b"")
+        for message in sent
+        if message["type"] == "http.response.body"
+    )
+    assert json.loads(body)["detail"]["error"] == "request_body_too_large"
+
+
 def test_python_client_sends_bearer_token_without_query_string():
     seen: list[httpx.Request] = []
 

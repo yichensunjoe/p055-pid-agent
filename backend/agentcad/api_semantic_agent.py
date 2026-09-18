@@ -16,7 +16,6 @@ from .agent_semantic_models import (
     CompiledSemanticTransaction,
     SemanticAgentApplyRequest,
     SemanticAgentPlanResult,
-    SemanticTransaction,
 )
 from .api_v2 import _apply_transaction_with_details
 from .diagnostics import DiagnosticLogger

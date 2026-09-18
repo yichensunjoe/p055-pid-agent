@@ -298,6 +298,7 @@ export type DiagramQualityReport = {
 };
 
 export type SemanticAgentPlanResult = {
+  session_id?: string;
   plan: SemanticAgentPlan;
   compiled_plan?: AgentPlan | null;
   assessment: AgentTransactionAssessment;

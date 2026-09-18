@@ -1,5 +1,17 @@
 # REUSE_AND_PITFALL_LOG — P055-PID-Agent
 
+## 2026-09-19 · 想接“官方 MCP”之前先看本机装了什么：AutoCAD 自带的无界面引擎比 MCP 更有用（P055-PID-Agent）
+
+- 场景：用户装了正式版 AutoCAD，要求“找个官方 MCP 接上”。调查结论：Autodesk 官方公开的 MCP server 是 **Revit / Model Data Explorer / Fusion Data / Product Help** 以及 ACC/Forma 平台侧服务，**没有 AutoCAD 桌面版官方 MCP**；社区那些 AutoCAD MCP 全是第三方，且依赖 Windows 的 COM/.NET/文件 IPC，在 macOS 上根本无法驱动 AutoCAD。即使可用也不该接：一个直接改 DWG 的外部服务会绕开本项目“唯一受治理写通道”的模型（Charter §7 / P0-2），等于开第二条无审计写路径。
+- 结论做法：不接写手，接**解码器**。实测发现 **AutoCAD for Mac 2027 自带 `AcCoreConsole`**（`AutoCAD <年份>.app/Contents/Helpers/AcCoreConsole.app/Contents/MacOS/AcCoreConsole`）——官方无界面核心引擎，支持 `/i 输入 /s 脚本`。用它 `DXFOUT` 出 DXF，再交给本项目的自研 DXF 读取器：同一张真实图纸得 **9757 个原生图元、0 个块定义缺失、3.7 s**，而 LibreDWG 的 `dwg2dxf` 只有 6523 个图元并丢掉 157 个块定义（正好是图上最显眼的 140 个阀门）。
+- 两个集成坑（都已写成测试）：① AutoCAD 命令行里**空行等于重复上一条命令**，脚本里的空行会让 `DXFOUT` 重新进入、把控制台卡在等输入上（进程不退出→超时）；② `accoreconsole` **不支持 `--version`**，探测版本只能读它启动横幅，而且读完必须把它杀掉（它没有脚本时永不退出）。
+- 关键经验：**“能不能调起来”跟“调起来有没有用”是两件事**。在接入任何外部 AI 桥（MCP/插件/插件市场工具）之前，先检查本机已安装的官方工具是否本身就提供无界面入口——这次官方引擎的保真度直接超过所有第三方解码路径，且不引入新的依赖与授权问题。
+
+## 2026-09-19 · 装了重型工具的开发机会悄悄改变测试结果（P055-PID-Agent）
+
+- 场景：把 AutoCAD 接为转换器候选后，三个“没有可用解码器时应该报 no_dwg_converter”的测试开始失败——不是因为逻辑错，而是这台机器现在真的装了 AutoCAD，于是“找不到解码器”这个前提不成立了。
+- 结论做法：把“声明式搜索位置”做成可按名字整组替换的 `EXECUTABLE_GLOBS`，所有相关 fixture 直接 `monkeypatch.setattr(cad_convert, "EXECUTABLE_GLOBS", {})`；并额外用“通配符找不到就是找不到”的测试固定住“不会伪造路径”。
+- 关键经验：**凡是以“环境里没有 X”为前提的测试，都必须显式关掉 X 的发现路径**，否则它的绿/红取决于开发机上装过什么——CI 与本地会给出不同的结论，而两边都以为自己在测同一件事。
 
 ## 2026-09-19 · “单调”必须写清楚跟谁比：参照点写错，一个阶段就能把上一阶段的成果吐回去（P055-PID-Agent）
 

@@ -60,7 +60,7 @@ A duplicate name is rejected by the registry.
 ## Current registered capabilities
 
 The registry contains only capabilities already backed by working code. Printed from the live
-catalog (`get_default_tool_registry().catalog()`, 30 tools at this commit):
+catalog (`get_default_tool_registry().catalog()`, 31 tools at this commit):
 
 | Capability | Permission | Risk |
 |---|---|---|
@@ -72,6 +72,7 @@ catalog (`get_default_tool_registry().catalog()`, 30 tools at this commit):
 | `preview_auto_layout`, `apply_auto_layout`, `apply_deterministic_drafting`, `apply_web_transaction` | `allow` | `draft_edit` |
 | `create_document`, `rename_document`, `move_document_folder`, `update_project_settings`, `rebuild_project_index`, `undo_document`, `redo_document` | `allow` | `draft_edit` |
 | `import_document_payload`, `import_project_payload` | `ask` | `draft_edit` |
+| `import_cad_drawing` | `allow` | `draft_edit` |
 | `apply_agent_transaction`, `apply_compiled_agent_transaction` | `ask` | `engineering_change` |
 | `delete_document` | `ask` | `critical_change` |
 
@@ -92,6 +93,18 @@ The deterministic drafting engine adds three capabilities. Note the deliberate s
 `surface_contract.py` registers both drafting REST routes as `read`. That is the machine-checkable
 statement that drafting has no private write path: a new unregistered write route fails
 `tests/test_surface_contract.py`.
+
+### CAD (DWG/DXF) import
+
+* `import_cad_drawing` — `allow` / `draft_edit`, audited. One tool covers REST, MCP and the CLI;
+  it **creates a new document** and cannot modify, re-version or delete an existing one.
+
+`surface_contract.py` registers `POST /api/v2/imports/cad` as an audited `project_metadata` write
+with that reason written down (`DRAFT_EDIT_EXCEPTIONS`), and `POST /api/v2/imports/cad/plan` as
+`read` — the dry run is machine-checkably incapable of writing. The capability probe
+(`GET /api/v2/imports/cad/capabilities`) is deliberately **not** in the contract, because the
+contract enumerates mutating methods and any declared read route becomes a staleness check; its
+read-only nature is asserted directly by `tests/test_cad_api.py::test_capabilities_route_writes_nothing`.
 
 ## Permission semantics in this slice
 
@@ -147,7 +160,7 @@ Existing MCP execution tools remain unchanged.
 
 ## Next step
 
-The registry now covers T0.1–T0.5, M2 and M3. The next Charter task is **Priority 2 — Validator
+The registry now covers T0.1–T0.5, M2, M3 and the CAD (DWG/DXF) import slice. The next Charter task is **Priority 2 — Validator
 Framework** (configurable, versionable rules with stable issue codes and project standard
 references; see `PROJECT_CHARTER.md` §33). Note the milestone numbering: Charter M3 is the
 Deterministic Drafting Engine (this slice, shipped), M4 is the Engineering Validation System;

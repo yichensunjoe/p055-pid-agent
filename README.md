@@ -51,6 +51,7 @@ WIP / Alpha — 核心文档引擎、浏览器编辑器、REST/Python/MCP 接入
 - 完整文档快照撤销和重做；
 - JSON、SVG、PNG、标准图幅 PDF 与工程 DXF 导出；
 - 版本化单文档 JSON 与原子项目包导入/导出，可在导入后继续编辑、撤销和重做；
+- **DWG / DXF 图纸导入**：把外部 CAD 图面复现成原生文档（几何、图层、文字、块出处），并在导入报告里逐条列出未能复现的内容；只复现图面，不推断工艺语义；
 - 从结构化图纸生成设备表、管线表、仪表索引和确定性工程规则检查；
 - 场景摘要包含符号端口、连接节点和管线 source/target。
 
@@ -298,6 +299,9 @@ GET    /api/v2/project/settings
 PUT    /api/v2/project/settings
 GET    /api/v2/project/export.json
 POST   /api/v2/imports/project-package
+GET    /api/v2/imports/cad/capabilities
+POST   /api/v2/imports/cad/plan
+POST   /api/v2/imports/cad
 GET    /api/v2/documents/{document_id}/export.svg
 GET    /api/v2/documents/{document_id}/export.png
 GET    /api/v2/documents/{document_id}/print-preview.svg
@@ -328,7 +332,7 @@ GET    /api/v2/agent/tool-schema
 
 JSON 格式、冲突策略、原子失败语义、浏览器操作和 Python Client 示例见 [`docs/project-json-import.md`](docs/project-json-import.md)。
 
-PDF 图幅、分页、标题栏、预览和 Python Client 用法见 [`docs/pdf-print-export.md`](docs/pdf-print-export.md)。DXF 图层、单位、坐标、XDATA 和 CAD 交换说明见 [`docs/dxf-export.md`](docs/dxf-export.md)。设备表、管线表、仪表索引、规则代码和 CSV/Python Client 用法见 [`docs/engineering-reports.md`](docs/engineering-reports.md)。工程对象、管线聚合、跨图连接、工程索引新鲜度和 tracing 见 [`docs/engineering-semantic-graph.md`](docs/engineering-semantic-graph.md)。确定性整理（layout / routing / collision / annotation / 区域修复 / 质量门禁）见 [`docs/deterministic-drafting.md`](docs/deterministic-drafting.md)。变更归因、哈希链、证据包和审批绑定见 [`docs/audit-and-provenance.md`](docs/audit-and-provenance.md)。
+PDF 图幅、分页、标题栏、预览和 Python Client 用法见 [`docs/pdf-print-export.md`](docs/pdf-print-export.md)。DXF 图层、单位、坐标、XDATA 和 CAD 交换说明见 [`docs/dxf-export.md`](docs/dxf-export.md)。设备表、管线表、仪表索引、规则代码和 CSV/Python Client 用法见 [`docs/engineering-reports.md`](docs/engineering-reports.md)。工程对象、管线聚合、跨图连接、工程索引新鲜度和 tracing 见 [`docs/engineering-semantic-graph.md`](docs/engineering-semantic-graph.md)。DWG/DXF 导入路线、保真度边界、报告错误码与许可边界见 [`docs/cad-import.md`](docs/cad-import.md)。确定性整理（layout / routing / collision / annotation / 区域修复 / 质量门禁）见 [`docs/deterministic-drafting.md`](docs/deterministic-drafting.md)。变更归因、哈希链、证据包和审批绑定见 [`docs/audit-and-provenance.md`](docs/audit-and-provenance.md)。
 
 `/api/v1` 主要旧端点仍由新文档引擎提供兼容。
 

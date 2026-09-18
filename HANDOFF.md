@@ -2,7 +2,31 @@
 
 > 交接文档：每次开新会话先读本文件。更新规则见 `AGENTS.md`「HANDOFF 交接规则」。
 
-## 当前状态（2026-09-19，最新轮次：M3 —— Deterministic Drafting Engine，含验收后单调性窄补丁）
+## 当前状态（2026-09-19，最新轮次：DWG/DXF 图纸导入 —— 用户直接要求的功能切片）
+
+- **里程碑口径（先看这条）**：**M3 已由外部架构验收正式签字**（accepted HEAD `d5c1fa0`，功能基线 `b47f197`）。本轮**不是 M4**：`M4 — Engineering Validation System`（§48 / Priority 2 Validator Framework）**未开始也未经验收**，不得因为本切片动工。本切片是用户直接要求的产品能力——把外部 CAD 图纸接进项目（Charter §14 图纸接入），按实现优先级单独交付，不改变 milestone 编号。
+- **本轮交付（DWG/DXF 导入，`docs/cad-import.md`）**：
+  1. **自研读取层，零运行时依赖**：`cad_dxf.py`（group-code DXF 读取器：块展开、bulge、镜像/嵌套/阵列插入、HATCH、SOLID、MTEXT、图层/颜色/线型、编码页）与 `cad_dwg.py`（LibreDWG 对象流展开）。`ezdxf` 仍是**仅供测试**的交叉校验依赖，运行时不引入。
+  2. **转换器适配层**（`cad_convert.py`）：只以 **subprocess** 调用已安装的外部工具，不链接、不 vendor；每条候选都带 `evidence`（`verified`/`unverified`）与失败尝试记录。发现顺序按实测保真度：**AutoCAD Core Console → LibreDWG 对象流 → ODA → LibreDWG DXF**。
+  3. **落地走唯一受治理写通道**：导入创建**一个新文档**，图层/图元按 `chunk_size` 分批走 `POST /documents/{id}/transactions`，因此 revision 校验、历史、语义 diff、审计、undo 全部继承；**不能修改/重新版本化/删除任何既有文档**（写进 `surface_contract.DRAFT_EDIT_EXCEPTIONS` 的理由里）。文档 metadata 记录 `cad_import`（文件名、格式、SHA-256、转换器、帧、统计）。
+  4. **导入报告是唯一诚实凭据**：源指纹、解码器与完整命令行、各类图元计数、图层、源/导入范围、画布、**逐条“未能复现”错误码与数量**、事务/revision/耗时、警告。
+  5. **接口面**：REST `GET /imports/cad/capabilities`（只读）、`POST /imports/cad/plan`（dry run，登记为 **read**）、`POST /imports/cad`（写，tool `import_cad_drawing`，audited）；MCP `import_cad_drawing`；CLI `pid-agent import-cad`；前端左侧「导入 DWG/DXF」「仅解析图纸」+ 只读导入报告面板。
+  6. **不造工程语义**：符号只留 `dwg_block` 块名元数据，不猜 `gate_valve`/`ball_valve` 之类（P0）。导入结果是**几何复现**，不是设备/管线图。
+- **真实图纸实测（用户提供的 `气路系统总图.dwg`，917 KB / AC1032 / 9283 实体）**：三条路线用**同一个**读取器解析对齐：
+
+  | 路线 | 原生图元 | 丢失块定义 | 耗时 |
+  |---|---|---|---|
+  | **AutoCAD Core Console → DXF**（官方引擎） | **9757** | **0** | **3.7 s** |
+  | LibreDWG `dwgread -O JSON` 对象流 | 9242 | 0 | — |
+  | LibreDWG `dwg2dxf` → DXF | 6523 | **157** | — |
+
+  157 个丢失块定义就是真实图纸上最显眼的 140 个阀门（`PDS2D-6Q1C15`）与增压泵/止回阀/风机（动态块在 LibreDWG 的 DXF 写出器里是空的）。**AutoCAD 2027 for Mac 自带无界面引擎** `AcCoreConsole`（`AutoCAD 2027.app/Contents/Helpers/AcCoreConsole.app/Contents/MacOS/AcCoreConsole`），本轮已接入并测通。
+- **关于“官方 MCP”（用户直接问过）**：Autodesk 官方公开的 MCP server 是 **Revit / Model Data Explorer / Fusion Data / Product Help** 与 ACC/Forma 平台侧服务，**没有 AutoCAD 桌面版官方 MCP**；市面上的 AutoCAD MCP 都是第三方且依赖 Windows 的 COM/.NET/文件 IPC，在 macOS 上无法驱动 AutoCAD。而且即使可用，**也不该接**：本项目所有写入必须走唯一受治理通道（Charter §7 / P0-2），一个直接改 DWG 的外部 MCP 会引入第二条无审计写路径。正确接法是本轮的实现——把 AutoCAD 当**解码器/旁证**（`accoreconsole` + `DXFOUT`），而不是写手。
+- **本切片验证（本地）**：Ruff ✓（全仓库 `All checks passed`）；pytest **580 passed**（M3 基线 437，本切片 +143，其中 CAD 专项 142）；offline quality harness **7/7**（新增 `cad_import_contract`）；前端 `npm test` **134 passed**（M3 基线 117，+17）、`npm run build` ✓；Playwright 本地全量 **48 passed / 3 failed / 1 skipped**，3 个失败与 M3 基线逐条相同（`flow-runtime` 重命名定位 + `locked element badges` / `connector route anchors` 两个视觉快照）；新增 `cad-import.spec.ts` 3 通过 1 条件跳过（本机装了 AutoCAD，缺解码器那条路径按能力探测跳过）。
+- **本切片已知边界（不藏）**：① `issues` 里明确记账，不假装做到：图案填充跳过、样条跳过、布局空间跳过、旋转文字只保锚点、填充以多边形表达（agentcad 无填充图元）、弧/椭圆采样为折线（`curve_segments` 可调）；② 符号语义映射表仍需人工确认；③ 大图勿整图跑整理引擎（M3 已知债务）。
+- **工程债/待办**：`.freebuff/` 已加入 `.gitignore`（本地临时工作区：运行文档、提交信息草稿、一次性复现脚本，均非产品代码）。
+
+## 上一轮状态（M3 —— Deterministic Drafting Engine，含验收后单调性窄补丁）
 
 - **里程碑口径（先看这条）**：Charter 的长期 milestone 是 `M0 Structured Editor → M1 Tool Harness → M2 Engineering Semantic Graph → M3 Deterministic Drafting Engine → M4 Engineering Validation System → M5 Agent Self-Repair …`。**M2 已由外部架构验收正式签字，accepted baseline = `49e3e14`**；本轮做的是 **M3**。`Priority 2 Validator Framework` 仍是**实现优先级**，不得改口称为 M3，也不得在 M2 与 M3 之间新造阶段；`Priority 3 Deterministic Drafting`（§34）与 `M3`（§48）是同一件事的两种编号。**M3 完成即停止开发，未经外部验收不得进入 M4。**
 - **M3 本轮交付（Deterministic Drafting Engine）**：

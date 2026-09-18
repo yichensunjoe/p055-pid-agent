@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, BinaryIO
 from urllib.parse import quote
 
-CURRENT_SCHEMA_VERSION = 2
+CURRENT_SCHEMA_VERSION = 3
 BACKUP_FORMAT = "pid-agent.sqlite-backup"
 BACKUP_VERSION = 1
 BACKUP_DATABASE_MEMBER = "database.sqlite3"
@@ -559,7 +559,86 @@ def _migration_2(connection: sqlite3.Connection) -> None:
         )
 
 
-_MIGRATIONS = {1: _migration_1, 2: _migration_2}
+def _migration_3(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS agent_sessions (
+            id TEXT PRIMARY KEY,
+            document_id TEXT NOT NULL,
+            actor TEXT NOT NULL,
+            project_id TEXT,
+            provider TEXT NOT NULL DEFAULT '',
+            model TEXT NOT NULL DEFAULT '',
+            start_revision INTEGER NOT NULL,
+            end_revision INTEGER,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE
+        )
+        """
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_sessions_document_created "
+        "ON agent_sessions(document_id, created_at DESC)"
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS agent_approvals (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            tool_name TEXT NOT NULL,
+            document_id TEXT NOT NULL,
+            intent_hash TEXT NOT NULL,
+            status TEXT NOT NULL,
+            requested_by TEXT NOT NULL,
+            resolved_by TEXT,
+            reason TEXT NOT NULL DEFAULT '',
+            note TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            resolved_at TEXT,
+            consumed_at TEXT,
+            FOREIGN KEY(session_id) REFERENCES agent_sessions(id) ON DELETE CASCADE,
+            FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE
+        )
+        """
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_approvals_session_created "
+        "ON agent_approvals(session_id, created_at ASC)"
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS agent_tool_calls (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            tool_name TEXT NOT NULL,
+            document_id TEXT NOT NULL,
+            permission TEXT NOT NULL,
+            risk TEXT NOT NULL,
+            approval_id TEXT,
+            intent_hash TEXT NOT NULL,
+            base_revision INTEGER,
+            result_revision INTEGER,
+            status TEXT NOT NULL,
+            error_code TEXT NOT NULL DEFAULT '',
+            started_at TEXT NOT NULL,
+            completed_at TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            FOREIGN KEY(session_id) REFERENCES agent_sessions(id) ON DELETE CASCADE,
+            FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE,
+            FOREIGN KEY(approval_id) REFERENCES agent_approvals(id) ON DELETE SET NULL
+        )
+        """
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_tool_calls_session_started "
+        "ON agent_tool_calls(session_id, started_at ASC)"
+    )
+
+
+_MIGRATIONS = {1: _migration_1, 2: _migration_2, 3: _migration_3}
 
 
 def _validate_supported_schema(connection: sqlite3.Connection) -> None:
@@ -578,7 +657,7 @@ def _validate_supported_schema(connection: sqlite3.Connection) -> None:
 
 
 def _validate_required_schema(connection: sqlite3.Connection) -> None:
-    required_tables = {"documents", "document_history", "project_settings", _METADATA_TABLE}
+    required_tables = {"documents", "document_history", "project_settings", "agent_sessions", "agent_approvals", "agent_tool_calls", _METADATA_TABLE}
     missing = required_tables - _table_names(connection)
     if missing:
         raise DatabaseMigrationError(f"database schema is missing tables: {sorted(missing)}")
@@ -605,6 +684,20 @@ def _validate_required_schema(connection: sqlite3.Connection) -> None:
             "details_json",
         },
         "project_settings": {"singleton_id", "data_json", "updated_at"},
+        "agent_sessions": {
+            "id", "document_id", "actor", "project_id", "provider", "model",
+            "start_revision", "end_revision", "status", "created_at", "updated_at", "metadata_json",
+        },
+        "agent_approvals": {
+            "id", "session_id", "tool_name", "document_id", "intent_hash", "status",
+            "requested_by", "resolved_by", "reason", "note", "created_at", "resolved_at",
+            "consumed_at",
+        },
+        "agent_tool_calls": {
+            "id", "session_id", "tool_name", "document_id", "permission", "risk", "approval_id",
+            "intent_hash", "base_revision", "result_revision", "status", "error_code",
+            "started_at", "completed_at", "metadata_json",
+        },
         _METADATA_TABLE: {"singleton_id", "instance_id", "created_at"},
     }
     for table, expected in required_columns.items():

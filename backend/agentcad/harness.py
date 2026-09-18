@@ -16,7 +16,7 @@ from .harness_models import (
     ToolApprovalResolveRequest,
     ToolCallRecord,
 )
-from .service import DocumentNotFoundError, DocumentService
+from .service import DocumentService
 from .store import SQLiteDocumentStore
 from .tool_registry import ToolDefinition, ToolRegistry, get_default_tool_registry
 

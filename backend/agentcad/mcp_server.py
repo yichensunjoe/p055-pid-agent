@@ -387,10 +387,25 @@ def main() -> None:
                 status="completed",
             )
             return {"applied": False, "preview": preview.model_dump(mode="json")}
+        try:
+            result = _apply_with_history(service, diagnostics, document_id, preview.transaction)
+        except Exception as exc:
+            harness.fail_tool_call(
+                authorized,
+                error_code=getattr(exc, "code", type(exc).__name__),
+            )
+            raise
+        revision = result["document"]["revision"]
+        harness.complete_tool_call(
+            authorized,
+            result_revision=revision,
+            metadata={"applied": True},
+        )
+        harness.complete_session(session.id, end_revision=revision, status="completed")
         return {
             "applied": True,
             "preview": preview.model_dump(mode="json"),
-            "result": _apply_with_history(service, diagnostics, document_id, preview.transaction),
+            "result": result,
         }
 
     @mcp.tool()

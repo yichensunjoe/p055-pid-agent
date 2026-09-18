@@ -328,7 +328,7 @@ GET    /api/v2/agent/tool-schema
 
 JSON 格式、冲突策略、原子失败语义、浏览器操作和 Python Client 示例见 [`docs/project-json-import.md`](docs/project-json-import.md)。
 
-PDF 图幅、分页、标题栏、预览和 Python Client 用法见 [`docs/pdf-print-export.md`](docs/pdf-print-export.md)。DXF 图层、单位、坐标、XDATA 和 CAD 交换说明见 [`docs/dxf-export.md`](docs/dxf-export.md)。设备表、管线表、仪表索引、规则代码和 CSV/Python Client 用法见 [`docs/engineering-reports.md`](docs/engineering-reports.md)。工程对象、管线聚合、跨图连接、工程索引新鲜度和 tracing 见 [`docs/engineering-semantic-graph.md`](docs/engineering-semantic-graph.md)。变更归因、哈希链、证据包和审批绑定见 [`docs/audit-and-provenance.md`](docs/audit-and-provenance.md)。
+PDF 图幅、分页、标题栏、预览和 Python Client 用法见 [`docs/pdf-print-export.md`](docs/pdf-print-export.md)。DXF 图层、单位、坐标、XDATA 和 CAD 交换说明见 [`docs/dxf-export.md`](docs/dxf-export.md)。设备表、管线表、仪表索引、规则代码和 CSV/Python Client 用法见 [`docs/engineering-reports.md`](docs/engineering-reports.md)。工程对象、管线聚合、跨图连接、工程索引新鲜度和 tracing 见 [`docs/engineering-semantic-graph.md`](docs/engineering-semantic-graph.md)。确定性整理（layout / routing / collision / annotation / 区域修复 / 质量门禁）见 [`docs/deterministic-drafting.md`](docs/deterministic-drafting.md)。变更归因、哈希链、证据包和审批绑定见 [`docs/audit-and-provenance.md`](docs/audit-and-provenance.md)。
 
 `/api/v1` 主要旧端点仍由新文档引擎提供兼容。
 
@@ -366,6 +366,7 @@ pytest -q
 ruff check backend
 pid-agent audit verify
 pid-agent project-index rebuild
+pid-agent drafting report <document_id> --summary
 cd frontend
 npm test
 npm run build
@@ -375,6 +376,8 @@ npm run test:e2e
 `pid-agent engineering-graph <document_id> --summary` 可在终端直接查看一张图纸的工程对象、拓扑规模与 findings，并在存在 error finding 时以退出码 2 结束；`pid-agent project-index rebuild|list|project` 同理（有非新鲜索引时退出码 2）；`pid-agent engineering-find <ref>` 可跨图纸定位一个工程对象（稳定 id `eq_…`、tag key `equipment:p-101`、tag `P-101` 或 element id 均可）。
 
 工程对象的**身份与 tag 是两件事**：`engineering_id`（`eq_…`/`vl_…`/`sg_…`/`ln_…`/`opc_conn_…`）不可变，改 tag 不会改变它；Signal 与 off-page 连接同样有各自的稳定身份。模型与不变量见 [`docs/engineering-semantic-graph.md`](docs/engineering-semantic-graph.md)。
+
+`pid-agent drafting report <document_id>` 测量一张图纸（端口、跨线、连接点、碰撞、保留区、锁定来源与质量门禁），`pid-agent drafting preview <document_id>` 返回**可复现**的整理事务而不写库；两者在门禁失败时以退出码 2 结束，可直接当作 CI 图面门禁。引擎是只读的：落地只能走普通受治理事务（网页/ MCP `apply_deterministic_drafting`）或人工确认。契约、流水线、锁定语义与明确边界见 [`docs/deterministic-drafting.md`](docs/deterministic-drafting.md)。
 
 Playwright 安装、headed 模式、视觉基线更新和 trace 查看方式见 [`docs/browser-e2e-visual-acceptance.md`](docs/browser-e2e-visual-acceptance.md)。
 无需模型或 API Key 的图例、拓扑和 Agent 事务验收见 [`docs/offline-quality-harness.md`](docs/offline-quality-harness.md)。

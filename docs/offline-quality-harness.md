@@ -38,7 +38,7 @@ Python traceback。错误位于 `symbol_catalog_load` case，并带稳定的 fin
 文件内重复 `key` 通常是复制错误，因此会失败；不同文件或内置/单位/项目层之间相同 `key`
 仍按加载顺序合法覆盖。
 
-## 四个检查
+## 六个检查
 
 ### 1. `symbol_catalog_integrity`
 
@@ -99,11 +99,40 @@ Python traceback。错误位于 `symbol_catalog_load` case，并带稳定的 fin
 完整新图必须没有阻断项且达到 95 分；不达标会以结构化 issue 反馈给模型重规划。局部编辑仍
 保留宽容编译，避免一处历史遗留排版问题阻止无关修改。
 
+### 5. `engineering_graph_contract`
+
+构造一份带位号、管线、跨图连接器与重复位号的图纸，验证 M2 的工程语义图契约：
+
+- 工程对象带**不可变代理 id**（`eq_…` / `ln_…` / `opc_conn_…`）与 `identity_basis`；
+- 管线按 tag + 介质 + 口径聚合，flow-aware trace 只在同一边类（工艺/信号）内遍历；
+- 重复位号报 `IR_TAG_DUPLICATED` 而不是合并对象；
+- project index 的 cheap/verified 两级新鲜度、计数与跨图连接可查询。
+
+它保证的是“图变成事实”的那一层：**派生层永不写文档，且同一份文档永远推出同一张语义图**。
+
+### 6. `deterministic_drafting_contract`
+
+M3 确定性整理引擎的离线黄金契约。它先构造一张**故意脏**的图纸（重叠设备、无意义绕行管线、
+压在符号上的标签、悬空连接点、一个被锁定的元素、一块声明图例、以及一条穿图例的管线），
+然后要求引擎同时满足：
+
+- **只读**：preview 后 document revision 不变；
+- **可复现**：两次相同请求得到同一个 `transaction_digest`；
+- **单调**：`regressions == []`，且分数不下降；
+- **锁定优先**：锁定元素没有被移动或编辑，且锁定来源被如实记录；
+- **拓扑不变**：管线端点绑定、元素集合都与应用前一致；
+- **保留区**：穿过图例的管线被改道、**压在图例上的符号被移出**，保留区侵入数降为 0；
+- **收敛**：把结果再喂回引擎即 `settled`；
+- **如实**：残留项只能是引擎不允许修的语义缺陷（重复标签），门禁必须拒绝签字。
+
+最后一条是刻意设计的：这个契约**不**要求“门禁通过”，而要求“几何残留归零 + 剩下的问题
+必须被如实拒绝”。草稿引擎不得为了让自己的分数好看而改写标签文字或隐藏缺陷。
+
 ## 与其他验收的关系
 
 | 层次 | 命令 | 是否联网 | 主要回答的问题 |
 |---|---|---:|---|
-| 离线质量 Harness | `pid-agent quality-harness` | 否 | 图例、存储、端口拓扑、Agent 事务和确定性绘图质量门禁是否完好 |
+| 离线质量 Harness | `pid-agent quality-harness` | 否 | 图例、存储、端口拓扑、Agent 事务、工程语义图与确定性绘图/整理契约是否完好 |
 | 浏览器验收 | `cd frontend && npm run test:e2e` | 否 | 人工编辑、刷新持久化、视觉和交互是否正常 |
 | 真实模型矩阵 | `pid-agent model-matrix ...` | 是或本地模型 | 指定模型能否多次从自然语言生成并修复正确事务 |
 | 大图基准 | `PYTHONPATH=backend python backend/benchmarks/benchmark_large_documents.py` | 否 | 500–5000 图元的导出耗时和内存是否退化 |

@@ -59,22 +59,39 @@ A duplicate name is rejected by the registry.
 
 ## Current registered capabilities
 
-The initial registry deliberately contains only capabilities already backed by working code:
+The registry contains only capabilities already backed by working code. Printed from the live
+catalog (`get_default_tool_registry().catalog()`, 30 tools at this commit):
 
-- `get_document`;
-- `get_scene_summary`;
-- `get_document_history`;
-- `analyze_transaction`;
-- `validate_transaction`;
-- `plan_pid_agent_semantic_transaction`;
-- `compile_agent_transaction`;
-- `apply_agent_transaction`;
-- `preview_auto_layout`;
-- `apply_auto_layout`;
-- `undo_document`;
-- `redo_document`.
+| Capability | Permission | Risk |
+|---|---|---|
+| `get_document`, `get_scene_summary`, `get_document_history` | `allow` | `read` |
+| `analyze_transaction`, `validate_transaction`, `preview_semantic_diff` | `allow` | `read` |
+| `plan_pid_agent_semantic_transaction`, `compile_agent_transaction` | `allow` | `read` |
+| `get_engineering_graph`, `trace_engineering_object`, `get_project_engineering_graph`, `find_engineering_object` | `allow` | `read` |
+| `get_drafting_report`, `preview_deterministic_drafting` | `allow` | `read` / `draft_edit` |
+| `preview_auto_layout`, `apply_auto_layout`, `apply_deterministic_drafting`, `apply_web_transaction` | `allow` | `draft_edit` |
+| `create_document`, `rename_document`, `move_document_folder`, `update_project_settings`, `rebuild_project_index`, `undo_document`, `redo_document` | `allow` | `draft_edit` |
+| `import_document_payload`, `import_project_payload` | `ask` | `draft_edit` |
+| `apply_agent_transaction`, `apply_compiled_agent_transaction` | `ask` | `engineering_change` |
+| `delete_document` | `ask` | `critical_change` |
 
 Proposed Charter tools must not be added to the registry until a real deterministic execution path and tests exist.
+
+### M3 additions
+
+The deterministic drafting engine adds three capabilities. Note the deliberate split:
+
+* `get_drafting_report` — `allow` / `read`. Measures a drawing (ports, crossings, junctions,
+  collisions, reserved-space intrusions, lock provenance, gate). Writes nothing.
+* `preview_deterministic_drafting` — `allow` / `draft_edit`, `preview_supported`. Returns a
+  reproducible `TransactionRequest` and writes nothing.
+* `apply_deterministic_drafting` — `allow` / `draft_edit`, audited. Runs the pipeline and applies
+  the result **through the same governed transaction channel**, so it inherits the revision check,
+  the audit record, undo and the Harness allow-policy like any other edit.
+
+`surface_contract.py` registers both drafting REST routes as `read`. That is the machine-checkable
+statement that drafting has no private write path: a new unregistered write route fails
+`tests/test_surface_contract.py`.
 
 ## Permission semantics in this slice
 
@@ -130,13 +147,12 @@ Existing MCP execution tools remain unchanged.
 
 ## Next step
 
-The T0.2/T0.3 groundwork is now implemented. The next Charter task is T0.4 Semantic Diff:
+The registry now covers T0.1–T0.5, M2 and M3. The next Charter task is **Priority 2 — Validator
+Framework** (configurable, versionable rules with stable issue codes and project standard
+references; see `PROJECT_CHARTER.md` §33). Note the milestone numbering: Charter M3 is the
+Deterministic Drafting Engine (this slice, shipped), M4 is the Engineering Validation System;
+the Validator Framework is a **Priority 2 implementation priority**, not a milestone rename.
 
-1. introduce an Agent Session identity;
-2. add a permission decision object;
-3. route mutating tool execution through one permission gate;
-4. emit registry-defined audit events;
-5. persist session/tool-call provenance;
-6. keep DocumentService as the atomic engineering write boundary.
-
-The registry itself should remain independent from model providers and UI state.
+The registry should keep its earlier promises while it grows: emit registry-defined audit events,
+persist session/tool-call provenance, and keep DocumentService as the atomic engineering write
+boundary. The registry itself should remain independent from model providers and UI state.

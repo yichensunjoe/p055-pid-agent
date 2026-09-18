@@ -2,7 +2,27 @@
 
 > 交接文档：每次开新会话先读本文件。更新规则见 `AGENTS.md`「HANDOFF 交接规则」。
 
-## 当前状态（2026-09-18，最新轮次：M2 返工 —— 稳定工程身份 / 一等 Signal / OPC 稳定连接身份）
+## 当前状态（2026-09-18，最新轮次：M3 —— Deterministic Drafting Engine）
+
+- **里程碑口径（先看这条）**：Charter 的长期 milestone 是 `M0 Structured Editor → M1 Tool Harness → M2 Engineering Semantic Graph → M3 Deterministic Drafting Engine → M4 Engineering Validation System → M5 Agent Self-Repair …`。**M2 已由外部架构验收正式签字，accepted baseline = `49e3e14`**；本轮做的是 **M3**。`Priority 2 Validator Framework` 仍是**实现优先级**，不得改口称为 M3，也不得在 M2 与 M3 之间新造阶段；`Priority 3 Deterministic Drafting`（§34）与 `M3`（§48）是同一件事的两种编号。**M3 完成即停止开发，未经外部验收不得进入 M4。**
+- **M3 本轮交付（Deterministic Drafting Engine）**：
+  1. **一条确定性流水线**（`drafting_engine.py`）：锁定解析 → 区域排布（仅第 1 轮）→ 端口感知重路由 → 标签摆放 → 跨线桥接 → 保留空间驱逐 → 碰撞松弛，循环到不动点（`pipeline_rounds`，默认 3，有限且可复现）；每个阶段只有**不使任何硬性图面指标变差**时才被接受（`DRAFTING_HARD_FIELDS`），否则整阶段回滚并记 `DRAFT_STAGE_ROLLED_BACK`。
+  2. **只读引擎**：`preview` 只返回一份 `TransactionRequest`，永不写库；落地只能走唯一受治理写通道（网页 `transact` / MCP `apply_deterministic_drafting` / 人工确认），因此权限、revision 校验、审计与 undo 一个都不少（Charter §7 / P0-2）。REST 两个整理路由在 `surface_contract.py` 里登记为 **read**——“整理没有私有写路径”是机器可检查的。
+  3. **手动锁成为一等数据**：三种来源合成一个冻结集并逐条回报来源——`request.locked_element_ids`、`element.metadata["drafting_lock"]`（编辑器钉住、跨会话）、`metadata.layout_regions` 中 `kind="lock"` 的区域。同一条锁定语义也接入了 `auto_layout`，排布引擎与整理引擎对“什么算锁定”只有一种理解。
+  4. **跨线 vs 连接点语义**：每条合法跨线恰好在**次要线**上打一个桥（优先级：声明流向 → 折点少 → 更短），双桥收敛为单桥；落在 connection 上的跨线报 `DRAFT_CROSSING_ON_JUNCTION`；悬空连接点报 `DRAFT_JUNCTION_DANGLING`；**引擎永不新增/删除/重绑拓扑**（patch 永不含 `source`/`target`，出现即 `DRAFT_TOPOLOGY_CHANGED` blocker）。
+  5. **保留空间（图例/标题栏/禁布区）**：走线把它们当障碍物参与评分、标签优先避开，并且**把未锁定却已经压在图例上的符号/连接节点确定性地移出**（本轮补的 `reserved_eviction` 阶段；锁定的侵入者留在原处并如实成为 blocker）。
+  6. **质量门禁**：`passed` = 无 drafting blocker + 无图面规则 error + 分数 ≥ `target_score`（默认 95）；豁免（waiver）只是不阻断，finding 仍然可见。CLI 复用同一判定，门禁失败退出码 2，可直接当 CI 图面门禁。
+  7. **可复现性**：id 规范序快照 + 规范序操作 + `input/output_content_hash` + `transaction_digest`（64 hex，摘要含引擎版本、请求、内容哈希与操作）；同样内容永远同一摘要，把结果再喂回引擎即 `settled`（幂等）。
+  8. **接口面**：REST `POST /documents/{id}/drafting/report|preview`；MCP `get_drafting_report` / `preview_deterministic_drafting` / `apply_deterministic_drafting`；CLI `pid-agent drafting report|preview`（`--region/--element/--lock/--no-relayout/--no-reroute/--no-annotations/--no-bridges/--no-collisions/--target-score/--waive/--summary/--output`）；前端右侧新增只读「整理」tab（分析/预览/落地/丢弃/锁定/解锁 + 门禁解释 + 指标 diff + findings + 摘要）。
+  9. **顺手消掉一处真实重复实现**：端口绝对坐标原本在 `DocumentService` 与整理几何里各写一份；现在 `_symbol_port_point` 委托给 `drafting_geometry.symbol_port_point`，让“模块 docstring 声称的唯一实现”变成事实（Charter §6.4：点差一像素，导出才发现）。
+- **M3 验证（本地，2026-09-18）**：Ruff ✓；pytest **432 passed**（M2 基线 382，+50：几何 21 + 引擎 27 + API 9 + CLI 5 与既有用例增量）；offline quality harness **6/6**（新增 `deterministic_drafting_contract`）；前端 `npm test` **117 passed**（基线 106，+11）；`npm run build` ✓；Playwright 本地全量 **45 passed / 3 failed**，3 个失败与 M2 基线**逐条相同**（`flow-runtime` 重命名定位 + `locked element badges` / `connector route anchors` 两个快照）。
+- **视觉失败不是本轮引入（已用 A/B 实测，不是推断）**：在 `.freebuff/m2base` 建 M2 accepted baseline (`49e3e14`) 的 git worktree（node_modules 用软链接复用），同一台机器同一次运行两个存疑快照：基线 `22941` / `22574` 差异像素，本轮 `22868` / `22501`（ratio 都是 0.02，阈值 0.015），**同一批失败、同一量级**；且这些基线的最后一次更新在 `61cc572`（2026-08-21），早于 T0.5/M2。结论：既有基线漂移，非本轮 regression。
+- **提交与推送状态**：M3 分三层提交并推送——`0cd15d5` 后端（引擎/几何/模型/接口/测试）→ `1b7d7dd` 前端 → 文档层（SHA 见本轮报告）；`origin/main...HEAD = 0 0`。未重切历史、未 force-push。
+- **CI 真实结果（run `35359869866`，commit `1b7d7dd`）**：Backend Python 3.11 ✅；Frontend Node 24 ✅；Browser ❌ **39 passed / 9 failed**。关键点：9 个失败与基线 `c60f5be` **逐条相同**（1 个存量重命名定位 + 8 张视觉快照），**本轮新增的 3 个 drafting e2e 全部通过**（36 → 39 passed），并且 M2 修掉的 `blank editor dark theme` 不再出现。shared-mode security acceptance 仍因 browser job 红而 skip（已知债务）。
+- **M3 明确边界**：不改标签文字/位号（重复位号只报不修）；不新增/删除设备、管线、连接点；不校验 ISA/SIS/cause-and-effect（属 M4 / Priority 2）；不产生声明式稳定标识（`identity_basis="element"` 的老图纸仍只有图元级标识，创建/导入层写出 `equipment_id`/`line_id` 的职责仍未开始）。文档见 `docs/deterministic-drafting.md`。
+- **下一步（等 M3 外部验收后才可以开始）**：按依赖关系建议先做 **Priority 2 Validator Framework**，或按 milestone 顺序进入 **M4 Engineering Validation System**（configurable rules、stable issue codes、release validator、project profile）。两条路线都不许在未验收前动工。
+
+## M2 及更早的状态（保留，最新在上）
 
 - **提交与推送状态**：T0.5 证据链、Registry 收口、M2 首版已分三层提交并推送（`da2acf1` 后端 → `e34b6c2` 前端 → `5f96754` 文档）；**M2 返工同样已提交并推送**（`d13a480` 后端身份/Signal/OPC → `0997241` 前端 → `e221291` 文档），其后又追加一个窄修复 `fix: keep undeclared off-page connections unresolved unless service matches`（OPC 解析收紧，SHA 见本轮报告）。不存在“工作树待提交”的状态——若本行与 `git log` 不一致，以 `git log` 为准。
 - **M2 返工（本轮，回应第二次验收的 3 个 Charter 级阻塞项）**：
@@ -13,7 +33,7 @@
 - **跨图 OPC 解析收紧（第二次验收的最后一项）**：`service_convention` 不再接受“目标图里仅有一个反向 OPC”作为证据——它现在要求 **normalised service 相同且方向相反且候选唯一**；不满足就 `resolved=False` + `matched_by="unresolved"` + `IR_CROSS_DOC_UNRESOLVED`（宁可承认未解析，也不猜出一条跨图连接）。同时 `declared_by_document_ids` 只在真正的相互声明时记两张图，约定匹配只记真正声明了目标图的那一侧；reciprocal 声明即使 service 不一致也成立（报 `IR_CROSS_DOC_TAG_MISMATCH`）。文档里的匹配矩阵与代码一致。
 - **M2 返工验证（本地，2026-09-18）**：Ruff ✓；pytest **380 passed**（基线 359，+21）；offline quality harness ✓（含新 case）；前端 `npm test` **106 passed**（基线 105）；`npm run build` ✓；Playwright 本地全量 **42 passed / 3 failed**，3 个失败均为**基线即失败**的存量项（`flow-runtime` 重命名定位 1 项 + `locked element badges` / `connector route anchors` 两个快照），与 CI 在 `c60f5be` 的失败集合一致。
 - **CI 真实结果（不是声明）**：推送后的 run `35314900492` = Backend Python 3.11 ✅、Frontend Node 24 ✅、Browser ❌（34 passed / 10 failed：1 个存量重命名定位 + 9 个视觉快照，其中 8 个在基线 run `35298219392` 就已失败）。相对基线**新增**的只有 `blank editor dark theme`，根因已定位为右侧面板 tab 条硬编码 5 列、第 6 个 tab 换行导致整条面板内容下移 38px（见下），本轮已修并用 e2e 守卫固化。
-- **视觉基线的诚实结论**：`frontend/e2e/visual.spec.ts-snapshots/*.png` 最后一次更新在 `86710c0`（UI token 化重构，早于 T0.5/M2），**由 macOS 渲染器生成**，而 CI 在 Linux 渲染（字体度量不同）。因此 10 张快照里 8 张在基线 commit 上就长期红，属于**既有基线漂移**，不是本轮引入。本轮**不**从 macOS 重生成基线（那会把 macOS 字体烧进基线、复现同一个问题），建议另开一个“在 CI 渲染器中重生成视觉基线”的独立任务。
+- **视觉基线的诚实结论（数字已于 M3 用实测修正）**：`frontend/e2e/visual.spec.ts-snapshots/` 最后一次更新在 **`61cc572`（2026-08-21）**（M2 时这里曾写作 `86710c0`，M3 用 `git log -- <snapshot dir>` 核对后修正），早于 T0.5/M2，**由 macOS 渲染器生成**，而 CI 在 Linux 渲染（字体度量不同）。因此 10 张快照里 8 张在基线 commit 上就长期红，属于**既有基线漂移**，不是本轮引入。本轮**不**从 macOS 重生成基线（那会把 macOS 字体烧进基线、复现同一个问题），建议另开一个“在 CI 渲染器中重生成视觉基线”的独立任务。
 
 - **T0.5 Audit / Provenance 已完成**：SQLite schema v4 新增 append-only `audit_records`（sha256 哈希链，genesis → prev_hash/record_hash/ordinal），`audit.py` 负责把 revision 写入、semantic diff、validation evidence、approval/intent 绑定在同一条证据里；**所有写路径**（v2 文档/事务/undo/redo/重命名/移动、imports、project settings、MCP 全部 apply、legacy v1 primitive/layer、Agent harness allow/ask/deny、被拒绝的审批）都在**同一 SQLite 事务**内写入审计记录，不存在未归因的 revision。
 - **T0.5 新增只读证据面**：REST `GET /api/v2/audit/records|verify|export`、`GET /api/v2/documents/{id}/audit`、`GET /api/v2/documents/{id}/history/{revision}/evidence`；MCP `get_audit_trail` / `verify_audit_chain` / `get_revision_evidence` / `get_agent_session_audit`；CLI `pid-agent audit verify|trail|export|evidence`。文档见 `docs/audit-and-provenance.md`。
@@ -30,9 +50,17 @@
 - Semantic Diff 的 `risk_hint` 仅为 deterministic review hint，不替代未来 Rule Engine / safety rules 的正式工程风险判断。
 - 首版核心验证（T0.5 + M2 首版，历史数字，已被本轮覆盖）：pytest 359、前端 105、schema v5；真实项目库（35 图）`rebuild_all` 35/35、0 stale、`audit verify` ok。本轮返工后：pytest **380**、前端 **106**、schema **v6**，详见顶部状态。
 - **Playwright e2e 为什么之前没跑、现在怎么跑的**：`frontend/e2e/fixtures.ts` 的 `resetDocuments()` 会删掉所连数据库里的全部图纸，所以**绝不能指向本机活库**；同时 `playwright.config.ts` 的端口已改为可覆盖（`PID_AGENT_E2E_API_PORT` / `PID_AGENT_E2E_PREVIEW_PORT`，`vite.config.ts` 的 proxy 读 `PID_AGENT_API_TARGET`），因此可以在空闲端口上对着**临时数据库**跑。本轮即用 `PID_AGENT_E2E_API_PORT=8011 PID_AGENT_E2E_PREVIEW_PORT=4174 npx playwright test` 在隔离 DB 上完成全量执行，结果记在顶部状态。CI 侧不需要额外配置。
-- **下一步（未开始，等待第二次验收）**：**Charter Priority 2 —— Validator Framework**：把当前分散在 `diagram_quality.py` / `engineering_reports.py` / `engineering_ir.py` 的 deterministic 规则收拢为可注册、可版本化、可按项目标准加载的 validator 框架（每条规则带 id/severity/scope/evidence/项目标准引用），并让 IR findings 成为其消费者。**注意编号**：Charter 的长期 milestone 是 `M2 Engineering Semantic Graph → M3 Deterministic Drafting Engine → M4 Engineering Validation System`；Validator Framework 属于 **Priority 2 implementation priority**，**不要把它改口叫 M3**（本轮之前 HANDOFF 里写成“下一步 M3 Validator Framework / 随后 M4 Drafting”，与 Charter 不一致，特此修正）。
+- **当時の“下一步”（已被 M3 取代，仅作历史）**：**Charter Priority 2 —— Validator Framework**：把当前分散在 `diagram_quality.py` / `engineering_reports.py` / `engineering_ir.py` 的 deterministic 规则收拢为可注册、可版本化、可按项目标准加载的 validator 框架（每条规则带 id/severity/scope/evidence/项目标准引用），并让 IR findings 成为其消费者。**注意编号**：Charter 的长期 milestone 是 `M2 Engineering Semantic Graph → M3 Deterministic Drafting Engine → M4 Engineering Validation System`；Validator Framework 属于 **Priority 2 implementation priority**，**不要把它改口叫 M3**（本轮之前 HANDOFF 里写成“下一步 M3 Validator Framework / 随后 M4 Drafting”，与 Charter 不一致，特此修正）。
 
 ## 近期轮次（最新在上，保留全部）
+
+- 2026-09-18（M3 Deterministic Drafting Engine，本轮，已提交并推送）：
+  - **新增文件**：`drafting_models.py`（契约/策略/门禁/可复现性模型）、`drafting_geometry.py`（纯几何与整理语义）、`drafting_engine.py`（七阶段确定性流水线）、`api_drafting.py`（两个只读 REST 路由）；测试 `test_drafting_geometry.py` / `test_drafting_engine.py` / `test_drafting_api.py` / `test_drafting_cli.py`；前端 `drafting.ts` / `draftingTypes.ts` / `editor/DraftingPanel.tsx` / `tests/drafting.test.ts` / `e2e/drafting.spec.ts`。
+  - **落地要点**：锁定三来源统一（含 `layout_regions` 的 `kind="lock"`）；区域/选择范围修复（越界即 blocker）；forced vs opportunistic 重路由（“不要顺路整理”≠“把你刚挪走的管子留在原地”）；跨线单桥只打次要线；保留空间既参与评分又驱逐未锁定侵入者；最后把结果再喂回引擎验证 `settled`。
+  - **提交**：`0cd15d5` 后端 → `1b7d7dd` 前端 → 文档层，已推送。
+  - **验证**：Ruff ✓；pytest **432**（M2 基线 382，+50）；quality harness **6/6**（新 case `deterministic_drafting_contract`）；前端 **117**（基线 106）；`npm run build` ✓；Playwright 本地 **45 passed / 3 failed**，失败集与 M2 基线逐条相同（已用 worktree A/B 实测证明，见顶部状态）。CI（run `35359869866`）：Backend ✅ / Frontend ✅ / Browser ❌ **39 passed / 9 failed**，失败集与基线逐条相同，新增 3 个 drafting e2e 全通过。
+  - **文档**：`docs/deterministic-drafting.md`（新增）、`docs/offline-quality-harness.md`（四个检查 → 六个检查，补齐 M2/M3 两个契约）、`docs/tool-registry.md`（登记 30 个实时能力与 M3 三个工具）、README、`REUSE_AND_PITFALL_LOG.md`。
+  - **顺手修正**：`DocumentService._symbol_port_point` 改为委托 `drafting_geometry.symbol_port_point`，消除端口坐标的第二份实现（模块 docstring 原先声称“唯一实现”，但代码并不是——本轮把它变成事实）。
 
 - 2026-09-18（M2 返工：稳定工程身份 + 一等 Signal + OPC 稳定连接身份，已推送 T0.5/Registry/M2 首版）：
   - **验收意见落地**：① `engineering_id` 与 tag 解耦（`eq_…` 等不可变代理 id，`identity_basis` 如实标注 declared/element，冲突报 `IR_IDENTITY_COLLISION`）；② `signal` 升为一等对象（`SignalDetail` + `signal_id`，`edge_class` 分离信号边/工艺边，连通分量只跑工艺边）；③ OPC 新增 `off_page_connection_id` 与索引层**对称 tag-free** 的稳定 `connection_id`，tag 仅作交叉校核。

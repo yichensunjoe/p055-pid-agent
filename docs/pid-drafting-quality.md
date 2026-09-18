@@ -33,6 +33,14 @@
 - `NODE_OVERLAP`、`DUPLICATE_LABEL`、`ANNOTATION_OVERLAP`；
 - `QUALITY_SCORE_BELOW_TARGET`。
 
+## 与 M3 确定性整理的关系
+
+`pid-agent.diagram-quality` 是**图面规则**（“这张图画得好不好”），也是 M3 整理引擎的评分与
+错误码来源；M3 的 `pid-agent.drafting-report` / `drafting-preview` 则是在同一套评分之上做
+**确定性修正**（重新排布、重路由、标签摆放、跨线桥、保留区、碰撞分离），并额外回答三个这
+里不回答的问题：改动是否可复现、是否严格不改差、是否越出了请求的范围与锁。两者共用同一份
+评分，但一个是判据、一个是手术刀，具体契约见 [`deterministic-drafting.md`](deterministic-drafting.md)。
+
 运行 `pid-agent quality-harness` 可在不调用模型的情况下验证这条边界。真实模型验收使用
 `pid-agent model-matrix --include-complex-diagram`，复杂场景除拓扑外还必须通过完整图面质量
 报告。

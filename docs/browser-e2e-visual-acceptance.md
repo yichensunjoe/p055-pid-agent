@@ -96,6 +96,31 @@ declared UI font stack resolves to different physical fonts on the two systems, 
 text-dense pages drift by a fraction of a percent of pixels. 8 of the 10 snapshots
 failed in CI at commit `c60f5be` for exactly that reason, before any M2 change.
 
+### Proving "pre-existing, not introduced" with a worktree A/B
+
+"Probably pre-existing" is not evidence. When a snapshot fails locally after a change,
+measure both sides on the same machine in the same session:
+
+```bash
+# 1. check out the last accepted baseline next to the working tree
+git worktree add .freebuff/baseline <accepted-baseline-sha>
+# 2. reuse the installed dependencies instead of reinstalling them
+ln -s "$(pwd)/frontend/node_modules" .freebuff/baseline/frontend/node_modules
+# 3. build the E2E bundle there and run only the suspect scenarios
+cd .freebuff/baseline/frontend && npm run build:e2e
+npx playwright test e2e/visual.spec.ts -g "locked element badges|connector route anchors"
+# 4. clean up (remove the symlink first: worktree remove --force also needs it gone)
+rm -f .freebuff/baseline/frontend/node_modules
+git worktree remove --force .freebuff/baseline
+```
+
+Playwright reports the differing pixel count per failure, which is the number to compare.
+Measured example at the M2 accepted baseline `49e3e14` versus the M3 working tree:
+`locked element badges` 22941 → 22868 pixels, `connector route anchors` 22574 → 22501
+(both ratio 0.02, threshold 0.015) — the same failures at the same magnitude, i.e. a
+baseline drift of the same size, not a regression from the change. The committed
+baselines for those two files were last touched at `61cc572` (2026-08-21), before M2.
+
 Consequences to keep in mind:
 
 - A screenshot failure is **weak evidence**: it can be a threshold-crossing of a
@@ -118,6 +143,13 @@ Baselines must never contain API keys, authorization headers, local user paths, 
 
 ## Automatic acceptance coverage
 
+These checks must be run through the npm script or after an explicit E2E build:
+`npx playwright test` alone reuses whatever `dist/` currently exists, so running
+`npm run build` (production, no test bridge) and then the raw Playwright CLI points the
+browser at a bundle the fixtures cannot drive — the symptom is a green test turning red
+with the canvas never appearing. `npm run test:e2e` runs `build:e2e` first for exactly
+that reason.
+
 The pull-request job automatically verifies:
 
 - document creation and persistence after reload;
@@ -131,6 +163,7 @@ The pull-request job automatically verifies:
 - light/dark appearance without engineering SVG color or revision changes;
 - named views, minimap navigation, automatic large-diagram zones, and fit-selection;
 - deterministic Agent ghost preview without a revision change, followed by apply and undo;
+- deterministic drafting analysis, preview, apply, lock/unlock and API read-only/reproducibility checks (`e2e/drafting.spec.ts`);
 - ten visual regression states;
 - opening, zooming, panning, selecting, minimap navigation, and fit-selection on a 500-element drawing with deliberately broad CI limits.
 

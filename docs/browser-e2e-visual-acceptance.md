@@ -90,11 +90,33 @@ cd frontend
 npm run test:e2e:update
 ```
 
-**Regenerate them in the same renderer that verifies them.** The committed baselines
-were last captured on macOS (Chromium on Darwin) while CI renders on Linux, and the
-declared UI font stack resolves to different physical fonts on the two systems, so
-text-dense pages drift by a fraction of a percent of pixels. 8 of the 10 snapshots
-failed in CI at commit `c60f5be` for exactly that reason, before any M2 change.
+**Regenerate them in the same renderer that verifies them.** The UI font stack resolves to
+different physical fonts on macOS and Linux, so text-dense pages drift by a fraction of a
+percent of pixels and a snapshot captured on one system fails on the other.
+
+**Current owner: the CI renderer (Linux).** The whole set was regenerated on the Linux runner
+in `.github/workflows/visual-baselines.yml` (manual `workflow_dispatch`), which runs the same
+setup as `Browser acceptance · Chromium` and then updates the snapshots instead of asserting
+them, uploading the PNGs as an artifact; the commit is reviewed and made by hand.
+
+The history that produced them: the set used to be macOS-rendered, and 8 of the 10 snapshots
+failed in CI at commit `c60f5be` (before any M2 change) purely from that cross-renderer drift,
+which is why the whole Browser job stayed red and skipped the shared-mode security acceptance
+behind it.
+
+**When the UI changes on purpose, regenerate — do not "fix" the assertion.** Adding controls
+to a panel legitimately changes the pixels of every screenshot that includes that panel, so a
+new failure on a changed region is expected. Re-run the `Visual baselines` workflow after the UI
+change itself is committed, review the images, and commit the new PNGs as their own deliberate
+change. Do not update snapshots merely to make CI green, and never update them on a workstation
+whose renderer differs from CI's: that bakes the other system's font metrics into the baseline
+and reproduces the same failure from the opposite side.
+
+**Working on macOS.** With Linux-owned baselines, a local `npx playwright test` reports those
+snapshots as differing by a small fraction of pixels. That is the same drift in the mirror
+direction, not evidence about the change you are making: judge a suspected visual regression by
+the worktree A/B below and by the differing-pixel count, not by the red/green of a local run.
+The authoritative comparison is the CI job.
 
 ### Proving "pre-existing, not introduced" with a worktree A/B
 
@@ -121,6 +143,17 @@ Measured example at the M2 accepted baseline `49e3e14` versus the M3 working tre
 baseline drift of the same size, not a regression from the change. The committed
 baselines for those two files were last touched at `61cc572` (2026-08-21), before M2.
 
+### Checking a regenerated baseline before committing it
+
+The `Visual baselines` workflow renders in the same environment CI asserts in, so the
+regenerated PNGs can be checked against CI's own captures of the *previous* commit: download
+the `playwright-failure-*` artifact of the failing run, and compare each regenerated baseline
+with the newest `*-actual.png` CI produced for the same snapshot. Measured that way at the CAD
+import slice (Linux baselines versus the Linux actuals of the run before them): 0.0003–0.0011
+differing ratio across all nine regenerated files, i.e. below the 0.015 threshold with two
+orders of magnitude to spare — which is the evidence that the new baselines *will* pass, rather
+than a hope that they might.
+
 Consequences to keep in mind:
 
 - A screenshot failure is **weak evidence**: it can be a threshold-crossing of a
@@ -130,7 +163,7 @@ Consequences to keep in mind:
 - Do not "fix" a red snapshot by running `npm run test:e2e:update` on a macOS
   workstation: that bakes the Darwin font metrics into the baseline and reproduces
   the same failure from the other side. Regenerating the whole set belongs in the CI
-  renderer (same job, `npm run test:e2e:update`, artefacts reviewed and committed) and
+  renderer (the `Visual baselines` workflow, artefacts reviewed and committed) and
   should be its own deliberate change.
 - Prefer a **layout assertion** over a pixel snapshot when the property is
   structural. The dock tab strip is guarded by a real assertion ("every tab stays on

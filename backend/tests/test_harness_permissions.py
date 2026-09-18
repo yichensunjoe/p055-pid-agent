@@ -8,6 +8,7 @@ from agentcad.harness import (
     AgentHarnessService,
     ToolApprovalRequiredError,
     ToolIntentMismatchError,
+    ToolPermissionDeniedError,
 )
 from agentcad.harness_models import (
     AgentSessionCreateRequest,
@@ -19,7 +20,7 @@ from agentcad.models import CreateDocumentRequest
 from agentcad.service import DocumentService
 from agentcad.store import SQLiteDocumentStore
 from agentcad.symbols import SymbolRegistry
-from agentcad.tool_registry import get_default_tool_registry
+from agentcad.tool_registry import ToolDefinition, ToolRegistry, get_default_tool_registry
 
 
 def _harness(tmp_path: Path) -> tuple[DocumentService, AgentHarnessService]:
@@ -235,3 +236,43 @@ def test_harness_session_rejects_missing_document(tmp_path: Path):
     )
 
     assert response.status_code == 404
+
+
+def test_deny_policy_is_enforced_and_audited(tmp_path: Path):
+    store = SQLiteDocumentStore(tmp_path / "deny.db")
+    service = DocumentService(store, SymbolRegistry())
+    registry = ToolRegistry(
+        [
+            ToolDefinition(
+                name="release_ifc",
+                description="Release an IFC package.",
+                input_schema={"type": "object"},
+                output_schema={"type": "object"},
+                permission="deny",
+                risk="release",
+                has_side_effect=True,
+                idempotency="non_idempotent",
+                audit_event="tool.release_ifc",
+                surfaces=["agent"],
+            )
+        ]
+    )
+    harness = AgentHarnessService(service, store, registry)
+    document = service.create_document(CreateDocumentRequest(name="Release"))
+    session = harness.create_session(
+        AgentSessionCreateRequest(document_id=document.id, actor="agent")
+    )
+
+    with pytest.raises(ToolPermissionDeniedError):
+        harness.authorize(
+            session_id=session.id,
+            tool_name="release_ifc",
+            document_id=document.id,
+            intent={"revision": 0},
+            base_revision=0,
+        )
+
+    audit = harness.audit(session.id)
+    assert len(audit.tool_calls) == 1
+    assert audit.tool_calls[0].status == "rejected"
+    assert audit.tool_calls[0].error_code == "tool_permission_denied"

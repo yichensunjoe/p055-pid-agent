@@ -11,7 +11,11 @@ from .auto_layout_engine import AutoLayoutEngine
 from .config import Settings
 from .diagnostics import DiagnosticLogger
 from .harness import AgentHarnessService
-from .harness_models import AgentSessionCreateRequest, ToolApprovalCreateRequest, ToolApprovalResolveRequest
+from .harness_models import (
+    AgentSessionCreateRequest,
+    ToolApprovalCreateRequest,
+    ToolApprovalResolveRequest,
+)
 from .history_diff import build_history_details
 from .layout_models import AutoLayoutRequest
 from .models import CreateDocumentRequest, TransactionRequest

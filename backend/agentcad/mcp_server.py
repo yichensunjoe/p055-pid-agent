@@ -17,6 +17,7 @@ from .semantic_compiler_engine import SemanticTransactionCompiler
 from .service import DocumentService, InvalidOperationError
 from .store import SQLiteDocumentStore
 from .symbols import SymbolRegistry
+from .tool_registry import get_default_tool_registry
 
 
 def build_service(settings: Settings | None = None) -> DocumentService:
@@ -50,6 +51,11 @@ def _validate_transaction(
         "deleted_element_ids": assessment.deleted_element_ids,
         "issues": [],
     }
+
+
+def _tool_registry_catalog() -> dict[str, Any]:
+    """Return the same canonical tool metadata used by REST and internal Agent surfaces."""
+    return get_default_tool_registry().catalog()
 
 
 def _server_info(
@@ -183,6 +189,11 @@ def main() -> None:
         """Read revision history with operation summaries and element-level before/after diffs."""
         service.get_document(document_id)
         return service.store.list_history_detailed(document_id, limit)
+
+    @mcp.tool()
+    def get_tool_registry() -> dict[str, Any]:
+        """Return canonical tool schemas, permissions, risk and audit metadata."""
+        return _tool_registry_catalog()
 
     @mcp.tool()
     def get_transaction_schema() -> dict[str, Any]:

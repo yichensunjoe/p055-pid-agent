@@ -306,6 +306,34 @@ class SQLiteDocumentStore:
             for item in self.list_history_detailed(document_id, limit)
         ]
 
+    def get_history_revision_detailed(
+        self,
+        document_id: str,
+        revision: int,
+    ) -> dict[str, Any] | None:
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT id, document_id, revision, timestamp, source, action, label,
+                       operation_count, details_json
+                FROM document_history
+                WHERE document_id = ? AND revision = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (document_id, revision),
+            ).fetchone()
+        if row is None:
+            return None
+        item = dict(row)
+        raw_details = item.pop("details_json", "{}")
+        try:
+            details = json.loads(raw_details) if raw_details else {}
+        except json.JSONDecodeError:
+            details = {"decode_error": True}
+        item["details"] = details if isinstance(details, dict) else {}
+        return item
+
     def list_history_detailed(self, document_id: str, limit: int = 100) -> list[dict[str, Any]]:
         safe_limit = max(1, min(limit, 500))
         with self._lock, self._connect() as connection:

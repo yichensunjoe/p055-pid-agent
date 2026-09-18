@@ -20,6 +20,7 @@ from .history_diff import build_history_details
 from .layout_models import AutoLayoutRequest
 from .models import CreateDocumentRequest, TransactionRequest
 from .semantic_compiler_engine import SemanticTransactionCompiler
+from .semantic_diff import build_semantic_diff, preview_transaction_semantic_diff
 from .service import DocumentService, InvalidOperationError
 from .store import SQLiteDocumentStore
 from .symbols import SymbolRegistry
@@ -99,6 +100,12 @@ def _apply_with_history(
         transaction.operations,
         action="transaction",
     )
+    details["semantic_diff"] = build_semantic_diff(
+        before,
+        result.document,
+        details,
+        service.symbols,
+    ).model_dump(mode="json")
     persisted = service.store.update_history_details(
         document_id,
         result.document.revision,
@@ -288,6 +295,18 @@ def main() -> None:
     ) -> dict[str, Any]:
         """Validate a low-level transaction and raise on the first structured issue."""
         return _validate_transaction(service, document_id, transaction)
+
+    @mcp.tool()
+    def preview_semantic_diff(
+        document_id: str,
+        transaction: TransactionRequest,
+    ) -> dict[str, Any]:
+        """Return an engineering-oriented semantic diff without writing."""
+        return preview_transaction_semantic_diff(
+            service,
+            document_id,
+            transaction,
+        ).model_dump(mode="json")
 
     @mcp.tool()
     def compile_agent_transaction(

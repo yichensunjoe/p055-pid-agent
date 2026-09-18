@@ -1,6 +1,15 @@
 # REUSE_AND_PITFALL_LOG — P055-PID-Agent
 
 
+## 2026-09-18 · 审批对象要从 JSON Patch 升级为 Semantic Diff（P055-PID-Agent）
+
+- 场景：Approval Gate 已能严格绑定 exact intent，但工程师若只能看到原始 TransactionRequest / JSON patch，仍然很难判断“到底改了什么工程内容”。
+- 结论做法：保留 low-level history snapshot 作为 forensic truth，在其上新增 deterministic Semantic Diff 层，把 symbol/connector/junction/text 等结构化变化解释为 valve/equipment/instrument/pipeline 等工程实体变化，并生成 field-level before/after 与可读 summary。
+- 关键经验：工程 Agent 的 review object 应是“工程变化”，不是模型 prompt，也不是 raw JSON；低层 diff 与语义 diff 应分层保存，前者保证精确审计，后者服务审批、人机协作和 Agent repair。
+- 风险边界：Semantic Diff 的 risk_hint 只能作为 deterministic review hint；安全等级、SIS/PSV/联锁等正式风险判断必须由项目 Rule Engine 与工程标准决定，不能让启发式分类替代工程规则。
+- 实施方式：先提供无写入 preview + revision 持久化 + REST/MCP 共用 contract，再在 T0.5 把 diff hash 和 validation evidence 绑定到 approval/provenance。
+
+
 ## 2026-09-18 · Approval 必须绑定 exact intent，不能只批准工具名（P055-PID-Agent）
 
 - 场景：Tool Registry 已能标记 ask/deny，但若 approval 只记录“用户批准 apply_transaction”，同一个批准令牌就可能被换成另一份事务、另一张图或另一个 Agent session 使用。

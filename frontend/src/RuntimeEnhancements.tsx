@@ -60,7 +60,11 @@ function RuntimeEnhancementsEnabled() {
   const workspace = useWorkspace();
   const svg = useDomTarget<SVGSVGElement>('svg[data-testid="editor-canvas"]');
   const sidebar = useDomTarget<HTMLElement>('[data-testid="documents-panel"]');
-  const documentHeading = useDomTarget<HTMLElement>('[data-testid="documents-panel"] > .panel-heading');
+  // Descendant, not child: the documents panel wraps its sections in `.left-panel-section`,
+  // and a `>` combinator silently stopped matching when that wrapper was introduced — the
+  // rename control's portal simply never rendered. `querySelector` returns the first match,
+  // which is the 文档 heading. Do not tighten this back to a child selector without a test.
+  const documentHeading = useDomTarget<HTMLElement>('[data-testid="documents-panel"] .panel-heading');
   const toolbarActions = useDomTarget<HTMLElement>(".toolbar-actions");
   const [documentsOpen, setDocumentsOpen] = useState(true);
   const [symbolsOpen, setSymbolsOpen] = useState(true);

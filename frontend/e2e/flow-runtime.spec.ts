@@ -99,6 +99,13 @@ test("OPC double click opens its linked P&ID and offers return navigation", asyn
 });
 
 test("renames the current P&ID and downloads a real PNG", async ({ page, request }) => {
+  // Renaming and PNG export live in the runtime enhancements, which the E2E bundle keeps
+  // off by default so the rest of the suite sees the plain editor. The opt-in is read from
+  // sessionStorage on every navigation, so it has to be set before the page loads — without
+  // it the controls simply are not rendered and this scenario times out waiting for them.
+  await page.addInitScript(() => {
+    window.sessionStorage.setItem("pid-agent:enable-runtime-e2e", "true");
+  });
   const document = await createDocument(request, "Original P&ID", [
     {
       op: "add_element",

@@ -1,0 +1,92 @@
+name: Visual baselines
+
+# Regenerates the Playwright screenshot baselines **in the renderer that verifies them**.
+#
+# The committed baselines were captured on macOS while CI renders on Linux, and the declared
+# UI font stack resolves to different physical fonts on the two systems, so text-dense pages
+# drift by a fraction of a percent of pixels. `docs/browser-e2e-visual-acceptance.md` therefore
+# says two things that this workflow exists to satisfy: never "fix" a red snapshot by updating
+# it on a macOS workstation, and regenerate the whole set in the CI renderer as its own
+# deliberate change.
+#
+# This job runs the same setup steps as `Browser acceptance · Chromium` and then updates the
+# snapshots instead of asserting them. It uploads them as an artifact and commits nothing:
+# reviewing the rendered images is the point, so the diff has to be looked at before it lands.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  update:
+    name: Update visual baselines on the CI renderer
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CI: "true"
+      # The suite must never reach a real provider; the same empty configuration CI uses.
+      PID_AGENT_LLM_API_KEY: ""
+      PID_AGENT_LLM_BASE_URL: ""
+      PID_AGENT_LLM_MODEL: ""
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install project
+        run: python -m pip install --upgrade pip && python -m pip install -e ".[mcp,dev]"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci --no-audit --no-fund
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}
+
+      - name: Install Chromium, runtime dependencies and deterministic fonts
+        working-directory: frontend
+        run: |
+          npx playwright install --with-deps chromium
+          sudo apt-get install --yes fonts-noto-cjk
+
+      - name: Build deterministic E2E frontend
+        working-directory: frontend
+        run: npm run build:e2e
+
+      # Writes the new PNGs in place. A failing assertion here is expected and meaningless:
+      # every drifted snapshot is being rewritten on purpose.
+      - name: Update snapshots
+        working-directory: frontend
+        run: npx playwright test e2e/visual.spec.ts --update-snapshots || true
+
+      - name: Record what changed
+        working-directory: frontend
+        run: |
+          git status --short e2e/visual.spec.ts-snapshots
+          git diff --stat e2e/visual.spec.ts-snapshots || true
+
+      - name: Upload updated baselines
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-baselines-${{ github.run_id }}
+          path: frontend/e2e/visual.spec.ts-snapshots/
+          retention-days: 14

@@ -111,12 +111,19 @@ def test_unversioned_legacy_database_is_migrated_without_losing_rows(tmp_path: P
     with sqlite3.connect(database) as connection:
         version = connection.execute("PRAGMA user_version").fetchone()[0]
         columns = {row[1] for row in connection.execute("PRAGMA table_info(document_history)")}
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
         document_count = connection.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
         metadata_count = connection.execute(
             "SELECT COUNT(*) FROM database_metadata WHERE singleton_id = 1"
         ).fetchone()[0]
     assert version == CURRENT_SCHEMA_VERSION
     assert "details_json" in columns
+    assert {"agent_sessions", "agent_approvals", "agent_tool_calls"}.issubset(tables)
     assert document_count == 1
     assert metadata_count == 1
 

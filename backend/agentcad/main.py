@@ -17,17 +17,20 @@ from .api_acceptance import create_acceptance_router
 from .api_documents import create_documents_router
 from .api_dxf import create_dxf_router
 from .api_export import _max_export_pixels, create_export_router
+from .api_harness import create_harness_router
 from .api_layout import create_layout_router
 from .api_reports import create_reports_router
 from .api_semantic_agent import create_semantic_agent_router
 from .config import Settings
 from .diagnostics import DiagnosticLogger
+from .harness import AgentHarnessService
 from .llm import OpenAICompatiblePlanner
 from .provider_security import ProviderNetworkPolicy
 from .security import RequestBoundary, redact_query_string
 from .service import DocumentService
 from .store import SQLiteDocumentStore
 from .symbols import SymbolRegistry
+from .tool_registry import get_default_tool_registry
 from .vision_semantic_planner import VisionSemanticAgentPlanner
 
 VERSION = __version__
@@ -176,6 +179,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         max_response_bytes=settings.provider_max_response_bytes,
         max_timeout_seconds=settings.agent_timeout_seconds,
     )
+    harness = AgentHarnessService(
+        service=service,
+        store=store,
+        registry=get_default_tool_registry(),
+        diagnostics=diagnostics,
+    )
 
     shared = settings.deployment_mode == "shared"
     app = FastAPI(
@@ -190,6 +199,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.diagnostics = diagnostics
     app.state.settings = settings
     app.state.provider_policy = provider_policy
+    app.state.harness = harness
 
     def json_safe(value):
         if isinstance(value, float) and not isfinite(value):
@@ -245,14 +255,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         settings=settings,
     )
 
-    app.include_router(create_v2_router(service, planner, diagnostics, VERSION))
+    app.include_router(create_v2_router(service, planner, diagnostics, VERSION, harness))
     app.include_router(create_documents_router(service))
+    app.include_router(create_harness_router(harness))
     app.include_router(create_acceptance_router(symbols, diagnostics))
     app.include_router(create_export_router(service, diagnostics))
     app.include_router(create_dxf_router(service, diagnostics))
     app.include_router(create_layout_router(service, diagnostics))
     app.include_router(create_reports_router(service))
-    app.include_router(create_semantic_agent_router(service, semantic_planner, diagnostics))
+    app.include_router(create_semantic_agent_router(service, semantic_planner, diagnostics, harness))
     app.include_router(create_v1_compat_router(service))
 
     @app.get("/health")

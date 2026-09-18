@@ -115,6 +115,37 @@ export type AgentRuntimeConfig = {
   max_timeout_seconds: number | null;
 };
 
+export type AgentSession = {
+  id: string;
+  document_id: string;
+  actor: string;
+  project_id?: string | null;
+  provider: string;
+  model: string;
+  start_revision: number;
+  end_revision?: number | null;
+  status: "active" | "completed" | "failed" | "cancelled";
+  created_at: string;
+  updated_at: string;
+  metadata: Record<string, unknown>;
+};
+
+export type ToolApproval = {
+  id: string;
+  session_id: string;
+  tool_name: string;
+  document_id: string;
+  intent_hash: string;
+  status: "pending" | "approved" | "rejected" | "consumed";
+  requested_by: string;
+  resolved_by?: string | null;
+  reason: string;
+  note: string;
+  created_at: string;
+  resolved_at?: string | null;
+  consumed_at?: string | null;
+};
+
 export type DocumentStatus = { id: string; revision: number; updated_at: string };
 export type AgentPlanResponse = { plan: AgentPlan; document?: Document | null };
 
@@ -260,6 +291,43 @@ function providerPayload(provider?: ProviderConfig): ProviderConfig | undefined 
 
 export const api = {
   listDocuments: () => request<DocumentSummary[]>("/documents"),
+  createAgentSession: (
+    documentId: string,
+    options?: { actor?: string; provider?: string; model?: string; metadata?: Record<string, unknown> },
+  ) => request<AgentSession>("/agent/sessions", {
+    method: "POST",
+    body: JSON.stringify({
+      document_id: documentId,
+      actor: options?.actor ?? "web-user",
+      provider: options?.provider ?? "",
+      model: options?.model ?? "",
+      metadata: options?.metadata ?? {},
+    }),
+  }),
+  requestToolApproval: (
+    sessionId: string,
+    toolName: string,
+    documentId: string,
+    intent: Record<string, unknown>,
+    reason = "",
+  ) => request<ToolApproval>(`/agent/sessions/${encodeURIComponent(sessionId)}/approvals`, {
+    method: "POST",
+    body: JSON.stringify({
+      tool_name: toolName,
+      document_id: documentId,
+      intent,
+      requested_by: "web-user",
+      reason,
+    }),
+  }),
+  resolveToolApproval: (
+    approvalId: string,
+    approved: boolean,
+    note = "",
+  ) => request<ToolApproval>(`/agent/approvals/${encodeURIComponent(approvalId)}/resolve`, {
+    method: "POST",
+    body: JSON.stringify({ approved, actor: "web-user", note }),
+  }),
   getAgentRuntimeConfig: () => request<AgentRuntimeConfig>("/agent/runtime-config"),
   createDocument: (name: string, options?: { folder_id?: string; metadata?: Record<string, unknown> }) =>
     request<Document>("/documents", {
@@ -339,6 +407,8 @@ export const api = {
     }),
   applySemanticAgentPlan: (
     id: string,
+    sessionId: string,
+    approvalId: string,
     planId: string,
     parentPlanId: string | null | undefined,
     attempt: number,
@@ -346,6 +416,8 @@ export const api = {
   ) => request<{ document: Document; applied_operations: number; label: string }>(`/documents/${id}/agent/apply-v2`, {
     method: "POST",
     body: JSON.stringify({
+      session_id: sessionId,
+      approval_id: approvalId,
       plan_id: planId,
       parent_plan_id: parentPlanId ?? null,
       attempt,
@@ -492,6 +564,7 @@ export const api = {
     revision: number,
     prompt: string,
     context: string,
+    sessionId: string | undefined,
     failedPlan: SemanticAgentPlan,
     attempt: number,
     provider?: ProviderConfig,
@@ -501,6 +574,7 @@ export const api = {
   ) => request<SemanticAgentPlanResult>(`/documents/${id}/agent/replan`, {
     method: "POST",
     body: JSON.stringify({
+      session_id: sessionId,
       prompt,
       context,
       expected_revision: revision,

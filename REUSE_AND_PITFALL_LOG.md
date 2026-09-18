@@ -1,3 +1,14 @@
+# REUSE_AND_PITFALL_LOG — P055-PID-Agent
+
+## 2026-09-18 · 用 Canonical Charter 约束未来模型重规划（P055-PID-Agent）
+
+- 场景：项目从“AI 可编辑的结构化 P&ID 软件”进一步明确为面向工程交付的 Agent Harness；未来模型能力会持续升级，单纯维护临时 Roadmap 容易发生目标漂移。
+- 结论做法：新增根目录 `PROJECT_CHARTER.md`，把最终工程交付目标和 P0 不可变原则与可变技术路线分离。模型可以优化 IR、工具粒度、数据库、UI、Multi-Agent 等实现，但不能自行取消 semantic-first、受控工具修改、deterministic validation、audit/rollback、model-agnostic 和人工正式 release approval。
+- 关键经验：长期 AI 项目不能只写“功能路线图”，还需要明确 immutable core、mutable architecture、benchmark、release gate 和 replanning governance；否则模型越强，越可能高效地偏离最初工程目标。
+- 实施原则：先在现有 DocumentService + TransactionRequest 上增加 Tool Registry，不做大爆炸重写；优先完成 Session、Permission/Approval、Semantic Diff、Audit，再逐步升级 Engineering IR 和 project graph。
+- 适用场景：任何需要多年迭代、会被多代 Agent 接力开发、同时又有强工程质量/合规责任边界的项目。
+- 待同步：工作区总库 REUSE_AND_PITFALL_LOG.md 不在当前 GitHub 仓库连接范围内，本轮仅完成项目内日志。
+
 ## 2026-08-21 · 左侧侧边栏双容器滚动冲突根除、全域滚轮穿透与导航标签体系（P055-PID-Agent）
 
 **场景**：用户反馈当图纸较多或点开分类文件夹后，其它文件夹与图纸被向下挤出视口且无法用鼠标滚轮向下滑动，且侧边栏未见清晰可用滚动条。

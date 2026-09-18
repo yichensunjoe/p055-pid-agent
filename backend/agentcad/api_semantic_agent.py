@@ -25,13 +25,13 @@ from .llm import PlannerError
 from .models import AgentPlan, TransactionRequest, TransactionResult
 from .permissive_semantic_compiler import PermissiveSemanticTransactionCompiler
 from .semantic_planner import SemanticAgentPlanner
-from .tool_registry import get_default_tool_registry
 from .service import (
     DocumentNotFoundError,
     DocumentService,
     InvalidOperationError,
     RevisionConflictError,
 )
+from .tool_registry import get_default_tool_registry
 from .vision_request_models import (
     VisionAgentGenerateRequest,
     VisionSemanticAgentReplanRequest,

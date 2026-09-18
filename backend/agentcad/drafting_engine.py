@@ -212,6 +212,12 @@ class DraftingEngine:
         usable_scope = scope_set - unusable
         frozen = locked | unusable
         before = snapshot(working, registry, policy)
+        #: The state every *stage* is compared against. It starts as the input and moves
+        #: forward only when a stage is accepted, so a pass can never give back an
+        #: improvement an earlier pass already won. ``before`` stays the input snapshot and
+        #: keeps its two jobs: the report's before/after metrics, and the second-layer
+        #: net-regression guard on the finished result.
+        current = before
 
         operations: list[Operation] = []
         moved: set[str] = set()
@@ -225,10 +231,26 @@ class DraftingEngine:
         forced: set[str] = set()
 
         def commit(stage: str, candidate: Document) -> bool:
-            """Accept a stage only if it worsens no hard drafting metric."""
+            """Accept a stage only if it worsens no hard drafting metric.
 
-            regressions = hard_regressions(before, snapshot(candidate, registry, policy))
+            The reference is the **last accepted state**, not the input: stage-local
+            comparison is the difference between "the result may not be worse than the
+            original" and the contract this engine actually promises, "no pass may destroy
+            what another pass just achieved". The passes interfere by design (a collision
+            move invalidates the route that was optimal before it), so a stage that turns a
+            metric from 1 back to 4 must be rolled back even when the input was 5.
+
+            On success the reference advances to this candidate: every call site commits
+            immediately after a ``True``, so the snapshot kept here is the committed state.
+            That also means the current state is never re-measured — one snapshot per
+            attempted stage, which is the same cost as before.
+            """
+
+            nonlocal current
+            candidate_snapshot = snapshot(candidate, registry, policy)
+            regressions = hard_regressions(current, candidate_snapshot)
             if not regressions:
+                current = candidate_snapshot
                 return True
             stage_findings.append(
                 DraftingFinding(

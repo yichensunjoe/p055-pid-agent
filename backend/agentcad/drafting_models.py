@@ -30,9 +30,13 @@ from pydantic import Field
 from .layout_models import RegionBox
 from .models import Point, StrictModel, TransactionRequest
 
-#: Bumped whenever the drafting pipeline changes how it moves geometry. A digest
-#: recorded under one engine version is not comparable with another.
-DRAFTING_ENGINE_VERSION = 1
+#: Bumped whenever the drafting pipeline changes how it moves geometry or how it decides to
+#: accept a stage, because ``transaction_digest`` is computed over this value: a digest
+#: recorded under one engine version must never be compared with another. v2 is the release
+#: where every stage is compared against the *last accepted* state instead of the run's
+#: input, so the same drawing can legitimately produce a different (and no longer
+#: accidentally regressing) result while remaining fully reproducible within a version.
+DRAFTING_ENGINE_VERSION = 2
 
 #: Drafting-specific finding codes (the drawing rules come from ``diagram_quality``).
 DRAFTING_CODES: tuple[str, ...] = (

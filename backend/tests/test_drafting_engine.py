@@ -24,6 +24,7 @@ from agentcad.drafting_models import (
     DRAFTING_ENGINE_VERSION,
     DraftingPolicy,
     DraftingRequest,
+    DraftingSnapshot,
 )
 from agentcad.layout_models import LayoutRegion
 from agentcad.models import (
@@ -1178,6 +1179,154 @@ def test_report_lists_addressable_ports_and_is_canonical(tmp_path: Path):
     assert report.engine_version == DRAFTING_ENGINE_VERSION
     assert report.scope_kind == "document"
     assert report.gate.checked_codes
+
+
+def staged_mess(service: DocumentService) -> str:
+    """A drawing whose repair needs more than one pass, so stages interact.
+
+    Overlapping pumps (collision), a pointless pipe detour (rerouting), a label sitting on
+    a symbol (annotation placement) and a valve far to the right. Used by the stage-local
+    monotonicity tests: with a single-pass fixture the reference bug cannot show up.
+    """
+
+    document_id = seed(
+        service,
+        [
+            pump("pump_a", 100, 300, label="P-101"),
+            pump("pump_b", 150, 320, label="P-102"),
+            valve("valve", 520, 300, label="HV-101"),
+            TextElement(
+                id="label_text",
+                position=Point(x=120, y=340),
+                text="P-101",
+                metadata={"parent_element_id": "pump_a"},
+            ),
+        ],
+        name="Staged mess",
+    )
+    document = service.get_document(document_id)
+    start = endpoint_point(service, document.elements[0], "discharge")
+    end = next(element for element in document.elements if element.id == "valve")
+    finish = endpoint_point(service, end, "in")
+    add(
+        service,
+        document_id,
+        [
+            bound_pipe(
+                service,
+                document,
+                "pipe",
+                "pump_a",
+                "discharge",
+                "valve",
+                "in",
+                routing="manual",
+                points=[
+                    start,
+                    Point(x=start.x + 40, y=start.y),
+                    Point(x=start.x + 40, y=620),
+                    Point(x=40, y=620),
+                    Point(x=40, y=finish.y),
+                    finish,
+                ],
+            )
+        ],
+    )
+    return document_id
+
+
+def test_a_stage_may_not_give_back_what_an_earlier_stage_won(tmp_path: Path, monkeypatch):
+    """Stage-local monotonicity: the reference is the last *accepted* state.
+
+    The reviewer's example, made executable: stage A takes a hard metric 5 -> 1, then stage
+    B would take it 1 -> 4. Comparing B against the *input* (5) would accept it — the result
+    is still better than where the run started — and that is exactly the bug: B destroys
+    what A achieved. B must be rolled back and named in the report.
+    """
+
+    from agentcad import drafting_engine as drafting_module
+    from agentcad.drafting_geometry import drafting_content_hash
+
+    service = make_service(tmp_path)
+    document_id = staged_mess(service)
+    input_hash = drafting_content_hash(service.get_document(document_id))
+    real_snapshot = drafting_module.snapshot
+    candidate_snapshots = {"seen": 0}
+
+    def scripted_snapshot(document, registry, policy):
+        """The input measures 5; the first stage's candidate measures 1; the rest 4."""
+
+        measured = real_snapshot(document, registry, policy)
+        if drafting_content_hash(document) == input_hash:
+            return measured.model_copy(update={"node_overlaps": 5})
+        candidate_snapshots["seen"] += 1
+        return measured.model_copy(
+            update={"node_overlaps": 1 if candidate_snapshots["seen"] == 1 else 4}
+        )
+
+    monkeypatch.setattr(drafting_module, "snapshot", scripted_snapshot)
+    preview = DraftingEngine(service).preview(document_id, DraftingRequest())
+
+    assert candidate_snapshots["seen"] >= 2, "the fixture must attempt at least two stages"
+    rolled_back = [
+        finding
+        for finding in preview.findings
+        if finding.code == "DRAFT_STAGE_ROLLED_BACK"
+    ]
+    assert rolled_back, "stage B must be rolled back: it worsens the accepted state"
+    assert all(finding.details["stage"] for finding in rolled_back)
+    assert any(
+        any("node_overlaps" in regression for regression in finding.details["regressions"])
+        for finding in rolled_back
+    ), "the rollback must name the metric it would have worsened"
+    assert any("已回滚" in warning for warning in preview.warnings)
+
+
+def test_every_stage_is_compared_against_the_state_before_it(tmp_path: Path, monkeypatch):
+    """No stage may be compared against the run's input once something was accepted."""
+
+    from agentcad import drafting_engine as drafting_module
+
+    service = make_service(tmp_path)
+    document_id = staged_mess(service)
+    real_hard_regressions = drafting_module.hard_regressions
+    comparisons: list[tuple[tuple, tuple]] = []
+
+    def spy(reference, candidate):
+        comparisons.append((reference.hard_signature(), candidate.hard_signature()))
+        return real_hard_regressions(reference, candidate)
+
+    monkeypatch.setattr(drafting_module, "hard_regressions", spy)
+    DraftingEngine(service).preview(document_id, DraftingRequest())
+
+    # The last comparison is the second-layer guard over the finished result; every earlier
+    # one is a stage. The invariant: the reference is the run's input until a stage is
+    # accepted, and from then on exactly the last accepted state — never the input again,
+    # and never a state that was rolled back.
+    stage_comparisons = comparisons[:-1]
+    assert len(stage_comparisons) >= 2, stage_comparisons
+    accepted_state = stage_comparisons[0][0]
+    accepted_count = 0
+    for reference, candidate in stage_comparisons:
+        assert reference == accepted_state, (
+            "a stage was compared against a state that is not the last accepted one"
+        )
+        if (
+            real_hard_regressions(
+                _snapshot_from_signature(reference), _snapshot_from_signature(candidate)
+            )
+            == []
+        ):
+            accepted_state = candidate
+            accepted_count += 1
+    assert accepted_count >= 1, "the fixture must accept at least one stage"
+    assert accepted_state != stage_comparisons[0][0]
+    # The net guard still measures the finished result against the original input.
+    assert comparisons[-1][0] == stage_comparisons[0][0]
+
+
+def _snapshot_from_signature(signature: tuple) -> DraftingSnapshot:
+    return DraftingSnapshot(**dict(signature))
 
 
 def test_hard_metrics_are_never_allowed_to_get_worse(tmp_path: Path):

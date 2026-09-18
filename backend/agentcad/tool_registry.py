@@ -10,6 +10,7 @@ from .agent_semantic_models import (
     CompiledSemanticTransaction,
     SemanticTransaction,
 )
+from .cad_models import CadImportOptions, CadImportResult
 from .drafting_models import DraftingPreview, DraftingReport, DraftingRequest
 from .engineering_ir import EngineeringGraph, TraceResult
 from .layout_models import AutoLayoutPreview, AutoLayoutRequest
@@ -52,6 +53,19 @@ class DraftingToolInput(DocumentToolInput):
     """
 
     request: DraftingRequest = Field(default_factory=DraftingRequest)
+
+
+class CadImportToolInput(StrictModel):
+    """Input for the CAD (DWG/DXF) import surfaces.
+
+    The HTTP surface takes the drawing as its request body and passes ``filename``;
+    the CLI and MCP surfaces name a file on the host through ``path``. ``options``
+    carries the whole import contract (frame, fills, layers, units, limits).
+    """
+
+    path: str = ""
+    filename: str = ""
+    options: CadImportOptions = Field(default_factory=CadImportOptions)
 
 
 class RevisionToolInput(DocumentToolInput):
@@ -257,6 +271,26 @@ def get_default_tool_registry() -> ToolRegistry:
                 audit_event="tool.import_project_payload",
                 surfaces=["rest"],
                 tags=["import", "project"],
+            ),
+            ToolDefinition(
+                name="import_cad_drawing",
+                description=(
+                    "Import a DWG or DXF drawing as a new document: geometry, layer "
+                    "names, text and block provenance are reproduced, and everything "
+                    "that could not be reproduced is reported with a code and a count. "
+                    "No engineering semantics are inferred. The import cannot modify, "
+                    "re-version or delete any existing document."
+                ),
+                input_schema=CadImportToolInput.model_json_schema(),
+                output_schema=CadImportResult.model_json_schema(),
+                permission="allow",
+                risk="draft_edit",
+                has_side_effect=True,
+                preview_supported=True,
+                idempotency="non_idempotent",
+                audit_event="tool.import_cad_drawing",
+                surfaces=["mcp", "rest", "agent"],
+                tags=["import", "cad", "dwg", "dxf", "drawing", "cli"],
             ),
             ToolDefinition(
                 name="update_project_settings",

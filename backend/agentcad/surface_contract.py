@@ -68,6 +68,14 @@ DRAFT_EDIT_EXCEPTIONS: dict[str, str] = {
         "elements at an expected revision. It cannot add, remove or reconnect "
         "engineering objects and is reversible with undo."
     ),
+    "import_cad_drawing": (
+        "Creates one *new* document from a CAD file; it cannot modify, re-version or "
+        "delete any existing document, and the source is identified by SHA-256 in both "
+        "the document metadata and the audit record. Every element is written through "
+        "the ordinary transaction path, so the import inherits the revision check and "
+        "is undoable like any other edit. Anything the importer could not reproduce is "
+        "reported rather than guessed at."
+    ),
     "apply_deterministic_drafting": (
         "The M3 drafting pipeline: it recomputes a preview and applies it inside the "
         "same governed transaction, so it inherits the revision check, the audit record "
@@ -303,6 +311,11 @@ HTTP_SURFACE_BINDINGS: tuple[SurfaceBinding, ...] = (
             "not a revision. Verified by test_read_routes_do_not_change_stored_state."
         ),
     ),
+    # --- CAD (DWG/DXF) import ---------------------------------------------------
+    # ``GET /api/v2/imports/cad/capabilities`` is deliberately absent: the contract
+    # enumerates *mutating* methods, and ``test_declared_routes_all_exist`` treats a
+    # declared read route as stale. Its read-only nature is asserted directly by
+    # ``test_capabilities_route_writes_nothing`` in tests/test_cad_api.py.
     # --- project metadata -------------------------------------------------------
     _http(
         "POST",
@@ -317,6 +330,28 @@ HTTP_SURFACE_BINDINGS: tuple[SurfaceBinding, ...] = (
         "project_metadata",
         tool="import_project_payload",
         audited=True,
+    ),
+    _http(
+        "POST",
+        "/api/v2/imports/cad",
+        "project_metadata",
+        tool="import_cad_drawing",
+        audited=True,
+        notes=(
+            "Creates one new document from an uploaded DWG/DXF: geometry, layers and "
+            "text only, no engineering semantics. Existing documents cannot be "
+            "modified, re-versioned or deleted by this route."
+        ),
+    ),
+    _http(
+        "POST",
+        "/api/v2/imports/cad/plan",
+        "read",
+        tool="import_cad_drawing",
+        notes=(
+            "Dry run: decodes the same body and returns the import report without "
+            "creating a document or writing anything."
+        ),
     ),
     _http(
         "PUT",
@@ -438,6 +473,16 @@ MCP_SURFACE_BINDINGS: tuple[SurfaceBinding, ...] = (
     mcp("find_engineering_object", "read", tool="find_engineering_object"),
     mcp("get_project_engineering_graph", "read", tool="get_project_engineering_graph"),
     mcp("rebuild_project_index", "runtime", tool="rebuild_project_index", audited=True),
+    mcp(
+        "import_cad_drawing",
+        "engineering_write",
+        tool="import_cad_drawing",
+        audited=True,
+        notes=(
+            "Imports a drawing from a path on the server host. Only files that decode "
+            "as DXF/DWG are accepted, and the source SHA-256 is recorded."
+        ),
+    ),
     mcp("list_symbols", "read"),
     mcp("get_transaction_schema", "read"),
     mcp("get_agent_transaction_schema", "read"),

@@ -11,8 +11,8 @@ def test_offline_quality_harness_passes_without_provider():
     report = run_quality_harness(SymbolRegistry())
 
     assert report.passed is True
-    assert report.total_cases == 6
-    assert report.passed_cases == 6
+    assert report.total_cases == 7
+    assert report.passed_cases == 7
     assert report.failed_cases == 0
     assert [case.name for case in report.cases] == [
         "symbol_catalog_integrity",
@@ -21,6 +21,7 @@ def test_offline_quality_harness_passes_without_provider():
         "drafting_quality_contract",
         "engineering_graph_contract",
         "deterministic_drafting_contract",
+        "cad_import_contract",
     ]
     graph_case = report.cases[4]
     # The M2 case must actually derive engineering objects, not just run.
@@ -42,6 +43,16 @@ def test_offline_quality_harness_passes_without_provider():
         drafting_engine.details["reserved_region_intrusions_after"]
         < drafting_engine.details["reserved_region_intrusions_before"]
     )
+    cad_import = report.cases[6]
+    # The CAD case must really reproduce a drawing, keep its layer names, admit what it
+    # could not reproduce, and refuse an unreadable source instead of guessing.
+    assert cad_import.details["element_count"] >= 10
+    assert cad_import.details["counts"]["fills"] == 1
+    assert {"PIPE", "仪表"} <= set(cad_import.details["layer_names"])
+    assert "CAD_PATTERN_HATCH_SKIPPED" in cad_import.details["issue_codes"]
+    assert "CAD_UNSUPPORTED_ENTITIES" in cad_import.details["issue_codes"]
+    assert cad_import.details["dry_run_transactions"] == 0
+    assert cad_import.details["cropped_canvas"] == {"width": 250.0, "height": 150.0}
 
 
 def test_catalog_harness_accepts_a_valid_dynamic_symbol(tmp_path):

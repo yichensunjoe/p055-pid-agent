@@ -276,6 +276,124 @@ def _run_drafting_command(args: argparse.Namespace) -> None:
     raise SystemExit(0 if passed else 2)
 
 
+def _run_import_cad_command(args: argparse.Namespace) -> None:
+    """Import a DWG/DXF drawing as a governed document (Charter §14).
+
+    This is a real write, and it goes through the same channel as every other write:
+    one document creation plus batched transactions, each with a revision check, an
+    audit record and an undo step. ``--dry-run`` decodes and translates the file and
+    prints the report without creating anything, which is what a CI job or a reviewer
+    should use first. With no file (or ``--capabilities``) it prints which converters
+    this machine has, so "cannot import my DWG" is answerable before a 1 MB upload.
+
+    Exit code 2 means the import was refused (no converter, unreadable file, no
+    geometry, limit exceeded), so this can gate a pipeline.
+    """
+    from .audit_models import AuditContext
+    from .cad_import import CadImporter, CadImportError
+    from .cad_models import CadImportOptions
+    from .service import DocumentService
+    from .store import SQLiteDocumentStore
+    from .symbols import SymbolRegistry
+
+    database = args.database or _default_database_path()
+    max_source_bytes = int(
+        os.getenv(
+            "PID_AGENT_MAX_CAD_SOURCE_BYTES",
+            str(25 * 1024 * 1024),
+        )
+    )
+    service = DocumentService(SQLiteDocumentStore(Path(database)), SymbolRegistry())
+    importer = CadImporter(service, max_source_bytes=max_source_bytes)
+
+    if args.capabilities or args.file is None:
+        print(_json_payload(importer.capabilities().model_dump(mode="json")))
+        return
+
+    source_path = Path(args.file)
+    options = CadImportOptions(
+        name=args.name or "",
+        frame=tuple(args.frame) if args.frame else None,
+        fills="skip" if args.no_fills else "solid",
+        layers=list(args.layer or []),
+        include_text=not args.no_text,
+        curve_segments=args.curve_segments,
+        stroke_width=args.stroke_width,
+        unit_scale=args.unit_scale,
+        max_elements=args.max_elements,
+        chunk_size=args.chunk_size,
+    )
+    try:
+        if args.dry_run:
+            plan = importer.dry_run(
+                source_path.read_bytes(), filename=source_path.name, options=options
+            )
+            payload = plan.model_dump(mode="json")
+            if args.summary:
+                report = payload["report"]
+                payload = {
+                    "document_name": payload["document_name"],
+                    "elements": payload["elements"],
+                    "operations": payload["operations"],
+                    "source": report["source"],
+                    "counts": report["counts"],
+                    "frame": report["frame"],
+                    "canvas": report["canvas"],
+                    "layers": report["layers"],
+                    "issues": report["issues"],
+                    "warnings": report["warnings"],
+                    "transactions": 0,
+                    "duration_ms": report["duration_ms"],
+                }
+        else:
+            result = importer.import_path(
+                source_path,
+                options=options,
+                audit=AuditContext(
+                    actor="cli",
+                    surface="cli",
+                    tool_name="import_cad_drawing",
+                    label=f"Import CAD file: {source_path.name}",
+                    metadata={"path": str(source_path)},
+                ),
+                source="system",
+            )
+            payload = result.model_dump(mode="json")
+            if args.summary:
+                report = payload["report"]
+                payload = {
+                    "document_id": payload["document_id"],
+                    "document_name": payload["document_name"],
+                    "revision": payload["revision"],
+                    "source": report["source"],
+                    "counts": report["counts"],
+                    "frame": report["frame"],
+                    "canvas": report["canvas"],
+                    "layers": report["layers"],
+                    "issues": report["issues"],
+                    "warnings": report["warnings"],
+                    "transactions": report["transactions"],
+                    "operations": report["operations"],
+                    "duration_ms": report["duration_ms"],
+                }
+    except CadImportError as exc:
+        error = {
+            "error": exc.code,
+            "message": exc.message,
+            "retryable": False,
+            **({"detail": exc.detail} if exc.detail else {}),
+        }
+        text = _json_payload(error)
+        if args.output:
+            args.output.write_text(text + "\n", encoding="utf-8")
+        print(text, file=sys.stderr)
+        raise SystemExit(2) from exc
+    text = _json_payload(payload)
+    if args.output:
+        args.output.write_text(text + "\n", encoding="utf-8")
+    print(text)
+
+
 def _run_database_command(args: argparse.Namespace) -> None:
     from .database_recovery import (
         DatabaseRecoveryError,
@@ -561,6 +679,74 @@ def main(argv: list[str] | None = None) -> None:
         )
         sub.add_argument("--output", type=Path, default=None, help="Optional JSON report path")
 
+    import_cad_parser = subparsers.add_parser(
+        "import-cad",
+        help=(
+            "Import a DWG/DXF drawing as a new document (geometry, layers, text and "
+            "block provenance; no engineering semantics)"
+        ),
+    )
+    _add_database_argument(import_cad_parser)
+    import_cad_parser.add_argument(
+        "file",
+        type=Path,
+        nargs="?",
+        default=None,
+        help="DWG or DXF file to import; omit to list available decoders",
+    )
+    import_cad_parser.add_argument("--name", default="", help="Document name")
+    import_cad_parser.add_argument(
+        "--frame",
+        type=float,
+        nargs=4,
+        metavar=("X0", "Y0", "X1", "Y1"),
+        default=None,
+        help="Crop window in source coordinates; default is the drawing's own extents",
+    )
+    import_cad_parser.add_argument(
+        "--layer",
+        action="append",
+        default=[],
+        help="Import only this source layer (repeatable)",
+    )
+    import_cad_parser.add_argument("--no-text", action="store_true", help="Skip text")
+    import_cad_parser.add_argument(
+        "--no-fills",
+        action="store_true",
+        help="Skip solid fills (SOLID/TRACE/solid HATCH)",
+    )
+    import_cad_parser.add_argument(
+        "--curve-segments",
+        type=int,
+        default=24,
+        help="Samples per turn when an arc/ellipse becomes a polyline",
+    )
+    import_cad_parser.add_argument("--stroke-width", type=float, default=1.8)
+    import_cad_parser.add_argument(
+        "--unit-scale",
+        type=float,
+        default=1.0,
+        help="Divide every coordinate and size by this factor",
+    )
+    import_cad_parser.add_argument("--max-elements", type=int, default=200_000)
+    import_cad_parser.add_argument("--chunk-size", type=int, default=1000)
+    import_cad_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Decode and report without creating a document",
+    )
+    import_cad_parser.add_argument(
+        "--capabilities",
+        action="store_true",
+        help="List the DWG/DXF decoders available on this machine",
+    )
+    import_cad_parser.add_argument(
+        "--summary",
+        action="store_true",
+        help="Print the report without the full element lists",
+    )
+    import_cad_parser.add_argument("--output", type=Path, default=None, help="Optional JSON path")
+
     args = parser.parse_args(argv)
     if args.command == "serve":
         import uvicorn
@@ -604,6 +790,8 @@ def main(argv: list[str] | None = None) -> None:
         _run_project_index_command(args)
     elif args.command == "drafting":
         _run_drafting_command(args)
+    elif args.command == "import-cad":
+        _run_import_cad_command(args)
     elif args.command == "quality-harness":
         from .quality_harness import run_quality_harness, symbol_load_failure_report
         from .symbols import SymbolCatalogLoadError, SymbolRegistry

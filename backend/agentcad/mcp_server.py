@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 from typing import Any
 
 from . import __version__
@@ -30,6 +31,24 @@ from .service import DocumentService, InvalidOperationError
 from .store import SQLiteDocumentStore
 from .symbols import SymbolRegistry
 from .tool_registry import get_default_tool_registry
+
+
+def _parse_cad_frame(raw: str) -> tuple[float, float, float, float] | None:
+    """Parse an ``x0,y0,x1,y1`` crop window for the CAD import tool."""
+
+    text = (raw or "").strip()
+    if not text:
+        return None
+    parts = [part.strip() for part in text.replace(";", ",").split(",")]
+    if len(parts) != 4:
+        raise InvalidOperationError("frame must be four comma-separated numbers: x0,y0,x1,y1")
+    try:
+        x0, y0, x1, y1 = (float(part) for part in parts)
+    except ValueError as exc:
+        raise InvalidOperationError("frame values must be numbers") from exc
+    if not (x1 > x0 and y1 > y0):
+        raise InvalidOperationError("frame must satisfy x1 > x0 and y1 > y0")
+    return (x0, y0, x1, y1)
 
 
 def build_service(settings: Settings | None = None) -> DocumentService:
@@ -192,6 +211,79 @@ def main() -> None:
             ),
         )
         return document.model_dump(mode="json")
+
+    @mcp.tool()
+    def import_cad_drawing(
+        path: str,
+        name: str = "",
+        frame: str = "",
+        include_text: bool = True,
+        fills: str = "solid",
+        unit_scale: float = 1.0,
+        max_elements: int = 200_000,
+        dry_run: bool = False,
+    ) -> dict:
+        """Import a DWG or DXF drawing from disk as a new engineering document.
+
+        Reproduces geometry, layer names, text and block provenance (``cad_block`` per
+        element) and reports everything it could not reproduce. It does not infer
+        equipment, lines or instruments — that remains a reviewed semantic step. Set
+        ``dry_run`` to get the report without creating a document.
+        """
+        from .cad_import import CadImporter, CadImportError
+        from .cad_models import CadImportOptions
+
+        database = Path(settings.database_path)
+        importer = CadImporter(
+            DocumentService(SQLiteDocumentStore(database), SymbolRegistry()),
+            max_source_bytes=settings.max_import_body_bytes,
+        )
+        options = CadImportOptions(
+            name=name,
+            frame=_parse_cad_frame(frame),
+            include_text=include_text,
+            fills=fills if fills in {"skip", "solid"} else "solid",
+            unit_scale=unit_scale,
+            max_elements=max_elements,
+        )
+        target = Path(path)
+        try:
+            if dry_run:
+                plan = importer.dry_run(
+                    target.read_bytes(), filename=target.name, options=options
+                )
+                return plan.model_dump(mode="json")
+            result = importer.import_path(
+                target,
+                options=options,
+                audit=request_audit_context(
+                    "import_cad_drawing",
+                    actor="mcp-agent",
+                    surface="mcp",
+                    label=f"Import CAD file: {target.name}",
+                    metadata={"surface": "mcp"},
+                ),
+                source="mcp",
+            )
+        except CadImportError as exc:
+            raise InvalidOperationError(f"{exc.code}: {exc.message}") from exc
+        emit_revision_diagnostics(
+            service,
+            service.get_document(result.document_id),
+            action="cad_import",
+            source="mcp",
+            diagnostics=diagnostics,
+            label=f"Import CAD file: {target.name}",
+            operation_count=result.report.operations,
+            extra={
+                "source_file": result.report.source.filename,
+                "sha256": result.report.source.sha256,
+                "converter": result.report.source.converter,
+                "element_count": result.report.counts.elements,
+                "issue_codes": [issue.code for issue in result.report.issues],
+            },
+        )
+        return result.model_dump(mode="json")
 
     @mcp.tool()
     def get_scene_summary(document_id: str) -> dict:

@@ -15,6 +15,7 @@ from . import __version__
 from .api import create_v1_compat_router, create_v2_router
 from .api_acceptance import create_acceptance_router
 from .api_audit import create_audit_router
+from .api_cad_import import create_cad_import_router
 from .api_documents import create_documents_router
 from .api_drafting import create_drafting_router
 from .api_dxf import create_dxf_router
@@ -293,6 +294,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(create_dxf_router(service, diagnostics))
     app.include_router(create_layout_router(service, diagnostics))
     app.include_router(create_drafting_router(service, diagnostics))
+    app.include_router(
+        create_cad_import_router(
+            service,
+            diagnostics,
+            max_source_bytes=settings.max_import_body_bytes,
+        )
+    )
     app.include_router(create_reports_router(service))
     app.include_router(create_semantic_agent_router(service, semantic_planner, diagnostics, harness))
     app.include_router(create_v1_compat_router(service))

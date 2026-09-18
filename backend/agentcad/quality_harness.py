@@ -1476,6 +1476,366 @@ def _deterministic_drafting_case(symbols: SymbolRegistry) -> QualityHarnessCaseR
     )
 
 
+def _cad_import_case(symbols: SymbolRegistry) -> QualityHarnessCaseResult:
+    """Offline (model-free) golden contract for CAD (DWG/DXF) import.
+
+    The importer is the only place where an outside file becomes engineering geometry, so
+    the checks are about the guarantees rather than the bytes: a DXG is reproduced with
+    its layers, block provenance and text; a frame crop and a unit scale move nothing
+    relative to anything else; the write is governed (a new document, audited, undoable)
+    and cannot touch an existing one; the same file always produces the same document;
+    the report admits what it could not reproduce; a dry run writes nothing; and a file
+    this installation cannot decode is refused with a code instead of an exception.
+
+    It also pins the single most dangerous failure mode of an importer: a source it
+    cannot understand must never be turned into geometry it made up.
+    """
+
+    from .audit_models import AuditContext
+    from .cad_import import CadImporter, CadImportError
+    from .cad_models import CadImportOptions
+    from .models import CreateDocumentRequest
+
+    def dxf_fixture() -> bytes:
+        """A small but complete DXF, written as literal records.
+
+        The harness ships with the application, so it cannot import a test helper: the
+        fixture is spelled out here, which also documents exactly which records the
+        contract covers.
+        """
+
+        lines: list[str] = []
+
+        def pair(code: int, value: object) -> None:
+            lines.append(str(code))
+            lines.append(str(value))
+
+        def entity(kind: str, items: list[tuple[int, object]]) -> None:
+            pair(0, kind)
+            for code, value in items:
+                pair(code, value)
+
+        pair(0, "SECTION")
+        pair(2, "HEADER")
+        pair(9, "$ACADVER")
+        pair(1, "AC1032")
+        pair(9, "$DWGCODEPAGE")
+        pair(3, "UTF-8")
+        pair(9, "$EXTMIN")
+        pair(10, 0.0)
+        pair(20, 0.0)
+        pair(9, "$EXTMAX")
+        pair(10, 1000.0)
+        pair(20, 600.0)
+        pair(0, "ENDSEC")
+
+        pair(0, "SECTION")
+        pair(2, "TABLES")
+        pair(0, "TABLE")
+        pair(2, "LAYER")
+        for layer_name, color in (("PIPE", 3), ("仪表", 5)):
+            entity("LAYER", [(2, layer_name), (70, 0), (62, color), (6, "CONTINUOUS")])
+        pair(0, "ENDTAB")
+        pair(0, "ENDSEC")
+
+        pair(0, "SECTION")
+        pair(2, "BLOCKS")
+        entity(
+            "BLOCK",
+            [(8, "0"), (2, "PDS2D-6Q1C15"), (70, 0), (10, 0.0), (20, 0.0), (30, 0.0)],
+        )
+        for start_x, start_y, end_x, end_y in (
+            (-5.0, -5.0, 5.0, -5.0),
+            (5.0, -5.0, 5.0, 5.0),
+            (5.0, 5.0, -5.0, 5.0),
+            (-5.0, 5.0, -5.0, -5.0),
+        ):
+            entity(
+                "LINE",
+                [
+                    (8, "0"),
+                    (10, start_x),
+                    (20, start_y),
+                    (11, end_x),
+                    (21, end_y),
+                ],
+            )
+        entity("ENDBLK", [(8, "0")])
+        pair(0, "ENDSEC")
+
+        pair(0, "SECTION")
+        pair(2, "ENTITIES")
+        entity("LINE", [(8, "PIPE"), (10, 0.0), (20, 0.0), (11, 1000.0), (21, 0.0)])
+        entity(
+            "LWPOLYLINE",
+            [
+                (8, "PIPE"),
+                (90, 3),
+                (70, 0),
+                (10, 0.0),
+                (20, 0.0),
+                (10, 500.0),
+                (20, 0.0),
+                (10, 500.0),
+                (20, 200.0),
+            ],
+        )
+        entity("CIRCLE", [(8, "仪表"), (10, 400.0), (20, 300.0), (40, 50.0)])
+        entity("ARC", [(8, "仪表"), (10, 200.0), (20, 100.0), (40, 30.0), (50, 0.0), (51, 90.0)])
+        entity(
+            "HATCH",
+            [
+                (8, "PIPE"),
+                (2, "SOLID"),
+                (70, 1),
+                (71, 0),
+                (91, 1),
+                (92, 2),
+                (72, 0),
+                (73, 1),
+                (93, 3),
+                (10, 600.0),
+                (20, 0.0),
+                (10, 700.0),
+                (20, 0.0),
+                (10, 700.0),
+                (20, 100.0),
+            ],
+        )
+        entity(
+            "HATCH",
+            [
+                (8, "PIPE"),
+                (2, "ANSI31"),
+                (70, 0),
+                (71, 0),
+                (91, 1),
+                (92, 2),
+                (72, 0),
+                (73, 1),
+                (93, 3),
+                (10, 0.0),
+                (20, 500.0),
+                (10, 100.0),
+                (20, 500.0),
+                (10, 100.0),
+                (20, 600.0),
+            ],
+        )
+        entity(
+            "TEXT",
+            [(8, "仪表"), (10, 100.0), (20, 400.0), (40, 40.0), (1, "P-101"), (50, 0.0), (72, 0), (73, 0)],
+        )
+        entity(
+            "TEXT",
+            [(8, "仪表"), (10, 100.0), (20, 500.0), (40, 40.0), (1, "45%%d"), (50, 45.0), (72, 0), (73, 0)],
+        )
+        entity(
+            "INSERT",
+            [
+                (8, "PIPE"),
+                (2, "PDS2D-6Q1C15"),
+                (10, 800.0),
+                (20, 100.0),
+                (41, -1.0),
+                (42, 1.0),
+                (43, 1.0),
+                (50, 0.0),
+            ],
+        )
+        entity("SPLINE", [(8, "0"), (10, 0.0), (20, 0.0)])
+        pair(0, "ENDSEC")
+        pair(0, "EOF")
+        return ("\n".join(lines) + "\n").encode("utf-8")
+
+    with TemporaryDirectory(prefix="pid-agent-quality-cad-") as directory:
+        service = DocumentService(
+            SQLiteDocumentStore(Path(directory) / "cad_import.db"),
+            symbols,
+        )
+        importer = CadImporter(service)
+        existing = service.create_document(
+            CreateDocumentRequest(name="Untouched neighbour"), source="system"
+        )
+        data = dxf_fixture()
+
+        result = importer.import_bytes(
+            data,
+            filename="harness.dxf",
+            options=CadImportOptions(),
+            audit=AuditContext(actor="quality-harness", surface="internal", tool_name="import_cad_drawing"),
+        )
+        document = service.get_document(result.document_id)
+        counts = result.report.counts
+        _require(
+            counts.elements == len(document.elements) and counts.elements > 0,
+            "CAD_ELEMENT_COUNT_MISMATCH",
+            "the report element count must match the document it created",
+        )
+        layer_names = {layer.name for layer in document.layers}
+        _require(
+            {"PIPE", "仪表", "0"} <= layer_names,
+            "CAD_LAYER_NAMES_LOST",
+            f"source layer names must survive the import: {sorted(layer_names)}",
+        )
+        blocks = {element.metadata.get("cad_block") for element in document.elements}
+        _require(
+            "PDS2D-6Q1C15" in blocks,
+            "CAD_BLOCK_PROVENANCE_LOST",
+            "block provenance must stay on the elements a block instance produced",
+        )
+        _require(
+            all(element.type != "symbol" for element in document.elements),
+            "CAD_SEMANTICS_INVENTED",
+            "a CAD import must not invent symbols/equipment from block names",
+        )
+        _require(
+            counts.fills == 1 and counts.texts == 2 and counts.lines == 5,
+            "CAD_GEOMETRY_KINDS_LOST",
+            f"unexpected geometry mix: lines={counts.lines} texts={counts.texts} fills={counts.fills}",
+        )
+        issue_codes = {issue.code for issue in result.report.issues}
+        _require(
+            "CAD_PATTERN_HATCH_SKIPPED" in issue_codes
+            and "CAD_TEXT_ROTATION_IGNORED" in issue_codes
+            and "CAD_UNSUPPORTED_ENTITIES" in issue_codes,
+            "CAD_IMPORT_UNREPORTED_LOSSES",
+            f"the report must name what it could not reproduce: {sorted(issue_codes)}",
+        )
+        _require(
+            all(issue.message and issue.count > 0 for issue in result.report.issues),
+            "CAD_ISSUE_WITHOUT_EVIDENCE",
+            "every reported issue needs a message and a count",
+        )
+        trail = service.audit.audit_trail(document_id=result.document_id, limit=50)
+        _require(
+            any(record.event_type == "revision.created" for record in trail),
+            "CAD_IMPORT_UNAUDITED",
+            "an import must leave revision audit evidence",
+        )
+        _require(
+            service.get_document(existing.id).revision == existing.revision
+            and not service.get_document(existing.id).elements,
+            "CAD_IMPORT_TOUCHED_ANOTHER_DOCUMENT",
+            "an import may only create a document, never change an existing one",
+        )
+
+        # A crop and a unit change must not move the geometry relative to itself.
+        cropped = importer.import_bytes(
+            data,
+            filename="harness.dxf",
+            options=CadImportOptions(frame=(400.0, 200.0, 900.0, 500.0), unit_scale=2.0),
+        )
+        cropped_document = service.get_document(cropped.document_id)
+        _require(
+            0 < len(cropped_document.elements) < len(document.elements),
+            "CAD_FRAME_CROP_INEFFECTIVE",
+            "a frame crop must reduce the imported geometry",
+        )
+        _require(
+            cropped_document.canvas.width == 250.0
+            and cropped_document.canvas.height == 150.0,
+            "CAD_FRAME_UNIT_SCALE_WRONG",
+            (
+                "canvas must follow the frame and unit scale: "
+                f"{cropped_document.canvas.width}x{cropped_document.canvas.height}"
+            ),
+        )
+        circle = next(
+            (
+                element
+                for element in cropped_document.elements
+                if element.type == "circle"
+            ),
+            None,
+        )
+        _require(
+            circle is not None and abs(circle.radius - 25.0) < 1e-6,
+            "CAD_UNIT_SCALE_NOT_APPLIED_TO_SIZES",
+            "the unit scale must apply to radii as well as coordinates",
+        )
+
+        # Determinism: the same bytes, the same document content.
+        repeated = importer.import_bytes(data, filename="harness.dxf")
+        repeated_document = service.get_document(repeated.document_id)
+        _require(
+            [element.model_dump(mode="json") for element in repeated_document.elements]
+            == [element.model_dump(mode="json") for element in document.elements],
+            "CAD_IMPORT_NOT_DETERMINISTIC",
+            "the same file must import into the same document content",
+        )
+
+        # A dry run writes nothing at all.
+        before = len(service.list_documents())
+        plan = importer.dry_run(data, filename="harness.dxf")
+        _require(
+            plan.elements == counts.elements
+            and plan.report.transactions == 0
+            and len(service.list_documents()) == before,
+            "CAD_DRY_RUN_WROTE_SOMETHING",
+            "a dry run must produce a report and no document",
+        )
+
+        # Undo must take the imported geometry away again.
+        undone = service.undo(result.document_id, expected_revision=document.revision)
+        _require(
+            undone.revision > document.revision and not undone.elements,
+            "CAD_IMPORT_NOT_UNDOABLE",
+            "the last import batch must be undoable like any other edit",
+        )
+
+        # An unreadable source is refused with a code, not guessed at.
+        try:
+            importer.import_bytes(b"this is not a drawing", filename="junk.txt")
+        except CadImportError as exc:
+            _require(
+                exc.code == "unrecognised_format",
+                "CAD_WRONG_REFUSAL_CODE",
+                f"an unreadable source must be refused as unrecognised_format, got {exc.code}",
+            )
+        else:
+            raise _HarnessFailure(
+                "CAD_UNREADABLE_SOURCE_ACCEPTED",
+                "a source that is not a drawing must be refused",
+            )
+
+    return QualityHarnessCaseResult(
+        name="cad_import_contract",
+        status="passed",
+        summary=(
+            "a DXF was reproduced with its layers, geometry kinds, text and block "
+            "provenance; the frame and unit scale moved nothing relative to itself; the "
+            "write was audited, undoable and confined to a new document; the report named "
+            "every loss; the same bytes produced the same document; a dry run wrote "
+            "nothing and an unreadable source was refused"
+        ),
+        details={
+            "source_format": result.report.source.format,
+            "sha256": result.report.source.sha256,
+            "converters_available": [
+                item.key for item in importer.capabilities().converters if item.available
+            ],
+            "element_count": counts.elements,
+            "counts": counts.model_dump(mode="json"),
+            "layer_names": sorted(layer_names),
+            "issue_codes": sorted(issue_codes),
+            "issue_counts": {issue.code: issue.count for issue in result.report.issues},
+            "transactions": result.report.transactions,
+            "operations": result.report.operations,
+            "frame": result.report.frame,
+            "canvas": result.report.canvas,
+            "cropped_element_count": len(cropped_document.elements),
+            "cropped_canvas": {
+                "width": cropped_document.canvas.width,
+                "height": cropped_document.canvas.height,
+            },
+            "dry_run_elements": plan.elements,
+            "dry_run_transactions": plan.report.transactions,
+            "duration_ms": result.report.duration_ms,
+        },
+    )
+
+
 def _capture_case(
     name: str,
     runner: Callable[[SymbolRegistry], QualityHarnessCaseResult],
@@ -1518,6 +1878,7 @@ def run_quality_harness(symbols: SymbolRegistry | None = None) -> QualityHarness
             _deterministic_drafting_case,
             registry,
         ),
+        _capture_case("cad_import_contract", _cad_import_case, registry),
     ]
     passed_cases = sum(case.status == "passed" for case in cases)
     return QualityHarnessReport(

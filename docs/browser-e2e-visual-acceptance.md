@@ -37,6 +37,29 @@ The Playwright web servers start:
 - FastAPI on `127.0.0.1:8000`, with a unique database and diagnostics file under `frontend/test-results/`;
 - the production Vite preview on `127.0.0.1:4173`.
 
+Both ports are overridable, and so is the preview's API proxy target, so a second
+checkout can run the suite while another one already holds the defaults:
+
+```bash
+cd frontend
+PID_AGENT_E2E_API_PORT=8011 PID_AGENT_E2E_PREVIEW_PORT=4174 npx playwright test
+```
+
+| variable | default | meaning |
+| --- | --- | --- |
+| `PID_AGENT_E2E_API_PORT` | `8000` | port the FastAPI web server listens on |
+| `PID_AGENT_E2E_PREVIEW_PORT` | `4173` | port the Vite preview web server listens on |
+| `PID_AGENT_API_TARGET` | `http://127.0.0.1:8000` | backend the preview proxies `/api` to (set automatically by the Playwright config) |
+| `PID_AGENT_E2E_API_ROOT` | `http://127.0.0.1:8000/api/v2` | backend the fixtures call directly (set automatically by the Playwright config) |
+
+CI passes none of these and keeps the defaults.
+
+The suite is **destructive by contract**: `resetDocuments()` deletes every document
+in the database it is pointed at. The web server always creates its own scratch
+database under `frontend/test-results/`, which is why the suite can be run locally
+at all — but do not point the fixtures at a live/shared database (`PID_AGENT_E2E_API_ROOT`)
+just to "reuse" a running backend.
+
 The E2E build exposes a test-only bridge for reading structured workspace state and injecting a deterministic Agent preview. Normal development and production builds do not expose that bridge.
 
 ## Failure evidence and traces
@@ -66,6 +89,28 @@ Update them only after reviewing the rendered result:
 cd frontend
 npm run test:e2e:update
 ```
+
+**Regenerate them in the same renderer that verifies them.** The committed baselines
+were last captured on macOS (Chromium on Darwin) while CI renders on Linux, and the
+declared UI font stack resolves to different physical fonts on the two systems, so
+text-dense pages drift by a fraction of a percent of pixels. 8 of the 10 snapshots
+failed in CI at commit `c60f5be` for exactly that reason, before any M2 change.
+
+Consequences to keep in mind:
+
+- A screenshot failure is **weak evidence**: it can be a threshold-crossing of a
+  pre-existing renderer drift rather than a code change. Always compare against the
+  failure set of the *baseline* commit before blaming the current diff, and read
+  `*-expected.png` / `*-actual.png` / `*-diff.png` rather than the summary line.
+- Do not "fix" a red snapshot by running `npm run test:e2e:update` on a macOS
+  workstation: that bakes the Darwin font metrics into the baseline and reproduces
+  the same failure from the other side. Regenerating the whole set belongs in the CI
+  renderer (same job, `npm run test:e2e:update`, artefacts reviewed and committed) and
+  should be its own deliberate change.
+- Prefer a **layout assertion** over a pixel snapshot when the property is
+  structural. The dock tab strip is guarded by a real assertion ("every tab stays on
+  one row inside the dock") in `e2e/engineering-graph.spec.ts`, precisely because a
+  `repeat(N, …)` grid silently reflowed the page when a tab was added.
 
 A product regression is a change that was not intended by the implementation: clipped controls, lost engineering elements, changed connector colors, missing lock/anchor/ghost affordances, incorrect panel state, or unstable text/layout. A legitimate visual change is an explicitly reviewed product modification whose affected screenshots match the approved design. Do not update snapshots merely to make CI green; inspect the actual, expected, and diff images first.
 

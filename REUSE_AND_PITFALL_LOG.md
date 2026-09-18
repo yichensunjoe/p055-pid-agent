@@ -10,6 +10,8 @@
 
 ## 2026-09-18 · 工程标识应由 tag 决定，重复 tag 必须报错而不是合并（P055-PID-Agent）
 
+> ⚠️ **本条的身份规则已被推翻**（M2 第二次验收，2026-09-18）：tag 是可变工程属性，不能兼任永久主键。现行做法见下方「稳定身份不能由可变 tag 兼任」。本条的“重复 tag 绝不合并、降级要如实标注”仍然有效。
+
 - 场景：工程对象需要跨 revision、跨导入/导出的稳定身份，但 element id 是随机的（导入会重新生成）；而真实图纸又常出现重复位号。
 - 结论做法：对象 id 优先由工程位号派生（`valve:hv-101`），无位号时降级为 element id，并用 `identity_scope`（`tag` / `element`）如实标注用的是哪一种；同一文档内重复 tag **绝不合并**，第二个及之后按 element id 排序加确定性 `#2`/`#3`，同时报 `IR_DUPLICATE_IDENTITY`。
 - 关键经验：图上两个阀共用位号是**工程缺陷**，不是别名机会；把“看起来一样的对象”合并成一个是把缺陷藏起来。身份降级要写在数据里（`identity_scope`），不要藏在文档里。
@@ -335,3 +337,39 @@
 - 原因：`--database` 注册在父 parser（与既有 `audit` 命令一致），argparse 要求父级可选参数出现在子命令之前。
 - 结论做法：沿用现约定不改 CLI 结构；在脚本/文档示例里固定写成 `pid-agent <group> --database <path> <subcommand>`；CI 用默认路径时不涉及。
 - 关键经验：给嵌套命令写文档或写脚本时，先在终端实跑一次顺序，别凭直觉拼参数；这类失败出现在**演练脚本**里（而不是单测里），最容易被误判成代码 bug。
+
+## 2026-09-18 · 稳定身份不能由可变 tag 兼任（推翻上一条身份规则）（P055-PID-Agent）
+
+- 场景：M2 首版把 tag 当工程身份（`valve:hv-101`），测试只验证了“element id 变了但 tag 不变 → id 不变”。第二次验收直接指出这不是 Charter 要的稳定身份：**P-101 改名成 P-201 后，它还是不是同一台设备？** 按 tag 派生身份，答案是否。
+- 结论做法：`engineering_id` 改为不可变的代理 id（`sha256("kind|anchor")` → `eq_…/vl_…/inst_…/sg_…/ln_…/jn_…/opc_conn_…`），anchor 优先取图纸里**显式声明**的稳定 id（`identity_basis="declared"`），否则取 element handle（`identity_basis="element"`）；tag 降级为可编辑属性（`tag` / `tag_key`），仍保留 tag 寻址能力；声明 id 冲突报 `IR_IDENTITY_COLLISION`，绝不合并。
+- 关键经验：**“稳定”是对什么稳定，必须写清楚并可被测试证伪**。只写“element 变化不影响身份”会漏掉真正的考题（属性变化不影响身份）。判断一个身份方案是否合格，用反例问一句：**业务上允许改的那个字段改了以后，它还是同一个东西吗？** 允许改的字段就不能是主键。
+- 连锁技巧：改了身份模型就必须同时处理**旧数据**——本项目把 `IR_BUILDER_VERSION` 从 1 升到 2，让旧索引行自动判 stale（而不是新旧图混用），且旧行在查询入口被跳过而非猜测；缺新 id 的老图纸降级为 element 身份而非报错。
+
+## 2026-09-18 · 硬编码列数的 tab 条：加一个 tab 让整页位移，快照红在别处（P055-PID-Agent）
+
+- 场景：M2 给右侧面板加了第 6 个 tab，本地肉眼看着“只是多一格”，但 CI 上 `blank editor dark theme` 快照相对基线**新增**失败，而报告里很容易写成“预期 UI 变化”。
+- 根因：`.right-panel-tabs` 写的是 `grid-template-columns: repeat(5, minmax(0, 1fr))`。第 6 个 tab 自动落到**第二行**（条高 39px → 77px），面板内容整体下移 38px；在 960px 高的页面上这就是几百个像素的位移，足以越过 `maxDiffPixelRatio: 0.015`。
+- 定位手法（可复用）：① 下载 CI 失败的 Playwright 产物（`*-expected.png` / `*-actual.png` / `*-diff.png`）；② 自己写 PNG 解码脚本做**逐像素 bbox / 行带 / 列带统计**和 ASCII 热力图——不靠肉眼看图也能判断“改动集中在哪个面板”；③ 在活页面里做 DOM A/B：注入旧 CSS 规则，直接量 `strip.getBoundingClientRect().height` 与下方第一个元素的 `top`，证明“换行 → 内容下移”而不是猜。
+- 结论做法：列数改成与 tab 数量无关（`grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr)`），并新增 e2e 守卫断言“所有 tab 同一行且不超出 dock 右边界”——把这类回归从“靠像素快照偶然发现”变成“靠断言必然发现”。
+- 关键经验：**像素快照是弱信号（阈值 + 渲染器差异），布局断言是强信号**。UI 里任何 `repeat(N, …)` 的 N 都是未来的 bug。
+
+## 2026-09-18 · 视觉基线是 macOS 渲染器生成的，CI（Linux）长期红——不要用本地重生成去"修"（P055-PID-Agent）
+
+- 场景：CI Browser job 长期 34 passed / 10 failed，其中 9 个是 screenshot。追查发现 `frontend/e2e/visual.spec.ts-snapshots/*.png` 最后一次更新在 UI token 化重构（`86710c0`，早于 T0.5/M2），由 macOS Chromium 渲染，而 CI 在 Linux 上渲染：字体度量不同 → 文字密集页面（左栏、右 dock、顶栏）逐像素判定超阈值。
+- 判断依据：同一批 PNG 在基线上就红 8 张，且“本地渲染 == 提交的基线”是 0 像素差；CI 里新增失败的那张，diff 分布与本地一致但整体偏大。即：**基线漂移是既有问题，不是本轮引入**。
+- 结论做法：**不从 macOS 重生成基线**（那只是把 macOS 字体烧进基线，复现同一个问题）。正确修法是“在 CI 渲染器里重生成基线”（容器/CI job 内 `npm run test:e2e:update`），作为独立任务；本轮只做归因 + 修真实回归，并在报告里写清“哪个是存量、哪个是新增”。
+- 关键经验：跨渲染器的截图基线，必须**在同一个渲染器里生成与校验**；报告里写“快照通过/失败”之前先问“基线是谁生成的”。
+
+## 2026-09-18 · 项目没有 @types/node：vite.config.ts 里用 process 会打断 tsc -b（P055-PID-Agent）
+
+- 场景：为了让第二个 checkout 能改端口，`vite.config.ts` 读了 `process.env.PID_AGENT_API_TARGET` / `PID_AGENT_PREVIEW_PORT`，结果 `npm run build`（`tsc -b`）报 TS2591 `Cannot find name 'process'`。
+- 原因：前端只装了 `@types/react` / `@types/react-dom`，没有 `@types/node`；`tsconfig.node.json`（`composite: true`）恰好包含 `vite.config.ts`。
+- 结论做法：新增最小环境声明文件（`frontend/node-env.d.ts`，只声明 `process.env` 与 `process.cwd()`）并加入 `tsconfig.node.json` 的 `include`，而不是为一个环境变量引入整套 `@types/node`。
+- 附加坑：改完 `tsconfig.*.json` 后仍报旧错时，是 `composite` 的 `*.tsbuildinfo` 增量缓存——**先删 `tsconfig.node.tsbuildinfo` / `tsconfig.app.tsbuildinfo` 再重跑**，否则你会以为改动没生效。
+- 关键经验：给构建配置加 Node 全局变量前，先确认项目有没有 Node 类型环境；有 `composite` 增量缓存的构建，改配置后要清 buildinfo 再判断。
+
+## 2026-09-18 · e2e 端口要可覆盖，且必须在隔离数据库上跑（P055-PID-Agent）
+
+- 场景：本机 8000 端口被另一个工作区的常驻后端占用（连着共享的 35 张真实图纸 dev DB），而 `playwright.config.ts` 的 webServer 固定 8000/4173 + `reuseExistingServer:false`，于是“想跑 e2e”就变成“要么清活库、要么跑不了”。
+- 结论做法：把端口改为环境变量可覆盖（`PID_AGENT_E2E_API_PORT` / `PID_AGENT_E2E_PREVIEW_PORT`），`vite.config.ts` 的 preview proxy 读 `PID_AGENT_API_TARGET`，`fixtures.ts` 的直连 API 根地址由同一组变量推导；CI 不传变量即用默认值。数据库仍然由 config 注入到 `test-results/*.db`，所以永远不会碰活库。
+- 关键经验：**验收脚本的破坏性要写进它的接口设计里**——只要“目标库/端口”是硬编码的，下一个人就会在错误的库上跑它；让端口和库路径可参数化，是把“别这么做”变成“做不到”的唯一办法。

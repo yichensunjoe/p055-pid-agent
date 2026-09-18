@@ -306,9 +306,10 @@ GET    /api/v2/documents/{document_id}/export-v2.dxf
 GET    /api/v2/documents/{document_id}/engineering-report
 GET    /api/v2/documents/{document_id}/engineering-report/{kind}.csv
 GET    /api/v2/documents/{document_id}/engineering-graph
-GET    /api/v2/documents/{document_id}/engineering-graph/trace?object_id=&direction=
+GET    /api/v2/documents/{document_id}/engineering-graph/trace?ref=&direction=
 GET    /api/v2/documents/{document_id}/project-index
 GET    /api/v2/project/engineering-graph
+GET    /api/v2/project/engineering-objects?ref=&limit=
 POST   /api/v2/project/index/rebuild
 GET    /api/v2/audit/records
 GET    /api/v2/audit/verify
@@ -371,7 +372,9 @@ npm run build
 npm run test:e2e
 ```
 
-`pid-agent engineering-graph <document_id> --summary` 可在终端直接查看一张图纸的工程对象、拓扑规模与 findings，并在存在 error finding 时以退出码 2 结束；`pid-agent project-index rebuild|list|project` 同理（有非新鲜索引时退出码 2）。
+`pid-agent engineering-graph <document_id> --summary` 可在终端直接查看一张图纸的工程对象、拓扑规模与 findings，并在存在 error finding 时以退出码 2 结束；`pid-agent project-index rebuild|list|project` 同理（有非新鲜索引时退出码 2）；`pid-agent engineering-find <ref>` 可跨图纸定位一个工程对象（稳定 id `eq_…`、tag key `equipment:p-101`、tag `P-101` 或 element id 均可）。
+
+工程对象的**身份与 tag 是两件事**：`engineering_id`（`eq_…`/`vl_…`/`sg_…`/`ln_…`/`opc_conn_…`）不可变，改 tag 不会改变它；Signal 与 off-page 连接同样有各自的稳定身份。模型与不变量见 [`docs/engineering-semantic-graph.md`](docs/engineering-semantic-graph.md)。
 
 Playwright 安装、headed 模式、视觉基线更新和 trace 查看方式见 [`docs/browser-e2e-visual-acceptance.md`](docs/browser-e2e-visual-acceptance.md)。
 无需模型或 API Key 的图例、拓扑和 Agent 事务验收见 [`docs/offline-quality-harness.md`](docs/offline-quality-harness.md)。

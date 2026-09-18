@@ -278,7 +278,7 @@ def semantic_diff_from_history_details(
         document_id=document_id,
         base_revision=max(0, int(details.get("base_revision", 0))),
         result_revision=max(0, int(details.get("result_revision", 0))),
-        change_count=len(changes),
+        change_count=max(len(changes), int(details.get("change_count", len(changes)))),
         engineering_change_count=engineering_count,
         critical_change_count=critical_count,
         draft_edit_count=draft_count,

@@ -1093,6 +1093,81 @@ def _annotation_blocker_rect(element: Element) -> Rect | None:
     return None
 
 
+def symbol_definition_findings(
+    document: Document,
+    registry: SymbolRegistry,
+) -> list[DraftingFinding]:
+    """Symbols whose definition the loaded catalog does not provide.
+
+    A real drawing can reference a symbol key that no longer exists (a renamed library,
+    a file produced by another checkout). Nothing about that element can be laid out,
+    and staying silent would let the report claim it measured the whole drawing. Warned,
+    not blocked: the drafting engine still repairs everything it *can* see, and the
+    verdict about the drawing itself belongs to the drawing rules and the IR findings,
+    which already report the same fact under their own code.
+    """
+
+    findings: list[DraftingFinding] = []
+    for element in canonical_elements(document):
+        if element.type != "symbol":
+            continue
+        try:
+            registry.get(element.symbol_key)
+        except KeyError:
+            findings.append(
+                DraftingFinding(
+                    severity="warning",
+                    code="DRAFT_SYMBOL_DEFINITION_MISSING",
+                    message=(
+                        f"图例 {element.symbol_key!r} 不在当前图例库中，"
+                        f"符号 {element.id} 无法参与排布与端口解析。"
+                    ),
+                    element_ids=[element.id],
+                    details={"symbol_key": element.symbol_key},
+                )
+            )
+    return findings
+
+
+def unresolvable_element_ids(
+    document: Document,
+    registry: SymbolRegistry,
+) -> set[str]:
+    """Elements whose geometry cannot be moved or normalized at all.
+
+    A real drawing reaches the drafting engine with history: a symbol key the loaded
+    catalog no longer defines (see :func:`symbol_definition_findings`), and the pipes
+    bound to it. Writing through the service for such an element raises, correctly --
+    the service refuses to compute a port point for a symbol it cannot resolve. The
+    drafting pipeline must therefore *exclude* them from its passes rather than discover
+    them by crashing: everything else still gets repaired, and the report says what could
+    not be touched.
+
+    Returns the unresolvable symbols plus every connector bound to one, so no stage can
+    pick a candidate that the service would reject.
+    """
+
+    unknown_symbols: set[str] = set()
+    for element in document.elements:
+        if element.type != "symbol":
+            continue
+        try:
+            registry.get(element.symbol_key)
+        except KeyError:
+            unknown_symbols.add(element.id)
+    if not unknown_symbols:
+        return set()
+    unusable = set(unknown_symbols)
+    for element in document.elements:
+        if element.type != "connector":
+            continue
+        for endpoint in (element.source, element.target):
+            if endpoint is not None and endpoint.element_id in unknown_symbols:
+                unusable.add(element.id)
+                break
+    return unusable
+
+
 def structural_findings(
     document: Document,
     registry: SymbolRegistry,
@@ -1105,6 +1180,7 @@ def structural_findings(
         *junction_findings(classify_junctions(document)),
         *reserved_region_intrusions(document, registry),
         *port_findings(document, registry),
+        *symbol_definition_findings(document, registry),
     ]
     waived = {code for code in policy.waived_codes}
     return sorted(

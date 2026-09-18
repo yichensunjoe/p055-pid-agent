@@ -26,6 +26,8 @@ from agentcad.drafting_geometry import (
     resolve_scope,
     snapshot,
     structural_findings,
+    symbol_definition_findings,
+    unresolvable_element_ids,
 )
 from agentcad.drafting_models import DraftingPolicy, DraftingRequest
 from agentcad.models import (
@@ -33,6 +35,7 @@ from agentcad.models import (
     ConnectorElement,
     ConnectorEndpoint,
     CreateDocumentRequest,
+    Document,
     JunctionElement,
     Point,
     SymbolElement,
@@ -575,3 +578,74 @@ def test_connector_segments_follow_the_declared_points() -> None:
     assert [segment.length for segment in segments] == [100, 100]
     assert segments[0].horizontal and segments[1].vertical
     assert element_rect(connector) is None
+
+
+def test_a_symbol_the_catalog_does_not_define_is_reported_and_excluded() -> None:
+    """A legacy drawing can reference a symbol key that no longer exists.
+
+    Found on real project data: nothing can be laid out or port-resolved for such an
+    element, so the geometry layer has to name it (warning) and mark it plus its pipes as
+    unusable, instead of raising halfway through a pass.
+    """
+
+    registry = SymbolRegistry()
+    ghost = SymbolElement(
+        id="ghost",
+        symbol_key="pressure_transmitter",
+        position=Point(x=400, y=300),
+        width=60,
+        height=50,
+        label="PT-101",
+    )
+    pump = SymbolElement(
+        id="pump",
+        symbol_key="centrifugal_pump",
+        position=Point(x=100, y=300),
+        width=80,
+        height=70,
+        label="P-101",
+    )
+    document = _document_with([ghost, pump, _pipe_to("ghost")])
+
+    findings = symbol_definition_findings(document, registry)
+    assert [finding.code for finding in findings] == ["DRAFT_SYMBOL_DEFINITION_MISSING"]
+    assert findings[0].severity == "warning"
+    assert findings[0].element_ids == ["ghost"]
+    # It reaches the report through the one entry point the engine uses.
+    assert "DRAFT_SYMBOL_DEFINITION_MISSING" in {
+        finding.code for finding in structural_findings(document, registry, DraftingPolicy())
+    }
+
+    # The unusable set is the unknown symbol plus every pipe bound to it, so no pass can
+    # pick a candidate the service would refuse to compute geometry for.
+    assert unresolvable_element_ids(document, registry) == {"ghost", "pipe"}
+    # A drawing that references only known symbols has nothing unusable.
+    clean = _document_with([pump])
+    assert unresolvable_element_ids(clean, registry) == set()
+    assert symbol_definition_findings(clean, registry) == []
+
+
+def _document_with(elements: list) -> Document:
+    """A stored-shaped document, built directly so a legacy element can be represented.
+
+    The service validates symbol keys on every write path, so a document that predates the
+    current catalog cannot be created through it — it can only be loaded, which is exactly
+    how the real project database ended up with such drawings.
+    """
+
+    return Document(id="doc_legacy", name="Legacy", elements=list(elements))
+
+
+def _pipe_to(target_id: str) -> ConnectorElement:
+    return ConnectorElement(
+        id="pipe",
+        points=[Point(x=160, y=300), Point(x=400, y=320)],
+        source=ConnectorEndpoint(
+            element_id="pump", port_id="discharge", point=Point(x=160, y=300)
+        ),
+        target=ConnectorEndpoint(
+            element_id=target_id, port_id="in", point=Point(x=400, y=320)
+        ),
+        routing="manual",
+        medium="process",
+    )

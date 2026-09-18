@@ -83,6 +83,7 @@ from .drafting_geometry import (
     structural_findings,
     text_rect,
     transaction_digest,
+    unresolvable_element_ids,
 )
 from .drafting_models import (
     DRAFTING_BLOCKER_CODES,
@@ -201,6 +202,15 @@ class DraftingEngine:
         scope_ids, scope_kind = resolve_scope(working, request)
         scope_set = set(scope_ids)
         locked = self._locked_ids(working, request)
+        # Elements the service cannot even compute geometry for — a symbol key the loaded
+        # catalog no longer defines, plus the pipes bound to it. They are excluded from
+        # every pass instead of being discovered by crashing: everything else is still
+        # repaired, and the report states what it could not touch (see
+        # ``unresolvable_element_ids``). ``locked`` stays the *lock* set, so lock provenance
+        # never claims an engineer froze something the catalog broke.
+        unusable = unresolvable_element_ids(working, registry) & scope_set
+        usable_scope = scope_set - unusable
+        frozen = locked | unusable
         before = snapshot(working, registry, policy)
 
         operations: list[Operation] = []
@@ -237,7 +247,10 @@ class DraftingEngine:
         # makes ``settled`` a property of the result instead of a hope, and the round bound
         # keeps the run finite and reproducible. Re-layout runs only in the first round:
         # it is a global arrangement, not a local repair.
-        for round_index in range(policy.pipeline_rounds):
+        def run_round(round_index: int) -> bool:
+            """One sweep of every pass. Returns whether anything was committed."""
+
+            nonlocal working
             changed = False
 
             # 1) Region-aware relayout with the frozen set passed in as anchors.
@@ -247,7 +260,7 @@ class DraftingEngine:
                     request,
                     policy,
                     scope_ids,
-                    locked,
+                    frozen,
                     commit,
                     operations,
                     moved,
@@ -255,6 +268,7 @@ class DraftingEngine:
                     moved_annotations,
                     skipped_locked,
                     warnings,
+                    stage_findings,
                 ) or changed
 
             # 2) Port-aware routing. Two different reasons to touch a pipe:
@@ -265,11 +279,11 @@ class DraftingEngine:
             #      quality strictly improves.
             #    Forced re-routing is deliberately independent of `reroute_connectors`: that
             #    switch means "do not tidy routes", never "leave the pipes you moved behind".
-            if scope_set and (request.reroute_connectors or forced):
+            if usable_scope and (request.reroute_connectors or forced):
                 candidate = deepcopy(working)
                 staged_reroute: list[Operation] = []
                 stage_rerouted: set[str] = set()
-                for connector in self._scoped_connectors(candidate, scope_set, locked):
+                for connector in self._scoped_connectors(candidate, usable_scope, locked):
                     must_follow = connector.id in forced
                     if not (request.reroute_connectors or must_follow):
                         continue
@@ -296,9 +310,9 @@ class DraftingEngine:
                     changed = True
 
             # 3) Annotation placement.
-            if request.place_annotations and scope_set:
+            if request.place_annotations and usable_scope:
                 candidate = deepcopy(working)
-                staged = self._place_annotations(candidate, scope_set, locked, scope_kind)
+                staged = self._place_annotations(candidate, usable_scope, locked, scope_kind)
                 if staged and commit(f"annotations-{round_index + 1}", candidate):
                     working = candidate
                     operations.extend(staged)
@@ -306,11 +320,11 @@ class DraftingEngine:
                     changed = True
 
             # 4) Crossing bridges.
-            if request.bridge_crossings and scope_set:
+            if request.bridge_crossings and usable_scope:
                 candidate = deepcopy(working)
                 staged, bridged_now = self._bridge_crossings(
                     candidate,
-                    scope_set,
+                    usable_scope,
                     locked,
                     stage_findings,
                 )
@@ -321,10 +335,12 @@ class DraftingEngine:
                     changed = True
 
             # 5) Collision relaxation.
-            if request.resolve_collisions and scope_set:
+            if request.resolve_collisions and usable_scope:
                 for pass_index in range(policy.collision_passes):
                     candidate = deepcopy(working)
-                    staged = self._relax_collisions(candidate, scope_set, locked, policy, request)
+                    staged = self._relax_collisions(
+                        candidate, usable_scope, locked, policy, request
+                    )
                     if not staged or not commit(
                         f"collision-{round_index + 1}-{pass_index + 1}", candidate
                     ):
@@ -346,10 +362,10 @@ class DraftingEngine:
             #    zone, not another node. Unlocked intruders are moved out here; a locked
             #    one is left exactly where the engineer froze it and stays visible in the
             #    gate as an honest blocker.
-            if request.resolve_collisions and scope_set:
+            if request.resolve_collisions and usable_scope:
                 candidate = deepcopy(working)
                 staged = self._evict_reserved_intruders(
-                    candidate, scope_set, locked, policy, request
+                    candidate, usable_scope, locked, policy, request
                 )
                 if staged and commit(f"reserved-{round_index + 1}", candidate):
                     working = candidate
@@ -362,7 +378,29 @@ class DraftingEngine:
                     )
                     changed = True
 
-            if not changed:
+            return changed
+
+        for round_index in range(policy.pipeline_rounds):
+            try:
+                if not run_round(round_index):
+                    break
+            except InvalidOperationError as exc:
+                # A pass builds its work on a copy and only commits a finished stage, so an
+                # abort here leaves the last committed state intact. Reported instead of
+                # raised: a read-only drafting request must not fail because one element of
+                # a legacy drawing is unusable.
+                warnings.append(f"整理阶段无法继续，已停在最后一次成功提交：{exc}")
+                stage_findings.append(
+                    DraftingFinding(
+                        severity="warning",
+                        code="DRAFT_STAGE_UNAVAILABLE",
+                        message=f"整理阶段因为元素不可用而中止：{exc}",
+                        details={
+                            "stage": f"round-{round_index + 1}",
+                            "reason": str(exc),
+                        },
+                    )
+                )
                 break
 
         result = canonical_document(working)
@@ -530,6 +568,7 @@ class DraftingEngine:
         moved_annotations: set[str],
         skipped_locked: set[str],
         warnings: list[str],
+        stage_findings: list[DraftingFinding],
     ) -> bool:
         """Round-one region relayout, replaying the layout engine's transaction locally.
 
@@ -540,24 +579,41 @@ class DraftingEngine:
         """
 
         candidate = deepcopy(working)
-        layout = AutoLayoutEngine(self.service).preview_document(
-            candidate,
-            AutoLayoutRequest(
-                expected_revision=None,
-                element_ids=scope_ids,
-                locked_element_ids=sorted(locked),
-                direction=request.direction,
-                rank_gap=request.rank_gap,
-                node_gap=request.node_gap,
-                component_gap=request.component_gap,
-                obstacle_margin=policy.obstacle_margin,
-                lane_gap=policy.lane_gap,
-                reroute_connectors=request.reroute_connectors,
-                include_hidden=request.include_hidden,
-            ),
-        )
+        try:
+            layout = AutoLayoutEngine(self.service).preview_document(
+                candidate,
+                AutoLayoutRequest(
+                    expected_revision=None,
+                    element_ids=scope_ids,
+                    locked_element_ids=sorted(locked),
+                    direction=request.direction,
+                    rank_gap=request.rank_gap,
+                    node_gap=request.node_gap,
+                    component_gap=request.component_gap,
+                    obstacle_margin=policy.obstacle_margin,
+                    lane_gap=policy.lane_gap,
+                    reroute_connectors=request.reroute_connectors,
+                    include_hidden=request.include_hidden,
+                ),
+            )
+            staged = self._apply_operations(candidate, layout.transaction)
+        except InvalidOperationError as exc:
+            # The relayout replay writes through the service, so it can meet something
+            # the service refuses -- a connector bound to a symbol the loaded catalog no
+            # longer defines is the real-data case that produced this guard. One unusable
+            # element must not take the whole report down: the stage is skipped, the
+            # reason is recorded, and every other pass still runs.
+            warnings.append(f"区域排布不可用，已跳过该阶段：{exc}")
+            stage_findings.append(
+                DraftingFinding(
+                    severity="warning",
+                    code="DRAFT_STAGE_UNAVAILABLE",
+                    message=f"区域排布阶段无法执行，已跳过：{exc}",
+                    details={"stage": "relayout", "reason": str(exc)},
+                )
+            )
+            return False
         skipped_locked.update(layout.skipped_locked_element_ids)
-        staged = self._apply_operations(candidate, layout.transaction)
         if staged and commit("relayout", candidate):
             working.elements = candidate.elements
             working.metadata = candidate.metadata

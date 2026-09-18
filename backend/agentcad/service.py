@@ -849,7 +849,15 @@ class DocumentService:
 
         from .drafting_geometry import symbol_port_point
 
-        definition = self.symbols.get(symbol.symbol_key)
+        try:
+            definition = self.symbols.get(symbol.symbol_key)
+        except KeyError as exc:
+            # A drawing can reference a symbol the loaded catalog no longer defines
+            # (legacy files, a project library that moved on). That is a data error the
+            # caller has to see, not a KeyError escaping through a read-only route.
+            raise InvalidOperationError(
+                f"unknown symbol '{symbol.symbol_key}' for element {symbol.id}"
+            ) from exc
         port = next((item for item in definition.ports if item.id == port_id), None)
         if port is None:
             raise InvalidOperationError(

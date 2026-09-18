@@ -191,6 +191,84 @@ def test_applying_a_drafting_preview_through_the_governed_channel(client: TestCl
     assert settled["transaction"] is None
 
 
+def test_a_legacy_document_with_an_unknown_symbol_does_not_break_the_read_routes(
+    client: TestClient,
+):
+    """The exact real-data failure: a stored drawing referencing a lost symbol key.
+
+    The service refuses to compute a port point for such an element (correctly), so both
+    read routes have to degrade honestly instead of answering 500 — this was a real 500 on
+    the project's own database before the guard existed.
+    """
+
+    from agentcad.models import (
+        ConnectorElement,
+        ConnectorEndpoint,
+        Document,
+        Point,
+        SymbolElement,
+    )
+    from agentcad.store import StoredDocument
+
+    document = Document(
+        id="doc_legacy",
+        name="Legacy drawing",
+        elements=[
+            SymbolElement(
+                id="ghost",
+                symbol_key="pressure_transmitter",
+                position=Point(x=400, y=300),
+                width=60,
+                height=50,
+                label="PT-101",
+            ),
+            SymbolElement(
+                id="pump",
+                symbol_key="centrifugal_pump",
+                position=Point(x=100, y=300),
+                width=80,
+                height=70,
+                label="P-101",
+            ),
+            ConnectorElement(
+                id="pipe",
+                points=[Point(x=160, y=300), Point(x=400, y=320)],
+                source=ConnectorEndpoint(
+                    element_id="pump", port_id="discharge", point=Point(x=160, y=300)
+                ),
+                target=ConnectorEndpoint(
+                    element_id="ghost", port_id="in", point=Point(x=400, y=320)
+                ),
+                routing="manual",
+                medium="process",
+            ),
+        ],
+    )
+    # Written straight to the store: the service validates symbol keys on every write path,
+    # which is exactly why a legacy drawing can only be loaded, never re-created.
+    client.app_state.service.store.save(  # type: ignore[attr-defined]
+        StoredDocument(document=document, undo_stack=[], redo_stack=[])
+    )
+
+    report = client.post("/api/v2/documents/doc_legacy/drafting/report", json={})
+    assert report.status_code == 200, report.text
+    codes = {finding["code"] for finding in report.json()["findings"]}
+    assert "DRAFT_SYMBOL_DEFINITION_MISSING" in codes
+    assert "DRAFT_PORT_UNRESOLVED" in codes
+
+    preview = client.post(
+        "/api/v2/documents/doc_legacy/drafting/preview",
+        json={"expected_revision": 0},
+    )
+    assert preview.status_code == 200, preview.text
+    body = preview.json()
+    assert body["metrics"]["regressions"] == []
+    assert "ghost" not in body["moved_element_ids"]
+    assert body["locked_element_ids"] == []
+    # And it is still a preview: nothing was written by either route.
+    assert client.get("/api/v2/documents/doc_legacy").json()["revision"] == 0
+
+
 def test_drafting_scope_parameters_are_honoured(client: TestClient):
     document_id = _seed_document(client)
     preview = client.post(

@@ -87,7 +87,13 @@ def symbol_bounds(element: Element) -> Rect | None:
 def _symbol_label_text(element: Element, registry: SymbolRegistry) -> TextElement | None:
     if element.type != "symbol" or not element.label.strip():
         return None
-    definition = registry.get(element.symbol_key)
+    try:
+        definition = registry.get(element.symbol_key)
+    except KeyError:
+        # The drawing references a symbol the loaded catalog does not define. Its label
+        # bounds cannot be derived, so it takes part in no annotation decision instead of
+        # raising: a missing definition is a data problem the reports already flag.
+        return None
     scale_x = element.width / definition.width
     scale_y = element.height / definition.height
     return TextElement(

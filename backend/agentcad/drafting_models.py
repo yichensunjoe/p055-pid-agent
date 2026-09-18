@@ -47,6 +47,14 @@ DRAFTING_CODES: tuple[str, ...] = (
     "DRAFT_JUNCTION_DANGLING",
     "DRAFT_RESERVED_REGION_OVERLAP",
     "DRAFT_PORT_UNRESOLVED",
+    #: The drawing references a symbol the loaded catalog does not define. The element
+    #: cannot be laid out or port-resolved, so the report says so instead of quietly
+    #: measuring a drawing it can only partly see.
+    "DRAFT_SYMBOL_DEFINITION_MISSING",
+    #: A pipeline stage could not run at all (for example a pass met an element the
+    #: service cannot compute geometry for). What was already committed stands; this
+    #: records what was skipped so the result is not mistaken for a complete pass.
+    "DRAFT_STAGE_UNAVAILABLE",
     "DRAFT_LOCKED_ELEMENT_MOVED",
     "DRAFT_OUT_OF_SCOPE_CHANGE",
     "DRAFT_TOPOLOGY_CHANGED",

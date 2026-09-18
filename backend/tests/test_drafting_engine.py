@@ -1056,6 +1056,76 @@ def test_a_locked_symbol_on_the_legend_is_reported_instead_of_moved(tmp_path: Pa
     assert preview.gate.passed is False
 
 
+def test_a_legacy_drawing_with_an_unknown_symbol_is_repaired_around_not_rejected(
+    tmp_path: Path,
+):
+    """Real project data contains drawings that reference symbols the catalog lost.
+
+    Reproduced from the live database: a pipe bound to ``pressure_transmitter`` (not a
+    library key) made the preview raise, so a read-only route answered 500. The engine now
+    excludes the unusable element and its pipe from every pass, repairs the rest, and says
+    what it could not touch.
+    """
+
+    from agentcad.store import StoredDocument
+
+    service = make_service(tmp_path)
+    document = Document(
+        id="doc_legacy",
+        name="Legacy drawing",
+        elements=[
+            SymbolElement(
+                id="ghost",
+                symbol_key="pressure_transmitter",
+                position=Point(x=400, y=300),
+                width=60,
+                height=50,
+                label="PT-101",
+            ),
+            pump("pump", 100, 300, label="P-101"),
+            valve("valve", 150, 320, label="HV-101"),
+            ConnectorElement(
+                id="pipe",
+                points=[Point(x=160, y=300), Point(x=400, y=320)],
+                source=ConnectorEndpoint(
+                    element_id="pump", port_id="discharge", point=Point(x=160, y=300)
+                ),
+                target=ConnectorEndpoint(
+                    element_id="ghost", port_id="in", point=Point(x=400, y=320)
+                ),
+                routing="manual",
+                medium="process",
+            ),
+        ],
+    )
+    service.store.save(StoredDocument(document=document, undo_stack=[], redo_stack=[]))
+    engine = DraftingEngine(service)
+
+    report = engine.report("doc_legacy", DraftingRequest())
+    missing = [
+        finding
+        for finding in report.findings
+        if finding.code == "DRAFT_SYMBOL_DEFINITION_MISSING"
+    ]
+    assert missing and missing[0].element_ids == ["ghost"]
+    # Reported, not blocked: the drafting engine still measures and repairs what it sees.
+    assert "DRAFT_SYMBOL_DEFINITION_MISSING" not in {
+        blocker.code for blocker in report.gate.blockers
+    }
+
+    preview = engine.preview("doc_legacy", DraftingRequest())
+    assert preview.metrics.regressions == []
+    # The unusable pipe is never moved or re-routed, and the engine does not pretend a
+    # lock caused it: lock provenance stays empty.
+    assert "pipe" not in preview.rerouted_connector_ids
+    assert "ghost" not in preview.moved_element_ids
+    assert preview.locked_element_ids == []
+    assert preview.locks.locked_element_ids == []
+    assert preview.metrics.improvements, "the usable part of the drawing is still repaired"
+    # It is still preview-only.
+    assert service.get_document("doc_legacy").revision == document.revision
+
+
 def test_a_label_that_sits_on_top_of_a_symbol_is_moved_off(tmp_path: Path):
     service = make_service(tmp_path)
     document_id = seed(

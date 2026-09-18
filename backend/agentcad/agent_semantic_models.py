@@ -312,6 +312,7 @@ class AnnotationLayoutMetrics(StrictModel):
 
 
 class SemanticAgentPlanResult(StrictModel):
+    session_id: str
     plan: SemanticAgentPlan
     compiled_plan: AgentPlan | None = None
     assessment: AgentTransactionAssessment
@@ -322,6 +323,7 @@ class SemanticAgentPlanResult(StrictModel):
 
 
 class SemanticAgentReplanRequest(StrictModel):
+    session_id: str | None = None
     prompt: str = Field(min_length=1, max_length=100_000)
     context: str = Field(default="", max_length=200_000)
     provider: ProviderConfig | None = None
@@ -331,6 +333,8 @@ class SemanticAgentReplanRequest(StrictModel):
 
 
 class SemanticAgentApplyRequest(StrictModel):
+    session_id: str
+    approval_id: str
     plan_id: str
     parent_plan_id: str | None = None
     attempt: int = Field(default=0, ge=0, le=5)

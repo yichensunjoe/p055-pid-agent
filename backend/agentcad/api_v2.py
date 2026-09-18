@@ -35,6 +35,7 @@ from .service import (
     RevisionConflictError,
 )
 from .svg import render_png, render_svg
+from .tool_registry import get_default_tool_registry
 
 
 def _record_revision_details(
@@ -152,6 +153,11 @@ def create_v2_router(
     @router.get("/health")
     def health() -> dict[str, Any]:
         return {"status": "ok", "service": "P&ID-Agent", "api_version": "v2"}
+
+    @router.get("/agent/tools")
+    def agent_tools() -> dict[str, Any]:
+        """Return the canonical machine-readable AgentCAD/P&ID tool catalog."""
+        return get_default_tool_registry().catalog()
 
     @router.get("/agent/runtime-config")
     def agent_runtime_config() -> dict[str, float | None]:

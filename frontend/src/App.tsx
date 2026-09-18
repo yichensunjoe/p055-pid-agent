@@ -11,6 +11,7 @@ import { DocumentTree } from "./editor/DocumentTree";
 import { CreateFolderDialog, RenameFolderDialog } from "./editor/FolderDialogs";
 import { BasicShapesToolbar } from "./editor/BasicShapesToolbar";
 import { ExperienceSettings } from "./editor/ExperienceSettings";
+import { DraftingPanel } from "./editor/DraftingPanel";
 import { EngineeringGraphPanel } from "./editor/EngineeringGraphPanel";
 import { EngineeringReportPanel } from "./editor/EngineeringReportPanel";
 import { ViewNavigator } from "./editor/ViewNavigator";
@@ -128,7 +129,7 @@ function ShapeToolButton({ tool, label, shortcut, active }: { tool: "line" | "re
   );
 }
 
-type RightPanel = "properties" | "groups" | "history" | "reports" | "graph" | "agent";
+type RightPanel = "properties" | "groups" | "history" | "reports" | "graph" | "drafting" | "agent";
 
 function operationDescription(operation: SemanticOperation): string {
   switch (operation.op) {
@@ -239,12 +240,20 @@ export default function App() {
     if (import.meta.env.MODE !== "e2e") return;
     return installE2EBridge(() => pendingPlan, setPendingPlan);
   }, [pendingPlan]);
+  // Keyed by the selection *contents*, not by the array object: any mutation re-creates
+  // the selection array (`filter` over the surviving ids), and a reference-keyed effect
+  // would then treat an ordinary edit as a fresh canvas selection and eject the user from
+  // whichever analysis panel they were working in.
+  const selectionKey = state.selectedElementIds.join("\u0000");
+  const selectionRevealsProperties = state.selectionRevealsProperties;
+  const hasSelection = state.selectedElementIds.length > 0;
   useEffect(() => {
     // Canvas selections reveal 属性; panel-driven highlights (定位/追踪) must not eject the user
     // from the analysis panel they were reading.
-    if (!state.selectedElementIds.length || !state.selectionRevealsProperties) return;
+    if (!hasSelection || !selectionRevealsProperties) return;
     setRightPanel("properties");
-  }, [state.selectedElementIds, state.selectionRevealsProperties]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed by selection contents on purpose
+  }, [selectionKey, selectionRevealsProperties, hasSelection]);
   useEffect(() => {
     const document = state.document;
     if (!pendingPlan) return;
@@ -578,6 +587,7 @@ export default function App() {
     { id: "history", label: "历史" },
     { id: "reports", label: "报表/检查" },
     { id: "graph", label: "工程图谱" },
+    { id: "drafting", label: "整理" },
     { id: "agent", label: "Agent" },
   ];
   const busyAgent = planningAgent || repairingAgent || applyingAgent || automaticAgentRunning;
@@ -928,6 +938,7 @@ export default function App() {
           {rightPanel === "history" ? <section className="inspector-panel" role="tabpanel"><h2>Revision 历史</h2><HistoryPanel /></section> : null}
           {rightPanel === "reports" ? <section className="inspector-panel" role="tabpanel"><h2>工程报表与规则检查</h2><EngineeringReportPanel /></section> : null}
           {rightPanel === "graph" ? <section className="inspector-panel" role="tabpanel"><h2>工程语义图（派生）</h2><EngineeringGraphPanel /></section> : null}
+          {rightPanel === "drafting" ? <section className="inspector-panel" role="tabpanel"><h2>确定性整理（M3）</h2><DraftingPanel /></section> : null}
           <section className="agent-panel" role="tabpanel" hidden={rightPanel !== "agent"}>
             <h2>P&amp;ID Agent</h2>
             <label>自然语言指令<textarea value={prompt} onChange={(event: ChangeEvent<HTMLTextAreaElement>) => setPrompt(event.target.value)} placeholder="例如：把选中的阀门替换为球阀，并保持原有管线连接。" rows={5} /></label>

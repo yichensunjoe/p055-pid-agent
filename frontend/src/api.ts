@@ -1,4 +1,9 @@
 import type { AgentImagePayload } from "./agent/visionImageTypes";
+import type {
+  DraftingOptions,
+  DraftingPreview,
+  DraftingReport,
+} from "./draftingTypes";
 import type { AutoLayoutOptions, AutoLayoutPreview } from "./layoutTypes";
 import type {
   AgentPlan,
@@ -412,6 +417,18 @@ export const api = {
     }),
   previewAutoLayout: (id: string, options: AutoLayoutOptions) =>
     request<AutoLayoutPreview>(`/documents/${id}/layout/preview`, {
+      method: "POST",
+      body: JSON.stringify(options),
+    }),
+  // Deterministic drafting (M3). Both routes are read routes: `previewDrafting` returns
+  // an ordinary transaction, and the editor applies it through `transact`.
+  getDraftingReport: (id: string, options: DraftingOptions = {}) =>
+    request<DraftingReport>(`/documents/${id}/drafting/report`, {
+      method: "POST",
+      body: JSON.stringify(options),
+    }),
+  previewDrafting: (id: string, options: DraftingOptions) =>
+    request<DraftingPreview>(`/documents/${id}/drafting/preview`, {
       method: "POST",
       body: JSON.stringify(options),
     }),

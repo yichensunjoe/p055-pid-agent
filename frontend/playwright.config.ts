@@ -18,7 +18,13 @@ export default defineConfig({
   testDir: "./e2e",
   testIgnore: "security.shared.spec.ts",
   outputDir: "test-results/playwright",
-  snapshotPathTemplate: "{testDir}/{testFilePath}-snapshots/{arg}{ext}",
+  // The platform is part of the file name on purpose. Font rasterisation differs between
+  // macOS and Linux, so a snapshot captured on one system fails on the other by a fraction
+  // of a percent of pixels — which used to leave the browser job permanently red and the
+  // shared-mode security acceptance behind it skipped. Keeping one baseline per renderer
+  // means each environment compares against its own pixels instead of drifting against the
+  // other's. Regenerate the set for *your* platform; see docs/browser-e2e-visual-acceptance.md.
+  snapshotPathTemplate: "{testDir}/{testFilePath}-snapshots/{arg}-{platform}{ext}",
   fullyParallel: false,
   workers: 1,
   forbidOnly: Boolean(process.env.CI),

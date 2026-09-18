@@ -90,33 +90,39 @@ cd frontend
 npm run test:e2e:update
 ```
 
-**Regenerate them in the same renderer that verifies them.** The UI font stack resolves to
-different physical fonts on macOS and Linux, so text-dense pages drift by a fraction of a
-percent of pixels and a snapshot captured on one system fails on the other.
+**One baseline per platform.** The UI font stack resolves to different physical fonts on macOS
+and Linux, so text-dense pages differ by a fraction of a percent of pixels between the two. The
+snapshot name therefore carries the platform (`snapshotPathTemplate` in `playwright.config.ts`,
+`{arg}-{platform}{ext}`), and each environment compares against pixels rendered on itself:
 
-**Current owner: the CI renderer (Linux).** The whole set was regenerated on the Linux runner
-in `.github/workflows/visual-baselines.yml` (manual `workflow_dispatch`), which runs the same
-setup as `Browser acceptance · Chromium` and then updates the snapshots instead of asserting
-them, uploading the PNGs as an artifact; the commit is reviewed and made by hand.
+```text
+frontend/e2e/visual.spec.ts-snapshots/blank-editor-light-linux.png     ← asserted by CI
+frontend/e2e/visual.spec.ts-snapshots/blank-editor-light-darwin.png    ← asserted on macOS
+```
 
-The history that produced them: the set used to be macOS-rendered, and 8 of the 10 snapshots
-failed in CI at commit `c60f5be` (before any M2 change) purely from that cross-renderer drift,
-which is why the whole Browser job stayed red and skipped the shared-mode security acceptance
-behind it.
+Both sets are committed on purpose. A single shared set cannot work: whichever renderer owns it,
+the other one drifts against it by more than the 1.5% threshold — which is how 8 of the 10
+snapshots failed in CI at commit `c60f5be` (before any M2 change) while the same files passed on
+the machines that produced them. That permanently red job also skipped the shared-mode security
+acceptance behind it, so a rendering difference was silently disabling a security gate.
 
-**When the UI changes on purpose, regenerate — do not "fix" the assertion.** Adding controls
-to a panel legitimately changes the pixels of every screenshot that includes that panel, so a
-new failure on a changed region is expected. Re-run the `Visual baselines` workflow after the UI
-change itself is committed, review the images, and commit the new PNGs as their own deliberate
-change. Do not update snapshots merely to make CI green, and never update them on a workstation
-whose renderer differs from CI's: that bakes the other system's font metrics into the baseline
-and reproduces the same failure from the opposite side.
+**When the UI changes on purpose, regenerate — do not "fix" the assertion.** Adding controls to
+a panel legitimately changes the pixels of every screenshot that contains that panel, so a new
+failure on a changed region is expected. Regenerate the set for your platform, review the
+rendered images, and commit them as their own deliberate change:
 
-**Working on macOS.** With Linux-owned baselines, a local `npx playwright test` reports those
-snapshots as differing by a small fraction of pixels. That is the same drift in the mirror
-direction, not evidence about the change you are making: judge a suspected visual regression by
-the worktree A/B below and by the differing-pixel count, not by the red/green of a local run.
-The authoritative comparison is the CI job.
+```bash
+# macOS: rebuild the E2E bundle first — `npm run build` overwrites dist/ with a bundle that
+# has no test bridge, and every screenshot scenario then times out waiting for it.
+cd frontend && npm run build:e2e && npx playwright test e2e/visual.spec.ts --update-snapshots
+```
+
+For the Linux set use `.github/workflows/visual-baselines.yml` (manual `workflow_dispatch`),
+which runs the same setup as `Browser acceptance · Chromium`, updates the snapshots instead of
+asserting them, and uploads the PNGs as an artifact; committing them is still a reviewed change.
+
+Do not update snapshots merely to make a run green, and never regenerate a set in a renderer
+other than the one that asserts it: that bakes the wrong font metrics into the baseline.
 
 ### Proving "pre-existing, not introduced" with a worktree A/B
 
@@ -160,11 +166,10 @@ Consequences to keep in mind:
   pre-existing renderer drift rather than a code change. Always compare against the
   failure set of the *baseline* commit before blaming the current diff, and read
   `*-expected.png` / `*-actual.png` / `*-diff.png` rather than the summary line.
-- Do not "fix" a red snapshot by running `npm run test:e2e:update` on a macOS
-  workstation: that bakes the Darwin font metrics into the baseline and reproduces
-  the same failure from the other side. Regenerating the whole set belongs in the CI
-  renderer (the `Visual baselines` workflow, artefacts reviewed and committed) and
-  should be its own deliberate change.
+- Regenerate only the set belonging to the platform you are on, and only after looking
+  at the images: `--update-snapshots` on macOS writes the `*-darwin.png` files, the
+  `Visual baselines` workflow writes the `*-linux.png` files. Running the update on the
+  wrong platform for a set is what produced the cross-renderer debt in the first place.
 - Prefer a **layout assertion** over a pixel snapshot when the property is
   structural. The dock tab strip is guarded by a real assertion ("every tab stays on
   one row inside the dock") in `e2e/engineering-graph.spec.ts`, precisely because a

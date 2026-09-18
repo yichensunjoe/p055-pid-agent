@@ -889,8 +889,8 @@ class SQLiteDocumentStore:
 
     _PROJECT_INDEX_COLUMNS = (
         "document_id, document_name, revision, content_hash, graph_hash, builder_version, "
-        "object_count, equipment_count, valve_count, instrument_count, line_count, "
-        "off_page_count, error_count, warning_count, graph_json, built_at, built_by"
+        "object_count, equipment_count, valve_count, instrument_count, signal_count, "
+        "line_count, off_page_count, error_count, warning_count, graph_json, built_at, built_by"
     )
 
     def upsert_project_index(self, record: dict[str, Any]) -> None:
@@ -908,9 +908,9 @@ class SQLiteDocumentStore:
                 INSERT INTO project_index (
                     document_id, document_name, revision, content_hash, graph_hash,
                     builder_version, object_count, equipment_count, valve_count,
-                    instrument_count, line_count, off_page_count, error_count,
+                    instrument_count, signal_count, line_count, off_page_count, error_count,
                     warning_count, graph_json, built_at, built_by
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(document_id) DO UPDATE SET
                     document_name = excluded.document_name,
                     revision = excluded.revision,
@@ -921,6 +921,7 @@ class SQLiteDocumentStore:
                     equipment_count = excluded.equipment_count,
                     valve_count = excluded.valve_count,
                     instrument_count = excluded.instrument_count,
+                    signal_count = excluded.signal_count,
                     line_count = excluded.line_count,
                     off_page_count = excluded.off_page_count,
                     error_count = excluded.error_count,
@@ -940,6 +941,7 @@ class SQLiteDocumentStore:
                     record["equipment_count"],
                     record["valve_count"],
                     record["instrument_count"],
+                    record["signal_count"],
                     record["line_count"],
                     record["off_page_count"],
                     record["error_count"],

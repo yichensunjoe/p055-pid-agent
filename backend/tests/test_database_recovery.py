@@ -201,6 +201,47 @@ def test_v4_database_gains_the_derived_project_index(tmp_path: Path):
     assert service.audit.verify_chain().ok is True
 
 
+def test_v5_database_gains_the_signal_count_column(tmp_path: Path):
+    """A pre-identity-rework (schema v5) index still works and can be rebuilt.
+
+    The column is additive with a 0 default, so old rows stay readable and are simply
+    reported as built by an older builder version until the next rebuild fills them in.
+    """
+
+    import sqlite3
+
+    from agentcad.project_index import IR_BUILDER_VERSION, ProjectIndexService
+
+    database = tmp_path / "v5.db"
+    store = SQLiteDocumentStore(database)
+    service = DocumentService(store, SymbolRegistry())
+    document = service.create_document(CreateDocumentRequest(name="Legacy signal drawing"))
+
+    # Simulate a v5 database: the index row exists but has no signal_count column and
+    # was written by the previous builder version.
+    with sqlite3.connect(database) as connection:
+        connection.execute("ALTER TABLE project_index DROP COLUMN signal_count")
+        connection.execute("PRAGMA user_version=5")
+
+    migrated = SQLiteDocumentStore(database)
+    with sqlite3.connect(database) as connection:
+        version = connection.execute("PRAGMA user_version").fetchone()[0]
+        columns = {
+            str(row[1]) for row in connection.execute("PRAGMA table_info(project_index)")
+        }
+    assert version == CURRENT_SCHEMA_VERSION
+    assert "signal_count" in columns
+
+    project_index = ProjectIndexService(migrated, SymbolRegistry())
+    report = project_index.rebuild_all()
+    assert report.rebuilt == [document.id]
+    entry = project_index.get_entry(document.id)
+    assert entry is not None
+    assert entry.staleness == "verified_fresh"
+    assert entry.counts.signals == 0
+    assert entry.builder_version == IR_BUILDER_VERSION
+
+
 def test_backup_and_restore_preserve_the_audit_chain(tmp_path: Path):
     from agentcad.audit import request_audit_context
     from agentcad.models import TransactionRequest

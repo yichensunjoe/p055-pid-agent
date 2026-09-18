@@ -126,6 +126,30 @@ def _run_engineering_graph_command(args: argparse.Namespace) -> None:
     raise SystemExit(0 if graph.counts.errors == 0 else 2)
 
 
+def _run_engineering_find_command(args: argparse.Namespace) -> None:
+    """Locate one engineering object across the project's indexed drawings.
+
+    Read-only, like the other derived-data commands: it opens the database for
+    reading and searches the cached engineering graphs, so it is safe on a live
+    project. Rows left by an older builder version are skipped rather than guessed
+    at; run ``project-index rebuild`` to search them again.
+    """
+    from .project_index import ProjectIndexService
+    from .store import SQLiteDocumentStore
+    from .symbols import SymbolRegistry
+
+    database = args.database or _default_database_path()
+    store = SQLiteDocumentStore(Path(database))
+    project_index = ProjectIndexService(store, SymbolRegistry())
+    matches = project_index.find_objects(args.ref, limit=args.limit)
+    payload = [match.model_dump(mode="json") for match in matches]
+    text = _json_payload(payload)
+    if args.output:
+        args.output.write_text(text + "\n", encoding="utf-8")
+    print(text)
+    raise SystemExit(0 if matches else 2)
+
+
 def _run_project_index_command(args: argparse.Namespace) -> None:
     """Inspect or rebuild the derived project engineering index."""
     from .project_index import ProjectIndexService
@@ -337,6 +361,17 @@ def main(argv: list[str] | None = None) -> None:
     )
     graph_parser.add_argument("--output", type=Path, default=None, help="Optional JSON report path")
 
+    find_parser = subparsers.add_parser(
+        "engineering-find",
+        help="Locate one engineering object across the indexed drawings (id, tag key or tag)",
+    )
+    _add_database_argument(find_parser)
+    find_parser.add_argument(
+        "ref", help="Engineering id (eq_…), tag key (equipment:p-101), tag (P-101) or element id"
+    )
+    find_parser.add_argument("--limit", type=int, default=50, help="Maximum matches to print")
+    find_parser.add_argument("--output", type=Path, default=None, help="Optional JSON report path")
+
     index_parser = subparsers.add_parser(
         "project-index",
         help="Inspect or rebuild the derived project engineering index",
@@ -402,6 +437,8 @@ def main(argv: list[str] | None = None) -> None:
         _run_audit_command(args)
     elif args.command == "engineering-graph":
         _run_engineering_graph_command(args)
+    elif args.command == "engineering-find":
+        _run_engineering_find_command(args)
     elif args.command == "project-index":
         _run_project_index_command(args)
     elif args.command == "quality-harness":

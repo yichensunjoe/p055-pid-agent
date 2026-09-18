@@ -536,11 +536,17 @@ def main() -> None:
     @mcp.tool()
     def trace_engineering_object(
         document_id: str,
-        object_id: str,
+        ref: str,
         direction: str = "both",
         max_depth: int = 64,
     ) -> dict:
-        """Trace upstream/downstream engineering objects from one object id."""
+        """Trace upstream/downstream engineering objects from an id, tag key or tag.
+
+        ``ref`` accepts the stable engineering id (``eq_…``/``ln_…``/``sg_…``), a tag
+        key (``equipment:p-101``), a tag (``P-101``) or a drawing element id. Traces
+        stay inside one edge class: starting from a signal follows instrument wiring,
+        anything else follows process flow.
+        """
         if direction not in {"upstream", "downstream", "both"}:
             raise InvalidOperationError(
                 f"direction must be upstream, downstream or both, got {direction!r}"
@@ -549,11 +555,23 @@ def main() -> None:
         graph = build_engineering_graph(document, service.symbols)
         try:
             result = trace_engineering_object(
-                graph, object_id, direction=direction, max_depth=max_depth  # type: ignore[arg-type]
+                graph, ref, direction=direction, max_depth=max_depth  # type: ignore[arg-type]
             )
         except KeyError as exc:
             raise InvalidOperationError(str(exc)) from exc
         return result.model_dump(mode="json")
+
+    @mcp.tool()
+    def find_engineering_object(ref: str, limit: int = 50) -> list[dict]:
+        """Locate one engineering object across the project's indexed drawings.
+
+        Answers "which drawing holds ``P-101``" or "which drawing holds
+        ``eq_9f3a2b1c4d5e``" without the caller knowing the drawing. Rows left by an
+        older builder version are skipped instead of guessed at.
+        """
+        return [
+            match.model_dump(mode="json") for match in project_index.find_objects(ref, limit=limit)
+        ]
 
     @mcp.tool()
     def get_project_engineering_graph() -> dict:

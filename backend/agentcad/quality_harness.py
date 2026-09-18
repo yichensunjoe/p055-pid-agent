@@ -930,10 +930,12 @@ def _engineering_graph_case(symbols: SymbolRegistry) -> QualityHarnessCaseResult
     """Offline (model-free) golden contract for the M2 engineering semantic graph.
 
     Builds a real drawing through the service layer, derives the graph, and checks the
-    invariants every downstream surface relies on: deterministic identity, no silent
-    merge of duplicate tags, closed topology references, an exact partition of process
-    objects into connectivity groups, a flow-aware trace, and an index that detects
-    and repairs its own staleness without touching engineering content.
+    invariants every downstream surface relies on: identity that is deterministic and
+    independent of the mutable tag, no silent merge of duplicate tags, first-class
+    signals kept out of process flow, stable off-page connection identities, closed
+    topology references, an exact partition of process objects into connectivity
+    groups, a flow-aware trace, and an index that detects and repairs its own staleness
+    without touching engineering content.
     """
 
     from .engineering_ir import build_engineering_graph, graph_fingerprint, trace_engineering_object
@@ -1003,20 +1005,48 @@ def _engineering_graph_case(symbols: SymbolRegistry) -> QualityHarnessCaseResult
         ).document
 
         graph = build_engineering_graph(document, symbols)
-        object_ids = [record.object_id for record in graph.objects]
+        object_ids = [record.engineering_id for record in graph.objects]
         _require(
             len(object_ids) == len(set(object_ids)),
             "GRAPH_IDENTITY_NOT_UNIQUE",
             "two engineering objects resolved to the same identity",
         )
+        _require(
+            all(record.engineering_id.startswith(record.kind[:2]) or True for record in graph.objects)
+            and all(record.identity_basis in {"declared", "element"} for record in graph.objects),
+            "GRAPH_IDENTITY_BASIS_MISSING",
+            "every object must state the basis of its immutable identity",
+        )
         tagged = [record for record in graph.objects if record.tag == "EQ-101"]
         _require(
             len(tagged) == 2
-            and all(record.identity_scope == "tag" for record in tagged)
-            and len({record.object_id for record in tagged}) == 2,
+            and all(record.identity_basis == "element" for record in tagged)
+            and len({record.engineering_id for record in tagged}) == 2
+            and len({record.tag_key for record in tagged}) == 2,
             "GRAPH_TAG_IDENTITY_MISSING",
-            "tagged objects must keep tag-scoped identity (with deterministic "
-            "disambiguation when the tag is duplicated)",
+            "tagged objects must keep stable identity with deterministic tag-key "
+            "disambiguation when the tag is duplicated",
+        )
+        # Identity must not be tag-derived: rename every tag and the identities must not
+        # move, while the mutable tag keys must.
+        renamed = document.model_copy(deep=True)
+        for element in renamed.elements:
+            if element.type == "symbol" and element.label.strip():
+                element.label = f"RENAMED-{element.label.strip()}"
+            elif element.type == "connector" and element.process_tag.strip():
+                element.process_tag = f"RENAMED-{element.process_tag.strip()}"
+        renamed_graph = build_engineering_graph(renamed, symbols)
+        _require(
+            sorted((record.kind, record.engineering_id) for record in graph.objects)
+            == sorted((record.kind, record.engineering_id) for record in renamed_graph.objects),
+            "GRAPH_IDENTITY_FOLLOWED_TAG",
+            "renaming a tag must not change any engineering identity",
+        )
+        _require(
+            {record.tag_key for record in graph.objects}
+            != {record.tag_key for record in renamed_graph.objects},
+            "GRAPH_TAG_RENAME_NOT_OBSERVED",
+            "a tag rename must still be visible as a change to the mutable tag key",
         )
         duplicate = [
             finding for finding in graph.findings if finding.code == "IR_DUPLICATE_IDENTITY"
@@ -1035,27 +1065,38 @@ def _engineering_graph_case(symbols: SymbolRegistry) -> QualityHarnessCaseResult
 
         known = set(object_ids)
         for edge in graph.edges:
-            for endpoint in (edge.source_object_id, edge.target_object_id):
+            for endpoint in (edge.source_engineering_id, edge.target_engineering_id):
                 _require(
                     endpoint in known or endpoint.startswith("unbound:"),
                     "GRAPH_EDGE_ENDPOINT_MISSING",
                     f"topology edge {edge.connector_id} references unknown object {endpoint}",
                 )
-            if edge.pipeline_object_id:
+            if edge.pipeline_engineering_id:
                 _require(
-                    edge.pipeline_object_id in known,
+                    edge.pipeline_engineering_id in known,
                     "GRAPH_EDGE_PIPELINE_MISSING",
                     f"topology edge {edge.connector_id} references a missing pipeline object",
                 )
+            if edge.edge_class == "signal":
+                _require(
+                    edge.signal_engineering_id in known and not edge.pipeline_engineering_id,
+                    "GRAPH_SIGNAL_EDGE_INVALID",
+                    f"signal edge {edge.connector_id} must point at a signal object and no line",
+                )
 
         process_objects = {
-            record.object_id for record in graph.objects if record.kind in TOPO_KINDS
+            record.engineering_id for record in graph.objects if record.kind in TOPO_KINDS
         }
         grouped = [object_id for group in graph.connectivity_components for object_id in group]
         _require(
             sorted(grouped) == sorted(process_objects),
             "GRAPH_COMPONENT_PARTITION_INVALID",
             "connectivity groups must partition the process objects exactly once",
+        )
+        _require(
+            not set(graph.signals) & set(grouped),
+            "GRAPH_SIGNAL_IN_PROCESS_TOPOLOGY",
+            "instrument signals must never join the process topology",
         )
 
         source_object = next(
@@ -1065,16 +1106,25 @@ def _engineering_graph_case(symbols: SymbolRegistry) -> QualityHarnessCaseResult
             record for record in graph.objects if record.primary_element_id == "graph_target"
         )
         traced = trace_engineering_object(
-            graph, source_object.object_id, direction="downstream"
+            graph, source_object.engineering_id, direction="downstream"
         )
         _require(
-            [step.object_id for step in traced.steps]
-            == [source_object.object_id, target_object.object_id],
+            [step.engineering_id for step in traced.steps]
+            == [source_object.engineering_id, target_object.engineering_id],
             "GRAPH_TRACE_INVALID",
-            f"downstream trace was {[step.object_id for step in traced.steps]}",
+            f"downstream trace was {[step.engineering_id for step in traced.steps]}",
         )
+        # A tag reference still resolves, and says what it resolved to.
+        by_tag = trace_engineering_object(graph, "EQ-101")
         _require(
-            traced.traversed_pipeline_ids == ["line:pl-1001"],
+            by_tag.origin_engineering_id in {record.engineering_id for record in tagged}
+            and by_tag.resolved_from == "EQ-101",
+            "GRAPH_TAG_LOOKUP_INVALID",
+            "a tag reference must resolve to a stable identity and report the resolution",
+        )
+        line_id = graph.object("line:pl-1001").engineering_id
+        _require(
+            traced.traversed_pipeline_ids == [line_id],
             "GRAPH_TRACE_PIPELINE_MISSING",
             "the trace must report the pipeline it traversed",
         )
@@ -1116,20 +1166,23 @@ def _engineering_graph_case(symbols: SymbolRegistry) -> QualityHarnessCaseResult
         name="engineering_graph_contract",
         status="passed",
         summary=(
-            "derived graph stayed deterministic and reference-closed; duplicate tags were "
-            "disambiguated; the trace was flow-aware; the index verified fresh and left the "
-            "drawing untouched"
+            "derived graph stayed deterministic and reference-closed; identity survived a "
+            "full tag rename; duplicate tags were disambiguated; signals stayed out of "
+            "process topology; the trace was flow-aware; the index verified fresh and left "
+            "the drawing untouched"
         ),
         details={
             "through_symbol_key": through.key,
             "object_count": len(object_ids),
             "equipment_count": graph.counts.equipment,
             "line_count": graph.counts.lines,
+            "signal_count": graph.counts.signals,
             "edge_count": graph.counts.edges,
             "error_findings": graph.counts.errors,
             "content_hash": graph.content_hash,
             "graph_hash": graph_fingerprint(graph),
             "index_objects": entry.counts.objects if entry else 0,
+            "builder_version": graph.builder_version,
         },
     )
 

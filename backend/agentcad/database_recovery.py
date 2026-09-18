@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, BinaryIO
 from urllib.parse import quote
 
-CURRENT_SCHEMA_VERSION = 5
+CURRENT_SCHEMA_VERSION = 6
 BACKUP_FORMAT = "pid-agent.sqlite-backup"
 BACKUP_VERSION = 1
 BACKUP_DATABASE_MEMBER = "database.sqlite3"
@@ -761,12 +761,31 @@ def _migration_5(connection: sqlite3.Connection) -> None:
     )
 
 
+def _migration_6(connection: sqlite3.Connection) -> None:
+    """Signal count in the derived project index (M2 identity rework).
+
+    Signals became first-class engineering objects, so the index reports how many a
+    drawing has. Existing rows keep their cached graph until the builder version bump
+    marks them stale and the next rebuild fills this in; the default is 0 rather than
+    NULL so a stored 0 still means "zero", never "unknown".
+    """
+
+    columns = {
+        str(row[1]) for row in connection.execute("PRAGMA table_info(project_index)").fetchall()
+    }
+    if "signal_count" not in columns:
+        connection.execute(
+            "ALTER TABLE project_index ADD COLUMN signal_count INTEGER NOT NULL DEFAULT 0"
+        )
+
+
 _MIGRATIONS = {
     1: _migration_1,
     2: _migration_2,
     3: _migration_3,
     4: _migration_4,
     5: _migration_5,
+    6: _migration_6,
 }
 
 
@@ -848,8 +867,8 @@ def _validate_required_schema(connection: sqlite3.Connection) -> None:
         "project_index": {
             "document_id", "document_name", "revision", "content_hash", "graph_hash",
             "builder_version", "object_count", "equipment_count", "valve_count",
-            "instrument_count", "line_count", "off_page_count", "error_count",
-            "warning_count", "graph_json", "built_at", "built_by",
+            "instrument_count", "signal_count", "line_count", "off_page_count",
+            "error_count", "warning_count", "graph_json", "built_at", "built_by",
         },
         _METADATA_TABLE: {"singleton_id", "instance_id", "created_at"},
     }

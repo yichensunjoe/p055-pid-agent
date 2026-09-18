@@ -13,7 +13,7 @@ from .agent_semantic_models import (
 from .engineering_ir import EngineeringGraph, TraceResult
 from .layout_models import AutoLayoutPreview, AutoLayoutRequest
 from .models import Document, StrictModel, TransactionRequest
-from .project_index import ProjectEngineeringGraph, RebuildReport
+from .project_index import EngineeringObjectMatch, ProjectEngineeringGraph, RebuildReport
 from .semantic_diff_models import SemanticDiffReport
 
 ToolPermission = Literal["allow", "ask", "deny"]
@@ -47,9 +47,23 @@ class RevisionToolInput(DocumentToolInput):
 
 
 class EngineeringTraceToolInput(DocumentToolInput):
-    object_id: str
+    #: Engineering id (``eq_…``), tag key (``equipment:p-101``), tag or element id.
+    ref: str
     direction: Literal["upstream", "downstream", "both"] = "both"
     max_depth: int = Field(default=64, ge=1, le=256)
+
+
+class EngineeringFindToolInput(StrictModel):
+    """Input for the project-wide engineering-object lookup."""
+
+    ref: str = Field(
+        min_length=1,
+        description=(
+            "Stable engineering id, tag key, tag or drawing element id to locate across "
+            "the project."
+        ),
+    )
+    limit: int = Field(default=50, ge=1, le=500)
 
 
 class ProjectIndexRebuildToolInput(StrictModel):
@@ -314,8 +328,9 @@ def get_default_tool_registry() -> ToolRegistry:
             ToolDefinition(
                 name="trace_engineering_object",
                 description=(
-                    "Trace upstream/downstream engineering objects from one object id, "
-                    "honouring declared flow direction. Read-only."
+                    "Trace upstream/downstream engineering objects from a stable id, tag "
+                    "key or tag, honouring declared flow direction and staying inside one "
+                    "edge class (signal wiring vs process flow). Read-only."
                 ),
                 input_schema=EngineeringTraceToolInput.model_json_schema(),
                 output_schema=TraceResult.model_json_schema(),
@@ -324,6 +339,24 @@ def get_default_tool_registry() -> ToolRegistry:
                 audit_event="tool.trace_engineering_object",
                 surfaces=["mcp", "rest", "agent"],
                 tags=["inspect", "topology", "trace"],
+            ),
+            ToolDefinition(
+                name="find_engineering_object",
+                description=(
+                    "Locate one engineering object across the project's indexed drawings "
+                    "by stable engineering id, tag key, tag or element id. Read-only; "
+                    "rows written by an older builder version are skipped, not guessed."
+                ),
+                input_schema=EngineeringFindToolInput.model_json_schema(),
+                output_schema={
+                    "type": "array",
+                    "items": EngineeringObjectMatch.model_json_schema(),
+                },
+                permission="allow",
+                risk="read",
+                audit_event="tool.find_engineering_object",
+                surfaces=["mcp", "rest", "agent"],
+                tags=["inspect", "project", "engineering", "identity"],
             ),
             ToolDefinition(
                 name="get_project_engineering_graph",

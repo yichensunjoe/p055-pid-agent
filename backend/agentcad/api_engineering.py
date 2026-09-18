@@ -27,6 +27,7 @@ from .engineering_ir import (
     trace_engineering_object,
 )
 from .project_index import (
+    EngineeringObjectMatch,
     ProjectEngineeringGraph,
     ProjectIndexEntry,
     ProjectIndexService,
@@ -76,17 +77,45 @@ def create_engineering_router(
     )
     def engineering_trace(
         document_id: str,
-        object_id: str,
+        ref: Annotated[
+            str,
+            Query(
+                description=(
+                    "Engineering id (``eq_…``/``ln_…``/``sg_…``), tag key "
+                    "(``equipment:p-101``), tag (``P-101``) or element id."
+                )
+            ),
+        ],
         direction: Literal["upstream", "downstream", "both"] = "both",
         max_depth: Annotated[int, Query(ge=1, le=256)] = 64,
     ) -> TraceResult:
         graph = _graph(document_id)
         try:
-            return trace_engineering_object(
-                graph, object_id, direction=direction, max_depth=max_depth
-            )
+            return trace_engineering_object(graph, ref, direction=direction, max_depth=max_depth)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @router.get("/project/engineering-objects", response_model=list[EngineeringObjectMatch])
+    def find_engineering_objects(
+        ref: Annotated[
+            str,
+            Query(
+                description=(
+                    "Stable engineering id, tag key, tag or element id to locate across "
+                    "the indexed drawings."
+                )
+            ),
+        ],
+        limit: Annotated[int, Query(ge=1, le=500)] = 50,
+    ) -> list[EngineeringObjectMatch]:
+        """Locate an engineering object across the project without knowing its drawing.
+
+        Answers "which drawing holds ``P-101``" and "which drawing holds
+        ``eq_9f3a2b1c4d5e``" from the derived index. Rows written by an older builder
+        version are skipped rather than guessed at; rebuild the index to search them.
+        """
+
+        return project_index.find_objects(ref, limit=limit)
 
     @router.get("/project/engineering-graph", response_model=ProjectEngineeringGraph)
     def project_engineering_graph() -> ProjectEngineeringGraph:

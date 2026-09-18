@@ -357,7 +357,7 @@ def mcp(
     )
 
 
-#: Every tool exposed by the MCP server (31 tools; kept in lockstep by test).
+#: Every tool exposed by the MCP server (32 tools; kept in lockstep by test).
 MCP_SURFACE_BINDINGS: tuple[SurfaceBinding, ...] = (
     mcp("get_server_info", "read"),
     mcp("get_tool_registry", "read"),
@@ -401,6 +401,7 @@ MCP_SURFACE_BINDINGS: tuple[SurfaceBinding, ...] = (
     mcp("get_revision_evidence", "read"),
     mcp("get_engineering_graph", "read", tool="get_engineering_graph"),
     mcp("trace_engineering_object", "read", tool="trace_engineering_object"),
+    mcp("find_engineering_object", "read", tool="find_engineering_object"),
     mcp("get_project_engineering_graph", "read", tool="get_project_engineering_graph"),
     mcp("rebuild_project_index", "runtime", tool="rebuild_project_index", audited=True),
     mcp("list_symbols", "read"),

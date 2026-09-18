@@ -11,7 +11,7 @@ from .agent_semantic_models import (
     SemanticTransaction,
 )
 from .layout_models import AutoLayoutPreview, AutoLayoutRequest
-from .models import Document, StrictModel, TransactionRequest, TransactionResult
+from .models import Document, StrictModel, TransactionRequest
 
 ToolPermission = Literal["allow", "ask", "deny"]
 ToolRisk = Literal["read", "draft_edit", "engineering_change", "critical_change", "release"]

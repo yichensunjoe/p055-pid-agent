@@ -110,11 +110,22 @@ jobs:
       - name: Sentinel a baseline so the update step has something to prove
         working-directory: frontend
         run: |
-          sentinel=$(find e2e/visual.spec.ts-snapshots -name '*.png' | sort | head -1)
-          test -n "$sentinel"
+          # This job's renderer, which is also what the snapshot path template encodes.
+          # The sentinel must be a baseline *this* renderer writes: on Linux, removing a
+          # committed darwin baseline proves nothing, because Playwright never touches it.
+          case "$(uname -s)" in
+            Darwin) platform=darwin ;;
+            Linux) platform=linux ;;
+            *) platform=win32 ;;
+          esac
+          sentinel=$(find e2e/visual.spec.ts-snapshots -name "*-$platform.png" | sort | head -1)
+          if [ -z "$sentinel" ]; then
+            echo "::error::no committed baseline for platform $platform to use as a sentinel"
+            exit 1
+          fi
           cp "$sentinel" "$RUNNER_TEMP/sentinel-committed.png"
           echo "SENTINEL=$sentinel" >> "$GITHUB_ENV"
-          echo "sentinel: $sentinel (removed; the update step must recreate it)"
+          echo "sentinel: $sentinel ($platform; removed, the update step must recreate it)"
           rm "$sentinel"
           touch "$RUNNER_TEMP/visual-baseline-marker"
 
@@ -134,11 +145,20 @@ jobs:
             echo "::error::$SENTINEL was not recreated by the update step: the update command did not run, or could not write baselines"
             exit 1
           fi
-          if cmp -s "$SENTINEL" "$RUNNER_TEMP/sentinel-committed.png"; then
-            echo "$SENTINEL: recreated byte-for-byte identical to the committed baseline (this renderer reproduces it exactly)"
-          else
-            echo "::warning::$SENTINEL differs from the committed baseline on this renderer; the uploaded artifact contains the regenerated set"
-          fi
+          # The recreated bytes are *not* compared with the committed file. Drift is
+          # defined by Playwright's pixel tolerance, not by byte equality — a screen with
+          # a timing-dependent element can re-encode to a few bytes' difference while
+          # asserting clean — so byte comparison would produce noise, not evidence. The
+          # next step is the real statement, using Playwright's own comparison.
+          echo "$SENTINEL: recreated by the update step"
+
+      # The baselines now in the tree must assert clean in the renderer that wrote them.
+      # This is the check with teeth: a regenerated set that cannot be reproduced by its
+      # own renderer (an unsettled animation, a snapshot written from the wrong state) fails
+      # here rather than being uploaded as the new expected output.
+      - name: Re-assert the regenerated baselines
+        working-directory: frontend
+        run: npx playwright test e2e/visual.spec.ts
 
       - name: Record what changed
         working-directory: frontend

@@ -238,12 +238,16 @@ is itself a required-success step: it is never wrapped in unconditional error su
 throws fails the job instead of publishing a green artifact that contains no usable baselines.
 
 Proving that the step produced baselines is tied to **that step** and is done by a **sentinel**:
-immediately before `--update-snapshots`, the workflow removes one committed baseline (and keeps a
-copy), and afterwards requires that file to exist again, to be newer than the marker, and — as
-reported evidence rather than an assumption — to be byte-for-byte identical to the committed one.
-A missing snapshot is written unconditionally, so this proves the update command really ran in this
-renderer and could write baselines; the byte comparison then says whether this renderer still
-reproduces the committed baseline exactly.
+immediately before `--update-snapshots`, the workflow removes one committed baseline *for this
+renderer* (and keeps a copy), and afterwards requires that file to exist again and to be newer than
+the marker. A missing snapshot is written unconditionally, so its recreation proves the update
+command really ran here and could write baselines. The suite is then run once more in **assert
+mode**, so the baselines left in the tree must assert clean in the renderer that wrote them — a
+regenerated set nobody can reproduce fails the job instead of being published.
+
+Byte equality with the committed file is deliberately *not* required: drift is defined by
+Playwright's pixel tolerance, not by PNG bytes, and a screen with a timing-dependent element can
+re-encode a few bytes differently while still asserting clean.
 
 Two weaker checks were tried and rejected, and both failures are worth remembering:
 

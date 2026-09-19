@@ -237,10 +237,22 @@ is itself a required-success step: it is never wrapped in unconditional error su
 (`|| true`), so a browser that fails to launch, a web server that fails to start or a test that
 throws fails the job instead of publishing a green artifact that contains no usable baselines.
 
-Proving that the step produced baselines is tied to **that step**, not to a wall-clock window: the
-workflow creates a marker immediately before `--update-snapshots` and then requires at least one PNG
-newer than that marker. A relative `find ... -newermt '-30 minutes'` check would pass on a fresh
-checkout, where git itself has just written every committed PNG and they all look recently modified.
+Proving that the step produced baselines is tied to **that step** and is done by a **sentinel**:
+immediately before `--update-snapshots`, the workflow removes one committed baseline (and keeps a
+copy), and afterwards requires that file to exist again, to be newer than the marker, and — as
+reported evidence rather than an assumption — to be byte-for-byte identical to the committed one.
+A missing snapshot is written unconditionally, so this proves the update command really ran in this
+renderer and could write baselines; the byte comparison then says whether this renderer still
+reproduces the committed baseline exactly.
+
+Two weaker checks were tried and rejected, and both failures are worth remembering:
+
+* a wall-clock window (`find ... -newermt '-30 minutes'`) passes on a fresh checkout, where git
+  itself has just written every committed PNG and they all look recently modified;
+* a marker with no sentinel ("at least one PNG is newer than the marker") fails on a **correct**
+  no-drift run, because Playwright only rewrites snapshots that actually differ — and replacing the
+  file with a deliberately different image does not help either, because Playwright refuses to
+  update a snapshot whose dimensions differ, so the job fails on the case it exists to handle.
 
 Renderer, browser and font versions used for a baseline are recorded with the baseline procedure, and
 the regenerated set is uploaded as an artifact for review — the workflow commits nothing.

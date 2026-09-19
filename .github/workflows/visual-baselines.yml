@@ -85,12 +85,38 @@ jobs:
         working-directory: frontend
         run: npm run build:e2e
 
-      # A marker taken immediately before the update step. The freshness proof below is
-      # relative to *this* run rather than to a wall-clock window: on a fresh checkout git
-      # writes every committed PNG, so a `-newermt '-30 minutes'` window would happily
-      # count images this job never touched and pass while producing nothing.
-      - name: Mark the start of the baseline update
-        run: touch "$RUNNER_TEMP/visual-baseline-marker"
+      # Proof that the update step really ran, without pretending a clean run must produce
+      # a diff.
+      #
+      # Two earlier attempts at this check were both wrong, in opposite directions:
+      #
+      #   * a wall-clock window (`find ... -newermt '-30 minutes'`) passes on a fresh
+      #     checkout, because git writes every committed PNG's mtime and the job counts
+      #     images it never touched;
+      #   * a marker ("at least one PNG is newer than the marker") fails on a correct
+      #     no-drift run, because Playwright only rewrites snapshots that actually differ.
+      #
+      # So the job creates the change it needs to observe: one committed baseline is
+      # removed, and the update step must recreate it. A *missing* snapshot is written
+      # unconditionally, which is what makes this a proof rather than a coincidence.
+      # (Replacing the file with a deliberately different image does not work: Playwright
+      # refuses to update when the dimensions differ, so the job would fail on the very
+      # no-drift case it is supposed to handle.)
+      #
+      # That is a real proof that the update command ran in this environment and was able
+      # to write baselines, and it goes one step further: the recreated file is compared
+      # with the committed bytes, so "the renderer still reproduces the committed baseline
+      # exactly" is evidence this job reports instead of an assumption.
+      - name: Sentinel a baseline so the update step has something to prove
+        working-directory: frontend
+        run: |
+          sentinel=$(find e2e/visual.spec.ts-snapshots -name '*.png' | sort | head -1)
+          test -n "$sentinel"
+          cp "$sentinel" "$RUNNER_TEMP/sentinel-committed.png"
+          echo "SENTINEL=$sentinel" >> "$GITHUB_ENV"
+          echo "sentinel: $sentinel (removed; the update step must recreate it)"
+          rm "$sentinel"
+          touch "$RUNNER_TEMP/visual-baseline-marker"
 
       # Writes the new PNGs in place. The pixel *assertions* are expected to pass (every
       # drifted snapshot is rewritten on purpose), and everything else must be a failure:
@@ -100,12 +126,19 @@ jobs:
         working-directory: frontend
         run: npx playwright test e2e/visual.spec.ts --update-snapshots
 
-      - name: Fail if the update produced no baselines
+      - name: Prove the update step recreated the sentinel baseline
         working-directory: frontend
         run: |
-          count=$(find e2e/visual.spec.ts-snapshots -name '*.png' -newer "$RUNNER_TEMP/visual-baseline-marker" | wc -l | tr -d ' ')
-          echo "regenerated $count baseline(s) after the marker"
-          test "$count" -gt 0
+          test -f "$SENTINEL"
+          if ! test "$SENTINEL" -nt "$RUNNER_TEMP/visual-baseline-marker"; then
+            echo "::error::$SENTINEL was not recreated by the update step: the update command did not run, or could not write baselines"
+            exit 1
+          fi
+          if cmp -s "$SENTINEL" "$RUNNER_TEMP/sentinel-committed.png"; then
+            echo "$SENTINEL: recreated byte-for-byte identical to the committed baseline (this renderer reproduces it exactly)"
+          else
+            echo "::warning::$SENTINEL differs from the committed baseline on this renderer; the uploaded artifact contains the regenerated set"
+          fi
 
       - name: Record what changed
         working-directory: frontend

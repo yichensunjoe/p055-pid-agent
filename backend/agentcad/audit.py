@@ -20,7 +20,7 @@ Honest boundaries (also stated in ``docs/audit-and-provenance.md``):
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
@@ -48,6 +48,49 @@ from .semantic_diff import build_semantic_diff
 from .semantic_diff_models import SemanticDiffReport
 
 _MAX_EVIDENCE_ENTITY_IDS = 200
+
+#: Evidence keys the recorder owns. A caller may *add* evidence (today: the CAD source
+#: binding), but it may not rewrite what changed, who did it, or which validation
+#: authorised the write — those are the audit record's own facts, and letting an intake
+#: path restate them would make the record agree with the caller instead of the store.
+#: Callers namespace their own evidence (``cad_import``) so a new key cannot collide by
+#: accident.
+RESERVED_EVIDENCE_KEYS = frozenset(
+    {
+        "action",
+        "history_source",
+        "attribution",
+        "semantic_diff",
+        "element_count_before",
+        "element_count_after",
+        "change_count",
+        "diff_truncated",
+        "changed_entity_ids",
+        "changed_entity_ids_truncated",
+        "added_element_ids",
+        "updated_element_ids",
+        "deleted_element_ids",
+        "operation_count",
+        "validation",
+        "metadata",
+        "intent_hash",
+        "diff_hash",
+        "diff_binding",
+        "base_content_hash",
+        "result_content_hash",
+    }
+)
+
+
+class ReservedEvidenceError(ValueError):
+    """A caller tried to overwrite evidence the audit recorder owns."""
+
+    def __init__(self, collisions: Sequence[str]):
+        super().__init__(
+            "caller-supplied evidence may not overwrite reserved audit keys: "
+            + ", ".join(collisions)
+        )
+        self.collisions = list(collisions)
 
 
 def new_audit_record_id() -> str:
@@ -192,8 +235,13 @@ class AuditRecorder:
             "metadata": context.metadata,
         }
         if extra_evidence:
-            # Caller-supplied *server-derived* evidence (today: CAD source binding).
-            # Merged last so it cannot be silently shadowed by the generic keys above.
+            # Caller-supplied *server-derived* evidence (today: the CAD source binding,
+            # namespaced under ``cad_import``). A collision is an error, not an overwrite:
+            # silently winning here would let an intake path rewrite the record of what
+            # changed or who asked for it.
+            collisions = sorted(set(extra_evidence) & RESERVED_EVIDENCE_KEYS)
+            if collisions:
+                raise ReservedEvidenceError(collisions)
             evidence.update(extra_evidence)
         draft = AuditRecordDraft(
             event_type="revision.created",

@@ -635,6 +635,153 @@ def test_a_failure_part_way_through_leaves_nothing_behind(
     assert service.list_documents() == [], "a failed import must not leave a document"
 
 
+def test_the_bulk_create_path_shares_the_mutation_kernel(
+    service: DocumentService,
+) -> None:
+    """M4-0 hardening: "one governed path" is a code fact, not a claim.
+
+    The same operations go in through both entry points - the ordinary transaction and
+    the bulk create CAD import uses. Operation application, editor-group normalization,
+    the revision convention, the resulting-document validation and the audit evidence
+    must all agree, because a policy hook attached to only one of them is exactly the
+    failure mode the remote review flagged.
+    """
+
+    from copy import deepcopy
+
+    from agentcad.models import (
+        AddElementOperation,
+        AddLayerOperation,
+        Layer,
+        Point,
+        SymbolElement,
+        TransactionRequest,
+    )
+
+    def build_operations() -> list:
+        return [
+            AddLayerOperation(layer=Layer(id="layer_process", name="Process")),
+            AddElementOperation(
+                element=SymbolElement(
+                    id="sym_bulk_a",
+                    symbol_key="gate_valve",
+                    label="HV-1",
+                    position=Point(x=10, y=10),
+                    width=30,
+                    height=30,
+                )
+            ),
+            AddElementOperation(
+                element=SymbolElement(
+                    id="sym_bulk_b",
+                    symbol_key="gate_valve",
+                    label="HV-2",
+                    position=Point(x=90, y=10),
+                    width=30,
+                    height=30,
+                )
+            ),
+        ]
+
+    created = service.create_document(CreateDocumentRequest(name="via transaction"))
+    via_transaction = service.apply_transaction(
+        created.id,
+        TransactionRequest(
+            expected_revision=created.revision,
+            operations=deepcopy(build_operations()),
+            label="fixture",
+        ),
+    ).document
+    via_bulk = service.create_document_with_operations(
+        CreateDocumentRequest(name="via bulk create"),
+        operations=build_operations(),
+        label="fixture",
+    ).document
+
+    # Same operations => same document, element for element. This is what fails if the
+    # bulk path ever grows its own application or normalization step.
+    assert [element.model_dump(mode="json") for element in via_bulk.elements] == [
+        element.model_dump(mode="json") for element in via_transaction.elements
+    ]
+    assert [layer.model_dump(mode="json") for layer in via_bulk.layers] == [
+        layer.model_dump(mode="json") for layer in via_transaction.layers
+    ]
+    assert via_bulk.revision == via_transaction.revision == 1
+    assert via_bulk.metadata == via_transaction.metadata
+
+    # Both paths record exactly one *mutation* history entry for the operation list. The
+    # bulk path folds the creation into it (the document arrives with content); the
+    # ordinary path necessarily has its earlier `create` entry first.
+    bulk_history = service.get_history(via_bulk.id, limit=10)
+    transaction_history = service.get_history(via_transaction.id, limit=10)
+
+    # ``get_history`` returns the newest entry first.
+    assert [entry.action for entry in bulk_history] == ["create"]
+    assert [entry.action for entry in transaction_history] == ["transaction", "create"]
+    assert bulk_history[0].operation_count == 3
+    assert transaction_history[0].operation_count == 3
+
+    # Same provenance builder: the evidence a reviewer reads must have the same shape on
+    # both paths, otherwise one of them has a hook the other does not.
+    def evidence_for(document_id: str) -> dict:
+        records = service.audit.audit_trail(document_id=document_id)
+        revision_records = [record for record in records if record.event_type == "revision.created"]
+        assert len(revision_records) == 1
+        return revision_records[0].evidence
+
+    bulk_evidence = evidence_for(via_bulk.id)
+    transaction_evidence = evidence_for(via_transaction.id)
+
+    assert sorted(bulk_evidence) == sorted(transaction_evidence)
+    assert bulk_evidence["element_count_after"] == transaction_evidence["element_count_after"]
+    assert bulk_evidence["change_count"] == transaction_evidence["change_count"]
+    assert bulk_evidence["operation_count"] == transaction_evidence["operation_count"] == 3
+    assert bulk_evidence["validation"] == transaction_evidence["validation"]
+
+
+def test_the_bulk_create_path_validates_and_leaves_nothing_on_failure(
+    service: DocumentService,
+) -> None:
+    """The shared kernel's rejection behavior applies to bulk create too."""
+
+    from agentcad.models import (
+        AddElementOperation,
+        Point,
+        SymbolElement,
+        TransactionRequest,
+    )
+
+    duplicate = AddElementOperation(
+        element=SymbolElement(
+            id="sym_dup",
+            symbol_key="gate_valve",
+            label="HV-9",
+            position=Point(x=1, y=1),
+            width=10,
+            height=10,
+        )
+    )
+    add_twice = [duplicate, duplicate.model_copy(deep=True)]
+
+    created = service.create_document(CreateDocumentRequest(name="transaction target"))
+    with pytest.raises(InvalidOperationError):
+        service.apply_transaction(
+            created.id,
+            TransactionRequest(
+                expected_revision=created.revision, operations=add_twice, label="dup"
+            ),
+        )
+    assert service.get_document(created.id).elements == []
+
+    with pytest.raises(InvalidOperationError):
+        service.create_document_with_operations(
+            CreateDocumentRequest(name="bulk target"),
+            operations=add_twice,
+            label="dup",
+        )
+    assert [document.name for document in service.list_documents()] == ["transaction target"]
+
+
 def test_a_non_uniform_block_scale_turns_a_circle_into_a_sampled_polyline(
     service: DocumentService, importer: CadImporter
 ) -> None:

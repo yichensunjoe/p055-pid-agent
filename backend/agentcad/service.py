@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any
@@ -207,16 +208,23 @@ class DocumentService:
     ) -> TransactionResult:
         """Create a document and apply a large operation set as ONE governed mutation.
 
-        Bulk intake (CAD drawings arrive in tens of thousands of operations) needs the
-        user-level semantics of a single change: one revision, one history entry, one
-        audit record that carries the source binding, and one undo snapshot. Nothing is
-        persisted until every operation has applied and the resulting document
-        validates, so a failure part-way through cannot leave a drawing that looks
-        finished but is not.
+        Bulk intake (CAD drawings arrive in thousands of operations) needs the user-level
+        semantics of a single change: one revision, one history entry, one audit record
+        that carries the source binding, and one undo snapshot. Nothing is persisted until
+        every operation has applied and the resulting document validates, so a failure
+        part-way through cannot leave a drawing that looks finished but is not.
 
         This is a second *entry point* into the same governed path, not a second write
-        channel: operation application, validation, provenance and persistence are the
-        same code that ``apply_transaction`` uses.
+        channel. Operation application, editor-group normalization, the revision
+        convention and the resulting-document validation are literally
+        :meth:`_stage_mutation` — the same method ``apply_transaction`` calls — and the
+        provenance/audit builder is the same one. Persistence is written once here because
+        a create has no prior revision to conflict against and no prior undo stack; that
+        difference is stated rather than implied.
+
+        The operations are applied in memory; there is no chunked write path, because a
+        chunk written before the last one succeeded is exactly the partial document this
+        method exists to prevent.
         """
 
         document = Document(
@@ -231,18 +239,7 @@ class DocumentService:
             label=label,
         )
         history_source = source or history_source_for_context(context, None)
-        working = Document.model_validate(document.model_dump(mode="python"))
-        for operation in operations:
-            self._apply_operation(working, operation)
-        _normalize_editor_groups(working)
-        # Same revision convention as ``apply_transaction``: a new document starts at 0,
-        # and the mutation that gives it content is revision 1.
-        working.revision = document.revision + 1
-        working.updated_at = datetime.now(UTC)
-        try:
-            working = Document.model_validate(working.model_dump(mode="python"))
-        except ValidationError as exc:
-            raise InvalidOperationError(f"resulting document is invalid: {exc}") from exc
+        working = self._stage_mutation(document, operations)
         bundle = self.audit.build_revision_provenance(
             before=document,
             after=working,
@@ -511,17 +508,7 @@ class DocumentService:
                 f"expected revision {transaction.expected_revision}, current revision is {current.revision}"
             )
 
-        working = Document.model_validate(current.model_dump(mode="python"))
-        for operation in transaction.operations:
-            self._apply_operation(working, operation)
-        _normalize_editor_groups(working)
-
-        working.revision = current.revision + 1
-        working.updated_at = datetime.now(UTC)
-        try:
-            working = Document.model_validate(working.model_dump(mode="python"))
-        except ValidationError as exc:
-            raise InvalidOperationError(f"resulting document is invalid: {exc}") from exc
+        working = self._stage_mutation(current, transaction.operations)
         undo_stack = [*stored.undo_stack, current.model_dump(mode="json")][-self.history_limit :]
         if audit is None:
             audit = AuditContext(
@@ -744,6 +731,31 @@ class DocumentService:
         if stored is None:
             raise DocumentNotFoundError(document_id)
         return stored
+
+    def _stage_mutation(self, current: Document, operations: Sequence[Any]) -> Document:
+        """Apply operations to a pristine copy and return the validated next revision.
+
+        Both governed mutation entry points — ``apply_transaction`` and the bulk create
+        CAD import uses — stage their work here. That is what makes "one governed path" a
+        fact about the code rather than a description of it: operation application,
+        editor-group normalization, the revision convention and the final document
+        validation have one implementation each and cannot drift apart.
+
+        Nothing is written here. The caller persists the returned document once, and a
+        failure anywhere in this method leaves the store untouched.
+        """
+
+        working = Document.model_validate(current.model_dump(mode="python"))
+        for operation in operations:
+            self._apply_operation(working, operation)
+        _normalize_editor_groups(working)
+        # A new document starts at revision 0; the mutation that gives it content is 1.
+        working.revision = current.revision + 1
+        working.updated_at = datetime.now(UTC)
+        try:
+            return Document.model_validate(working.model_dump(mode="python"))
+        except ValidationError as exc:
+            raise InvalidOperationError(f"resulting document is invalid: {exc}") from exc
 
     def _apply_operation(self, document: Document, operation: Any) -> None:
         if isinstance(operation, AddElementOperation):

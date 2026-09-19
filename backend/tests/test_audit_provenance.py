@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient
 
 from agentcad.api_documents import create_documents_router
 from agentcad.api_v1 import create_v1_compat_router
-from agentcad.audit import request_audit_context
+from agentcad.audit import ReservedEvidenceError, request_audit_context
 from agentcad.main import create_app
 from agentcad.models import CreateDocumentRequest, TransactionRequest
 from agentcad.service import DocumentService, InvalidOperationError
@@ -624,6 +624,42 @@ def test_schema_version_covers_audit_tables(tmp_path: Path) -> None:
     assert service.audit.verify_chain().ok is True
     history = service.store.get_history_revision_detailed(document.id, document.revision + 1)
     assert history is not None and history["details"]["semantic_diff"]
+
+
+def test_caller_evidence_cannot_overwrite_reserved_audit_keys(tmp_path: Path) -> None:
+    """M4-0 hardening: an intake path may *add* evidence, never restate the record.
+
+    The CAD import supplies server-derived provenance (namespaced ``cad_import``). If a
+    caller could also hand in ``change_count`` or ``validation``, the audit record would
+    agree with whoever called it instead of with what the store actually did.
+    """
+
+    service = _service(tmp_path)
+    with pytest.raises(ReservedEvidenceError) as excinfo:
+        service.create_document_with_operations(
+            CreateDocumentRequest(name="collision"),
+            operations=[],
+            label="collision",
+            provenance={"change_count": 999, "validation": {}},
+        )
+
+    assert excinfo.value.collisions == ["change_count", "validation"]
+    assert service.list_documents() == [], "a rejected write must leave no document"
+
+    # The same guard applies to a create that carries its own namespace.
+    document = service.create_document_with_operations(
+        CreateDocumentRequest(name="namespaced"),
+        operations=[],
+        label="namespaced",
+        provenance={"cad_import": {"source_sha256": "0" * 64}},
+    ).document
+    records = service.audit.audit_trail(document_id=document.id)
+    evidence = next(
+        record.evidence for record in records if record.event_type == "revision.created"
+    )
+
+    assert evidence["cad_import"]["source_sha256"] == "0" * 64
+    assert "action" in evidence and evidence["action"] == "transaction"
 
 
 def test_store_save_requires_explicit_audit_for_new_revisions(tmp_path: Path) -> None:

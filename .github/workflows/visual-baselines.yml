@@ -85,6 +85,13 @@ jobs:
         working-directory: frontend
         run: npm run build:e2e
 
+      # A marker taken immediately before the update step. The freshness proof below is
+      # relative to *this* run rather than to a wall-clock window: on a fresh checkout git
+      # writes every committed PNG, so a `-newermt '-30 minutes'` window would happily
+      # count images this job never touched and pass while producing nothing.
+      - name: Mark the start of the baseline update
+        run: touch "$RUNNER_TEMP/visual-baseline-marker"
+
       # Writes the new PNGs in place. The pixel *assertions* are expected to pass (every
       # drifted snapshot is rewritten on purpose), and everything else must be a failure:
       # no `|| true` here, so a browser/server/test failure fails the job instead of
@@ -96,8 +103,8 @@ jobs:
       - name: Fail if the update produced no baselines
         working-directory: frontend
         run: |
-          count=$(find e2e/visual.spec.ts-snapshots -name '*.png' -newermt '-30 minutes' | wc -l | tr -d ' ')
-          echo "regenerated $count baseline(s)"
+          count=$(find e2e/visual.spec.ts-snapshots -name '*.png' -newer "$RUNNER_TEMP/visual-baseline-marker" | wc -l | tr -d ' ')
+          echo "regenerated $count baseline(s) after the marker"
           test "$count" -gt 0
 
       - name: Record what changed

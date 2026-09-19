@@ -2,7 +2,16 @@
 
 > 交接文档：每次开新会话先读本文件。更新规则见 `AGENTS.md`「HANDOFF 交接规则」。
 
-## 当前状态（2026-09-19，最新轮次：远端评审 Round 2 + M4 Engineering Validation System 实现完成、待远端验收）
+## 当前状态（2026-09-19，最新轮次：**M4 已由远端 Release Gate 正式 ACCEPTED @ `ecedc00`**）
+
+- **M4 验收口径（远端 `REMOTE_BASELINE_2026-09-19_M4_ACCEPTED.md` 正式签发）**：
+  - **`M4 accepted HEAD = ecedc00ae3063a4043334bd30367008d00665a29`**（`ecedc00`）
+  - **`M4 acceptance-fix content commit = b5f2ca5`**（R3 §2 必修项的内容提交）
+  - **`M4 CI evidence = CI run 35421802528 (success) + Visual baselines run 35421823171 (success)`，两者均绑定 `ecedc00`**
+  - 两者含义不同、必须同时保留：`b5f2ca5` 是“改了什么”，`ecedc00` 是“被接受的仓库状态”。**不得把 `b5f2ca5` 写成 accepted HEAD**；也不得因为写 SHA 的记账提交而产生新 SHA 就改口 accepted HEAD——**M4 accepted SHA 永远固定为 `ecedc00`**。
+  - 远端代码复查结论：R3 mandatory items 已全部成立，未再发现 acceptance blocker；唯一残留为非阻断的 P2 清理项（`test_the_published_hash_can_be_recomputed_from_the_published_payload` 末尾有一处恒真自比较），**M4 accepted 后顺手删，不得为它重开 M4**。
+  - 下一阶段：完成 accepted-SHA 记账提交后直接进入下一大阶段；除发现会推翻 M4 acceptance invariant 的真实 regression，否则不再回开 M4。
+- **上一轮状态（以下保留为历史）**：远端评审 Round 2 + M4 Engineering Validation System 实现完成、待远端验收。
 
 - **里程碑口径**：**M4 — Engineering Validation System 已获远端 Reviewer / Release Gate 正式授权**，Charter 完成条件引用为 **§49**（`§48` 是 M3，不得再混用）。执行顺序由远端基线强制：`M4-0 CAD/CI gate closure` → `M4-1` canonical validation contract + project profile → `M4-2` 既有 validator 适配 → `M4-3` 可配置规则引擎与 profile 解析 → `M4-4` release validator → `M4-5` REST/MCP/CLI/UI/审计表面 → `M4-6` 全量验收与里程碑门禁。
 - **M4 状态（远端基线 `REMOTE_BASELINE_2026-09-19_M4_GATE_R2.md` 规定的口径）**：M4-0 原九项 CAD/CI gate 已 fix-forward 通过，锚点为 **`bcacd8c`**，不做 CAD 回退。**`bcacd8c` 是 M4-0 fix-forward anchor，不是整个 M4 的 accepted HEAD。** M4-1/2/3 实现 canonical 校验契约、legacy adapter、project profile 解析、waiver 与 readiness 核心，必须满足 R2 的 Round-2 必修项（见该基线 §2/§3）。M4-4/5/6 待完成。**最终 M4 accepted SHA 与实测验收数字只在 M4-6 之后填写**，M4-1/2/3 的修复提交只记为 `M4-1/2/3 implementation anchor`。

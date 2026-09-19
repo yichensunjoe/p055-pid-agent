@@ -221,10 +221,13 @@ def test_the_published_hash_can_be_recomputed_from_the_published_payload(databas
     )
     assert readiness["readiness_hash"] == hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
-    # And the helper the repository actually uses produces the same bytes.
+    # And the engine, re-run against the same stored document at the same instant,
+    # reproduces the hash the surfaces published — and its canonical JSON is the payload
+    # REST returned, not merely something that hashes the same way.
     service = DocumentService(SQLiteDocumentStore(database), SymbolRegistry())
     recomputed = validate_document(service, document_id, load_profile(), now=_AS_OF)
     assert recomputed.result_hash == result["result_hash"]
-    assert canonical_json(recomputed, exclude=frozenset({"result_hash"})) == canonical_json(
-        recomputed, exclude=frozenset({"result_hash"})
+    recomputed_body = json.loads(
+        canonical_json(recomputed, exclude=frozenset({"result_hash"}))
     )
+    assert recomputed_body == result_body

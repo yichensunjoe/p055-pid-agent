@@ -1328,6 +1328,14 @@ request
 
 M4 未通过 M4-6 验收前，Charter 中不得写入 M4 accepted SHA。
 
+**M4 accepted（2026-09-19，由远端 Release Gate 正式签发）**：
+
+- **M4 accepted HEAD = `ecedc00ae3063a4043334bd30367008d00665a29`**
+- M4 acceptance-fix content commit = `b5f2ca5`（R3 §2 必修项内容）
+- M4 CI evidence = CI run `35421802528`（success）+ Visual baselines run `35421823171`（success），均绑定 `ecedc00`
+
+`b5f2ca5` 与 `ecedc00` 含义不同：前者是“改了什么”，后者是“被接受的仓库状态”；accepted SHA 固定为 `ecedc00`，不随后续记账类提交而变化。
+
 ## 50. M5 — Agent Self-Repair
 
 完成标志：Agent 能依据 validator 局部修复并在 benchmark 达到预设成功率。

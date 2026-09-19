@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -146,6 +147,26 @@ class SymbolRegistry:
                         hidden_keys.discard(symbol.key)
         self._symbols = symbols
         self._hidden_keys = hidden_keys
+
+    def fingerprint(self) -> str:
+        """A stable hash of the catalog validators actually consult.
+
+        Validation evidence binds the document hash and the profile fingerprint, but the
+        drafting and graph checks also read this catalog: the same drawing can produce
+        different findings after a symbol is added, edited or hidden. Without this, two
+        runs that disagree would look unreproducible (remote baseline R2 §3.4). Hidden
+        keys are excluded because nothing can reference them.
+        """
+
+        payload = [
+            {"key": key, **symbol.model_dump(mode="json")}
+            for key, symbol in sorted(self._symbols.items())
+            if key not in self._hidden_keys
+        ]
+        canonical = json.dumps(
+            payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        )
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
     def list(self) -> list[SymbolDefinition]:
         return sorted(

@@ -2,13 +2,19 @@
 
 > 交接文档：每次开新会话先读本文件。更新规则见 `AGENTS.md`「HANDOFF 交接规则」。
 
-## 当前状态（2026-09-19，最新轮次：远端评审 + M4 Engineering Validation System）
+## 当前状态（2026-09-19，最新轮次：远端评审 Round 2 + M4 Engineering Validation System 实现完成、待远端验收）
 
 - **里程碑口径**：**M4 — Engineering Validation System 已获远端 Reviewer / Release Gate 正式授权**，Charter 完成条件引用为 **§49**（`§48` 是 M3，不得再混用）。执行顺序由远端基线强制：`M4-0 CAD/CI gate closure` → `M4-1` canonical validation contract + project profile → `M4-2` 既有 validator 适配 → `M4-3` 可配置规则引擎与 profile 解析 → `M4-4` release validator → `M4-5` REST/MCP/CLI/UI/审计表面 → `M4-6` 全量验收与里程碑门禁。
+- **M4 状态（远端基线 `REMOTE_BASELINE_2026-09-19_M4_GATE_R2.md` 规定的口径）**：M4-0 原九项 CAD/CI gate 已 fix-forward 通过，锚点为 **`bcacd8c`**，不做 CAD 回退。**`bcacd8c` 是 M4-0 fix-forward anchor，不是整个 M4 的 accepted HEAD。** M4-1/2/3 实现 canonical 校验契约、legacy adapter、project profile 解析、waiver 与 readiness 核心，必须满足 R2 的 Round-2 必修项（见该基线 §2/§3）。M4-4/5/6 待完成。**最终 M4 accepted SHA 与实测验收数字只在 M4-6 之后填写**，M4-1/2/3 的修复提交只记为 `M4-1/2/3 implementation anchor`。
 - **远端评审（2026-09-19）**：评审基线 `main@2389ee7`，评审切片 `d5c1fa0..2389ee7`（CAD 图纸导入切片）。裁决 = **CONDITIONALLY ACCEPTED，fix-forward，不整体回退**。架构方向保留（几何复现不造工程语义、只新建文档、只走 `DocumentService` 受治理通道、DWG 解码只用 subprocess 外部工具、转换器选择带证据、重命名控件是真 bug 修复、平台化视觉基线被接受）。
 - **M4-0 必修项（远端指定，全部已实现，见提交）**：① AutoCAD 脚本路径注入（用户文件名不得进入命令行/`.scr`，改为固定内部名 `source.dwg` / `output.dxf` / `converter.scr`）；② 导入必须是**一次**逻辑受治理变更（一个 revision、一条历史、一条审计、一次 undo），不得留下可用的半成品图；③ 源 SHA-256 必须同时进入**审计证据**（不只文档 metadata）；④ 视觉基线 workflow 不得用 `|| true` 吞掉浏览器/服务/测试失败，并把 Linux 渲染器钉到 `ubuntu-24.04`；⑤ 转换器非零退出码默认判失败（`acceptable_exit_codes` 默认 `(0,)`）；⑥ AutoCAD 版本探测改为真正的墙钟超时（静默进程也不会卡死）；⑦ 非均匀缩放块参照里的圆必须保几何（采样为闭合折线 + `CAD_CIRCLE_APPROXIMATED`）；⑧ CLI/MCP dry-run 与真导入共用读取入口，缺文件返回稳定 `CadImportError`；⑨ 文档契约修正（`§48→§49`、`cad_block`、`cad_import`、`dwg2dfx→dwg2dxf`、去掉“分批事务即 undo 单位”的说法、转换器 verified 只代表该工具族在参考语料上跑过、许可改为事实性打包口径、公开报告不暴露本机路径）。
 - **CAD 切片的既定口径（远端确认保留）**：导入只是**几何复现**；块出处键为 `cad_block`（元素级来源为 `cad_source`，文档级为 `cad_import` metadata）；一次完成的 CAD 导入 = **一个逻辑受治理变更 / 一次 undo**，不做“分批事务”的中间态；正式 release 只产生**就绪证据**，Agent 可以请求审批但绝不能自批 `Approved`/`IFC`/`AFC`/release 状态。
-- **本切片（M4）状态**：实现与验证证据见本轮验收报告；accepted HEAD 与测试数字在实测完成后填入，不预先声明验收。
+- **M4-0 追加 hardening（Round 2 评审发现，已完成）**：① 受治理写入的**共享 mutation kernel**——`apply_transaction` 与 CAD 批量建文档都走 `DocumentService._stage_mutation()`，operation 应用/editor-group 归一/版本号约定/结果文档校验只有一份实现，并有 parity 测试断言两条路径产出同一文档、同一审计证据键集、同一次逻辑变更；不是“声明”，是代码事实（也不再声称存在有界分块写入）；② 审计证据**保留键**保护——调用方只能新增证据（CAD 走 `cad_import` 命名空间），覆盖 `RESERVED_EVIDENCE_KEYS`（`change_count`/`validation`/`action` 等）会抛 `ReservedEvidenceError`，写入前失败；③ 视觉基线 workflow 的“没有产出基线”判定改为**更新步骤前的 marker**（`find -newer marker`），不再用相对时间窗（fresh checkout 会让旧 PNG 看起来是刚生成的）。
+- **M4 实现锚点（按远端 R2 要求的次序提交）**：`bcacd8c` = M4-0 fix-forward anchor；`a1e7b47` = **M4-1/2/3 implementation anchor**（canonical 契约 + profile 链 + readiness 核心，含 R2 Round-2 必修项）；`f20b4fc` = M4-0 追加 hardening（共享 mutation kernel + 审计保留键 + 基线 marker）；`af5dfa0` = M4-4/5（REST/MCP/CLI/UI 读表面 + 审计 read 事件 + harness `validation_contract`）。**这些都不是 M4 accepted HEAD**：M4 accepted HEAD 只能在远端审阅 M4-6 验收报告后填写。
+- **M4 验收编号（本地实测，2026-09-19）**：backend ruff ✓；pytest **657 passed**；offline quality harness **8/8**（新增 `validation_contract`）；前端 `npm test` **141 passed**（M3 基线 134，+7）；`npm run build` ✓；Playwright Chromium **52 passed / 1 skipped**（本机装了 AutoCAD，能力分支跳过）；shared-mode security acceptance **2 passed**；视觉快照 **10/10 未变**（新增校验面板只在「报表/检查」tab 内渲染，不参与截图集，因此 darwin/linux 两套基线**都无需重生成**）。
+- **代表性大图性能（本地方法：导入 1 次 + warm-up 1 次 + 测量 5 次）**：真实图纸「气路系统总图.dwg」939,381 B / AC1032 / 最终元素 **9757** / 导入操作 9769 / 逻辑变更 1 次；导入（converter=autocad-core-console）7.4 s（**不计入校验时间**）；canonical 校验 cold **0.758 s**，5 次 **0.751 / 0.696 / 0.659 / 0.769 / 0.700 s**，median **0.700 s**，min 0.659 / max 0.769，峰值 RSS ≈ 303 MB；结论 3 个 error、0 个 blocker。复现入口：`scripts/m4_validation_perf.py`。M4 **不设**跨机器硬阈值。
+- **确定性证据**：真实图纸上固定 `as_of` 连跑 3 次 → 同一 `result_hash`、逐条 issue 相同；改变 `as_of` → 哈希变化（时间是被绑定的输入）；校验前后 revision（1）与历史（1 条 create）不变 → 校验确为只读。
+- **本轮（M4）状态**：完整验收报告见对话中交付的 M4-6 验收报告；accepted HEAD 仍为 pending，等远端审阅后填写。
 
 ## 上一轮状态（DWG/DXF 图纸导入切片，`d5c1fa0..2389ee7`）
 

@@ -490,6 +490,27 @@
 - 附加坑：改完 `tsconfig.*.json` 后仍报旧错时，是 `composite` 的 `*.tsbuildinfo` 增量缓存——**先删 `tsconfig.node.tsbuildinfo` / `tsconfig.app.tsbuildinfo` 再重跑**，否则你会以为改动没生效。
 - 关键经验：给构建配置加 Node 全局变量前，先确认项目有没有 Node 类型环境；有 `composite` 增量缓存的构建，改配置后要清 buildinfo 再判断。
 
+## 2026-09-19 · M4 工程校验系统五条可复用教训（P055-PID-Agent）
+
+1. **“fail closed”配置意味着不允许“未知精确规则”后门。** 给 profile 里写错的 `rule_id` 留一个
+   “先建个占位规则用着”的逃生口，等于让项目以为自己启用了某条规则而其实没有；拼错的规则必须
+   直接抛 `profile_unknown_rule`。未知 **adapter 输出** 是另一回事：finding 不许丢，要标
+   `registered=false` / `rule_source="unregistered"` 并让 release gate fail closed，绝不能
+   伪装成 `built-in`。
+2. **fingerprint 必须包含作用域，而不只是身份。** waiver 的 `object_ids`/`element_ids` 就是语义：
+   只把 waiver_id/rule/actor/reason/时间纳入指纹，会让“只覆盖 A 设备”和“覆盖全部设备”的两份批准
+   看起来是同一个规则包——审阅者从此无法从指纹看出批准范围变了。
+3. **parity 测试必须保留“相关性”。** 把 `(code, severity)` 与引用 id 集合**分开**比较多重集，在
+   两个 finding 互换了指向对象时仍然会绿。正确做法是每条 finding 一个关联 tuple
+   `(code, severity, sorted(object_ids), sorted(element_ids))`；输出顺序则另用独立测试锁定。
+4. **存在过期机制时，墙钟就是输入。** 带 `expires_at` 的 waiver 让校验变成时间相关，若结果不绑定
+   评估时刻，同一份输入会出现两个结论且无从解释；`granted_at` 更不能在 profile 加载时用
+   `now()` 自动生成——那是凭空制造审批证据，还会让同一份文件每次加载指纹都不同。实现：显式
+   `as_of/evaluated_at`、拒绝 naive datetime、拒绝 `expires_at <= granted_at`。
+5. **可配置阈值的规则必须由阈值“拥有判决权”。** 如果项目能把质量分门槛从 95 改到 97，canonical
+   判定就必须用解析后的 97；否则配置只是展示字段，会出现“配置看起来生效、真实门禁仍认 95”的
+   假配置——这比不给配置项更危险。
+
 ## 2026-09-18 · e2e 端口要可覆盖，且必须在隔离数据库上跑（P055-PID-Agent）
 
 - 场景：本机 8000 端口被另一个工作区的常驻后端占用（连着共享的 35 张真实图纸 dev DB），而 `playwright.config.ts` 的 webServer 固定 8000/4173 + `reuseExistingServer:false`，于是“想跑 e2e”就变成“要么清活库、要么跑不了”。

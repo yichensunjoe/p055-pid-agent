@@ -111,6 +111,34 @@ paths.
 
 ## 9. Tests
 
+## Engineering validation evidence (M4)
+
+A validation result is bound to the exact document id/revision/content hash, the profile id/version,
+the **complete** rule-bundle fingerprint (including waiver scope), the engine and validator versions,
+the symbol-registry fingerprint, and the explicit evaluation time the run used. A release-readiness
+result additionally binds the validation hash and the release-validator version/policy, plus its own
+readiness hash.
+
+Two rules follow from that:
+
+* **Validation is a read.** Running it does not create a document revision or a history entry, and
+  `revision.created` is never emitted for it. If a deployment records read/tool invocations, the
+  event is `validation.completed` / `release.readiness.assessed` and it stores or references the
+  canonical result/readiness hash. It must not be confused with `revision.created`, and it is not
+  human approval evidence.
+* **Approval fields do not exist here.** No validation or readiness payload contains `approved`,
+  `ifc`, `afc`, `signature`, `signed` or a release state; readiness carries
+  `human_approval_required: true` instead. Formal state transitions stay behind the human Approval
+  Gate.
+
+The M4-0 CAD rule still applies to the same records: the source SHA-256 and decoder evidence are
+**server-derived** and live in the audit record as well as in document provenance, and caller-supplied
+`extra_evidence` may only *add* evidence in its own namespace (`cad_import`) — it cannot overwrite
+reserved evidence keys such as `change_count`, `validation`, `action` or `attribution`
+(`RESERVED_EVIDENCE_KEYS`; a collision raises `ReservedEvidenceError` before anything is written).
+
+`backend/tests/test_audit_provenance.py` covers the reserved-key guard alongside its existing cases.
+
 `backend/tests/test_audit_provenance.py` covers: chained writes, same-transaction
 diff+audit, failed writes leaving no revision, undo/redo, tamper detection,
 deletion detection, tail-truncation limitation, evidence re-hashing, bounded

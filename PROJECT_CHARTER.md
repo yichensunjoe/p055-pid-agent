@@ -1302,6 +1302,26 @@ request
 
 完成标志：configurable rules、stable issue codes、release validator、project profile。
 
+**M4 完成条件的规范含义**（2026-09-19 由远端 Reviewer / Release Gate 定义，本地不得自行放宽）：
+
+> 仓库只有**一份** canonical、只读的工程校验契约。每条 finding 携带稳定 code、severity
+> （`info|warning|error|blocker`）、工程对象 id、图纸元素 id、message、expected/actual、
+> suggested repair、rule source、waiver 状态与证据、validator id/version、rule id、profile
+> id/version、适用时的**生效阈值**，以及足以复现本次运行的确定性 provenance。
+>
+> 生效规则链为 `built-in < standard < company < project < release-phase`；非法或未知配置
+> **fail closed**。既有 graph / report / drafting validator 是本契约的 **adapter**，不再各自
+> 充当对外规则真相。
+>
+> waiver **标注** finding，永不删除 finding。自动化 release 校验只产出 `eligible|not_eligible`
+> 就绪证据，**永远不能**批准/签发/放行图纸。
+>
+> 只有当同一引擎通过 REST/MCP/CLI/UI 一致暴露、read/audit provenance 已绑定、stable
+> issue-code 契约由 tests/harness 守住、代表性大图性能已记录、且 backend/frontend/browser/
+> shared-mode 全量验收为绿时，M4 才算完成。
+
+M4 未通过 M4-6 验收前，Charter 中不得写入 M4 accepted SHA。
+
 ## 50. M5 — Agent Self-Repair
 
 完成标志：Agent 能依据 validator 局部修复并在 benchmark 达到预设成功率。

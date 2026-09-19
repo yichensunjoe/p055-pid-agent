@@ -107,3 +107,14 @@ Valid CSV kinds are `equipment`, `lines`, `instruments`, and `rules`.
 ## Verification
 
 Backend tests cover deterministic ordering, visible/all scope, duplicate and missing tags, dangling and invalid endpoints, unconnected required ports, missing line metadata, UTF-8 CSV, Python Client behavior, and document immutability. Chromium acceptance covers the browser counts, filters, finding navigation, CSV download, hidden-layer scope switch, and unchanged revision.
+
+## M4 canonical-validation boundary
+
+`RuleFinding` remains the engineering-report domain model. It is an **adapter input**, not a second
+public rule truth: the M4 `engineering-report` adapter preserves each legacy finding's code, severity
+and element references under the built-in profile and then applies only the resolved canonical profile
+metadata (enable / severity / waiver / rule source) in the common engine.
+
+REST, MCP, CLI and the UI must not expose `RuleFinding` as an alternative validation contract — they
+return the canonical `ValidationResult`. See
+[`m4-engineering-validation.md`](m4-engineering-validation.md).

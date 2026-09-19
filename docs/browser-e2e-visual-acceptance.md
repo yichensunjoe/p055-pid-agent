@@ -229,3 +229,18 @@ The normal pull-request workflow does not replace:
 - the separate 1000/2500/5000-element benchmark suite;
 - platform-specific headed checks outside Chromium/Linux;
 - review of a visual baseline change before the new PNG is accepted.
+
+## Baseline generation must be able to fail (M4-0)
+
+Snapshot generation runs on a **pinned** `ubuntu-24.04` runner, and the Playwright update command
+is itself a required-success step: it is never wrapped in unconditional error suppression
+(`|| true`), so a browser that fails to launch, a web server that fails to start or a test that
+throws fails the job instead of publishing a green artifact that contains no usable baselines.
+
+Proving that the step produced baselines is tied to **that step**, not to a wall-clock window: the
+workflow creates a marker immediately before `--update-snapshots` and then requires at least one PNG
+newer than that marker. A relative `find ... -newermt '-30 minutes'` check would pass on a fresh
+checkout, where git itself has just written every committed PNG and they all look recently modified.
+
+Renderer, browser and font versions used for a baseline are recorded with the baseline procedure, and
+the regenerated set is uploaded as an artifact for review — the workflow commits nothing.

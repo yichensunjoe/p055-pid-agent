@@ -304,3 +304,16 @@ a proof that no Python code can ever reach `Store` directly.
   pipelines as text. A topology/ladder view is future work.
 * Nothing in this layer replaces engineering review. Findings are deterministic
   review inputs; approval, issuance and IFC/AFC state remain human decisions.
+
+## M4 canonical-validation boundary
+
+`GraphFinding` remains the domain model of `build_engineering_graph()`. It is **not** the
+repository-wide validation contract: the M4 `engineering-graph` adapter maps each finding into a
+canonical `ValidationIssue` without changing the legacy code, severity, object ids or element ids
+under the built-in profile (parity is asserted per finding, as a correlated tuple rather than two
+independent lists). New external surfaces — REST, MCP, CLI, UI — consume the canonical result only.
+
+A graph finding whose code is not registered in the M4 rule catalog is a **contract error to
+surface**: the issue is reported with `registered=false` and `rule_source="unregistered"`, counted in
+`counts.unregistered`, and it makes release readiness fail closed. It is never dropped, and it is
+never relabelled `built-in`. See [`m4-engineering-validation.md`](m4-engineering-validation.md).

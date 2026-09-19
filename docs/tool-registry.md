@@ -106,6 +106,41 @@ with that reason written down (`DRAFT_EDIT_EXCEPTIONS`), and `POST /api/v2/impor
 contract enumerates mutating methods and any declared read route becomes a staleness check; its
 read-only nature is asserted directly by `tests/test_cad_api.py::test_capabilities_route_writes_nothing`.
 
+### M4 engineering validation (read-only)
+
+* `validate_document` — **`read`**, not audited as a revision. Inputs: an existing document id and
+  an optional timezone-aware `as_of`. Output: the canonical `ValidationResult` (stable codes,
+  `info|warning|error|blocker` severities, object/element locators, expected vs actual, rule source,
+  waiver status, effective threshold, and the document/profile/rule-bundle/registry fingerprints
+  plus the evaluation time). It **cannot** accept a client-supplied rule script, severity override,
+  waiver or approval state, and it never writes a revision.
+* `assess_release_readiness` — **`read`**. Runs canonical validation and returns
+  `ReleaseReadiness(eligible|not_eligible)` with the evidence behind it. Missing required-validator
+  evidence, an unwaived severity named by the release policy, or a finding whose rule is not
+  registered in the catalog all **fail closed**. This tool cannot approve, sign, issue IFC/AFC or
+  change release state; human approval remains a separate gate.
+* `inspect_validation_profile` — **`read`**. The resolved rule bundle: profile id/version,
+  fingerprint, release policy, and every effective rule with the layer (`built-in` / `standard` /
+  `company` / `project` / `release-phase`) that decided it.
+
+The same three capabilities are exposed as
+
+~~~text
+GET /api/v2/validation/profile
+GET /api/v2/validation/documents/{document_id}
+GET /api/v2/validation/documents/{document_id}/release-readiness
+MCP  inspect_validation_profile / validate_document / assess_release_readiness
+CLI  pid-agent validate <document_id> / pid-agent release-readiness <document_id>
+~~~
+
+REST, MCP, CLI and the UI are adapters over **one** engine and **one** profile resolver: the same
+input must produce the same canonical payload, and no surface may implement independent validation
+policy. Validation/readiness are reads; if the deployment records the invocation
+(`GET ...?audit=true`, `--audit`, or the MCP tool call) it is recorded as read/tool evidence
+(`validation.completed` / `release.readiness.assessed`) that references the canonical result or
+readiness hash — never as `revision.created` and never as an approval. See
+[`m4-engineering-validation.md`](m4-engineering-validation.md).
+
 ## Permission semantics in this slice
 
 Permissions are now enforced for Agent-originated mutating paths by `AgentHarnessService`. See [`agent-harness-sessions-permissions.md`](agent-harness-sessions-permissions.md).
@@ -163,7 +198,7 @@ Existing MCP execution tools remain unchanged.
 The registry now covers T0.1–T0.5, M2, M3 and the CAD (DWG/DXF) import slice. The next Charter task is **Priority 2 — Validator
 Framework** (configurable, versionable rules with stable issue codes and project standard
 references; see `PROJECT_CHARTER.md` §33). Note the milestone numbering: Charter M3 is the
-Deterministic Drafting Engine (this slice, shipped), M4 is the Engineering Validation System;
+Deterministic Drafting Engine (shipped), M4 is the Engineering Validation System;
 the Validator Framework is a **Priority 2 implementation priority**, not a milestone rename.
 
 The registry should keep its earlier promises while it grows: emit registry-defined audit events,

@@ -41,6 +41,16 @@
 里不回答的问题：改动是否可复现、是否严格不改差、是否越出了请求的范围与锁。两者共用同一份
 评分，但一个是判据、一个是手术刀，具体契约见 [`deterministic-drafting.md`](deterministic-drafting.md)。
 
-运行 `pid-agent quality-harness` 可在不调用模型的情况下验证这条边界。真实模型验收使用
+## M4 canonical-validation 边界
+
+`DiagramQualityIssue` / `DiagramQualityReport` 仍然是制图领域的输出与评分输入。M4 的
+`diagram-quality` adapter 在内置 profile 下保留旧有 issue 结论，**唯一例外**是被明确评审过的
+`QUALITY_SCORE_BELOW_TARGET` 归属迁移：canonical 引擎用**解析后的项目阈值**（内置默认 95）与报告
+分数比较，这样 profile 的阈值配置才是真策略而不是展示字段。canonical issue 会记录生效
+`threshold`、`expected`、`actual` 与 `rule_source`；生产 release 路径不得出现第二个独立的 95 分门。
+详见 [`m4-engineering-validation.md`](m4-engineering-validation.md)。
+
+运行 `pid-agent quality-harness` 可在不调用模型的情况下验证这条边界（含 `validation_contract` 用例）。
+真实模型验收使用
 `pid-agent model-matrix --include-complex-diagram`，复杂场景除拓扑外还必须通过完整图面质量
 报告。

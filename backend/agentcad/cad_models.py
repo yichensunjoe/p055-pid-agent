@@ -63,8 +63,6 @@ class CadImportOptions(StrictModel):
     #: Refuse an import that would exceed this many native elements. A guard rail, not
     #: a truncation: a silently truncated drawing would look complete.
     max_elements: int = Field(default=200_000, ge=1, le=5_000_000)
-    #: Operations per governed transaction (the store limits one transaction to 1000).
-    chunk_size: int = Field(default=1000, ge=1, le=1000)
     #: Copy the source layer colour onto the imported geometry. ``False`` draws
     #: everything in the document's default ink.
     preserve_colors: bool = True
@@ -141,8 +139,13 @@ class CadImportReport(StrictModel):
     layers: list[str] = Field(default_factory=list)
     issues: list[CadIssue] = Field(default_factory=list)
     operations: int = Field(default=0, ge=0)
+    #: Revisions the import produced. One: the whole drawing is one governed change.
     revisions: int = Field(default=0, ge=0)
-    transactions: int = Field(default=0, ge=0)
+    #: Logical governed mutations the import produced. One for a real import, zero for
+    #: a dry run. This replaced a physical "transactions" count when imports stopped
+    #: being written as batches: the number a reviewer cares about is how many
+    #: user-visible changes landed, not how many SQLite writes carried them.
+    logical_mutations: int = Field(default=0, ge=0)
     duration_ms: float = Field(default=0.0, ge=0)
     warnings: list[str] = Field(default_factory=list)
 

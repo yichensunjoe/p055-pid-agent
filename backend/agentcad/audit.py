@@ -157,6 +157,7 @@ class AuditRecorder:
         source: str,
         context: AuditContext,
         status: AuditStatus = "applied",
+        extra_evidence: dict[str, Any] | None = None,
     ) -> ProvenanceBundle:
         operation_list = list(operations) if operations is not None else None
         details = build_history_details(before, after, operation_list, action=action)
@@ -190,6 +191,10 @@ class AuditRecorder:
             "validation": self._bounded_validation(context),
             "metadata": context.metadata,
         }
+        if extra_evidence:
+            # Caller-supplied *server-derived* evidence (today: CAD source binding).
+            # Merged last so it cannot be silently shadowed by the generic keys above.
+            evidence.update(extra_evidence)
         draft = AuditRecordDraft(
             event_type="revision.created",
             actor=context.actor,

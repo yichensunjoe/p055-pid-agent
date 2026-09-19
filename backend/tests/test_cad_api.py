@@ -109,7 +109,7 @@ def test_plan_route_decodes_without_writing(client: TestClient) -> None:
     payload = response.json()
     assert payload["elements"] > 0
     assert payload["operations"] >= payload["elements"]
-    assert payload["report"]["transactions"] == 0
+    assert payload["report"]["logical_mutations"] == 0
     assert client.get("/api/v2/documents").json() == before
 
 

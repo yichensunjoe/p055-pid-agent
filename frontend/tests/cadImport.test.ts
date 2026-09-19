@@ -43,7 +43,7 @@ function report(overrides: Partial<CadImportReport> = {}): CadImportReport {
     issues: [],
     operations: 10,
     revisions: 1,
-    transactions: 1,
+    logical_mutations: 1,
     duration_ms: 12.5,
     warnings: [],
     ...overrides,

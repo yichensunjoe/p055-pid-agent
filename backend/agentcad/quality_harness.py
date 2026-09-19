@@ -1770,18 +1770,31 @@ def _cad_import_case(symbols: SymbolRegistry) -> QualityHarnessCaseResult:
         plan = importer.dry_run(data, filename="harness.dxf")
         _require(
             plan.elements == counts.elements
-            and plan.report.transactions == 0
+            and plan.report.logical_mutations == 0
             and len(service.list_documents()) == before,
             "CAD_DRY_RUN_WROTE_SOMETHING",
             "a dry run must produce a report and no document",
         )
 
-        # Undo must take the imported geometry away again.
+        # One undo must take the *whole* import away again: a CAD import is one logical
+        # governed mutation, not a run of transactions whose tail can be popped.
+        history_before_undo = service.get_history(result.document_id, limit=50)
+        _require(
+            len(history_before_undo) == 1 and result.report.logical_mutations == 1,
+            "CAD_IMPORT_IS_NOT_ONE_LOGICAL_MUTATION",
+            "an import must land as one revision, one history entry and one undo step",
+        )
         undone = service.undo(result.document_id, expected_revision=document.revision)
         _require(
             undone.revision > document.revision and not undone.elements,
             "CAD_IMPORT_NOT_UNDOABLE",
-            "the last import batch must be undoable like any other edit",
+            "one undo must reverse the entire import",
+        )
+        redone = service.redo(undone.id, expected_revision=undone.revision)
+        _require(
+            len(redone.elements) == counts.elements,
+            "CAD_IMPORT_NOT_REDOABLE",
+            "one redo must restore the entire import",
         )
 
         # An unreadable source is refused with a code, not guessed at.
@@ -1805,9 +1818,10 @@ def _cad_import_case(symbols: SymbolRegistry) -> QualityHarnessCaseResult:
         summary=(
             "a DXF was reproduced with its layers, geometry kinds, text and block "
             "provenance; the frame and unit scale moved nothing relative to itself; the "
-            "write was audited, undoable and confined to a new document; the report named "
-            "every loss; the same bytes produced the same document; a dry run wrote "
-            "nothing and an unreadable source was refused"
+            "write was audited and confined to a new document as one logical mutation "
+            "that one undo reverses and one redo restores; the report named every loss; "
+            "the same bytes produced the same document; a dry run wrote nothing and an "
+            "unreadable source was refused"
         ),
         details={
             "source_format": result.report.source.format,
@@ -1820,7 +1834,7 @@ def _cad_import_case(symbols: SymbolRegistry) -> QualityHarnessCaseResult:
             "layer_names": sorted(layer_names),
             "issue_codes": sorted(issue_codes),
             "issue_counts": {issue.code: issue.count for issue in result.report.issues},
-            "transactions": result.report.transactions,
+            "logical_mutations": result.report.logical_mutations,
             "operations": result.report.operations,
             "frame": result.report.frame,
             "canvas": result.report.canvas,
@@ -1830,7 +1844,7 @@ def _cad_import_case(symbols: SymbolRegistry) -> QualityHarnessCaseResult:
                 "height": cropped_document.canvas.height,
             },
             "dry_run_elements": plan.elements,
-            "dry_run_transactions": plan.report.transactions,
+            "dry_run_logical_mutations": plan.report.logical_mutations,
             "duration_ms": result.report.duration_ms,
         },
     )

@@ -1,5 +1,35 @@
 # REUSE_AND_PITFALL_LOG — P055-PID-Agent
 
+## 2026-09-19 · “分批写入”不是“一次用户动作”：原子性与 undo 必须定义在用户级操作边界上（P055-PID-Agent）
+
+- 场景：CAD 导入最初写成“先 `create_document()`，再按 1000 操作/批 `apply_transaction()`”。每一批都走受治理通道、都有 revision/审计/undo，看起来比“一次性写完”更“规范”。但它有两个真实缺陷：① 第 N 批失败会留下一份**看起来正常**的半张图（revision 正常、列表里有、能打开）；② `undo()` 一次只弹一层栈，所以 9242 图元的大图一次 undo 只能撤最后一批。测试当时全绿，因为测的是“有事务”和“能撤销”。
+- 结论做法：把导入做成**一次性逻辑受治理变更**——新增 `DocumentService.create_document_with_operations()`：在内存里逐个应用操作、校验整份文档、然后**只落盘一次**（一个 revision、一条历史、一条审计、一次 undo 快照）。收拢代码、校验、provenance、持久化全部复用 `apply_transaction` 的同一套路径，因此这不是第二条写通道；分块退化为纯内存策略。补三类负向测试：注入“第 12 个操作失败”→ `list_documents() == []`；>1000 操作 → 一次 undo 清空、一次 redo 全量恢复；历史只有一条且 `operation_count` 等于操作数。
+- 关键经验：**物理事务边界 ≠ 用户动作边界**。当实现里出现“for batch in batches: commit(batch)”时，必须回头问一句：用户眼里这是几件事？失败了会看到什么？按一次 Ctrl+Z 会撤掉多少？这三个问题都答不上来，就还没有定义原子性。
+
+## 2026-09-19 · 用户文件名绝不能进命令脚本：staging 用固定内部名（P055-PID-Agent）
+
+- 场景：DWG 解码要把上传写进临时目录中转。原实现用 `Path(filename).name` 派生暂存文件名、又用 `path.stem` 派生 DXF 输出名，而 AutoCAD 路线是**脚本驱动**的（`/s script.scr` 里写 `DXFOUT <输出路径>`）。一个含换行/引号/控制字符的文件名，就能把额外命令插进 AutoCAD 脚本；同一类问题也存在于“把用户路径拼进命令行”。
+- 结论做法：暂存、输出、脚本三类路径全部改成固定内部名（`source.dwg` / `output.dxf` / `converter.scr`），转换器永远只被交给 `<workdir>/input/source.dwg`，原始文件名只保留为展示/provenance 字段。回归测试用一个带换行与引号的恶意文件名，断言它**不出现在** argv 与脚本内容里。
+- 关键经验：**“这条路径来自用户输入”与“这条路径会进入脚本/命令行”相遇时，必须做名字替换而不是转义**。同时对“公开报告暴露本机路径”做决定：能力清单与导入报告只给基名与 `<workdir>` 标记。
+
+## 2026-09-19 · 会生成基线的 workflow 本身不能吞掉失败（P055-PID-Agent）
+
+- 场景：为了在 CI 渲染器里重生成截图基线，新 workflow 里写了 `npx playwright test … --update-snapshots || true`。理由听起来合理：“断言失败是预期的，因为我们在重写期望值”。但 `|| true` 吞掉的不只是像素断言，还有浏览器启动失败、web server 起不来、测试代码抛异常——于是这个 workflow 能产出一份**绿色的、内容为空的“坏基线”**，而 artifact 看起来一切正常。
+- 结论做法：去掉无条件 `|| true`，让更新步骤本身成为真门禁；再补一步“必须真的有新生成的 png”检查（`find … -newermt '-30 minutes' | wc -l` > 0），并把渲染器从 `ubuntu-latest` 钉到 `ubuntu-24.04`（基线只对产出它的渲染器有意义）。
+- 关键经验：**“预期失败”只适用于你明确知道会在哪一层失败的部分**。给整条命令加吞错，等于把“我知道这里会红”扩写成“这里红不红我都不看”。凡是生成 artifacts 的流水线，都要单独验证“失败时它确实会红”。
+
+## 2026-09-19 · provenance 声明必须由“审计记录里的精确值”测试证明（P055-PID-Agent）
+
+- 场景：文档里写着“导入记录源 SHA-256”，代码也确实把 SHA 写进了 `document.metadata.cad_import`。但 `create_document()` 的审计 evidence 只写 name/canvas/history_source，所以“SHA 同时进入审计”这个承诺并不成立——而 metadata 是可以被后续修改的，审计链才是契约凭据。
+- 结论做法：给审计证据加上服务端**从实际解码字节算出**的 `cad_import` 绑定块（sha256 / format / converter / converter_version / operation_count），并写精确值断言：`record.evidence["cad_import"]["source_sha256"] == hashlib.sha256(data).hexdigest()`，同时断言 `record.document_id` 与 `record.result_revision`。
+- 关键经验：**“记录在某个地方”不等于“记录在承诺的地方”**。凡文档里出现“同时进入 X”这类句子，测试就要精确地在 X 里找那个值；只断言“存在一个 sha 字段”的测试不能防住这类偏差。
+
+## 2026-09-19 · 非均匀仿射变换会改变图元类型（圆→椭圆）（P055-PID-Agent）
+
+- 场景：块的 INSERT 带 `scale=(3, 1)` 时，块里的圆在图纸上其实是椭圆，但导入把它当圆重建，只用了“行列式缩放”得到一个标量半径——图元类型错了，而且看不出来（圆还是圆）。
+- 结论做法：重建“原生形状”之前先判断变换类别（`matrix_is_uniform`）；非均匀时改为对**完全变换后**的曲线采样成闭合折线，并报 `CAD_CIRCLE_APPROXIMATED`。配一个非均匀缩放测试与一个均匀缩放的对照测试。
+- 关键经验：**几何保真优先于图元类型保真**。任何“把采样曲线还原成原生图元”的优化，都要先确认变换是相似变换；否则宁可用折线。
+
 ## 2026-09-19 · 想接“官方 MCP”之前先看本机装了什么：AutoCAD 自带的无界面引擎比 MCP 更有用（P055-PID-Agent）
 
 - 场景：用户装了正式版 AutoCAD，要求“找个官方 MCP 接上”。调查结论：Autodesk 官方公开的 MCP server 是 **Revit / Model Data Explorer / Fusion Data / Product Help** 以及 ACC/Forma 平台侧服务，**没有 AutoCAD 桌面版官方 MCP**；社区那些 AutoCAD MCP 全是第三方，且依赖 Windows 的 COM/.NET/文件 IPC，在 macOS 上根本无法驱动 AutoCAD。即使可用也不该接：一个直接改 DWG 的外部服务会绕开本项目“唯一受治理写通道”的模型（Charter §7 / P0-2），等于开第二条无审计写路径。

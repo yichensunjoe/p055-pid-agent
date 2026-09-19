@@ -249,9 +249,9 @@ def main() -> None:
         target = Path(path)
         try:
             if dry_run:
-                plan = importer.dry_run(
-                    target.read_bytes(), filename=target.name, options=options
-                )
+                # Same loader as the real import: a missing/unreadable path must fail
+                # with a stable CAD code on both branches, not leak OSError on one.
+                plan = importer.dry_run_path(target, options=options)
                 return plan.model_dump(mode="json")
             result = importer.import_path(
                 target,

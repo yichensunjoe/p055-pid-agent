@@ -13,10 +13,15 @@ The import is a *reproduction*, not an interpretation. It produces:
   (``cad_block``/``cad_handle``), so a later, *reviewed* semantic pass can group them
   into equipment — this importer deliberately does not.
 
-and it produces a **report** that names everything it could not reproduce. Writes go
-through ``DocumentService`` exactly like a manual edit: one document creation plus
-batched transactions, each with its own revision, history entry and audit record, so an
-import is undoable and reviewable like any other change.
+and it produces a **report** that names everything it could not reproduce.
+
+**One import is one governed mutation.** The whole geometry lands through a single
+``DocumentService`` call (``create_document_with_operations``): one revision, one history
+entry, one audit record and one undo snapshot. An earlier version wrote the layers and
+then the elements in batched transactions, which meant a failure part-way through left a
+half-imported drawing that looked like a normal completed document, and one undo only
+removed the last batch. Chunking is now purely an internal memory concern; nothing partial
+is ever persisted, because nothing is persisted until the whole document is valid.
 """
 
 from __future__ import annotations
@@ -33,10 +38,12 @@ from typing import Any
 
 from .audit_models import AuditContext
 from .cad_convert import (
+    STAGED_SOURCE_NAME,
     CadConversionError,
     available_converters,
     convert_dwg,
     converter_report,
+    public_command,
 )
 from .cad_dwg import decode_object_stream
 from .cad_dxf import read_dxf
@@ -48,6 +55,7 @@ from .cad_geometry import (
     bounds_of,
     boxes_intersect,
     dash_for_linetype,
+    matrix_is_uniform,
 )
 from .cad_models import (
     CadCapabilities,
@@ -67,9 +75,8 @@ from .models import (
     CreateDocumentRequest,
     HistorySource,
     Layer,
-    TransactionRequest,
 )
-from .service import DocumentService
+from .service import DocumentService, InvalidOperationError
 
 DWG_SIGNATURE = b"AC10"
 BINARY_DXF_MARKER = b"AutoCAD Binary DXF"
@@ -118,6 +125,31 @@ def detect_format(data: bytes) -> tuple[CadSourceFormat, str]:
     )
 
 
+def read_source_bytes(path: Path) -> bytes:
+    """Read a CAD file from disk, reporting failures as stable CAD error codes.
+
+    Every entry point that takes a path (CLI, MCP, dry run or write) goes through here,
+    so an unreadable file is answered with the same ``CadImportError`` code no matter
+    which surface asked, instead of leaking ``FileNotFoundError`` from one of them.
+    """
+
+    path = Path(path)
+    try:
+        if path.is_dir():
+            raise CadImportError("source_not_a_file", f"not a file: {path}")
+        return path.read_bytes()
+    except CadImportError:
+        raise
+    except FileNotFoundError as exc:
+        raise CadImportError("source_not_found", f"no such file: {path}") from exc
+    except OSError as exc:
+        raise CadImportError(
+            "source_not_readable",
+            f"the file could not be read: {exc.strerror or exc}",
+            detail={"path_name": path.name},
+        ) from exc
+
+
 def _slug(value: str, *, limit: int = 48) -> str:
     normalized = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode("ascii")
     cleaned = re.sub(r"[^A-Za-z0-9_-]+", "_", normalized).strip("_")
@@ -143,6 +175,7 @@ class _Plan:
     warnings: list[str] = field(default_factory=list)
     duration_ms: float = 0.0
     decode_ms: float = 0.0
+    logical_mutations: int = 1
 
     @property
     def operations(self) -> int:
@@ -178,6 +211,30 @@ class _Plan:
             }
         }
 
+    @property
+    def audit_provenance(self) -> dict[str, Any]:
+        """Server-derived CAD provenance for the audit record (Charter §19).
+
+        The SHA-256 is hashed from the decoded bytes here, never taken from a request,
+        and the whole binding (format, decoder key and version, resulting document and
+        revision) travels with the same atomic write as the revision itself, so an audit
+        record cannot claim a source it did not import.
+        """
+
+        return {
+            "cad_import": {
+                "source_sha256": self.source.sha256,
+                "source_format": self.source.format,
+                "source_format_detail": self.source.format_detail,
+                "source_size_bytes": self.source.size_bytes,
+                "source_encoding": self.source.encoding,
+                "converter": self.source.converter,
+                "converter_version": self.source.converter_version,
+                "converter_command": list(self.source.converter_command),
+                "operation_count": self.operations,
+            }
+        }
+
 
 class CadImporter:
     """Decode CAD files and write them as governed documents."""
@@ -187,11 +244,9 @@ class CadImporter:
         service: DocumentService,
         *,
         max_source_bytes: int = 25 * 1024 * 1024,
-        curve_segments_default: int = 24,
     ):
         self.service = service
         self.max_source_bytes = max_source_bytes
-        self.curve_segments_default = curve_segments_default
 
     # -- capability discovery ----------------------------------------------- #
 
@@ -250,7 +305,7 @@ class CadImporter:
                 return read_dxf(data)
             except CadGeometryError as exc:
                 raise CadImportError(exc.code, exc.message) from exc
-        return self._decode_dwg(data, filename=filename, options=selected, detail=detail)[0]
+        return self._decode_dwg(data, options=selected, detail=detail)[0]
 
     def _validate_source(self, data: bytes) -> None:
         """Reject an empty or oversized upload before any decoding is attempted."""
@@ -270,7 +325,6 @@ class CadImporter:
         self,
         data: bytes,
         *,
-        filename: str,
         options: CadImportOptions,
         detail: str,
     ) -> tuple[CadDecodeResult, dict[str, Any]]:
@@ -286,7 +340,9 @@ class CadImporter:
             )
         with tempfile.TemporaryDirectory(prefix="pid-agent-cad-") as temporary:
             workdir = Path(temporary)
-            source_path = workdir / (Path(filename).name or "drawing.dwg")
+            # Fixed internal name: the operator's filename never becomes a path, and so
+            # can never reach the converter's command line or its ``.scr`` script.
+            source_path = workdir / STAGED_SOURCE_NAME
             source_path.write_bytes(data)
             try:
                 conversion = convert_dwg(source_path, workdir=workdir, converters=converters)
@@ -328,7 +384,13 @@ class CadImporter:
             "converter": conversion.converter.key,
             "converter_label": conversion.converter.label,
             "converter_version": conversion.version,
-            "command": list(conversion.attempts[-1].command) if conversion.attempts else [],
+            # Reported form: executable basename plus a ``<workdir>`` token, so no local
+            # path is disclosed to a client of this instance.
+            "command": (
+                public_command(conversion.attempts[-1].command, workdir=workdir)
+                if conversion.attempts
+                else []
+            ),
             "attempts": [
                 {"key": attempt.key, "status": attempt.status, "duration_ms": attempt.duration_ms}
                 for attempt in conversion.attempts
@@ -359,7 +421,7 @@ class CadImporter:
             result = self.decode_bytes(data, filename=filename, options=selected)
         else:
             result, conversion_details = self._decode_dwg(
-                data, filename=filename, options=selected, detail=detail
+                data, options=selected, detail=detail
             )
         decode_ms = round((time.perf_counter() - decode_started) * 1000, 2)
 
@@ -475,6 +537,22 @@ class CadImporter:
                 sum(skipped.values()),
                 detail=dict(skipped),
             )
+
+        approximated_circles = sum(
+            1
+            for primitive in kept
+            if primitive.kind == "circle"
+            and not matrix_is_uniform(primitive.transform.matrix)
+        )
+        note(
+            "CAD_CIRCLE_APPROXIMATED",
+            (
+                "circles placed by a non-uniform block reference are not circles after "
+                "the transform (they are ellipses), so they were sampled as closed "
+                "polylines"
+            ),
+            approximated_circles,
+        )
 
         layer_ids = self._assign_layer_ids(kept)
         plan.layers = sorted(layer_ids, key=lambda name: layer_ids[name])
@@ -664,6 +742,21 @@ class CadImporter:
                 }
             )
         if primitive.kind == "circle":
+            if not matrix_is_uniform(primitive.transform.matrix):
+                # A non-uniform INSERT turns a circle into an ellipse. A scalar radius
+                # cannot express that, so the *fully transformed* curve is sampled
+                # instead of keeping a native circle that would be the wrong shape.
+                points = [place(point) for point in primitive.curve_points(options.curve_segments)]
+                if len(points) < 3:
+                    return None
+                return AddElementOperation(
+                    element={
+                        "type": "polyline",
+                        "points": points,
+                        "closed": True,
+                        **common,
+                    }
+                )
             radius = primitive.radius * primitive.transform.scale / scale
             if radius <= 0:
                 return None
@@ -734,15 +827,29 @@ class CadImporter:
         source: HistorySource | None = None,
     ) -> CadImportResult:
         path = Path(path)
-        if not path.is_file():
-            raise CadImportError("source_not_found", f"no such file: {path}")
         return self.import_bytes(
-            path.read_bytes(),
+            read_source_bytes(path),
             filename=path.name,
             options=options,
             audit=audit,
             source=source,
         )
+
+    def dry_run_path(
+        self,
+        path: Path,
+        *,
+        options: CadImportOptions | None = None,
+    ) -> CadDryRun:
+        """The dry run of a file on disk, through the same loader as a real import.
+
+        Sharing ``read_source_bytes`` is the point: a dry run that reported raw
+        ``FileNotFoundError`` for a path a real import would report as a stable
+        ``CadImportError`` would be answering a different question than it claims to.
+        """
+
+        path = Path(path)
+        return self.dry_run(read_source_bytes(path), filename=path.name, options=options)
 
     def dry_run(
         self,
@@ -753,7 +860,7 @@ class CadImporter:
     ) -> CadDryRun:
         plan = self.plan(data, filename=filename, options=options)
         return CadDryRun(
-            report=self._report(plan, transactions=0, operations=0, revisions=0),
+            report=self._report(plan, logical_mutations=0, operations=0, revisions=0),
             document_name=plan.document_name,
             operations=plan.operations,
             elements=plan.counts.elements,
@@ -767,61 +874,53 @@ class CadImporter:
         source: HistorySource | None,
         options: CadImportOptions,
     ) -> CadImportResult:
-        document = self.service.create_document(
-            CreateDocumentRequest(
-                name=plan.document_name,
-                width=max(1.0, plan.canvas_width),
-                height=max(1.0, plan.canvas_height),
-                metadata=plan.metadata,
-            ),
-            source=source or "web",
-            audit=audit,
-        )
-        batches = self._batches(plan, options.chunk_size)
-        revision = document.revision
-        operations_applied = 0
-        for number, batch in enumerate(batches, start=1):
-            result = self.service.apply_transaction(
-                document.id,
-                TransactionRequest(
-                    expected_revision=revision,
-                    operations=batch,
-                    label=(
-                        f"Import CAD file {plan.source.filename} "
-                        f"(batch {number}/{len(batches)})"
-                    ),
-                ),
-                source=source or "web",
-                audit=audit,
-            )
-            revision = result.document.revision
-            operations_applied += result.applied_operations
-        return CadImportResult(
-            document_id=document.id,
-            document_name=document.name,
-            revision=revision,
-            report=self._report(
-                plan,
-                transactions=len(batches),
-                operations=operations_applied,
-                revisions=len(batches),
-            ),
-        )
+        """Write the whole plan as one logical governed mutation.
 
-    def _batches(self, plan: _Plan, chunk_size: int) -> list[list[Any]]:
-        """Split the plan into transactions, front-loading the layer operations."""
+        One ``DocumentService`` call, therefore one revision, one history entry, one
+        audit record and one undo snapshot. The alternative (a document, then batched
+        transactions) has two failure modes a reviewer would call data loss: a failed
+        batch leaves a document that looks finished but is not, and one undo removes
+        only the last batch of a large drawing.
+        """
 
         operations: list[Any] = [*plan.layer_operations, *plan.element_operations]
         if not operations:
             raise CadImportError("no_geometry", "there is nothing to import")
-        size = max(1, min(chunk_size, 1000))
-        return [operations[start : start + size] for start in range(0, len(operations), size)]
+        try:
+            result = self.service.create_document_with_operations(
+                CreateDocumentRequest(
+                    name=plan.document_name,
+                    width=max(1.0, plan.canvas_width),
+                    height=max(1.0, plan.canvas_height),
+                    metadata=plan.metadata,
+                ),
+                operations=operations,
+                label=f"Import CAD file {plan.source.filename}",
+                source=source or "web",
+                audit=audit,
+                provenance=plan.audit_provenance,
+            )
+        except InvalidOperationError as exc:
+            # The service validates the finished document and refuses the whole write. A
+            # rejected import is a caller-facing outcome with a stable code, not a 500.
+            raise CadImportError("import_rejected", str(exc)) from exc
+        return CadImportResult(
+            document_id=result.document.id,
+            document_name=result.document.name,
+            revision=result.document.revision,
+            report=self._report(
+                plan,
+                logical_mutations=1,
+                operations=len(operations),
+                revisions=1,
+            ),
+        )
 
     def _report(
         self,
         plan: _Plan,
         *,
-        transactions: int,
+        logical_mutations: int,
         operations: int,
         revisions: int,
     ) -> CadImportReport:
@@ -839,7 +938,7 @@ class CadImporter:
             issues=plan.issues,
             operations=operations,
             revisions=revisions,
-            transactions=transactions,
+            logical_mutations=logical_mutations,
             duration_ms=plan.duration_ms,
             warnings=plan.warnings,
         )
@@ -851,4 +950,5 @@ __all__ = [
     "CadImportError",
     "CadImporter",
     "detect_format",
+    "read_source_bytes",
 ]

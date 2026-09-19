@@ -2,7 +2,19 @@
 
 > 交接文档：每次开新会话先读本文件。更新规则见 `AGENTS.md`「HANDOFF 交接规则」。
 
-## 当前状态（2026-09-19，最新轮次：DWG/DXF 图纸导入 —— 用户直接要求的功能切片）
+## 当前状态（2026-09-19，最新轮次：远端评审 + M4 Engineering Validation System）
+
+- **里程碑口径**：**M4 — Engineering Validation System 已获远端 Reviewer / Release Gate 正式授权**，Charter 完成条件引用为 **§49**（`§48` 是 M3，不得再混用）。执行顺序由远端基线强制：`M4-0 CAD/CI gate closure` → `M4-1` canonical validation contract + project profile → `M4-2` 既有 validator 适配 → `M4-3` 可配置规则引擎与 profile 解析 → `M4-4` release validator → `M4-5` REST/MCP/CLI/UI/审计表面 → `M4-6` 全量验收与里程碑门禁。
+- **远端评审（2026-09-19）**：评审基线 `main@2389ee7`，评审切片 `d5c1fa0..2389ee7`（CAD 图纸导入切片）。裁决 = **CONDITIONALLY ACCEPTED，fix-forward，不整体回退**。架构方向保留（几何复现不造工程语义、只新建文档、只走 `DocumentService` 受治理通道、DWG 解码只用 subprocess 外部工具、转换器选择带证据、重命名控件是真 bug 修复、平台化视觉基线被接受）。
+- **M4-0 必修项（远端指定，全部已实现，见提交）**：① AutoCAD 脚本路径注入（用户文件名不得进入命令行/`.scr`，改为固定内部名 `source.dwg` / `output.dxf` / `converter.scr`）；② 导入必须是**一次**逻辑受治理变更（一个 revision、一条历史、一条审计、一次 undo），不得留下可用的半成品图；③ 源 SHA-256 必须同时进入**审计证据**（不只文档 metadata）；④ 视觉基线 workflow 不得用 `|| true` 吞掉浏览器/服务/测试失败，并把 Linux 渲染器钉到 `ubuntu-24.04`；⑤ 转换器非零退出码默认判失败（`acceptable_exit_codes` 默认 `(0,)`）；⑥ AutoCAD 版本探测改为真正的墙钟超时（静默进程也不会卡死）；⑦ 非均匀缩放块参照里的圆必须保几何（采样为闭合折线 + `CAD_CIRCLE_APPROXIMATED`）；⑧ CLI/MCP dry-run 与真导入共用读取入口，缺文件返回稳定 `CadImportError`；⑨ 文档契约修正（`§48→§49`、`cad_block`、`cad_import`、`dwg2dfx→dwg2dxf`、去掉“分批事务即 undo 单位”的说法、转换器 verified 只代表该工具族在参考语料上跑过、许可改为事实性打包口径、公开报告不暴露本机路径）。
+- **CAD 切片的既定口径（远端确认保留）**：导入只是**几何复现**；块出处键为 `cad_block`（元素级来源为 `cad_source`，文档级为 `cad_import` metadata）；一次完成的 CAD 导入 = **一个逻辑受治理变更 / 一次 undo**，不做“分批事务”的中间态；正式 release 只产生**就绪证据**，Agent 可以请求审批但绝不能自批 `Approved`/`IFC`/`AFC`/release 状态。
+- **本切片（M4）状态**：实现与验证证据见本轮验收报告；accepted HEAD 与测试数字在实测完成后填入，不预先声明验收。
+
+## 上一轮状态（DWG/DXF 图纸导入切片，`d5c1fa0..2389ee7`）
+
+（远端评审基线；评审结论见上：conditional accepted / fix-forward）
+
+### 当轮记录
 
 - **里程碑口径（先看这条）**：**M3 已由外部架构验收正式签字**（accepted HEAD `d5c1fa0`，功能基线 `b47f197`）。本轮**不是 M4**：`M4 — Engineering Validation System`（§48 / Priority 2 Validator Framework）**未开始也未经验收**，不得因为本切片动工。本切片是用户直接要求的产品能力——把外部 CAD 图纸接进项目（Charter §14 图纸接入），按实现优先级单独交付，不改变 milestone 编号。
 - **本轮交付（DWG/DXF 导入，`docs/cad-import.md`）**：

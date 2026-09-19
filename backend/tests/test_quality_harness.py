@@ -51,7 +51,8 @@ def test_offline_quality_harness_passes_without_provider():
     assert {"PIPE", "仪表"} <= set(cad_import.details["layer_names"])
     assert "CAD_PATTERN_HATCH_SKIPPED" in cad_import.details["issue_codes"]
     assert "CAD_UNSUPPORTED_ENTITIES" in cad_import.details["issue_codes"]
-    assert cad_import.details["dry_run_transactions"] == 0
+    assert cad_import.details["dry_run_logical_mutations"] == 0
+    assert cad_import.details["logical_mutations"] == 1
     assert cad_import.details["cropped_canvas"] == {"width": 250.0, "height": 150.0}
 
 

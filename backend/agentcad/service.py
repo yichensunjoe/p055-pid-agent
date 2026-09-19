@@ -194,6 +194,95 @@ class DocumentService:
         )
         return document
 
+    def create_document_with_operations(
+        self,
+        request: CreateDocumentRequest,
+        *,
+        operations: list[Any],
+        label: str,
+        source: HistorySource = "web",
+        audit: AuditContext | None = None,
+        provenance: dict[str, Any] | None = None,
+        state: ProvenanceState | None = None,
+    ) -> TransactionResult:
+        """Create a document and apply a large operation set as ONE governed mutation.
+
+        Bulk intake (CAD drawings arrive in tens of thousands of operations) needs the
+        user-level semantics of a single change: one revision, one history entry, one
+        audit record that carries the source binding, and one undo snapshot. Nothing is
+        persisted until every operation has applied and the resulting document
+        validates, so a failure part-way through cannot leave a drawing that looks
+        finished but is not.
+
+        This is a second *entry point* into the same governed path, not a second write
+        channel: operation application, validation, provenance and persistence are the
+        same code that ``apply_transaction`` uses.
+        """
+
+        document = Document(
+            name=request.name,
+            canvas={"width": request.width, "height": request.height},
+            metadata=request.metadata,
+        )
+        context = audit or AuditContext(
+            actor="system",
+            surface="internal",
+            tool_name="create_document_with_operations",
+            label=label,
+        )
+        history_source = source or history_source_for_context(context, None)
+        working = Document.model_validate(document.model_dump(mode="python"))
+        for operation in operations:
+            self._apply_operation(working, operation)
+        _normalize_editor_groups(working)
+        # Same revision convention as ``apply_transaction``: a new document starts at 0,
+        # and the mutation that gives it content is revision 1.
+        working.revision = document.revision + 1
+        working.updated_at = datetime.now(UTC)
+        try:
+            working = Document.model_validate(working.model_dump(mode="python"))
+        except ValidationError as exc:
+            raise InvalidOperationError(f"resulting document is invalid: {exc}") from exc
+        bundle = self.audit.build_revision_provenance(
+            before=document,
+            after=working,
+            operations=operations,
+            request=None,
+            action="transaction",
+            source=history_source,
+            context=context,
+            extra_evidence=provenance,
+        )
+        final = self.audit.finalize_state(state, result_revision=working.revision)
+        try:
+            self.store.save(
+                StoredDocument(
+                    document=working,
+                    undo_stack=[document.model_dump(mode="json")],
+                    redo_stack=[],
+                ),
+                history=HistoryEntry(
+                    document_id=working.id,
+                    revision=working.revision,
+                    source=history_source,
+                    action="create",
+                    label=context_label(context, label),
+                    operation_count=len(operations),
+                ),
+                history_details=bundle.history_details,
+                audit=bundle.audit,
+                tool_call=final.tool_call,
+                approval=final.approval,
+                session=final.session,
+            )
+        except StoreRevisionConflictError as exc:
+            raise RevisionConflictError(str(exc)) from exc
+        return TransactionResult(
+            document=working,
+            applied_operations=len(operations),
+            label=label,
+        )
+
     def list_documents(self):
         return self.store.list()
 

@@ -12,6 +12,11 @@ name: Visual baselines
 # This job runs the same setup steps as `Browser acceptance · Chromium` and then updates the
 # snapshots instead of asserting them. It uploads them as an artifact and commits nothing:
 # reviewing the rendered images is the point, so the diff has to be looked at before it lands.
+#
+# The update step is a real gate. `--update-snapshots` rewrites the expected images, so the
+# pixel *assertions* are expected to pass; a browser that fails to launch, a server that fails
+# to start or a test that throws must still fail this job. Masking those (`|| true`) would let
+# this workflow publish "green" baselines from a run that produced no screenshots at all.
 
 on:
   workflow_dispatch:
@@ -22,7 +27,10 @@ permissions:
 jobs:
   update:
     name: Update visual baselines on the CI renderer
-    runs-on: ubuntu-latest
+    # Pinned on purpose. A baseline is only meaningful next to the renderer that produced
+    # it, so this job must not silently move to a new Ubuntu (and a new browser/font stack)
+    # and regenerate a whole set of images under a changed environment.
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
       CI: "true"
@@ -34,6 +42,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Record the renderer environment the baselines belong to
+        run: |
+          echo "runner: $(lsb_release -ds 2>/dev/null || cat /etc/os-release | head -1)"
+          python3 --version
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -72,11 +85,20 @@ jobs:
         working-directory: frontend
         run: npm run build:e2e
 
-      # Writes the new PNGs in place. A failing assertion here is expected and meaningless:
-      # every drifted snapshot is being rewritten on purpose.
+      # Writes the new PNGs in place. The pixel *assertions* are expected to pass (every
+      # drifted snapshot is rewritten on purpose), and everything else must be a failure:
+      # no `|| true` here, so a browser/server/test failure fails the job instead of
+      # producing a green artifact that contains no usable baselines.
       - name: Update snapshots
         working-directory: frontend
-        run: npx playwright test e2e/visual.spec.ts --update-snapshots || true
+        run: npx playwright test e2e/visual.spec.ts --update-snapshots
+
+      - name: Fail if the update produced no baselines
+        working-directory: frontend
+        run: |
+          count=$(find e2e/visual.spec.ts-snapshots -name '*.png' -newermt '-30 minutes' | wc -l | tr -d ' ')
+          echo "regenerated $count baseline(s)"
+          test "$count" -gt 0
 
       - name: Record what changed
         working-directory: frontend

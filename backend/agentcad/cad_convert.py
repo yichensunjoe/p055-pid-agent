@@ -7,16 +7,28 @@ decoding it needs a converter, and this module is the *only* place that runs one
 rules keep that honest:
 
 * **Separate processes, never libraries.** LibreDWG is GPL-3.0 and the ODA File
-  Converter is proprietary; linking either into this codebase would make the licence
-  question the project's problem. Running an installed executable is the recognised
-  boundary, and the executable is never bundled or redistributed.
+  Converter is proprietary; neither is bundled, linked or redistributed. Every tool is
+  run only if the operator already installed it, under whatever terms that tool ships
+  with; whether those terms suit a given deployment is the operator's call, not a
+  conclusion this project draws for them.
+* **Fixed internal staging names.** Nothing derived from a user-supplied filename ever
+  reaches a command line, a script file or a filesystem path: the upload is staged as
+  ``source.dwg``, converters write ``output.dxf``, and scripted converters read
+  ``converter.scr``. This is not cosmetic — AutoCAD's console executes a *command
+  script*, so a filename containing a newline or a control character would otherwise
+  become an injected command. The original name survives only as display/provenance.
 * **Every candidate is declared with its evidence.** A converter that has been run on
   real drawings says ``verified``; one that is merely present says ``unverified``.
   The importer records which converter produced a document, so a reviewer can tell a
-  high-fidelity import from a lossy one without re-running anything.
-* **Failure is reported, not papered over.** If a converter produces a partial file,
-  the attempt is recorded with its exit status and stderr, and the next candidate is
-  tried. A DWG import never silently falls back to "no geometry".
+  high-fidelity import from a lossy one without re-running anything. "Verified" means
+  the family/reference corpus above, never that every installed version of that tool
+  behaves identically.
+* **Failure is reported, not papered over.** A non-zero exit status is a failed attempt
+  by default, even if a parseable object dump or a non-empty DXF file is left behind: a
+  converter that died part-way through has produced a *partial* file, and importing it
+  silently would be worse than falling back. The attempt is recorded with its exit
+  status and stderr and the next candidate is tried, and a DWG import never silently
+  falls back to "no geometry".
 
 Measured on a real 气路系统总图 (AC1032, 9283 entities), decoding the same file every way:
 
@@ -37,9 +49,12 @@ from __future__ import annotations
 
 import json
 import os
+import queue
 import shutil
 import subprocess
+import threading
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -49,6 +64,17 @@ CadConversionKind = Literal["object-stream", "dxf"]
 
 DEFAULT_CONVERT_TIMEOUT_SECONDS = 180.0
 MAX_CONVERT_TIMEOUT_SECONDS = 3_600.0
+
+#: Fixed internal staging basenames (see the module docstring). The user's filename is
+#: never turned into a path, an argument or a script line.
+STAGED_SOURCE_NAME = "source.dwg"
+CONVERTER_OUTPUT_NAME = "output.dxf"
+CONVERTER_SCRIPT_NAME = "converter.scr"
+
+#: Token that replaces this machine's private temporary directory in any *reported*
+#: command line. Reports are readable by every client of the instance; the exact local
+#: path is not part of the contract and stays out of them.
+REPORTED_WORKDIR_TOKEN = "<workdir>"
 
 #: Locations worth checking beyond ``PATH`` — the ODA converter ships as a macOS
 #: application bundle and as a Windows directory, and neither installs onto ``PATH``.
@@ -126,12 +152,19 @@ class CadConverter:
     evidence: Literal["verified", "unverified"]
     notes: str
     #: Command template. ``{input}``/``{output}``/``{script}`` are filesystem paths this
-    #: module creates; nothing from a request is ever interpolated into an argument list.
+    #: module creates from fixed internal names; nothing from a request is ever
+    #: interpolated into an argument list.
     argv: tuple[str, ...] = ()
     #: ODA-style converters take directories rather than files.
     directory_mode: bool = False
     #: Script written to ``{script}`` before the run (scripted converters only).
     script_lines: tuple[str, ...] = ()
+    #: Exit statuses this converter is allowed to succeed with. ``(0,)`` for every
+    #: declared converter: a non-zero exit means the tool reported a problem, and a
+    #: tool that failed part-way leaves a partial file, so it must not be accepted as a
+    #: complete decode. The tuple exists so a converter with a documented, evidenced
+    #: exception can declare it instead of the rule being loosened globally.
+    acceptable_exit_codes: tuple[int, ...] = (0,)
 
 
 def convert_timeout() -> float:
@@ -223,7 +256,10 @@ def _autocad_console_version(executable: str) -> str:
 
     The console never exits on its own without a script, so this reads its banner and
     stops it: ``--version`` is not supported and a plain ``subprocess.run`` would only
-    ever time out.
+    ever time out. Reading is bounded by *wall-clock* time, not by line arrival: a
+    version probe must not be able to hang on a process that prints nothing (or prints
+    without a newline), so the pipe is drained by a reader thread and the poll below is
+    what enforces the deadline. The process is killed on every exit path.
     """
 
     try:
@@ -237,23 +273,45 @@ def _autocad_console_version(executable: str) -> str:
     except OSError:
         return ""
     deadline = time.monotonic() + AUTOCAD_CONSOLE_PROBE_SECONDS
+    lines: queue.Queue[str | None] = queue.Queue()
+
+    def _drain(stream: Any) -> None:
+        try:
+            for raw in stream:
+                lines.put(raw.decode("utf-8", errors="replace"))
+        except (OSError, ValueError):  # pragma: no cover - pipe closed under us
+            pass
+        finally:
+            lines.put(None)
+
+    reader = threading.Thread(target=_drain, args=(process.stdout,), daemon=True)
+    reader.start()
     try:
-        if process.stdout is not None:
-            for raw in process.stdout:
-                line = raw.decode("utf-8", errors="replace").strip()
-                if "AutoCAD Core Engine Console" in line:
-                    return line[:120]
-                if time.monotonic() > deadline:
-                    break
-    except (OSError, ValueError):
-        return ""
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return ""
+            try:
+                line = lines.get(timeout=min(remaining, 0.25))
+            except queue.Empty:
+                continue
+            if line is None:
+                return ""
+            text = line.strip()
+            if "AutoCAD Core Engine Console" in text:
+                return text[:120]
     finally:
         process.kill()
         try:
             process.wait(timeout=10)
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired:  # pragma: no cover - kill is immediate
             pass
-    return ""
+        if process.stdout is not None:
+            try:
+                process.stdout.close()
+            except OSError:  # pragma: no cover
+                pass
+        reader.join(timeout=5)
 
 
 def available_converters(*, refresh: bool = False) -> list[CadConverter]:
@@ -277,6 +335,7 @@ def available_converters(*, refresh: bool = False) -> list[CadConverter]:
                 argv=template.argv,
                 directory_mode=template.directory_mode,
                 script_lines=template.script_lines,
+                acceptable_exit_codes=template.acceptable_exit_codes,
             )
         )
     pinned = pinned_converter_key()
@@ -300,6 +359,8 @@ class _ConverterTemplate:
     #: Script written to ``{script}`` before the run, for converters that are scripted
     #: rather than handed an output path (AutoCAD's console is the only one).
     script_lines: tuple[str, ...] = ()
+    #: Declared acceptable exit statuses; see ``CadConverter.acceptable_exit_codes``.
+    acceptable_exit_codes: tuple[int, ...] = (0,)
 
 
 #: Order matters: they are tried top to bottom, best-measured first. AutoCAD's own engine
@@ -327,8 +388,9 @@ CONVERTER_TEMPLATES: tuple[_ConverterTemplate, ...] = (
         notes=(
             "AutoCAD's own headless engine. Measured on a real 气路系统总图: 9757 "
             "primitives recovered with 0 missing block definitions, versus 9242/0 for "
-            "LibreDWG's object dump and 6523/157 for its DXF writer. Uses the user's "
-            "installed AutoCAD under its own licence; nothing is bundled."
+            "LibreDWG's object dump and 6523/157 for its DXF writer. This project runs "
+            "the copy the operator already installed; it bundles and links nothing, and "
+            "the operator's own licence with Autodesk governs that install."
         ),
         executable_glob_group="autocad-core-console",
         argv=(
@@ -361,9 +423,10 @@ CONVERTER_TEMPLATES: tuple[_ConverterTemplate, ...] = (
         produces="dxf",
         evidence="unverified",
         notes=(
-            "The reference DWG engine from the Open Design Alliance. Free to install, "
-            "not redistributable, so the user installs it; this project has not run it "
-            "on the reference drawing."
+            "The reference DWG engine from the Open Design Alliance. This project does "
+            "not bundle or redistribute it, so the operator installs it and the terms "
+            "that come with that install apply; it has not been run on the reference "
+            "drawing here, hence ``unverified``."
         ),
         argv=("{executable}", "{input_dir}", "{output_dir}", "ACAD2018", "DXF", "0", "1"),
         directory_mode=True,
@@ -462,6 +525,21 @@ def convert_dwg(
             ),
             attempts,
         )
+    # The file every converter is handed is always ``<workdir>/input/source.dwg``: this
+    # module builds command lines (one of them an AutoCAD *script*), so the path in them
+    # must not be able to contain anything the caller named. The operator's filename
+    # lives in the provenance report, never in an argument or a script line.
+    input_dir = workdir / "input"
+    input_dir.mkdir(parents=True, exist_ok=True)
+    staged_input = input_dir / STAGED_SOURCE_NAME
+    try:
+        shutil.copy2(path, staged_input)
+    except OSError as exc:
+        raise CadConversionError(
+            "source_not_readable",
+            f"the drawing could not be staged for decoding: {exc}",
+            attempts,
+        ) from exc
     for converter in candidates:
         attempt = CadConversionAttempt(
             key=converter.key,
@@ -469,16 +547,11 @@ def convert_dwg(
             executable=converter.executable,
         )
         attempts.append(attempt)
-        input_dir = workdir / "input"
         output_dir = workdir / converter.key
         output_dir.mkdir(parents=True, exist_ok=True)
-        if converter.directory_mode:
-            input_dir.mkdir(parents=True, exist_ok=True)
-            staged = input_dir / path.name
-            if not staged.exists():
-                shutil.copy2(path, staged)
-        output_path = output_dir / f"{path.stem}.dxf"
-        script_path = output_dir / f"{converter.key}.scr"
+        # Fixed internal names: no part of the operator's filename becomes a path.
+        output_path = output_dir / CONVERTER_OUTPUT_NAME
+        script_path = output_dir / CONVERTER_SCRIPT_NAME
         if converter.script_lines:
             script_path.write_text(
                 "\n".join(
@@ -491,7 +564,7 @@ def convert_dwg(
         argv = [
             str(argument)
             .replace("{executable}", converter.executable)
-            .replace("{input}", str(path))
+            .replace("{input}", str(staged_input))
             .replace("{input_dir}", str(input_dir))
             .replace("{output_dir}", str(output_dir))
             .replace("{output}", str(output_path))
@@ -515,6 +588,18 @@ def convert_dwg(
         attempt.duration_ms = round((time.perf_counter() - started) * 1000, 2)
         attempt.exit_code = completed.returncode
         attempt.stderr = _stderr_tail(completed)
+        if completed.returncode not in converter.acceptable_exit_codes:
+            # Fail closed *before* looking at whatever was left on disk: a converter that
+            # exited non-zero may have written half a file, and importing half a drawing
+            # is worse than trying the next decoder. Applies to the object dump too —
+            # ``dwgread`` prints parse errors and can still emit a partial document.
+            attempt.status = "failed"
+            attempt.error = (
+                f"the converter exited with status {completed.returncode}, so its output "
+                "is treated as partial"
+                + (f" ({attempt.stderr})" if attempt.stderr else "")
+            )
+            continue
 
         if converter.produces == "object-stream":
             text = (completed.stdout or b"").decode("utf-8", errors="replace")
@@ -591,6 +676,43 @@ def _find_dxf(directory: Path) -> Path | None:
     return None
 
 
+def public_executable(executable: str) -> str:
+    """The reportable form of a converter's location: its basename.
+
+    Capability listings are readable by any client of the instance, and a shared
+    deployment should not hand out this machine's directory layout. Local diagnostics,
+    the audit trail and the operator's own CLI still see the real path.
+    """
+
+    return Path(executable).name if executable else ""
+
+
+def public_command(argv: Sequence[str], *, workdir: Path | None = None) -> list[str]:
+    """A reportable form of a converter command line.
+
+    Two things are removed before a command line reaches a report: the executor's own
+    absolute path (reduced to its basename) and this process's private staging
+    directory (replaced by ``<workdir>``). The staging basenames themselves are fixed
+    and safe to show. The real argv is what the process actually ran; this is what a
+    reviewer is shown.
+    """
+
+    rendered: list[str] = []
+    for index, argument in enumerate(argv):
+        text = str(argument)
+        if index == 0:
+            text = public_executable(text)
+        if workdir is not None:
+            prefix = str(workdir)
+            if text == prefix:
+                text = REPORTED_WORKDIR_TOKEN
+            elif text.startswith(prefix + os.sep):
+                relative = text[len(prefix) + 1 :].replace(os.sep, "/")
+                text = f"{REPORTED_WORKDIR_TOKEN}/{relative}"
+        rendered.append(text)
+    return rendered
+
+
 def converter_report() -> list[dict[str, Any]]:
     """Inventory of every declared converter, installed or not."""
 
@@ -602,7 +724,7 @@ def converter_report() -> list[dict[str, Any]]:
             {
                 "key": template.key,
                 "label": template.label,
-                "executable": found.executable if found else "",
+                "executable": public_executable(found.executable) if found else "",
                 "available": bool(found),
                 "produces": template.produces,
                 "evidence": template.evidence,
@@ -622,7 +744,13 @@ def declared_glob_paths() -> dict[str, tuple[str, ...]]:
 __all__ = [
     "AUTOCAD_CORE_CONSOLE_GLOBS",
     "AUTOCAD_DXF_SCRIPT",
+    "CONVERTER_OUTPUT_NAME",
+    "CONVERTER_SCRIPT_NAME",
     "CONVERTER_TEMPLATES",
+    "REPORTED_WORKDIR_TOKEN",
+    "STAGED_SOURCE_NAME",
+    "public_command",
+    "public_executable",
     "EXECUTABLE_GLOBS",
     "CadConversion",
     "CadConversionAttempt",

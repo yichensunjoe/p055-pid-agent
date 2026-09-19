@@ -55,7 +55,8 @@ export type CadImportReport = {
   issues: CadIssue[];
   operations: number;
   revisions: number;
-  transactions: number;
+  /** Logical governed mutations: 1 for an import, 0 for a dry run. */
+  logical_mutations: number;
   duration_ms: number;
   warnings: string[];
 };
@@ -171,7 +172,7 @@ export function cadReportLines(report: CadImportReport): string[] {
   }
   for (const warning of report.warnings) lines.push(`注意 ${warning}`);
   lines.push(
-    `事务 ${report.transactions} · 操作 ${report.operations} · 耗时 ${Math.round(report.duration_ms)} ms`,
+    `逻辑提交 ${report.logical_mutations} · 操作 ${report.operations} · 耗时 ${Math.round(report.duration_ms)} ms`,
   );
   return lines;
 }
@@ -185,5 +186,5 @@ export function cadReportLines(report: CadImportReport): string[] {
  */
 export function dwgConverterHint(capabilities: CadCapabilities | null): string {
   if (!capabilities || capabilities.dwg_import) return "";
-  return "本机未安装 DWG 解码器：可导入 DXF，或安装 LibreDWG（dwgread/dwg2dfx）后重试";
+  return "本机未安装 DWG 解码器：可导入 DXF，或安装 LibreDWG（dwgread/dwg2dxf）后重试";
 }

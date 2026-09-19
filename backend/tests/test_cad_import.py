@@ -13,6 +13,7 @@ The properties under test are the ones an engineer will actually depend on:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import stat
 import sys
@@ -26,7 +27,7 @@ from agentcad.audit_models import AuditContext
 from agentcad.cad_import import CadImporter, CadImportError, detect_format
 from agentcad.cad_models import CadImportOptions
 from agentcad.models import CreateDocumentRequest
-from agentcad.service import DocumentService
+from agentcad.service import DocumentService, InvalidOperationError
 from agentcad.store import SQLiteDocumentStore
 from agentcad.symbols import SymbolRegistry
 
@@ -67,23 +68,49 @@ def test_dxf_import_creates_a_governed_document(service: DocumentService, import
     assert {"PIPE", "EQUIP", "0"} <= {layer.name for layer in document.layers}
 
 
-def test_import_writes_an_audit_record_and_history_entries(
+def test_an_import_is_one_logical_mutation_in_history_and_audit(
     service: DocumentService, importer: CadImporter
 ) -> None:
+    """M4-0.2: the whole drawing is one revision, one history entry, one audit record."""
+
     result = _import(importer, simple_dxf())
     trail = service.audit.audit_trail(document_id=result.document_id, limit=20)
     revision_records = [record for record in trail if record.event_type == "revision.created"]
 
-    assert revision_records, "the import must leave audit evidence per revision"
+    assert len(revision_records) == 1, "one import must not be several audit records"
     assert all(record.actor == "test" for record in revision_records)
     history = service.get_history(result.document_id, limit=50)
-    transactions = [entry for entry in history if entry.action == "transaction"]
-    assert transactions, "the import must appear in the document history"
-    assert result.report.transactions == len(transactions)
-    assert result.revision == len(transactions)
-    # The creation itself is a history entry too, so an import has one more than its
-    # transactions.
-    assert len(history) == len(transactions) + 1
+    assert len(history) == 1
+    assert history[0].action == "create"
+    assert history[0].revision == result.revision
+    assert history[0].operation_count == result.report.operations
+    assert result.report.logical_mutations == 1
+    assert result.report.revisions == 1
+    assert result.revision == 1
+
+
+def test_audit_evidence_binds_the_source_sha256(
+    service: DocumentService, importer: CadImporter
+) -> None:
+    """M4-0.3: the SHA binding must be in the *audit record*, not only in metadata.
+
+    Exact values, because "provenance was recorded" is only true if the record carries
+    the same digest as the bytes that were imported.
+    """
+
+    data = simple_dxf()
+    result = _import(importer, data, "气路系统总图.dxf")
+    trail = service.audit.audit_trail(document_id=result.document_id, limit=20)
+    record = next(record for record in trail if record.event_type == "revision.created")
+    binding = record.evidence["cad_import"]
+
+    assert binding["source_sha256"] == hashlib.sha256(data).hexdigest()
+    assert binding["source_sha256"] == result.report.source.sha256
+    assert binding["source_format"] == "dxf"
+    assert binding["source_size_bytes"] == len(data)
+    assert binding["operation_count"] == result.report.operations
+    assert record.document_id == result.document_id
+    assert record.result_revision == result.revision
 
 
 def test_import_metadata_records_the_source_fingerprint(
@@ -525,7 +552,7 @@ def test_dry_run_writes_nothing(service: DocumentService, importer: CadImporter)
     assert plan.operations >= plan.elements
     assert plan.document_name
     assert plan.report.counts.elements == plan.elements
-    assert plan.report.transactions == 0
+    assert plan.report.logical_mutations == 0
     assert plan.report.operations == 0
     assert service.list_documents() == []
 
@@ -549,19 +576,131 @@ def test_import_path_reports_a_missing_file(importer: CadImporter, tmp_path) -> 
     assert excinfo.value.code == "source_not_found"
 
 
-def test_batching_keeps_each_transaction_within_the_operation_cap(
+def test_a_large_import_is_one_logical_action_with_one_undo(
     service: DocumentService, importer: CadImporter
 ) -> None:
-    builder = DxfBuilder()
-    for index in range(25):
-        builder.line((0.0, float(index)), (10.0, float(index)))
-    result = _import(importer, builder.build(), chunk_size=10)
+    """M4-0.2: >1000 operations, one history entry, one undo, one redo.
 
-    assert result.report.transactions == 3
-    assert result.revision == 3
-    assert result.report.counts.elements == 25
-    history = service.get_history(result.document_id, limit=10)
-    assert len([entry for entry in history if entry.action == "transaction"]) == 3
+    The former implementation wrote this as several transactions, so one undo removed
+    only the last batch and left the rest of the drawing behind.
+    """
+
+    builder = DxfBuilder()
+    for index in range(1200):
+        builder.line((0.0, float(index)), (10.0, float(index)))
+    result = _import(importer, builder.build())
+    document = service.get_document(result.document_id)
+
+    assert result.report.operations > 1000
+    assert len(document.elements) > 1000
+    assert result.report.logical_mutations == 1
+    history = service.get_history(result.document_id, limit=50)
+    assert len(history) == 1
+    assert history[0].operation_count == result.report.operations
+
+    undone = service.undo(result.document_id, expected_revision=document.revision)
+    assert undone.elements == [], "one undo must reverse the whole import"
+
+    redone = service.redo(undone.id, expected_revision=undone.revision)
+    assert len(redone.elements) == len(document.elements)
+    assert [element.id for element in redone.elements] == [
+        element.id for element in document.elements
+    ]
+
+
+def test_a_failure_part_way_through_leaves_nothing_behind(
+    service: DocumentService, importer: CadImporter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M4-0.2: no half-imported drawing may ever be readable as a normal document."""
+
+    builder = DxfBuilder()
+    for index in range(30):
+        builder.line((0.0, float(index)), (10.0, float(index)))
+    original = DocumentService._apply_operation
+    calls = {"count": 0}
+
+    def failing(self, document, operation):
+        calls["count"] += 1
+        if calls["count"] == 12:
+            raise InvalidOperationError("injected failure while applying operation 12")
+        return original(self, document, operation)
+
+    monkeypatch.setattr(DocumentService, "_apply_operation", failing)
+
+    with pytest.raises(CadImportError) as excinfo:
+        _import(importer, builder.build())
+
+    assert excinfo.value.code == "import_rejected"
+    assert calls["count"] == 12
+    assert service.list_documents() == [], "a failed import must not leave a document"
+
+
+def test_a_non_uniform_block_scale_turns_a_circle_into_a_sampled_polyline(
+    service: DocumentService, importer: CadImporter
+) -> None:
+    """M4-0.7: a circle under ``scale_x != scale_y`` is an ellipse, not a circle."""
+
+    circle_entity: list = [
+        (0, "CIRCLE"),
+        (8, "0"),
+        (10, 0.0),
+        (20, 0.0),
+        (30, 0.0),
+        (40, 5.0),
+    ]
+    builder = DxfBuilder()
+    builder.block("ELLIPTIC", [circle_entity])
+    builder.insert("ELLIPTIC", (0.0, 0.0), scale=(3.0, 1.0))
+
+    result = _import(importer, builder.build())
+    document = service.get_document(result.document_id)
+    element = next(item for item in document.elements if item.type == "polyline")
+
+    assert [item.type for item in document.elements] == ["polyline"]
+    assert element.metadata["cad_block"] == "ELLIPTIC"
+    assert any(issue.code == "CAD_CIRCLE_APPROXIMATED" for issue in result.report.issues)
+
+
+def test_a_uniformly_scaled_circle_stays_a_circle(
+    service: DocumentService, importer: CadImporter
+) -> None:
+    """The control for M4-0.7: only a non-uniform transform changes the primitive."""
+
+    circle_entity: list = [
+        (0, "CIRCLE"),
+        (8, "0"),
+        (10, 0.0),
+        (20, 0.0),
+        (30, 0.0),
+        (40, 5.0),
+    ]
+    builder = DxfBuilder()
+    builder.block("ROUND", [circle_entity])
+    builder.insert("ROUND", (0.0, 0.0), scale=(2.0, 2.0))
+
+    result = _import(importer, builder.build())
+    document = service.get_document(result.document_id)
+
+    assert [item.type for item in document.elements] == ["circle"]
+    assert not any(issue.code == "CAD_CIRCLE_APPROXIMATED" for issue in result.report.issues)
+
+
+def test_dry_run_path_reports_a_missing_file_like_a_real_import(
+    importer: CadImporter, tmp_path
+) -> None:
+    """M4-0.8: dry run and write mode share one loader, so they share its error codes."""
+
+    with pytest.raises(CadImportError) as excinfo:
+        importer.dry_run_path(tmp_path / "missing.dxf")
+
+    assert excinfo.value.code == "source_not_found"
+
+
+def test_dry_run_path_refuses_a_directory(importer: CadImporter, tmp_path) -> None:
+    with pytest.raises(CadImportError) as excinfo:
+        importer.dry_run_path(tmp_path)
+
+    assert excinfo.value.code == "source_not_a_file"
 
 
 def test_report_is_json_serialisable(importer: CadImporter) -> None:

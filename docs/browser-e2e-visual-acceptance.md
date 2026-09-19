@@ -121,6 +121,19 @@ For the Linux set use `.github/workflows/visual-baselines.yml` (manual `workflow
 which runs the same setup as `Browser acceptance · Chromium`, updates the snapshots instead of
 asserting them, and uploads the PNGs as an artifact; committing them is still a reviewed change.
 
+That workflow is a real gate, not a rubber stamp. `--update-snapshots` rewrites the expected
+images, so the pixel assertions are meant to pass; but a browser that cannot launch, a server
+that will not start, a test that throws, or a run that produces **no** new PNGs must still fail
+the job. An unconditional `|| true` around the Playwright invocation is prohibited for exactly
+that reason: it hides those failures and can publish a green artifact containing baselines that
+were never generated. The job therefore runs Playwright bare and then asserts that at least one
+baseline file was actually rewritten.
+
+The renderer is pinned (`ubuntu-24.04`) rather than `ubuntu-latest`. A baseline is only meaningful
+next to the environment that produced it, so this job must not silently move to a new Ubuntu (and
+a new browser/font stack) and regenerate a whole set of images under a changed environment; the
+job also prints the runner OS and Python version so the environment is recorded per run.
+
 Do not update snapshots merely to make a run green, and never regenerate a set in a renderer
 other than the one that asserts it: that bakes the wrong font metrics into the baseline.
 

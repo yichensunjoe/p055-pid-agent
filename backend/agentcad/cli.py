@@ -280,11 +280,12 @@ def _run_import_cad_command(args: argparse.Namespace) -> None:
     """Import a DWG/DXF drawing as a governed document (Charter §14).
 
     This is a real write, and it goes through the same channel as every other write:
-    one document creation plus batched transactions, each with a revision check, an
-    audit record and an undo step. ``--dry-run`` decodes and translates the file and
-    prints the report without creating anything, which is what a CI job or a reviewer
-    should use first. With no file (or ``--capabilities``) it prints which converters
-    this machine has, so "cannot import my DWG" is answerable before a 1 MB upload.
+    one document creation carrying the entire operation set as a single governed
+    mutation, with one revision check, one audit record and one undo step. ``--dry-run``
+    decodes and translates the file and prints the report without creating anything,
+    which is what a CI job or a reviewer should use first. With no file (or
+    ``--capabilities``) it prints which converters this machine has, so "cannot import my
+    DWG" is answerable before a 1 MB upload.
 
     Exit code 2 means the import was refused (no converter, unreadable file, no
     geometry, limit exceeded), so this can gate a pipeline.
@@ -321,13 +322,13 @@ def _run_import_cad_command(args: argparse.Namespace) -> None:
         stroke_width=args.stroke_width,
         unit_scale=args.unit_scale,
         max_elements=args.max_elements,
-        chunk_size=args.chunk_size,
     )
     try:
         if args.dry_run:
-            plan = importer.dry_run(
-                source_path.read_bytes(), filename=source_path.name, options=options
-            )
+            # ``dry_run_path`` shares the loader with a real import, so a missing or
+            # unreadable file is a stable CadImportError on both paths instead of a raw
+            # FileNotFoundError here and a coded error there.
+            plan = importer.dry_run_path(source_path, options=options)
             payload = plan.model_dump(mode="json")
             if args.summary:
                 report = payload["report"]
@@ -342,7 +343,7 @@ def _run_import_cad_command(args: argparse.Namespace) -> None:
                     "layers": report["layers"],
                     "issues": report["issues"],
                     "warnings": report["warnings"],
-                    "transactions": 0,
+                    "logical_mutations": 0,
                     "duration_ms": report["duration_ms"],
                 }
         else:
@@ -372,7 +373,7 @@ def _run_import_cad_command(args: argparse.Namespace) -> None:
                     "layers": report["layers"],
                     "issues": report["issues"],
                     "warnings": report["warnings"],
-                    "transactions": report["transactions"],
+                    "logical_mutations": report["logical_mutations"],
                     "operations": report["operations"],
                     "duration_ms": report["duration_ms"],
                 }
@@ -729,7 +730,7 @@ def main(argv: list[str] | None = None) -> None:
         help="Divide every coordinate and size by this factor",
     )
     import_cad_parser.add_argument("--max-elements", type=int, default=200_000)
-    import_cad_parser.add_argument("--chunk-size", type=int, default=1000)
+
     import_cad_parser.add_argument(
         "--dry-run",
         action="store_true",

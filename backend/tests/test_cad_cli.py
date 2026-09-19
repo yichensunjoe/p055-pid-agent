@@ -46,7 +46,7 @@ def test_a_dry_run_creates_no_document(capsys, database: str, tmp_path) -> None:
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["elements"] > 0
-    assert payload["transactions"] == 0
+    assert payload["logical_mutations"] == 0
     assert "document_id" not in payload, "a dry run must not claim to have created one"
     service = DocumentService(SQLiteDocumentStore(database), SymbolRegistry())
     assert service.list_documents() == []
@@ -156,6 +156,35 @@ def test_a_missing_file_exits_two_with_a_code(capsys, database: str, tmp_path) -
 
     assert excinfo.value.code == 2
     assert json.loads(capsys.readouterr().err)["error"] == "source_not_found"
+
+
+def test_a_dry_run_on_a_missing_file_uses_the_same_stable_code(
+    capsys, database: str, tmp_path
+) -> None:
+    """M4-0.8: dry run and write mode answer a bad path the same way."""
+
+    with pytest.raises(SystemExit) as excinfo:
+        main([
+            "import-cad",
+            str(tmp_path / "nope.dxf"),
+            "--dry-run",
+            "--summary",
+            "--database",
+            database,
+        ])
+
+    assert excinfo.value.code == 2
+    payload = json.loads(capsys.readouterr().err)
+    assert payload["error"] == "source_not_found", payload
+    assert payload["retryable"] is False
+
+
+def test_a_directory_is_refused_as_not_a_file(capsys, database: str, tmp_path) -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        main(["import-cad", str(tmp_path), "--database", database])
+
+    assert excinfo.value.code == 2
+    assert json.loads(capsys.readouterr().err)["error"] == "source_not_a_file"
 
 
 def test_the_element_limit_can_be_set_and_refuses_politely(

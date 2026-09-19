@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import stat
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -244,8 +245,13 @@ def test_oda_directory_mode_conversion_is_attempted(isolated_path, tmp_path) -> 
     assert conversion.dxf_bytes is not None
 
 
-def test_converter_arguments_are_literal_paths_not_shell_strings(isolated_path, tmp_path) -> None:
-    """A file name with shell metacharacters must reach the converter intact."""
+def test_converter_arguments_are_literal_argv_and_a_staged_path(isolated_path, tmp_path) -> None:
+    """Metacharacters in a filename never reach the command, and the source is untouched.
+
+    The converter is handed a fixed ``input/source.dwg`` inside its own work directory,
+    so shell metacharacters in the operator's name cannot be interpreted by anything; the
+    argument list is still passed as argv, never through a shell.
+    """
 
     _install_reader(isolated_path)
     source = tmp_path / "weird; rm -rf $(x).dwg"
@@ -254,8 +260,10 @@ def test_converter_arguments_are_literal_paths_not_shell_strings(isolated_path, 
     conversion = cad_convert.convert_dwg(source, workdir=tmp_path)
 
     assert conversion.kind == "object-stream"
-    assert str(source) in conversion.attempts[0].command
-    assert source.exists()
+    command = conversion.attempts[0].command
+    assert not any("weird" in argument for argument in command)
+    assert str(tmp_path / "input" / cad_convert.STAGED_SOURCE_NAME) in command
+    assert source.exists(), "the operator's own file must be left alone"
 
 
 def test_timeout_configuration_is_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -408,9 +416,109 @@ def test_scripted_converter_writes_its_script_and_reads_it_back(
 
     assert conversion.kind == "dxf"
     assert conversion.dxf_bytes is not None and b"SECTION" in conversion.dxf_bytes
-    script = tmp_path / "autocad-core-console" / "autocad-core-console.scr"
+    script = tmp_path / "autocad-core-console" / cad_convert.CONVERTER_SCRIPT_NAME
     assert script.is_file()
     assert str(script) in conversion.attempts[0].command
+
+
+def test_converter_paths_never_contain_the_operators_filename(isolated_path, tmp_path) -> None:
+    """A filename is data, never a path, an argument or a script line (M4-0.1).
+
+    The names below are the ones that would matter if this were got wrong: AutoCAD's
+    console executes a *command script*, so a newline in a filename becomes a second
+    command, and the same names double as path separators and shell metacharacters.
+    """
+
+    body = (
+        "#!/usr/bin/env python3\n"
+        "import pathlib, sys\n"
+        "script = pathlib.Path([a for a in sys.argv if a.endswith('.scr')][0])\n"
+        "record = script.parent / 'observed.txt'\n"
+        "lines = ['argv=' + repr(sys.argv)]\n"
+        "lines.append('script=' + repr(script.read_text(encoding='utf-8')))\n"
+        "lines.append('files=' + repr(sorted(p.name for p in script.parent.iterdir())))\n"
+        "record.write_text(chr(10).join(lines), encoding='utf-8')\n"
+        "target = pathlib.Path(script.read_text(encoding='utf-8').splitlines()[3])\n"
+        f"target.write_bytes({simple_dxf()!r})\n"
+    )
+    _install_fake_console(isolated_path, body)
+
+    hostile = 'evil"; DXFOUT ok;\nQUIT.dwg'
+    source = tmp_path / "hostile" / hostile
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_bytes(_dwg_bytes())
+    conversion = cad_convert.convert_dwg(source, workdir=tmp_path, converters=[
+        converter for converter in cad_convert.available_converters()
+        if converter.key == "autocad-core-console"
+    ])
+
+    observed = (tmp_path / "autocad-core-console" / "observed.txt").read_text(encoding="utf-8")
+    assert hostile not in observed, observed
+    assert "evil" not in observed, observed
+    assert cad_convert.STAGED_SOURCE_NAME in observed
+    assert conversion.kind == "dxf"
+
+
+def test_a_non_zero_exit_is_a_failure_even_with_usable_looking_output(
+    isolated_path, tmp_path
+) -> None:
+    """M4-0.5: a converter that exited non-zero may have written half a file."""
+
+    _install_reader(isolated_path, exit_code=1)
+    _install_dxf_writer(isolated_path)
+    source = tmp_path / "drawing.dwg"
+    source.write_bytes(_dwg_bytes())
+
+    conversion = cad_convert.convert_dwg(source, workdir=tmp_path)
+
+    statuses = [(attempt.key, attempt.status) for attempt in conversion.attempts]
+    assert statuses == [
+        ("libredwg-object-stream", "failed"),
+        ("libredwg-dxf", "success"),
+    ]
+    assert "exited with status 1" in conversion.attempts[0].error
+    assert conversion.converter.key == "libredwg-dxf"
+
+
+def test_a_non_zero_exit_on_a_dxf_converter_fails_too(isolated_path, tmp_path) -> None:
+    _install_dxf_writer(isolated_path, exit_code=3)
+    source = tmp_path / "drawing.dwg"
+    source.write_bytes(_dwg_bytes())
+
+    with pytest.raises(cad_convert.CadConversionError) as excinfo:
+        cad_convert.convert_dwg(source, workdir=tmp_path)
+
+    assert excinfo.value.attempts[0].status == "failed"
+    assert "exited with status 3" in excinfo.value.attempts[0].error
+    assert excinfo.value.attempts[0].exit_code == 3
+
+
+def test_the_version_probe_cannot_hang_on_a_silent_process(
+    isolated_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M4-0.6: the deadline must hold when the process prints nothing at all.
+
+    The fake prints a partial line and never writes a newline, which is the case a
+    blocking ``for line in stdout`` cannot escape from.
+    """
+
+    monkeypatch.setattr(cad_convert, "AUTOCAD_CONSOLE_PROBE_SECONDS", 1.0)
+    _install_fake_console(
+        isolated_path,
+        "#!/usr/bin/env python3\n"
+        "import sys, time\n"
+        "sys.stdout.write('AutoCAD Core Engine Console - starting')\n"
+        "sys.stdout.flush()\n"
+        "time.sleep(300)\n",
+    )
+    cad_convert.converter_version.cache_clear()
+    started = time.monotonic()
+
+    version = cad_convert.converter_version(str(isolated_path / "accoreconsole"))
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 15.0, f"the probe took {elapsed:.1f}s, so it is not bounded"
+    assert version == ""
 
 
 def test_autocad_build_is_read_from_the_startup_banner(

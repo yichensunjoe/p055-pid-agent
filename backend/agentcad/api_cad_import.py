@@ -11,10 +11,10 @@ Three routes, deliberately separated by what they do:
 * ``POST /imports/cad/plan`` — decode and translate, write nothing, return the report
   (counts, layers, frame, every issue). This is the dry run, and it is a *read* route.
 * ``POST /imports/cad`` — the write. The file is the request body; the import creates
-  one new document through ``DocumentService`` and applies the geometry in batched
-  governed transactions, so it lands with an audit record, a revision history and an
-  undo step exactly like a manual edit. It cannot modify, re-version or delete any
-  existing document.
+  one new document through ``DocumentService`` and applies the whole geometry as a
+  single governed mutation, so it lands with one audit record, one revision history
+  entry and one undo step exactly like any other edit. It cannot modify, re-version or
+  delete any existing document.
 
 The body is the raw file rather than a multipart form: this project has no multipart
 dependency, and a browser can send a ``Blob`` directly. ``/api/v2/imports/*`` already
@@ -90,7 +90,6 @@ def create_cad_import_router(
         unit_scale: float,
         preserve_colors: bool,
         max_elements: int,
-        chunk_size: int,
     ) -> CadImportOptions:
         try:
             return CadImportOptions(
@@ -104,7 +103,6 @@ def create_cad_import_router(
                 unit_scale=unit_scale,
                 preserve_colors=preserve_colors,
                 max_elements=max_elements,
-                chunk_size=chunk_size,
             )
         except CadImportError:
             raise
@@ -112,7 +110,7 @@ def create_cad_import_router(
             raise CadImportError("invalid_options", str(exc)) from exc
 
     def _error(exc: CadImportError) -> HTTPException:
-        if exc.code in {"source_not_found"}:
+        if exc.code in {"source_not_found", "source_not_a_file"}:
             status = 404
         elif exc.code in {"source_too_large"}:
             status = 413
@@ -125,6 +123,8 @@ def create_cad_import_router(
             "dxf_not_recognised",
             "object_stream_missing",
             "no_model_space",
+            "source_not_readable",
+            "invalid_options",
         }:
             status = 422
         else:
@@ -159,7 +159,6 @@ def create_cad_import_router(
         unit_scale: float = Query(default=1.0, gt=0, le=100_000),
         preserve_colors: bool = True,
         max_elements: int = Query(default=200_000, ge=1, le=5_000_000),
-        chunk_size: int = Query(default=1000, ge=1, le=1000),
     ) -> CadDryRun:
         """Decode a CAD file and report what an import would do. Nothing is written."""
 
@@ -176,7 +175,6 @@ def create_cad_import_router(
                 unit_scale=unit_scale,
                 preserve_colors=preserve_colors,
                 max_elements=max_elements,
-                chunk_size=chunk_size,
             )
             result = importer.dry_run(data, filename=filename, options=options)
         except CadImportError as exc:
@@ -207,7 +205,6 @@ def create_cad_import_router(
         unit_scale: float = Query(default=1.0, gt=0, le=100_000),
         preserve_colors: bool = True,
         max_elements: int = Query(default=200_000, ge=1, le=5_000_000),
-        chunk_size: int = Query(default=1000, ge=1, le=1000),
     ) -> CadImportResult:
         """Import a DWG/DXF file as a new document.
 
@@ -229,7 +226,6 @@ def create_cad_import_router(
                 unit_scale=unit_scale,
                 preserve_colors=preserve_colors,
                 max_elements=max_elements,
-                chunk_size=chunk_size,
             )
             result = importer.import_bytes(
                 data,
@@ -267,7 +263,7 @@ def create_cad_import_router(
                 primitives=result.report.counts.primitives,
                 skipped=result.report.counts.skipped,
                 layers=len(result.report.layers),
-                transactions=result.report.transactions,
+                logical_mutations=result.report.logical_mutations,
                 operations=result.report.operations,
                 issue_codes=[issue.code for issue in result.report.issues],
                 duration_ms=round((perf_counter() - started) * 1000, 2),

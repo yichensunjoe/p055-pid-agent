@@ -22,8 +22,6 @@ surfaces that expose it are registered as reads.
 
 from __future__ import annotations
 
-import hashlib
-import json
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -46,12 +44,48 @@ from .validation_models import (
     Waiver,
     WaiverEvidence,
     WaiverStatus,
+    canonical_digest,
     sort_issues,
 )
 from .validation_profile import EffectiveProfile
 from .validation_rules import DEFAULT_QUALITY_SCORE_THRESHOLD, rule_id_for
 
 VALIDATION_ENGINE_VERSION = "1"
+
+
+class ValidationTimeError(ValueError):
+    """A caller asked validation to evaluate "now" without saying in which "now".
+
+    The time contract belongs to the engine, not to its three current callers: waivers
+    have a lower *and* an upper temporal bound, and ``evaluated_at`` is hashed, so a
+    naive datetime is not a formatting detail — it is an unanswerable question (remote
+    baseline R3 P0-2). ``code`` is the stable key a surface maps onto its own framing.
+    """
+
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+def normalize_evaluation_time(moment: datetime | None) -> datetime:
+    """The engine's one answer to "when is this validation happening?".
+
+    ``None`` means now. An aware timestamp is converted to UTC, so the same instant
+    written as ``12:00:00Z`` and as ``08:00:00-04:00`` produces one ``evaluated_at`` and
+    therefore one canonical ``result_hash``. A naive timestamp is refused: without a zone
+    it names a different instant on every machine, and comparing it against a waiver's
+    bounds would either raise a raw ``TypeError`` or, worse, silently agree.
+    """
+
+    if moment is None:
+        return datetime.now(UTC)
+    if moment.tzinfo is None or moment.tzinfo.utcoffset(moment) is None:
+        raise ValidationTimeError(
+            "as_of_not_timezone_aware",
+            "the evaluation time must be timezone-aware, e.g. 2026-09-19T12:00:00Z",
+        )
+    return moment.astimezone(UTC)
 
 
 class ValidationContextUnavailable(RuntimeError):
@@ -104,41 +138,36 @@ class ValidationContext:
     _report: EngineeringReport | None = None
 
     def quality(self) -> DiagramQualityReport:
+        """Drafting-quality analysis for this document.
+
+        There is deliberately **no** ``except`` here. The legacy analyzers already handle
+        the one context condition they know about (a symbol key with no definition becomes
+        a finding, not a crash), so catching ``KeyError``/``ValueError`` around a whole
+        analyzer call could only ever convert a programming regression into a
+        clean-looking "skipped" record — the exact failure R2 flagged and R3 re-flagged
+        because the first fix moved the catch instead of removing it. A validator that
+        genuinely cannot run raises :class:`ValidationContextUnavailable` itself, at the
+        exact lookup that failed.
+        """
+
         if self._quality is None:
-            try:
-                self._quality = analyze_diagram_quality(self.document, self.registry)
-            except (KeyError, ValueError) as exc:
-                raise ValidationContextUnavailable(
-                    f"drafting-quality analysis cannot build its context: "
-                    f"{type(exc).__name__}: {exc}",
-                    code="diagram_quality_context_unavailable",
-                ) from exc
+            self._quality = analyze_diagram_quality(self.document, self.registry)
         return self._quality
 
     def graph(self) -> EngineeringGraph:
+        """The engineering IR graph. No broad catch: see :meth:`quality`."""
+
         if self._graph is None:
-            try:
-                self._graph = build_engineering_graph(self.document, self.registry)
-            except (KeyError, ValueError) as exc:
-                raise ValidationContextUnavailable(
-                    f"the engineering graph cannot build its context: "
-                    f"{type(exc).__name__}: {exc}",
-                    code="engineering_graph_context_unavailable",
-                ) from exc
+            self._graph = build_engineering_graph(self.document, self.registry)
         return self._graph
 
     def report(self) -> EngineeringReport:
+        """The engineering report. No broad catch: see :meth:`quality`."""
+
         if self._report is None:
-            try:
-                self._report = build_engineering_report(
-                    self.document, self.registry, scope="all"
-                )
-            except (KeyError, ValueError) as exc:
-                raise ValidationContextUnavailable(
-                    f"the engineering report cannot build its context: "
-                    f"{type(exc).__name__}: {exc}",
-                    code="engineering_report_context_unavailable",
-                ) from exc
+            self._report = build_engineering_report(
+                self.document, self.registry, scope="all"
+            )
         return self._report
 
 
@@ -338,7 +367,15 @@ def _waiver_status(
     active = [waiver for waiver in matching if waiver.is_active(revision=revision, now=now)]
     if active:
         return "waived", _waiver_evidence(active[0], status="waived", matched=len(matching))
-    return "expired", _waiver_evidence(matching[0], status="expired", matched=len(matching))
+    # Nothing is active. The remaining question is *why*, and the two answers are not
+    # interchangeable: a waiver that has been granted and then lapsed (by expiry or by
+    # the revision moving on) is `expired` evidence, while a waiver granted in the future
+    # has not applied yet and must stay `not_waived`. Reporting the second as the first
+    # would put an approval in the audit trail that nobody ever gave (R3 P0-1).
+    lapsed = [waiver for waiver in matching if waiver.was_granted_by(now=now)]
+    if lapsed:
+        return "expired", _waiver_evidence(lapsed[0], status="expired", matched=len(matching))
+    return "not_waived", None
 
 
 def _count(issues: Iterable[ValidationIssue]) -> ValidationCounts:
@@ -376,9 +413,14 @@ def run_validation(
     service: DocumentService | None = None,
     now: datetime | None = None,
 ) -> ValidationResult:
-    """Validate one document, deterministically, without writing anything."""
+    """Validate one document, deterministically, without writing anything.
 
-    moment = now or datetime.now(UTC)
+    ``now`` is normalized here rather than by the caller: the engine owns the meaning of
+    the evaluation instant, so REST, CLI, MCP and any future surface cannot each invent a
+    slightly different time contract (R3 P0-2).
+    """
+
+    moment = normalize_evaluation_time(now)
     context = ValidationContext(
         document=document, registry=registry, service=service, project_id=project_id
     )
@@ -460,11 +502,13 @@ def run_validation(
 
 
 def _result_hash(result: ValidationResult) -> str:
-    """Hash over the canonical form of the result, excluding the hash itself."""
+    """Hash over the canonical public form of the result, excluding the hash itself.
 
-    payload = result.model_dump(mode="json", exclude={"result_hash"})
-    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    The canonical form is the same one REST, CLI and MCP publish, so a ``result_hash``
+    can be recomputed by a reviewer from the payload they were given.
+    """
+
+    return canonical_digest(result, exclude=frozenset({"result_hash"}))
 
 
 def validate_document(
@@ -516,8 +560,10 @@ __all__ = [
     "RawIssue",
     "ValidationContext",
     "ValidationContextUnavailable",
+    "ValidationTimeError",
     "ValidatorDefinition",
     "issue_summary",
+    "normalize_evaluation_time",
     "run_validation",
     "validate_document",
 ]

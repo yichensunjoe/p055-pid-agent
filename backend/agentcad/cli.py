@@ -294,7 +294,12 @@ def _run_validation_command(args: argparse.Namespace) -> None:
     from .service import DocumentNotFoundError, DocumentService
     from .store import SQLiteDocumentStore
     from .symbols import SymbolRegistry
-    from .validation_engine import validate_document
+    from .validation_engine import (
+        ValidationTimeError,
+        normalize_evaluation_time,
+        validate_document,
+    )
+    from .validation_models import canonical_payload
     from .validation_profile import ProfileError, load_profile
 
     database = args.database or _default_database_path()
@@ -308,20 +313,24 @@ def _run_validation_command(args: argparse.Namespace) -> None:
     moment = None
     if args.as_of:
         try:
-            moment = datetime.fromisoformat(args.as_of.replace("Z", "+00:00"))
+            parsed = datetime.fromisoformat(args.as_of.replace("Z", "+00:00"))
         except ValueError as exc:
             print(_json_payload({"error": "invalid_as_of", "message": str(exc)}))
             raise SystemExit(2) from exc
-        if moment.tzinfo is None:
+        # The engine owns the time contract; the CLI only frames its stable error code
+        # for a terminal (R3 P0-2).
+        try:
+            moment = normalize_evaluation_time(parsed)
+        except ValidationTimeError as exc:
             print(
                 _json_payload(
                     {
-                        "error": "as_of_not_timezone_aware",
+                        "error": exc.code,
                         "message": "--as-of must carry a timezone, e.g. 2026-09-19T12:00:00Z",
                     }
                 )
             )
-            raise SystemExit(2)
+            raise SystemExit(2) from exc
     audit_context = AuditContext(
         actor="cli",
         surface="cli",
@@ -331,7 +340,7 @@ def _run_validation_command(args: argparse.Namespace) -> None:
     try:
         if args.command == "validate":
             result = validate_document(service, args.document_id, profile, now=moment)
-            payload = result.model_dump(mode="json")
+            payload = canonical_payload(result)
             passed = not result.has_blockers
             if args.audit:
                 service.audit.record_event(
@@ -351,7 +360,7 @@ def _run_validation_command(args: argparse.Namespace) -> None:
             readiness = assess_document_release_readiness(
                 service, args.document_id, profile, now=moment
             )
-            payload = readiness.model_dump(mode="json")
+            payload = canonical_payload(readiness)
             passed = readiness.state == "eligible"
             if args.audit:
                 service.audit.record_event(

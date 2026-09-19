@@ -247,3 +247,46 @@ def test_quality_harness_cli_reports_single_file_duplicate_key(tmp_path, capsys)
     assert exited.value.code == 2
     assert finding["code"] == "SYMBOL_FILE_DUPLICATE_KEY"
     assert finding["symbol_key"] == "duplicate_cli_fixture"
+
+
+def test_validation_contract_binds_a_code_to_its_own_validator(monkeypatch):
+    """A known code emitted by the wrong validator must fail the contract case.
+
+    Rule identity is ``<validator-id>.<CODE>``. A check that only compares sets of bare
+    codes would pass here, and would point a reviewer at the wrong rule (remote baseline
+    R3 P0-6).
+    """
+
+    from agentcad import diagram_quality as quality_module
+    from agentcad.diagram_quality_models import DiagramQualityIssue
+
+    real_analyzer = quality_module.analyze_diagram_quality
+
+    def misattributing_analyzer(document, registry):
+        report = real_analyzer(document, registry)
+        # ``TAG_DUPLICATE`` is engineering-report's code; emitting it from the
+        # drafting-quality adapter is exactly the mistake the identity check exists for.
+        return report.model_copy(
+            update={
+                "issues": [
+                    *report.issues,
+                    DiagramQualityIssue(
+                        severity="warning",
+                        code="TAG_DUPLICATE",
+                        message="a code this validator does not own",
+                    ),
+                ]
+            }
+        )
+
+    # The harness imports the analyzer when the case runs, so patching the analyzer module
+    # is what the harness actually sees.
+    monkeypatch.setattr(quality_module, "analyze_diagram_quality", misattributing_analyzer)
+
+    report = run_quality_harness(SymbolRegistry())
+    case = next(case for case in report.cases if case.name == "validation_contract")
+    codes = {finding.code for finding in case.findings}
+
+    assert report.passed is False
+    assert case.status == "failed"
+    assert "validation_wrong_validator_code" in codes

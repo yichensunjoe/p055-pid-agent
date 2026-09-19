@@ -119,6 +119,13 @@ the symbol-registry fingerprint, and the explicit evaluation time the run used. 
 result additionally binds the validation hash and the release-validator version/policy, plus its own
 readiness hash.
 
+`evaluated_at` is a **canonical UTC** instant: the engine rejects a naive timestamp and normalises an
+offset one, so two spellings of the same moment cannot produce two different canonical hashes. When a
+review surface shows a validation result and a readiness verdict together, the readiness payload's
+`validation_hash` must name **that** result — same revision, profile, rule bundle and evaluation
+time. A readiness verdict computed at a different instant is not evidence about the result on screen,
+and the UI reports that mismatch instead of presenting the pair as one decision.
+
 Two rules follow from that:
 
 * **Validation is a read.** Running it does not create a document revision or a history entry, and

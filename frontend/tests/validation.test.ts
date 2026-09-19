@@ -3,11 +3,14 @@ import { describe, it } from "node:test";
 
 import {
   approvalDisclaimer,
+  bindEvaluation,
+  bindingNotice,
   filterIssues,
   hasBlockingWork,
   issueDetailRows,
   severityLabels,
   sortIssues,
+  type ReleaseReadiness,
   type ValidationIssue,
   type ValidationResult,
 } from "../src/validation.ts";
@@ -52,6 +55,28 @@ function result(issues: ValidationIssue[]): ValidationResult {
     issues,
     counts: { blocker: 0, error: 0, warning: 0, info: 0, total: issues.length, waived: 0, unregistered: 0 },
     result_hash: "3".repeat(64),
+  };
+}
+
+function readiness(overrides: Partial<ReleaseReadiness> = {}): ReleaseReadiness {
+  return {
+    document_id: "doc_1",
+    revision: 1,
+    profile_id: "built-in",
+    profile_version: "1",
+    rule_bundle_fingerprint: "1".repeat(64),
+    state: "eligible",
+    reasons: [],
+    missing_required_validators: [],
+    unwaived_blockers: [],
+    unregistered_codes: [],
+    waivers_considered: [],
+    counts: { blocker: 0, error: 0, warning: 0, info: 0, total: 0, waived: 0, unregistered: 0 },
+    human_approval_required: true,
+    validation_hash: "3".repeat(64),
+    readiness_hash: "4".repeat(64),
+    evaluated_at: "2026-09-19T12:00:00Z",
+    ...overrides,
   };
 }
 
@@ -141,5 +166,48 @@ describe("validation view helpers", () => {
   it("states that validation is evidence, not approval", () => {
     assert.ok(approvalDisclaimer().includes("不会批准"));
     assert.ok(Object.values(severityLabels).includes("阻断"));
+  });
+
+  it("accepts a readiness verdict that names the validation result on screen", () => {
+    const binding = bindEvaluation(result([issue()]), readiness());
+
+    assert.equal(binding.bound, true);
+    assert.deepEqual(binding.mismatches, []);
+    assert.ok(bindingNotice(binding).includes("同一评估时刻"));
+  });
+
+  it("refuses to present two different evaluation instants as one decision", () => {
+    // The exact failure the panel used to have: readiness re-ran validation at its own
+    // `now`, so its validation_hash names a result the reviewer never saw.
+    const binding = bindEvaluation(
+      result([issue()]),
+      readiness({
+        evaluated_at: "2026-09-19T12:00:01Z",
+        validation_hash: "9".repeat(64),
+      }),
+    );
+
+    assert.equal(binding.bound, false);
+    assert.deepEqual(binding.mismatches, ["evaluated_at", "validation_hash"]);
+    assert.ok(bindingNotice(binding).includes("不一致"));
+  });
+
+  it("refuses a pair that describes different revisions, profiles or rule bundles", () => {
+    const moved = bindEvaluation(
+      result([issue()]),
+      readiness({ revision: 2, rule_bundle_fingerprint: "8".repeat(64) }),
+    );
+    const other_profile = bindEvaluation(
+      result([issue()]),
+      readiness({ profile_id: "company", profile_version: "3" }),
+    );
+    const other_document = bindEvaluation(
+      result([issue()]),
+      readiness({ document_id: "doc_2" }),
+    );
+
+    assert.deepEqual(moved.mismatches, ["revision", "rule_bundle_fingerprint"]);
+    assert.deepEqual(other_profile.mismatches, ["profile_id", "profile_version"]);
+    assert.deepEqual(other_document.mismatches, ["document_id"]);
   });
 });

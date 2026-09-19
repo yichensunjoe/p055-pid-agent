@@ -70,6 +70,10 @@ export type ValidationResult = {
 export type ReleaseReadiness = {
   document_id: string;
   revision: number;
+  /** Readiness carries the same provenance bindings as the validation result it names. */
+  profile_id: string;
+  profile_version: string;
+  rule_bundle_fingerprint: string;
   state: "eligible" | "not_eligible";
   reasons: string[];
   missing_required_validators: string[];
@@ -176,6 +180,44 @@ export function issueDetailRows(issue: ValidationIssue): { label: string; value:
     });
   }
   return rows;
+}
+
+/**
+ * The bindings that make a validation result and a readiness verdict one review state.
+ *
+ * Readiness re-runs validation server-side, so asking for the two in separate requests
+ * with no explicit evaluation time gives them two different `now` values: the readiness
+ * payload then references a result hash the reviewer is not looking at, and near a waiver
+ * boundary the waiver state itself can differ. The UI therefore sends one explicit
+ * evaluation instant to both requests and refuses to present the pair as coherent unless
+ * they describe the same revision, profile, rule bundle and moment (M4 R3 P0-5).
+ */
+export type EvaluationBinding = {
+  bound: boolean;
+  mismatches: string[];
+};
+
+export function bindEvaluation(
+  result: ValidationResult,
+  readiness: ReleaseReadiness,
+): EvaluationBinding {
+  const mismatches: string[] = [];
+  if (result.document_id !== readiness.document_id) mismatches.push("document_id");
+  if (result.revision !== readiness.revision) mismatches.push("revision");
+  if (result.profile_id !== readiness.profile_id) mismatches.push("profile_id");
+  if (result.profile_version !== readiness.profile_version) mismatches.push("profile_version");
+  if (result.rule_bundle_fingerprint !== readiness.rule_bundle_fingerprint) {
+    mismatches.push("rule_bundle_fingerprint");
+  }
+  if (readiness.evaluated_at !== result.evaluated_at) mismatches.push("evaluated_at");
+  if (readiness.validation_hash !== result.result_hash) mismatches.push("validation_hash");
+  return { bound: mismatches.length === 0, mismatches };
+}
+
+/** How a mismatch reads to the reviewer: the pair is not one piece of evidence. */
+export function bindingNotice(binding: EvaluationBinding): string {
+  if (binding.bound) return "校验与就绪检查绑定同一版本与同一评估时刻。";
+  return `校验结果与就绪证据不一致（${binding.mismatches.join("、")}），不能作为同一份评审证据，请重新校验。`;
 }
 
 export function hasBlockingWork(result: ValidationResult): boolean {

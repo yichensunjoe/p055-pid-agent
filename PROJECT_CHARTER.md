@@ -1316,6 +1316,12 @@ request
 > waiver **标注** finding，永不删除 finding。自动化 release 校验只产出 `eligible|not_eligible`
 > 就绪证据，**永远不能**批准/签发/放行图纸。
 >
+> “同一 canonical payload”有精确含义：机器可读的 REST/CLI/MCP 输出共用**一份公开 schema 与
+> 公开字段别名**（`schema` 才是 canonical 字段名），并由一条**完整 payload 等价测试**守住；
+> 浏览器 UI 消费的正是这份 REST payload，它只能为显示做排序/过滤，**不得重算策略**，也不得
+> 成为第二套校验实现。若某面同时展示校验结果与就绪结论，两者必须绑定同一评估时刻、同一
+> revision/profile/规则包，且 `readiness.validation_hash` 必须等于所展示结果的 `result_hash`。
+>
 > 只有当同一引擎通过 REST/MCP/CLI/UI 一致暴露、read/audit provenance 已绑定、stable
 > issue-code 契约由 tests/harness 守住、代表性大图性能已记录、且 backend/frontend/browser/
 > shared-mode 全量验收为绿时，M4 才算完成。

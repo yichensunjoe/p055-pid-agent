@@ -36,6 +36,8 @@ Design rules that are load-bearing:
 
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import datetime
 from typing import Any, Literal
 
@@ -142,9 +144,32 @@ class Waiver(ContractModel):
         return True
 
     def is_active(self, *, revision: int, now: datetime) -> bool:
+        """Whether this waiver is in force at ``now``, for ``revision``.
+
+        The window is *closed at both ends in the right direction*: a waiver is active
+        from the moment it was granted, up to (but not including) its expiry, and only at
+        or below its revision boundary. The lower bound is the one that used to be
+        missing, and its absence was not cosmetic — replaying a historical ``as_of``
+        earlier than ``granted_at`` would let an approval that had not happened yet waive
+        a finding, which is exactly the evidence a release argument is built on (remote
+        baseline R3 P0-1).
+        """
+
+        if now < self.granted_at:
+            return False
         if self.expires_at is not None and now >= self.expires_at:
             return False
         return self.max_revision is None or revision <= self.max_revision
+
+    def was_granted_by(self, *, now: datetime) -> bool:
+        """True once the waiver has been granted, whatever its expiry or revision bound.
+
+        Used to tell "this approval lapsed" (``expired``) apart from "this approval does
+        not exist yet" (``not_waived``): mislabelling a future waiver as expired would
+        invent history.
+        """
+
+        return now >= self.granted_at
 
 
 class WaiverEvidence(ContractModel):
@@ -359,6 +384,36 @@ def sort_issues(issues: list[ValidationIssue]) -> list[ValidationIssue]:
     return sorted(issues, key=canonical_issue_key)
 
 
+def canonical_payload(model: BaseModel, *, exclude: frozenset[str] = frozenset()) -> dict[str, Any]:
+    """The one canonical JSON form of a contract model.
+
+    Machine-facing surfaces used to differ by accident: FastAPI serialises a response
+    model *by alias* (``schema``), while a hand-written ``model_dump(mode="json")``
+    published the internal field name (``schema_name``). Two names for one field is a
+    second contract, so every surface — REST, CLI, MCP — and every provenance hash now
+    goes through this helper (remote baseline R3 P0-4).
+    """
+
+    return model.model_dump(mode="json", by_alias=True, exclude=set(exclude))
+
+
+def canonical_json(model: BaseModel, *, exclude: frozenset[str] = frozenset()) -> str:
+    """Canonical JSON text: public field names, sorted keys, no incidental whitespace."""
+
+    return json.dumps(
+        canonical_payload(model, exclude=exclude),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+
+
+def canonical_digest(model: BaseModel, *, exclude: frozenset[str] = frozenset()) -> str:
+    """SHA-256 over :func:`canonical_json`, so a hash binds exactly what a surface shows."""
+
+    return hashlib.sha256(canonical_json(model, exclude=exclude).encode("utf-8")).hexdigest()
+
+
 __all__ = [
     "LAYER_RANK",
     "PROFILE_PRECEDENCE",
@@ -376,6 +431,9 @@ __all__ = [
     "Waiver",
     "WaiverEvidence",
     "WaiverStatus",
+    "canonical_digest",
     "canonical_issue_key",
+    "canonical_json",
+    "canonical_payload",
     "sort_issues",
 ]

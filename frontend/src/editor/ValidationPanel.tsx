@@ -3,11 +3,14 @@ import { api, ApiError } from "../api";
 import { useWorkspace } from "../store";
 import {
   approvalDisclaimer,
+  bindEvaluation,
+  bindingNotice,
   filterIssues,
   issueDetailRows,
   severityLabels,
   severityOrder,
   sortIssues,
+  type EvaluationBinding,
   type IssueFilter,
   type ReleaseReadiness,
   type ValidationResult,
@@ -26,10 +29,12 @@ export function ValidationPanel() {
   const document = useWorkspace((state) => state.document);
   const setSelection = useWorkspace((state) => state.setSelection);
   const [asOf, setAsOf] = useState("");
+  const [usedMoment, setUsedMoment] = useState("");
   const [filter, setFilter] = useState("");
   const [severity, setSeverity] = useState<IssueFilter>("all");
   const [result, setResult] = useState<ValidationResult | null>(null);
   const [readiness, setReadiness] = useState<ReleaseReadiness | null>(null);
+  const [binding, setBinding] = useState<EvaluationBinding | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [nonce, setNonce] = useState(0);
@@ -38,12 +43,17 @@ export function ValidationPanel() {
     if (!document) {
       setResult(null);
       setReadiness(null);
+      setBinding(null);
       return;
     }
     let cancelled = false;
     setLoading(true);
     setError("");
-    const moment = asOf.trim() || undefined;
+    // One evaluation instant per refresh, sent explicitly to *both* requests. Leaving it
+    // empty would let the server pick two different `now` values, and readiness would
+    // then describe a validation result the reviewer is not looking at (R3 P0-5).
+    const moment = asOf.trim() || new Date().toISOString();
+    setUsedMoment(moment);
     void Promise.all([
       api.getValidation(document.id, moment),
       api.getReleaseReadiness(document.id, moment),
@@ -52,6 +62,7 @@ export function ValidationPanel() {
         if (cancelled) return;
         setResult(nextResult);
         setReadiness(nextReadiness);
+        setBinding(bindEvaluation(nextResult, nextReadiness));
       })
       .catch((reason) => {
         if (!cancelled) setError(reason instanceof ApiError ? reason.message : String(reason));
@@ -91,9 +102,26 @@ export function ValidationPanel() {
         <button onClick={() => setNonce((value) => value + 1)} type="button">
           重新校验
         </button>
+        {usedMoment ? (
+          <span data-testid="validation-as-of" title="两次请求使用的同一个评估时刻">
+            本次评估时刻 {usedMoment}
+          </span>
+        ) : null}
       </div>
 
-      {readiness ? (
+      {binding ? (
+        <p
+          className={binding.bound ? "validation-binding" : "validation-binding report-error"}
+          data-mismatches={binding.mismatches.join(",")}
+          data-state={binding.bound ? "bound" : "mismatched"}
+          data-testid="validation-binding"
+        >
+          {bindingNotice(binding)}
+          {result && binding.bound ? ` 结果哈希 ${result.result_hash.slice(0, 12)}…` : ""}
+        </p>
+      ) : null}
+
+      {readiness && binding?.bound ? (
         <p className="validation-state" data-testid="validation-readiness" data-state={readiness.state}>
           发布就绪：{readiness.state === "eligible" ? "eligible（可申请）" : "not_eligible（不可申请）"}
           {readiness.reasons.length ? ` · ${readiness.reasons.join("；")}` : ""}
@@ -200,6 +228,7 @@ export function ValidationPanel() {
 
 export const validationPanelTestIds = {
   panel: "validation-panel",
+  binding: "validation-binding",
   readiness: "validation-readiness",
   provenance: "validation-provenance",
   issues: "validation-issues",

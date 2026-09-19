@@ -1966,7 +1966,7 @@ def _validation_contract_case(symbols: SymbolRegistry) -> QualityHarnessCaseResu
         load_profile,
         resolve_profile,
     )
-    from .validation_rules import RULE_CATALOG
+    from .validation_rules import RULE_CATALOG, RULES_BY_ID, rule_id_for
 
     moment = datetime(2026, 9, 19, 12, 0, tzinfo=UTC)
     emitted_codes: set[str] = set()
@@ -2017,22 +2017,61 @@ def _validation_contract_case(symbols: SymbolRegistry) -> QualityHarnessCaseResu
                 "a validation result must bind the evaluation time it used",
             )
 
-        # (2) every code an adapter emits is registered, and the legacy models agree.
-        for source in (
-            analyze_diagram_quality(document, symbols).issues,
-            build_engineering_graph(document, symbols).findings,
-            build_engineering_report(document, symbols, scope="all").findings,
-        ):
-            emitted_codes |= {item.code for item in source}
-        emitted_codes |= {issue.code for issue in result.issues}
-        registered_codes = {rule.code for rule in RULE_CATALOG}
-        unregistered = sorted(emitted_codes - registered_codes)
-        if unregistered:
+        # (2) every code an adapter emits is registered *for that adapter*.
+        #
+        # A bare set of codes is not enough: rule identity is
+        # ``<validator-id>.<CODE>``, so a code registered for validator A but emitted by
+        # validator B would pass a global set comparison while pointing a reviewer at the
+        # wrong rule (R3 P0-6). Emitted identities are therefore collected per validator
+        # and checked against the catalog entry's own ``validator_id``.
+        analyzer_sources = (
+            ("diagram-quality", analyze_diagram_quality(document, symbols).issues),
+            ("engineering-graph", build_engineering_graph(document, symbols).findings),
+            (
+                "engineering-report",
+                build_engineering_report(document, symbols, scope="all").findings,
+            ),
+        )
+        emitted: list[tuple[str, str, str]] = []
+        for validator_id, source in analyzer_sources:
+            emitted.extend(
+                (validator_id, item.code, rule_id_for(validator_id, item.code))
+                for item in source
+            )
+        emitted.extend(
+            (issue.validator_id, issue.code, issue.rule_id) for issue in result.issues
+        )
+        emitted_codes |= {rule_id for _, _, rule_id in emitted}
+        # A code that the catalog knows under a *different* validator is a misattribution,
+        # not an unknown rule, and saying which of the two happened is the difference
+        # between a useful failure and a confusing one.
+        code_owners = {rule.code: rule.validator_id for rule in RULE_CATALOG}
+        unknown_rule_ids: list[str] = []
+        wrong_validator: list[str] = []
+        for validator_id, code, rule_id in emitted:
+            if rule_id in RULES_BY_ID:
+                owner = RULES_BY_ID[rule_id].validator_id
+                if owner != validator_id:
+                    wrong_validator.append(f"{validator_id} emitted {rule_id} (owned by {owner})")
+            elif code in code_owners and code_owners[code] != validator_id:
+                wrong_validator.append(
+                    f"{validator_id} emitted {code} (owned by {code_owners[code]})"
+                )
+            else:
+                unknown_rule_ids.append(rule_id)
+        if sorted(set(unknown_rule_ids)):
             _require(
                 False,
                 "validation_unregistered_code",
                 "adapter-emitted codes missing from the rule catalog: "
-                + ", ".join(unregistered),
+                + ", ".join(sorted(set(unknown_rule_ids))),
+            )
+        if sorted(set(wrong_validator)):
+            _require(
+                False,
+                "validation_wrong_validator_code",
+                "a code was emitted by a validator the catalog does not register it for: "
+                + "; ".join(sorted(set(wrong_validator))),
             )
 
         # (3) required public fields, the waiver vocabulary and the threshold rule.
@@ -2263,6 +2302,9 @@ def _validation_contract_case(symbols: SymbolRegistry) -> QualityHarnessCaseResu
             "issue_count": result.counts.total,
             "checked_issue_fields": checked_fields,
             "catalog_snapshot_size": len(EXPECTED_RULE_CATALOG),
+            # The identities the adapters actually emitted, so a reviewer can see that the
+            # check was per-validator rather than a global set of bare codes (R3 P0-6).
+            "emitted_rule_ids": sorted(emitted_codes),
         }
 
     return QualityHarnessCaseResult(

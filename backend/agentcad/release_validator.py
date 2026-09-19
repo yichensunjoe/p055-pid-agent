@@ -22,15 +22,13 @@ Three invariants are enforced here rather than promised in a document:
 
 from __future__ import annotations
 
-import hashlib
-import json
 from datetime import datetime
 
 from .models import Document
 from .service import DocumentService
 from .symbols import SymbolRegistry
 from .validation_engine import VALIDATION_ENGINE_VERSION, run_validation
-from .validation_models import ReleaseReadiness, ValidationResult
+from .validation_models import ReleaseReadiness, ValidationResult, canonical_digest
 from .validation_profile import EffectiveProfile
 
 RELEASE_VALIDATOR_VERSION = "1"
@@ -129,11 +127,14 @@ def assess_release_readiness(
 
 
 def _readiness_hash(readiness: ReleaseReadiness) -> str:
-    """Hash over the canonical readiness payload, so a surface that audits it binds it."""
+    """Hash over the canonical readiness payload, so a surface that audits it binds it.
 
-    payload = readiness.model_dump(mode="json", exclude={"readiness_hash"})
-    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    Deliberately the same canonicalization REST/CLI/MCP publish (R3 P0-4), which is also
+    why ``policy`` is the canonicalized release policy: two profiles that ask for the same
+    gate must not hash differently because they listed ``fail_on`` in another order.
+    """
+
+    return canonical_digest(readiness, exclude=frozenset({"readiness_hash"}))
 
 
 def assess_document_release_readiness(

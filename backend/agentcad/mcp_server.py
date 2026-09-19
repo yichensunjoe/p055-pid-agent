@@ -60,9 +60,16 @@ _READ_EVENT_TYPES = {
 
 
 def _parse_as_of(raw: str):
-    """Parse an optional, timezone-aware evaluation time for waiver expiry."""
+    """Parse an optional, timezone-aware evaluation time for waiver expiry.
+
+    Parsing is local (MCP receives a string), but the *contract* is the engine's: a naive
+    value is refused with the same stable code REST and the CLI use, and an aware value is
+    normalized to UTC by the engine before it is hashed (R3 P0-2).
+    """
 
     from datetime import datetime
+
+    from .validation_engine import ValidationTimeError, normalize_evaluation_time
 
     text = (raw or "").strip()
     if not text:
@@ -71,11 +78,12 @@ def _parse_as_of(raw: str):
         moment = datetime.fromisoformat(text.replace("Z", "+00:00"))
     except ValueError as exc:
         raise InvalidOperationError(f"invalid_as_of: {exc}") from exc
-    if moment.tzinfo is None or moment.tzinfo.utcoffset(moment) is None:
+    try:
+        return normalize_evaluation_time(moment)
+    except ValidationTimeError as exc:
         raise InvalidOperationError(
-            "as_of_not_timezone_aware: as_of must carry a timezone, e.g. 2026-09-19T12:00:00Z"
-        )
-    return moment
+            f"{exc.code}: as_of must carry a timezone, e.g. 2026-09-19T12:00:00Z"
+        ) from exc
 
 
 def emit_read_diagnostics(
@@ -207,13 +215,21 @@ def _apply_governed(
     return result.model_dump(mode="json")
 
 
-def main() -> None:
+def build_mcp_server(settings: Settings | None = None) -> tuple[Any, str]:
+    """Build the MCP server and every tool it publishes, without starting a transport.
+
+    Returning the server, rather than only running it, is what makes this surface
+    testable: the cross-surface parity test calls the registered tool functions and
+    compares their payloads against REST and the CLI byte for byte, which is only possible
+    if a test can build the tools without blocking on stdio (M4 R3 P0-4).
+    """
+
     try:
         from mcp.server.fastmcp import FastMCP
     except ImportError as exc:
         raise SystemExit("Install MCP support with: pip install 'pid-agent[mcp]'" ) from exc
 
-    settings = Settings.from_env()
+    settings = settings or Settings.from_env()
     service = build_service(settings)
     semantic_compiler = SemanticTransactionCompiler(service)
     layout_engine = AutoLayoutEngine(service)
@@ -386,6 +402,7 @@ def main() -> None:
         waiver expiry matters and the verdict must be reproducible.
         """
         from .validation_engine import validate_document as run_canonical_validation
+        from .validation_models import canonical_payload
         from .validation_profile import load_profile
 
         moment = _parse_as_of(as_of)
@@ -404,7 +421,8 @@ def main() -> None:
                 "evaluated_at": result.evaluated_at.isoformat(),
             },
         )
-        return result.model_dump(mode="json")
+        # Same canonical public payload as REST and the CLI: ``schema``, not ``schema_name``.
+        return canonical_payload(result)
 
     @mcp.tool()
     def assess_release_readiness(document_id: str, as_of: str = "") -> dict:
@@ -417,6 +435,7 @@ def main() -> None:
         stays behind the human approval workflow.
         """
         from .release_validator import assess_document_release_readiness
+        from .validation_models import canonical_payload
         from .validation_profile import load_profile
 
         moment = _parse_as_of(as_of)
@@ -435,7 +454,7 @@ def main() -> None:
                 "evaluated_at": readiness.evaluated_at.isoformat(),
             },
         )
-        return readiness.model_dump(mode="json")
+        return canonical_payload(readiness)
 
     @mcp.tool()
     def get_scene_summary(document_id: str) -> dict:
@@ -947,6 +966,11 @@ def main() -> None:
         """List allowed company/P&ID symbols, sizes, ports, and descriptions."""
         return [item.model_dump(mode="json") for item in service.symbols.list()]
 
+    return mcp, transport
+
+
+def main() -> None:
+    mcp, transport = build_mcp_server()
     mcp.run(transport=transport)
 
 

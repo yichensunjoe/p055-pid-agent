@@ -135,7 +135,11 @@ CLI  pid-agent validate <document_id> / pid-agent release-readiness <document_id
 
 REST, MCP, CLI and the UI are adapters over **one** engine and **one** profile resolver: the same
 input must produce the same canonical payload, and no surface may implement independent validation
-policy. Validation/readiness are reads; if the deployment records the invocation
+policy. Concretely: every non-summary REST/CLI/MCP output is serialised by one helper into the
+**same canonical public JSON**, using the **same public field names** on every surface. `schema` is
+a canonical field — `schema_name` is an internal name and must never appear in a machine-facing
+payload. This is asserted by a full-payload equality test (`tests/test_validation_parity.py`), not by
+convention. Validation/readiness are reads; if the deployment records the invocation
 (`GET ...?audit=true`, `--audit`, or the MCP tool call) it is recorded as read/tool evidence
 (`validation.completed` / `release.readiness.assessed`) that references the canonical result or
 readiness hash — never as `revision.created` and never as an approval. See

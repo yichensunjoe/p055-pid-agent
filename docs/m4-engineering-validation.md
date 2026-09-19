@@ -75,9 +75,15 @@ engine 版本、符号目录 fingerprint、以及显式的 **评估时刻 `evalu
 - 确定性定义：`同一文档内容 + 同一 revision + 同一 profile/规则包 + 同一 validator 输入与版本 +
   同一评估时刻 ⇒ 同一 canonical 结果与同一 result_hash`。
 - 时间是有输入的：waiver 会过期，所以“什么时候判的”必须写进结果，不能被墙钟偷偷决定。
+- **时间契约由 engine 拥有**：`run_validation` 的边界拒绝 naive datetime（稳定错误码
+  `as_of_not_timezone_aware`），并把带时区时刻**规范化为 UTC** 后再进入结果、waiver 判定与哈希。
+  REST/CLI/MCP 只负责把该稳定错误码包装成各自的表面措辞。因此 `2026-09-19T12:00:00Z` 与
+  `2026-09-19T08:00:00-04:00` 是同一评估时刻、同一个 `evaluated_at`、同一个 `result_hash`。
 - canonical 顺序：`severity rank(blocker<error<warning<info)` → `code` → `object_ids` →
   `element_ids` → `message` → `validator_id`；列表输出稳定可 diff。
-- `result_hash` / `readiness_hash` 覆盖 canonical JSON（不含自身哈希），供审计与复现引用。
+- `result_hash` / `readiness_hash` 覆盖 canonical JSON（不含自身哈希），供审计与复现引用；
+  “canonical”就是 REST/CLI/MCP 发布的**同一份公开 JSON**（公开别名、`schema` 而非 `schema_name`），
+  所以拿到 payload 的人可以自己重算这个哈希。
 
 ## 5. 规则目录
 
@@ -103,6 +109,12 @@ built-in < standard < company < project < release-phase
 - 非法配置一律拒绝：层级重复、层级乱序、项目未授权却声明 release-phase 覆盖、阈值不可配置、
   阈值非有限数（NaN/Infinity）、质量分阈值超出 0..100、重复 `waiver_id`。
 - `allow_release_phase_overrides` 是 release-phase 层唯一开关；默认关闭。
+- **生效 release policy 会被规范化**：`required_validators` 去重并按 validator id 升序，`fail_on`
+  去重并按 canonical severity 顺序（`blocker → error → warning → info`）。fingerprint、readiness
+  判定循环、发布出去的 `policy` 与 readiness hash 全部使用这同一份规范化结果——两份语义相同、
+  书写顺序不同的 profile 必须得到相同 fingerprint、相同 payload 与相同 readiness hash。
+- profile 的公开 `source` 是**逻辑身份**（`built-in` 或 `file:<basename>`），不是服务器绝对路径；
+  精确路径只出现在本地诊断里，不会进入 REST/MCP 的 canonical 输出。
 
 ## 7. legacy adapter 政策
 
@@ -132,8 +144,13 @@ built-in < standard < company < project < release-phase
 - 必需信息：actor、reason、**显式 `granted_at`**（不得在加载时自动生成）、`expires_at?`、
   `max_revision?`、作用域（规则/代码/object/element）。
 - 时间必须**带时区**；`expires_at <= granted_at` 视为配置错误。
-- 选择算法确定：收集**全部**匹配项 → 有 active 则取 `waiver_id` 字典序最小者，否则取 expired 中
-  字典序最小者，否则 `not_waived`。声明顺序不得改变判定或证据。
+- **生效区间自 `granted_at` 开始**：`active` 当且仅当
+  `as_of >= granted_at` 且（无 `expires_at` 或 `as_of < expires_at`）且
+  （无 `max_revision` 或 `revision <= max_revision`）。用历史 `as_of` 回放时，**未来才批准的
+  waiver 不得生效**，且不得标成 `expired`（那会伪造一段根本没有发生过的审批历史）：只有
+  “已批准但已失效（过期或越过 revision 边界）”的匹配项才是 `expired` 证据。
+- 选择算法确定：收集**全部**匹配项 → 有 active 则取 `waiver_id` 字典序最小者，否则取已批准的
+  expired 中字典序最小者，否则 `not_waived`。声明顺序不得改变判定或证据。
 - fingerprint 覆盖**完整作用域**（含 `object_ids`/`element_ids`）。
 
 ## 10. release readiness
@@ -151,11 +168,22 @@ REST / MCP / CLI / UI 都是**同一个引擎 + 同一个 profile 解析器**的
 禁止四套各自实现策略。校验与就绪检查是**读**：即使记录调用审计，也只记 read/tool 证据事件，
 不得因此给文档追加 revision/history。
 
+- 这种一致性是**测试而不是声明**：`canonical_payload()` 是唯一的公开序列化入口（公开别名、
+  `schema`），REST/CLI/MCP 三方在**同一 fixture、同一 as_of** 下比较**完整非摘要 payload**
+  （嵌套 issues/skips/policy/哈希逐项相等），不是抽查若干字段。
+- **UI 是 REST 的消费者**，不是第四个校验引擎：它不得重算策略，只能排序/过滤用于显示；并且
+  每次刷新只生成**一个评估时刻**，同时发给 validation 与 readiness 两个请求，随后要求
+  `readiness.validation_hash == validation.result_hash`、同一 document/revision、同一
+  profile id/version 与 rule-bundle fingerprint、同一 `evaluated_at`——不满足就不把它当作
+  同一份评审证据展示（显示明确的不一致/过期状态）。
+
 ## 12. 审计与 provenance
 
 - 校验结果是读：运行校验**不产生** `revision.created`。
 - 若部署记录 read/tool 调用，审计事件应绑定 canonical result/readiness hash，并明确区别于
   revision 创建与人工批准证据。
+- `evaluated_at` 是规范化 UTC 时刻；当某个 UI/评审面同时展示 validation 与 readiness 时，
+  readiness 的 `validation_hash` 必须指向**与它配对展示的那一次** validation 结果。
 - waiver 证据（含作用域）属于 rule-bundle fingerprint 的一部分。
 - CAD 导入的源 SHA-256 与解码器证据为**服务端派生**，同时存在于文档 provenance 与审计记录；
   调用方字段不得覆盖保留审计键（`RESERVED_EVIDENCE_KEYS`）。

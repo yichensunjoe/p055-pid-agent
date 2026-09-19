@@ -26,7 +26,7 @@ return two different verdicts and the reason would be invisible.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 
 from fastapi import APIRouter, HTTPException
 
@@ -36,7 +36,12 @@ from .release_validator import (
     assess_document_release_readiness,
 )
 from .service import DocumentNotFoundError, DocumentService
-from .validation_engine import VALIDATION_ENGINE_VERSION, validate_document
+from .validation_engine import (
+    VALIDATION_ENGINE_VERSION,
+    ValidationTimeError,
+    normalize_evaluation_time,
+    validate_document,
+)
 from .validation_models import ReleaseReadiness, ValidationIssue, ValidationResult
 from .validation_profile import EffectiveProfile, ProfileError, load_profile
 
@@ -45,18 +50,23 @@ PROFILE_ERROR_STATUS = 500
 
 
 def _moment(as_of: datetime | None) -> datetime:
-    if as_of is None:
-        return datetime.now(UTC)
-    if as_of.tzinfo is None or as_of.tzinfo.utcoffset(as_of) is None:
+    """Normalize the evaluation instant through the engine's own contract.
+
+    The engine, not this route, decides what a valid evaluation time is (R3 P0-2); the
+    route only maps the engine's stable error code onto HTTP 422 framing.
+    """
+
+    try:
+        return normalize_evaluation_time(as_of)
+    except ValidationTimeError as exc:
         raise HTTPException(
             status_code=422,
             detail={
-                "error": "as_of_not_timezone_aware",
+                "error": exc.code,
                 "message": "as_of must be timezone-aware (for example 2026-09-19T12:00:00Z)",
                 "retryable": False,
             },
-        )
-    return as_of
+        ) from exc
 
 
 def create_validation_router(service: DocumentService) -> APIRouter:

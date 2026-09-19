@@ -3,7 +3,7 @@
 ## 2026-09-19 · “分批写入”不是“一次用户动作”：原子性与 undo 必须定义在用户级操作边界上（P055-PID-Agent）
 
 - 场景：CAD 导入最初写成“先 `create_document()`，再按 1000 操作/批 `apply_transaction()`”。每一批都走受治理通道、都有 revision/审计/undo，看起来比“一次性写完”更“规范”。但它有两个真实缺陷：① 第 N 批失败会留下一份**看起来正常**的半张图（revision 正常、列表里有、能打开）；② `undo()` 一次只弹一层栈，所以 9242 图元的大图一次 undo 只能撤最后一批。测试当时全绿，因为测的是“有事务”和“能撤销”。
-- 结论做法：把导入做成**一次性逻辑受治理变更**——新增 `DocumentService.create_document_with_operations()`：在内存里逐个应用操作、校验整份文档、然后**只落盘一次**（一个 revision、一条历史、一条审计、一次 undo 快照）。收拢代码、校验、provenance、持久化全部复用 `apply_transaction` 的同一套路径，因此这不是第二条写通道；分块退化为纯内存策略。补三类负向测试：注入“第 12 个操作失败”→ `list_documents() == []`；>1000 操作 → 一次 undo 清空、一次 redo 全量恢复；历史只有一条且 `operation_count` 等于操作数。
+- 结论做法：把导入做成**一次性逻辑受治理变更**——新增 `DocumentService.create_document_with_operations()`：在内存里把操作序列逐个应用、校验整份文档、然后**只落盘一次**（一个 revision、一条历史、一条审计、一次 undo 快照）。它**复用 `apply_transaction` 真正共享的那部分**：`_stage_mutation()`（操作应用、编辑器分组规范化、revision 约定、结果文档校验）与同一套 provenance/audit 构造器；**持久化是唯一刻意的差异**，因为新建文档没有可冲突的既有 revision、也没有既有 undo 栈，所以这里写一次而不是走事务提交。它没有分块写路径——操作在内存里顺序应用，完成且通过校验后才整体持久化，“分块”这个说法已从代码与文档里删除。补三类负向测试：注入“第 12 个操作失败”→ `list_documents() == []`；>1000 操作 → 一次 undo 清空、一次 redo 全量恢复；历史只有一条且 `operation_count` 等于操作数，另加一条测试断言这条路径与 `apply_transaction` 共用同一个 mutation kernel。
 - 关键经验：**物理事务边界 ≠ 用户动作边界**。当实现里出现“for batch in batches: commit(batch)”时，必须回头问一句：用户眼里这是几件事？失败了会看到什么？按一次 Ctrl+Z 会撤掉多少？这三个问题都答不上来，就还没有定义原子性。
 
 ## 2026-09-19 · 用户文件名绝不能进命令脚本：staging 用固定内部名（P055-PID-Agent）
@@ -12,10 +12,16 @@
 - 结论做法：暂存、输出、脚本三类路径全部改成固定内部名（`source.dwg` / `output.dxf` / `converter.scr`），转换器永远只被交给 `<workdir>/input/source.dwg`，原始文件名只保留为展示/provenance 字段。回归测试用一个带换行与引号的恶意文件名，断言它**不出现在** argv 与脚本内容里。
 - 关键经验：**“这条路径来自用户输入”与“这条路径会进入脚本/命令行”相遇时，必须做名字替换而不是转义**。同时对“公开报告暴露本机路径”做决定：能力清单与导入报告只给基名与 `<workdir>` 标记。
 
+## 2026-09-19 · 生产构建会静默换掉 shared-mode 测试所需的那份 dist（P055-PID-Agent）
+
+- 场景：先跑 `npm run build`（生产模式）再跑 `npm run test:e2e:shared`，本来 2 passed 的共享部署用例开始 45 s 超时——界面一直等不到 `window.__PID_AGENT_E2E__`。看起来像功能回归，实际是 shared 配置**不自己构建**，它复用目录里已有的 dist，而生产构建不含 e2e 钩子。
+- 结论做法：跑 shared-mode 之前先 `npm run build:e2e`（或把构建写进该 npm script）。判据：e2e 钩子是否存在，而不是页面“看起来能不能打开”。
+- 关键经验：**同一份产物目录被多种模式共用时，构建顺序就是测试的隐式输入**。看到与改动无关的上游失败，先确认产物是哪种模式产出的，再怀疑自己的代码——否则会去“修”一个根本不存在的问题。
+
 ## 2026-09-19 · 会生成基线的 workflow 本身不能吞掉失败（P055-PID-Agent）
 
 - 场景：为了在 CI 渲染器里重生成截图基线，新 workflow 里写了 `npx playwright test … --update-snapshots || true`。理由听起来合理：“断言失败是预期的，因为我们在重写期望值”。但 `|| true` 吞掉的不只是像素断言，还有浏览器启动失败、web server 起不来、测试代码抛异常——于是这个 workflow 能产出一份**绿色的、内容为空的“坏基线”**，而 artifact 看起来一切正常。
-- 结论做法：去掉无条件 `|| true`，让更新步骤本身成为真门禁；再补一步“必须真的有新生成的 png”检查（`find … -newermt '-30 minutes' | wc -l` > 0），并把渲染器从 `ubuntu-latest` 钉到 `ubuntu-24.04`（基线只对产出它的渲染器有意义）。
+- 结论做法：去掉无条件 `|| true`，让更新步骤本身成为真门禁；把渲染器从 `ubuntu-latest` 钉到 `ubuntu-24.04`（基线只对产出它的渲染器有意义）；用**与生成步骤绑定的标记**证明更新真的跑过——在 Playwright 更新前创建 marker，之后只认可比 marker 新的 baseline（`-newermt '-30 minutes'` 那种墙钟窗口会被刚 checkout 的旧 PNG 的 mtime 假通过，已废弃）。若 marker 证明在“无视觉变化”的干净运行上误报（Playwright 不重写未变化的快照），正确做法是换成与更新步骤绑定的等价证据（例如受控的 sentinel 重生成），**不是把门禁放宽回墙钟窗口**。
 - 关键经验：**“预期失败”只适用于你明确知道会在哪一层失败的部分**。给整条命令加吞错，等于把“我知道这里会红”扩写成“这里红不红我都不看”。凡是生成 artifacts 的流水线，都要单独验证“失败时它确实会红”。
 
 ## 2026-09-19 · provenance 声明必须由“审计记录里的精确值”测试证明（P055-PID-Agent）

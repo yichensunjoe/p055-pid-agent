@@ -44,6 +44,7 @@ from pydantic import Field, ValidationError
 from .validation_models import (
     LAYER_RANK,
     PROFILE_PRECEDENCE,
+    SEVERITY_RANK,
     ContractModel,
     ProfileLayerName,
     ReleasePolicy,
@@ -132,7 +133,10 @@ class EffectiveProfile(ContractModel):
 
         Sorted everywhere, including inside each waiver's scope, so that reordering a
         profile file — or listing the same elements in another order — cannot change the
-        fingerprint while leaving the effective rules identical.
+        fingerprint while leaving the effective rules identical. ``fail_on`` uses the
+        canonical severity order (most severe first) rather than a lexical sort, so the
+        fingerprint, the readiness loop and the published policy all read one ordering
+        (remote baseline R3 P0-7).
         """
 
         return {
@@ -166,8 +170,8 @@ class EffectiveProfile(ContractModel):
                 for waiver in sorted(self.waivers, key=lambda item: item.waiver_id)
             ],
             "release_policy": {
-                "required_validators": sorted(self.release_policy.required_validators),
-                "fail_on": sorted(self.release_policy.fail_on),
+                "required_validators": list(self.release_policy.required_validators),
+                "fail_on": list(self.release_policy.fail_on),
                 "allow_release_phase_overrides": (
                     self.release_policy.allow_release_phase_overrides
                 ),
@@ -193,6 +197,24 @@ def built_in_rules() -> dict[str, EffectiveRule]:
             rule_source="built-in",
         )
     return rules
+
+
+def canonical_release_policy(policy: ReleasePolicy) -> ReleasePolicy:
+    """The one ordering an effective release policy may have.
+
+    Two profile files that ask for the same gate in a different order are the same rule
+    bundle, so they must produce the same fingerprint *and* the same readiness payload,
+    reasons and hash. ``required_validators`` is unique and sorted by id; ``fail_on`` is
+    unique and ordered by the canonical severity rank (blocker → error → warning → info),
+    which is the order readiness reasons are assembled in (remote baseline R3 P0-7).
+    """
+
+    return policy.model_copy(
+        update={
+            "required_validators": sorted(set(policy.required_validators)),
+            "fail_on": sorted(set(policy.fail_on), key=lambda severity: SEVERITY_RANK[severity]),
+        }
+    )
 
 
 def _expand_targets(rule_id: str) -> list[str]:
@@ -319,7 +341,8 @@ def resolve_profile(profile: ValidationProfile, *, source: str = "") -> Effectiv
         source=source or profile.profile_id,
         rules=rules,
         waivers=list(profile.waivers),
-        release_policy=profile.release_policy,
+        # Canonicalized here, once, so nothing downstream can disagree about the order.
+        release_policy=canonical_release_policy(profile.release_policy),
     )
     return effective.model_copy(update={"fingerprint": _fingerprint(effective.taints())})
 
@@ -354,6 +377,12 @@ def load_profile(path: Path | str | None = None) -> EffectiveProfile:
     if not resolved:
         return resolve_profile(built_in_profile(), source="built-in")
     profile_path = Path(resolved)
+    # The published source is a logical identity, never the deployment's absolute path:
+    # ``GET /validation/profile`` and the MCP profile tool are reachable by any client
+    # allowed to inspect validation config, and a home directory or user name is not
+    # validation evidence. Diagnostics keep the real path (see the error messages), which
+    # never leave the server.
+    public_source = f"file:{profile_path.name}"
     try:
         raw = profile_path.read_text(encoding="utf-8")
     except OSError as exc:
@@ -375,7 +404,7 @@ def load_profile(path: Path | str | None = None) -> EffectiveProfile:
             "profile_invalid",
             f"the validation profile at {profile_path} is invalid: {exc}",
         ) from exc
-    return resolve_profile(profile, source=str(profile_path))
+    return resolve_profile(profile, source=public_source)
 
 
 __all__ = [
@@ -391,6 +420,7 @@ __all__ = [
     "ValidationProfile",
     "built_in_profile",
     "built_in_rules",
+    "canonical_release_policy",
     "load_profile",
     "resolve_profile",
 ]

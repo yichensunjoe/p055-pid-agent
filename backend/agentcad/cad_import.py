@@ -20,8 +20,9 @@ and it produces a **report** that names everything it could not reproduce.
 entry, one audit record and one undo snapshot. An earlier version wrote the layers and
 then the elements in batched transactions, which meant a failure part-way through left a
 half-imported drawing that looked like a normal completed document, and one undo only
-removed the last batch. Chunking is now purely an internal memory concern; nothing partial
-is ever persisted, because nothing is persisted until the whole document is valid.
+removed the last batch. There is **no chunked write path** today: the operation sequence is
+staged in memory and the completed document is persisted once, so nothing partial is ever
+persisted — nothing is persisted until the whole document is valid.
 """
 
 from __future__ import annotations

@@ -14,7 +14,17 @@
 - **M4 验收编号（本地实测，2026-09-19）**：backend ruff ✓；pytest **657 passed**；offline quality harness **8/8**（新增 `validation_contract`）；前端 `npm test` **141 passed**（M3 基线 134，+7）；`npm run build` ✓；Playwright Chromium **52 passed / 1 skipped**（本机装了 AutoCAD，能力分支跳过）；shared-mode security acceptance **2 passed**；视觉快照 **10/10 未变**（新增校验面板只在「报表/检查」tab 内渲染，不参与截图集，因此 darwin/linux 两套基线**都无需重生成**）。
 - **代表性大图性能（本地方法：导入 1 次 + warm-up 1 次 + 测量 5 次）**：真实图纸「气路系统总图.dwg」939,381 B / AC1032 / 最终元素 **9757** / 导入操作 9769 / 逻辑变更 1 次；导入（converter=autocad-core-console）7.4 s（**不计入校验时间**）；canonical 校验 cold **0.758 s**，5 次 **0.751 / 0.696 / 0.659 / 0.769 / 0.700 s**，median **0.700 s**，min 0.659 / max 0.769，峰值 RSS ≈ 303 MB；结论 3 个 error、0 个 blocker。复现入口：`scripts/m4_validation_perf.py`。M4 **不设**跨机器硬阈值。
 - **确定性证据**：真实图纸上固定 `as_of` 连跑 3 次 → 同一 `result_hash`、逐条 issue 相同；改变 `as_of` → 哈希变化（时间是被绑定的输入）；校验前后 revision（1）与历史（1 条 create）不变 → 校验确为只读。
-- **本轮（M4）状态**：完整验收报告见对话中交付的 M4-6 验收报告；accepted HEAD 仍为 pending，等远端审阅后填写。
+- **M4 Round-3 裁决（远端基线 `REMOTE_BASELINE_2026-09-19_M4_GATE_R3.md`，2026-09-19）**：架构继续接受，不回滚、不重写前五个提交；`25b60c6` 被命名为 **M4 Round-3 candidate / review anchor**，**不是 accepted HEAD**。R3 §2 的必修项（waiver 时间下界、engine 时间契约、删掉 analyzer 外层 broad catch、canonical serializer + 跨面等价测试、UI 单评估时刻与哈希绑定、harness 按 validator 绑定 rule id、release policy 规范化、profile 路径不泄露、文档事实修正）已全部落地，见本地仓库约定：
+  - `M4-0 fix-forward anchor = bcacd8c`
+  - `M4-0 Round-2 hardening anchor = f20b4fc`
+  - `M4-1/2/3 implementation anchor = a1e7b47`
+  - `M4-4/5 implementation anchor = af5dfa0`
+  - `M4 Round-3 candidate/review anchor = 25b60c6`
+  - `M4 acceptance-fix candidate = <见下方“Round-3 fix-forward”行>`
+  - `M4 accepted HEAD = pending final pushed CI-green candidate`（只能由远端 Gate 填写，本地不得自行填写）
+- **Round-3 语义修正（已进代码与文档）**：① waiver 生效区间自 `granted_at` 开始——历史 `as_of` 早于 `granted_at` 的 waiver **不生效且不得标成 `expired`**（`expired` 只表示“已批准但已失效”）；② 时间契约由 engine 拥有：`run_validation` 拒绝 naive 时间（稳定码 `as_of_not_timezone_aware`）并把时刻规范化为 UTC，因此同一瞬间的两种写法得到同一 `result_hash`；③ `ValidationContext` 不再整段捕获 `(KeyError, ValueError)`——只有显式分类的 typed `ValidationContextUnavailable` 才变成 skip，analyzer 内部的编程错误直接抛出（并有直接 patch analyzer 的测试）；④ REST/CLI/MCP 由唯一的 `canonical_payload()` 序列化，`schema` 是 canonical 公开字段名（内部名 `schema_name` 不得出现在机读 payload 里），并有完整 payload 等价测试 `tests/test_validation_parity.py`；⑤ UI 每次刷新只生成一个评估时刻并同时发给 validation/readiness，展示前校验 revision/profile/规则包/`evaluated_at` 与 `readiness.validation_hash == result.result_hash`，不一致就显示不一致状态；⑥ harness 按 `(validator_id, code)` 绑定规则身份（错 validator 发出已知 code 会失败）；⑦ 生效 release policy 规范化（去重 + validator id 升序 / severity 顺序），fingerprint、判定、发布值与 readiness hash 一致；⑧ profile 公开 `source` 为逻辑身份（`built-in` / `file:<basename>`），不泄露服务器路径；⑨ 文档事实修正（不再声称批量建文档“复用 `apply_transaction` 同一套路径”、也不再有“分块写入”的说法，见 `REUSE_AND_PITFALL_LOG.md`、`docs/cad-import.md`、`cad_import.py`）。
+- **Round-3 推送与 CI 权限**：远端已**预先授权**修完 R3 §2 且本地全量套件全绿后直接 push 到 `origin/main`（不需再申请许可），但**不得**把 `25b60c6` 当最终候选推送。M4 accepted HEAD 只能在“推送后拿到真实 CI（含手动 dispatch 一次 `Visual baselines`）全绿”之后由远端命名。
+- **本轮（M4）状态**：完整验收报告见对话中交付的 M4-6 验收报告 + `05-m4-acceptance-report.md`；accepted HEAD 仍为 pending。
 
 ## 上一轮状态（DWG/DXF 图纸导入切片，`d5c1fa0..2389ee7`）
 

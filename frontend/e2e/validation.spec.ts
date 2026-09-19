@@ -64,6 +64,22 @@ test("reviews the canonical validation result without changing the drawing", asy
   await expect(provenance).toContainText("已运行校验器");
   await expect(provenance).toContainText("engineering-report");
 
+  // Readiness is bound to the exact result on screen: one evaluation instant, sent to
+  // both requests, and the readiness hash must name the displayed result (M4 R3 P0-5).
+  const binding = panel.getByTestId("validation-binding");
+  await expect(binding).toHaveAttribute("data-state", "bound");
+  await expect(binding).toHaveAttribute("data-mismatches", "");
+  await expect(panel.getByTestId("validation-as-of")).toContainText("本次评估时刻");
+
+  // The hash the binding line quotes is the hash of the result shown next to it.
+  const shownHash = await panel.evaluate((node) => {
+    const pairs = Array.from(node.querySelectorAll("[data-testid='validation-provenance'] div"));
+    const row = pairs.find((pair) => pair.querySelector("dt")?.textContent === "结果哈希");
+    return row?.querySelector("dd")?.textContent ?? "";
+  });
+  expect(shownHash).not.toBe("");
+  await expect(binding).toContainText(shownHash);
+
   // Readiness is evidence, not approval.
   const readiness = panel.getByTestId("validation-readiness");
   await expect(readiness).toHaveAttribute("data-state", /eligible|not_eligible/);

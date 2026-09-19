@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 from cad_fixtures import simple_dxf
@@ -39,10 +39,17 @@ from agentcad.store import SQLiteDocumentStore
 from agentcad.symbols import SymbolRegistry
 from agentcad.validation_engine import (
     ValidationContextUnavailable,
+    ValidationTimeError,
+    normalize_evaluation_time,
     run_validation,
     validate_document,
 )
-from agentcad.validation_models import ValidationIssue, Waiver
+from agentcad.validation_models import (
+    ValidationIssue,
+    Waiver,
+    canonical_digest,
+    canonical_payload,
+)
 from agentcad.validation_profile import (
     ProfileError,
     ProfileLayer,
@@ -915,12 +922,21 @@ def test_validation_result_cannot_be_forged_into_an_approval(service, registry, 
 
 
 def test_the_result_hash_is_a_hash_of_the_canonical_result(service, registry, profile) -> None:
+    """A reviewer must be able to recompute the hash from the payload they were given.
+
+    "The payload they were given" is the canonical *public* one from
+    ``canonical_payload`` — the same bytes REST, CLI and MCP publish, with ``schema``
+    rather than the internal ``schema_name`` (remote baseline R3 P0-4).
+    """
+
     document = _document_with_a_duplicate_tag(service)
     result = run_validation(document, registry, profile)
-    payload = result.model_dump(mode="json", exclude={"result_hash"})
+    payload = canonical_payload(result, exclude=frozenset({"result_hash"}))
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
     assert result.result_hash == hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    assert "schema" in payload and "schema_name" not in payload
+    assert canonical_digest(result, exclude=frozenset({"result_hash"})) == result.result_hash
 
 
 def test_an_issue_model_is_frozen_and_strict() -> None:
@@ -1351,3 +1367,309 @@ def test_an_unregistered_adapter_code_is_surfaced_not_dropped(
     readiness = assess_release_readiness(document, registry, profile)
     assert readiness.state == "not_eligible"
     assert readiness.unregistered_codes == ["engineering-report.NOT_IN_THE_CATALOG"]
+
+
+# --------------------------------------------------------------------------- #
+# Round-3 acceptance fixes (remote baseline R3 §2)
+# --------------------------------------------------------------------------- #
+
+
+def test_a_waiver_granted_in_the_future_does_not_apply(service, registry, profile_factory) -> None:
+    """The waiver window is closed at the bottom too.
+
+    Replaying a historical ``as_of`` earlier than ``granted_at`` must not let an approval
+    that had not happened yet waive anything, and it must not be described as expired
+    either: the waiver has no history at that moment (R3 P0-1).
+    """
+
+    document = _document_with_a_duplicate_tag(service)
+    future = profile_factory(
+        ValidationProfile(
+            profile_id="P",
+            profile_version="1",
+            waivers=[
+                Waiver(
+                    waiver_id="W-future",
+                    rule_id="engineering-report.TAG_DUPLICATE",
+                    actor="chief-engineer",
+                    reason="granted next week, after the review",
+                    granted_at=_NOW + timedelta(days=7),
+                )
+            ],
+        )
+    )
+
+    historical = run_validation(document, registry, future, now=_NOW)
+    issue = next(issue for issue in historical.issues if issue.code == "TAG_DUPLICATE")
+
+    assert issue.waiver_status == "not_waived"
+    assert issue.waiver is None or issue.waiver.status == "not_waived"
+    assert historical.counts.waived == 0
+
+
+def test_a_future_waiver_does_not_close_the_release_gate(
+    service, registry, profile_factory
+) -> None:
+    document = _document_with_a_duplicate_tag(service)
+    gated = profile_factory(
+        ValidationProfile(
+            profile_id="P",
+            profile_version="1",
+            release_policy=ReleasePolicy(fail_on=["blocker"]),
+            layers=[
+                ProfileLayer(
+                    layer="project",
+                    source="test",
+                    rules=[
+                        RuleOverride(
+                            rule_id="engineering-report.TAG_DUPLICATE", severity="blocker"
+                        )
+                    ],
+                )
+            ],
+            waivers=[
+                Waiver(
+                    waiver_id="W-future",
+                    rule_id="engineering-report.TAG_DUPLICATE",
+                    actor="chief-engineer",
+                    reason="not yet in force",
+                    granted_at=_NOW + timedelta(days=1),
+                )
+            ],
+        )
+    )
+
+    readiness = assess_release_readiness(document, registry, gated, now=_NOW)
+
+    assert readiness.state == "not_eligible"
+    assert readiness.unwaived_blockers
+
+
+def test_a_waiver_is_active_at_the_exact_grant_moment(service, registry, profile_factory) -> None:
+    """Inclusive lower bound: ``as_of == granted_at`` is in force."""
+
+    document = _document_with_a_duplicate_tag(service)
+    at_grant = profile_factory(
+        ValidationProfile(
+            profile_id="P",
+            profile_version="1",
+            waivers=[
+                Waiver(
+                    waiver_id="W-now",
+                    rule_id="engineering-report.TAG_DUPLICATE",
+                    actor="chief-engineer",
+                    reason="granted exactly now",
+                    granted_at=_NOW,
+                )
+            ],
+        )
+    )
+
+    result = run_validation(document, registry, at_grant, now=_NOW)
+    issue = next(issue for issue in result.issues if issue.code == "TAG_DUPLICATE")
+
+    assert issue.waiver_status == "waived"
+    assert issue.waiver is not None and issue.waiver.waiver_id == "W-now"
+
+
+def test_a_future_waiver_does_not_displace_an_active_one(
+    service, registry, profile_factory
+) -> None:
+    """Ordering determinism still holds with a future waiver in the list."""
+
+    document = _document_with_a_duplicate_tag(service)
+    future = Waiver(
+        waiver_id="W-future",
+        rule_id="*",
+        actor="chief-engineer",
+        reason="later",
+        granted_at=_NOW + timedelta(days=30),
+    )
+    active = Waiver(
+        waiver_id="W-active",
+        rule_id="engineering-report.TAG_DUPLICATE",
+        actor="chief-engineer",
+        reason="in force",
+        granted_at=_NOW - timedelta(days=1),
+    )
+
+    for order in ([future, active], [active, future]):
+        ordered = profile_factory(
+            ValidationProfile(profile_id="P", profile_version="1", waivers=list(order))
+        )
+        issue = next(
+            issue
+            for issue in run_validation(document, registry, ordered, now=_NOW).issues
+            if issue.code == "TAG_DUPLICATE"
+        )
+        assert issue.waiver_status == "waived"
+        assert issue.waiver is not None and issue.waiver.waiver_id == "W-active"
+
+
+def test_the_engine_refuses_a_naive_evaluation_time(service, registry, profile) -> None:
+    """The time contract belongs to the engine, not to its callers (R3 P0-2)."""
+
+    document = _document_with_a_duplicate_tag(service)
+
+    with pytest.raises(ValidationTimeError) as refused:
+        run_validation(document, registry, profile, now=datetime(2026, 9, 19, 12, 0))
+
+    assert refused.value.code == "as_of_not_timezone_aware"
+
+
+def test_normalizing_an_evaluation_time_returns_utc(registry) -> None:
+    offset = datetime(2026, 9, 19, 8, 0, tzinfo=timezone(timedelta(hours=-4)))
+
+    assert normalize_evaluation_time(offset) == _NOW
+    assert normalize_evaluation_time(offset).utcoffset() == timedelta(0)
+
+
+def test_equivalent_offsets_produce_one_result_hash(service, registry, profile) -> None:
+    """Two spellings of one instant are one evaluation time, so they hash the same."""
+
+    document = _document_with_a_duplicate_tag(service)
+    utc_spelling = run_validation(document, registry, profile, now=_NOW)
+    offset_spelling = run_validation(
+        document,
+        registry,
+        profile,
+        now=datetime(2026, 9, 19, 8, 0, tzinfo=timezone(timedelta(hours=-4))),
+    )
+
+    assert offset_spelling.evaluated_at == utc_spelling.evaluated_at
+    assert offset_spelling.result_hash == utc_spelling.result_hash
+
+
+#: The analyzer each context builder calls, as seen from the engine module — the layer the
+#: removed broad ``except (KeyError, ValueError)`` used to swallow.
+_ANALYZERS = (
+    ("agentcad.validation_engine", "analyze_diagram_quality"),
+    ("agentcad.validation_engine", "build_engineering_graph"),
+    ("agentcad.validation_engine", "build_engineering_report"),
+)
+
+
+@pytest.mark.parametrize(("module", "attribute"), _ANALYZERS)
+def test_an_unexpected_analyzer_error_is_not_a_skip(
+    service, registry, profile, monkeypatch, module, attribute
+) -> None:
+    """A bug inside a legacy analyzer must fail the request (R3 P0-3).
+
+    The previous test patched the *collector* and therefore never entered the broad
+    ``except`` the reviewer found. This one patches the analyzer itself, which is the
+    layer that catch used to swallow.
+    """
+
+    document = _document_with_a_duplicate_tag(service)
+
+    def explode(*args, **kwargs):
+        raise ValueError("a programming regression, not a missing symbol")
+
+    monkeypatch.setattr(f"{module}.{attribute}", explode, raising=True)
+
+    with pytest.raises(ValueError):
+        run_validation(document, registry, profile)
+
+
+def test_only_an_explicitly_classified_context_failure_becomes_a_skip(
+    service, registry, profile, monkeypatch
+) -> None:
+    """The skip path stays available, but only through the typed domain exception."""
+
+    document = _document_with_a_duplicate_tag(service)
+
+    def unavailable(*args, **kwargs):
+        raise ValidationContextUnavailable(
+            "the symbol catalog cannot answer for this document",
+            code="diagram_quality_context_unavailable",
+        )
+
+    monkeypatch.setattr(
+        "agentcad.validation_engine.analyze_diagram_quality", unavailable, raising=True
+    )
+
+    result = run_validation(document, registry, profile)
+
+    assert "diagram-quality" not in result.validators_run
+    skipped = [
+        skip for skip in result.validators_skipped if skip.validator_id == "diagram-quality"
+    ]
+    assert skipped and skipped[0].code == "diagram_quality_context_unavailable"
+    assert skipped[0].reason
+
+
+@pytest.mark.parametrize(
+    ("field", "first", "second"),
+    [
+        ("required_validators", ["engineering-report", "diagram-quality"], ["diagram-quality", "engineering-report"]),
+        ("fail_on", ["warning", "blocker"], ["blocker", "warning"]),
+    ],
+)
+def test_the_effective_release_policy_order_is_canonical(
+    service, registry, profile_factory, field, first, second
+) -> None:
+    """Same gate, different file order ⇒ same fingerprint, payload and hash (R3 P0-7)."""
+
+    document = _document_with_a_duplicate_tag(service)
+    payloads = []
+    fingerprints = []
+    for values in (first, second):
+        policy = ReleasePolicy(**{field: list(values)})
+        candidate = profile_factory(
+            ValidationProfile(
+                profile_id="P", profile_version="1", release_policy=policy
+            )
+        )
+        fingerprints.append(candidate.fingerprint)
+        payloads.append(assess_release_readiness(document, registry, candidate, now=_NOW))
+
+    assert fingerprints[0] == fingerprints[1]
+    assert payloads[0].readiness_hash == payloads[1].readiness_hash
+    assert canonical_payload(payloads[0]) == canonical_payload(payloads[1])
+
+
+def test_the_canonical_release_policy_orders_by_severity(
+    service, registry, profile_factory
+) -> None:
+    policy = profile_factory(
+        ValidationProfile(
+            profile_id="P",
+            profile_version="1",
+            release_policy=ReleasePolicy(
+                required_validators=["engineering-report", "diagram-quality", "engineering-report"],
+                fail_on=["info", "blocker", "warning", "blocker"],
+            ),
+        )
+    )
+
+    assert policy.release_policy.required_validators == [
+        "diagram-quality",
+        "engineering-report",
+    ]
+    assert policy.release_policy.fail_on == ["blocker", "warning", "info"]
+
+
+def test_the_public_profile_source_is_not_a_server_path(tmp_path) -> None:
+    """Profile inspection is reachable by clients: it publishes an identity, not a path."""
+
+    profile_file = tmp_path / "company-rules.json"
+    profile_file.write_text(
+        json.dumps({"profile_id": "company", "profile_version": "1"}),
+        encoding="utf-8",
+    )
+
+    loaded = load_profile(profile_file)
+
+    assert loaded.source == "file:company-rules.json"
+    assert str(tmp_path) not in loaded.source
+    assert "/" not in loaded.source
+
+
+def test_the_machine_surface_payload_uses_public_field_names(service, registry, profile) -> None:
+    document = _document_with_a_duplicate_tag(service)
+    result = run_validation(document, registry, profile, now=_NOW)
+
+    payload = canonical_payload(result)
+
+    assert payload["schema"] == "pid-agent.validation-result"
+    assert "schema_name" not in payload

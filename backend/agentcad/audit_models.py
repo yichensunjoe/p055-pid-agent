@@ -35,6 +35,11 @@ AuditEventType = Literal[
     "engineering.identity.changed",
     "engineering.index.rebuilt",
     "validation.rejected",
+    # M4: validation and release readiness are *reads*. They are recorded as read/tool
+    # evidence so an invocation can be audited, and deliberately not as revision events:
+    # running a validator must never look like an edit to the drawing.
+    "validation.completed",
+    "release.readiness.assessed",
     "permission.rejected",
     "provider.egress.blocked",
 ]

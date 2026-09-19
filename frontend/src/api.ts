@@ -11,6 +11,7 @@ import type {
   DraftingReport,
 } from "./draftingTypes";
 import type { AutoLayoutOptions, AutoLayoutPreview } from "./layoutTypes";
+import type { ReleaseReadiness, ValidationResult } from "./validation";
 import type {
   AgentPlan,
   AgentTransaction,
@@ -419,6 +420,16 @@ export const api = {
     request<EngineeringReport>(`/documents/${id}/engineering-report?scope=${encodeURIComponent(scope)}`),
   getEngineeringGraph: (id: string) =>
     request<EngineeringGraph>(`/documents/${id}/engineering-graph`),
+  // M4 validation: both are reads. `asOf` is the explicit evaluation time waiver expiry
+  // is judged against; leaving it out means "now", which is why the panel shows it back.
+  getValidation: (id: string, asOf?: string) =>
+    request<ValidationResult>(
+      `/validation/documents/${id}${asOf ? `?as_of=${encodeURIComponent(asOf)}` : ""}`,
+    ),
+  getReleaseReadiness: (id: string, asOf?: string) =>
+    request<ReleaseReadiness>(
+      `/validation/documents/${id}/release-readiness${asOf ? `?as_of=${encodeURIComponent(asOf)}` : ""}`,
+    ),
   getEngineeringTrace: (
     id: string,
     ref: string,

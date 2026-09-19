@@ -25,6 +25,7 @@ from .api_harness import create_harness_router
 from .api_layout import create_layout_router
 from .api_reports import create_reports_router
 from .api_semantic_agent import create_semantic_agent_router
+from .api_validation import create_validation_router
 from .config import Settings
 from .diagnostics import DiagnosticLogger
 from .harness import AgentHarnessService
@@ -302,6 +303,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
     )
     app.include_router(create_reports_router(service))
+    app.include_router(create_validation_router(service))
     app.include_router(create_semantic_agent_router(service, semantic_planner, diagnostics, harness))
     app.include_router(create_v1_compat_router(service))
 

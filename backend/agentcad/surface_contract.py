@@ -468,6 +468,13 @@ MCP_SURFACE_BINDINGS: tuple[SurfaceBinding, ...] = (
     mcp("get_audit_trail", "read"),
     mcp("verify_audit_chain", "read"),
     mcp("get_revision_evidence", "read"),
+    # M4 validation surfaces. All three are reads: validation never writes a revision,
+    # and readiness is evidence rather than an approval. Any invocation audit they record
+    # is a read/tool event (``validation.completed`` / ``release.readiness.assessed``),
+    # never ``revision.created``.
+    mcp("inspect_validation_profile", "read", tool="inspect_validation_profile"),
+    mcp("validate_document", "read", tool="validate_document"),
+    mcp("assess_release_readiness", "read", tool="assess_release_readiness"),
     mcp("get_engineering_graph", "read", tool="get_engineering_graph"),
     mcp("trace_engineering_object", "read", tool="trace_engineering_object"),
     mcp("find_engineering_object", "read", tool="find_engineering_object"),

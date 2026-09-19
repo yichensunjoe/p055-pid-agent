@@ -51,6 +51,65 @@ def _parse_cad_frame(raw: str) -> tuple[float, float, float, float] | None:
     return (x0, y0, x1, y1)
 
 
+#: Read-only tools and the audit *read* event each one records. Named here so the tool
+#: layer cannot invent a third kind of event, and so no read tool can look like a write.
+_READ_EVENT_TYPES = {
+    "validate_document": "validation.completed",
+    "assess_release_readiness": "release.readiness.assessed",
+}
+
+
+def _parse_as_of(raw: str):
+    """Parse an optional, timezone-aware evaluation time for waiver expiry."""
+
+    from datetime import datetime
+
+    text = (raw or "").strip()
+    if not text:
+        return None
+    try:
+        moment = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise InvalidOperationError(f"invalid_as_of: {exc}") from exc
+    if moment.tzinfo is None or moment.tzinfo.utcoffset(moment) is None:
+        raise InvalidOperationError(
+            "as_of_not_timezone_aware: as_of must carry a timezone, e.g. 2026-09-19T12:00:00Z"
+        )
+    return moment
+
+
+def emit_read_diagnostics(
+    service: DocumentService,
+    document,
+    *,
+    tool_name: str,
+    label: str,
+    extra: dict[str, Any],
+) -> None:
+    """Record one read/tool invocation as audit evidence.
+
+    Validation is a read, so this is deliberately **not** a ``revision.created`` event:
+    running a validator must not appear in document history as if the drawing changed.
+    The event references the canonical hashes instead, which is what a reviewer needs in
+    order to bind "what was checked" to "what was found".
+    """
+
+    service.audit.record_event(
+        _READ_EVENT_TYPES[tool_name],
+        request_audit_context(
+            tool_name,
+            actor="mcp-agent",
+            surface="mcp",
+            label=label,
+            metadata={"surface": "mcp"},
+        ),
+        document_id=document.id,
+        base_revision=document.revision,
+        status="applied",
+        evidence=extra,
+    )
+
+
 def build_service(settings: Settings | None = None) -> DocumentService:
     settings = settings or Settings.from_env()
     symbols = SymbolRegistry()
@@ -284,6 +343,99 @@ def main() -> None:
             },
         )
         return result.model_dump(mode="json")
+
+    @mcp.tool()
+    def inspect_validation_profile() -> dict:
+        """Read the resolved validation rule bundle for this deployment.
+
+        Returns the profile id/version, the rule-bundle fingerprint, the release policy
+        and every effective rule with the layer that decided it. The profile is resolved
+        server-side; there is no argument that could change a rule, a severity or a
+        waiver from here.
+        """
+        from .validation_profile import load_profile
+
+        profile = load_profile()
+        return {
+            "profile_id": profile.profile_id,
+            "profile_version": profile.profile_version,
+            "source": profile.source,
+            "fingerprint": profile.fingerprint,
+            "release_policy": profile.release_policy.model_dump(mode="json"),
+            "rules": [
+                {
+                    "rule_id": rule.rule_id,
+                    "enabled": rule.enabled,
+                    "severity": rule.severity,
+                    "threshold": rule.threshold,
+                    "rule_source": rule.rule_source,
+                }
+                for rule in sorted(profile.rules.values(), key=lambda item: item.rule_id)
+            ],
+        }
+
+    @mcp.tool()
+    def validate_document(document_id: str, as_of: str = "") -> dict:
+        """Run the canonical engineering validation for one document. Read-only.
+
+        Returns the canonical result: every issue with its stable code, severity,
+        object/element locators, expected versus actual, rule source and waiver status,
+        bound to the document revision, profile and rule-bundle fingerprints and the
+        evaluation time. It cannot accept a rule script, a severity override or a waiver,
+        and it never writes a revision. Pass ``as_of`` (ISO-8601, timezone-aware) when
+        waiver expiry matters and the verdict must be reproducible.
+        """
+        from .validation_engine import validate_document as run_canonical_validation
+        from .validation_profile import load_profile
+
+        moment = _parse_as_of(as_of)
+        profile = load_profile()
+        document = service.get_document(document_id)
+        result = run_canonical_validation(service, document.id, profile, now=moment)
+        emit_read_diagnostics(
+            service,
+            document,
+            tool_name="validate_document",
+            label=f"Validate: {document.name}",
+            extra={
+                "validation_hash": result.result_hash,
+                "rule_bundle_fingerprint": result.rule_bundle_fingerprint,
+                "counts": result.counts.model_dump(mode="json"),
+                "evaluated_at": result.evaluated_at.isoformat(),
+            },
+        )
+        return result.model_dump(mode="json")
+
+    @mcp.tool()
+    def assess_release_readiness(document_id: str, as_of: str = "") -> dict:
+        """Assess whether a document is release-*eligible*. It cannot approve anything.
+
+        Returns ``eligible`` / ``not_eligible`` with the evidence behind it. A required
+        validator that did not run, an unwaived severity named by the release policy, or
+        a finding whose rule is not registered all fail closed. There is no argument and
+        no return field that can produce an approved/signed/IFC/AFC state: formal release
+        stays behind the human approval workflow.
+        """
+        from .release_validator import assess_document_release_readiness
+        from .validation_profile import load_profile
+
+        moment = _parse_as_of(as_of)
+        profile = load_profile()
+        document = service.get_document(document_id)
+        readiness = assess_document_release_readiness(service, document.id, profile, now=moment)
+        emit_read_diagnostics(
+            service,
+            document,
+            tool_name="assess_release_readiness",
+            label=f"Release readiness: {document.name}",
+            extra={
+                "readiness_hash": readiness.readiness_hash,
+                "state": readiness.state,
+                "human_approval_required": True,
+                "evaluated_at": readiness.evaluated_at.isoformat(),
+            },
+        )
+        return readiness.model_dump(mode="json")
 
     @mcp.tool()
     def get_scene_summary(document_id: str) -> dict:

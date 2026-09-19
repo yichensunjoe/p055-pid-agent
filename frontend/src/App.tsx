@@ -14,6 +14,7 @@ import { ExperienceSettings } from "./editor/ExperienceSettings";
 import { DraftingPanel } from "./editor/DraftingPanel";
 import { EngineeringGraphPanel } from "./editor/EngineeringGraphPanel";
 import { EngineeringReportPanel } from "./editor/EngineeringReportPanel";
+import { ValidationPanel } from "./editor/ValidationPanel";
 import { ViewNavigator } from "./editor/ViewNavigator";
 import { elementPaletteCommands, type PaletteCommand } from "./editor/paletteCommands";
 import { currentNavigationZone, deriveNavigationZones, loadNamedViews, persistNamedViews, sanitizeNamedViews, type CanvasView, type NamedCanvasView, type NavigationZone } from "./editor/navigationViews";
@@ -1024,7 +1025,14 @@ export default function App() {
           {rightPanel === "properties" ? <section className="inspector-panel" role="tabpanel"><h2>元素属性</h2><PropertyInspector /></section> : null}
           {rightPanel === "groups" ? <section className="inspector-panel" role="tabpanel"><h2>图层与工艺系统</h2><LayerSystemPanel /></section> : null}
           {rightPanel === "history" ? <section className="inspector-panel" role="tabpanel"><h2>Revision 历史</h2><HistoryPanel /></section> : null}
-          {rightPanel === "reports" ? <section className="inspector-panel" role="tabpanel"><h2>工程报表与规则检查</h2><EngineeringReportPanel /></section> : null}
+          {rightPanel === "reports" ? (
+            <section className="inspector-panel" role="tabpanel">
+              <h2>工程报表与规则检查</h2>
+              <EngineeringReportPanel />
+              <h3>工程校验（M4）</h3>
+              <ValidationPanel />
+            </section>
+          ) : null}
           {rightPanel === "graph" ? <section className="inspector-panel" role="tabpanel"><h2>工程语义图（派生）</h2><EngineeringGraphPanel /></section> : null}
           {rightPanel === "drafting" ? <section className="inspector-panel" role="tabpanel"><h2>确定性整理（M3）</h2><DraftingPanel /></section> : null}
           <section className="agent-panel" role="tabpanel" hidden={rightPanel !== "agent"}>

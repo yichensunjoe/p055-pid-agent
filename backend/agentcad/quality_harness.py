@@ -36,7 +36,7 @@ from .symbols import SymbolCatalogLoadError, SymbolRegistry
 QUALITY_HARNESS_SCHEMA = "pid-agent.quality-harness"
 #: Bumped whenever the case set changes: the report is a contract, and a harness that
 #: quietly grows a case is harder to compare than one that says so.
-QUALITY_HARNESS_VERSION = 3
+QUALITY_HARNESS_VERSION = 4
 _IDENTIFIER = re.compile(r"^[a-z][a-z0-9_]*$")
 _SUPPORTED_SHAPES = {"line", "polyline", "rect", "circle", "path", "text"}
 _EPSILON = 1e-6
@@ -1850,6 +1850,433 @@ def _cad_import_case(symbols: SymbolRegistry) -> QualityHarnessCaseResult:
     )
 
 
+#: The reviewed rule catalog, sorted. A snapshot rather than a count: a rule that is
+#: renamed, removed or added changes the meaning of every stored profile that references
+#: it, so it must be a deliberate, reviewed edit to this line rather than a side effect.
+EXPECTED_RULE_CATALOG: tuple[str, ...] = (
+    "diagram-quality.ANNOTATION_OVERLAP",
+    "diagram-quality.CONNECTOR_OUT_OF_BOUNDS",
+    "diagram-quality.DUPLICATE_LABEL",
+    "diagram-quality.EXCESSIVE_BENDS",
+    "diagram-quality.MICRO_SEGMENT",
+    "diagram-quality.NODE_OVERLAP",
+    "diagram-quality.NON_ORTHOGONAL_SEGMENT",
+    "diagram-quality.PIPE_THROUGH_EQUIPMENT",
+    "diagram-quality.PORT_DIRECTION_MISMATCH",
+    "diagram-quality.PORT_EXIT_MISMATCH",
+    "diagram-quality.PORT_FACING_MISMATCH",
+    "diagram-quality.QUALITY_SCORE_BELOW_TARGET",
+    "diagram-quality.SYMBOL_OUT_OF_BOUNDS",
+    "diagram-quality.UNBRIDGED_CROSSING",
+    "diagram-quality.UNNECESSARY_BEND",
+    "engineering-graph.IR_DUPLICATE_IDENTITY",
+    "engineering-graph.IR_ENDPOINT_ELEMENT_MISSING",
+    "engineering-graph.IR_IDENTITY_COLLISION",
+    "engineering-graph.IR_ISOLATED_OBJECT",
+    "engineering-graph.IR_OPC_CONNECTION_ID_DUPLICATE",
+    "engineering-graph.IR_OPC_TARGET_MISSING",
+    "engineering-graph.IR_ORPHAN_LINE",
+    "engineering-graph.IR_SIGNAL_UNNAMED",
+    "engineering-graph.IR_SIGNAL_WITHOUT_INSTRUMENT",
+    "engineering-graph.IR_SYMBOL_DEFINITION_MISSING",
+    "engineering-report.CONNECTOR_ENDPOINT_DANGLING",
+    "engineering-report.CONNECTOR_ENDPOINT_ELEMENT_MISSING",
+    "engineering-report.CONNECTOR_ENDPOINT_INVALID_ELEMENT_TYPE",
+    "engineering-report.CONNECTOR_ENDPOINT_POINT_MISMATCH",
+    "engineering-report.CONNECTOR_ENDPOINT_PORT_MISSING",
+    "engineering-report.LINE_DIAMETER_MISSING",
+    "engineering-report.LINE_MEDIUM_MISSING",
+    "engineering-report.LINE_TAG_MISSING",
+    "engineering-report.SYMBOL_DEFINITION_MISSING",
+    "engineering-report.SYMBOL_REQUIRED_PORT_UNCONNECTED",
+    "engineering-report.TAG_DUPLICATE",
+    "engineering-report.TAG_MISSING",
+)
+
+#: Field names that would turn readiness evidence into an approval. None of them may
+#: appear anywhere in a validation or readiness payload.
+FORBIDDEN_APPROVAL_FIELDS: tuple[str, ...] = (
+    "approved",
+    "approval",
+    "approval_id",
+    "ifc",
+    "afc",
+    "signature",
+    "signed",
+    "released",
+    "release_state",
+    "release_status",
+    "issued",
+)
+
+
+def _payload_keys(payload: Any) -> set[str]:
+    """Every dictionary key anywhere in a JSON-shaped payload."""
+
+    if isinstance(payload, dict):
+        keys = set(payload)
+        for value in payload.values():
+            keys |= _payload_keys(value)
+        return keys
+    if isinstance(payload, list):
+        keys: set[str] = set()
+        for item in payload:
+            keys |= _payload_keys(item)
+        return keys
+    return set()
+
+
+def _validation_contract_case(symbols: SymbolRegistry) -> QualityHarnessCaseResult:
+    """Offline golden contract for the canonical engineering validation system (M4).
+
+    This is the repository's release-facing gate, so it pins the invariants a release
+    argument depends on rather than replaying the deep pytest suite:
+
+    1. the rule catalog is exactly the reviewed snapshot (a contract, not a count);
+    2. every code the legacy adapters can emit is registered in that catalog;
+    3. canonical issues carry the required public fields, including ``threshold`` and the
+       approved waiver vocabulary;
+    4. readiness fails closed (blocker => not_eligible, missing required validator =>
+       not_eligible) and a waiver keeps the issue visible while making it eligible;
+    5. no validation or readiness payload can carry an approval/release/signature field.
+    """
+
+    import tempfile
+    from datetime import UTC, datetime
+    from pathlib import Path
+
+    from .diagram_quality import analyze_diagram_quality
+    from .engineering_ir import build_engineering_graph
+    from .engineering_reports import build_engineering_report
+    from .models import (
+        AddElementOperation,
+        CreateDocumentRequest,
+        Point,
+        SymbolElement,
+    )
+    from .release_validator import RELEASE_VALIDATOR_VERSION, assess_release_readiness
+    from .service import DocumentService
+    from .store import SQLiteDocumentStore
+    from .validation_engine import VALIDATION_ENGINE_VERSION, run_validation
+    from .validation_models import ReleasePolicy, Waiver
+    from .validation_profile import (
+        ProfileLayer,
+        RuleOverride,
+        ValidationProfile,
+        load_profile,
+        resolve_profile,
+    )
+    from .validation_rules import RULE_CATALOG
+
+    moment = datetime(2026, 9, 19, 12, 0, tzinfo=UTC)
+    emitted_codes: set[str] = set()
+    checked_fields = 0
+
+    with tempfile.TemporaryDirectory() as tmp:
+        service = DocumentService(
+            SQLiteDocumentStore(Path(tmp) / "validation-harness.db"), symbols
+        )
+        document = service.create_document(
+            CreateDocumentRequest(name="Validation harness fixture")
+        )
+        duplicate_tag = [
+            AddElementOperation(
+                element=SymbolElement(
+                    id=f"harness_hv_{index}",
+                    symbol_key="gate_valve",
+                    label="HV-101",
+                    position=Point(x=10.0 + index * 80.0, y=10.0),
+                    width=30,
+                    height=30,
+                )
+            )
+            for index in range(2)
+        ]
+        document = service.apply_transaction(
+            document.id,
+            TransactionRequest(
+                expected_revision=document.revision,
+                operations=duplicate_tag,
+                label="Validation harness fixture",
+            ),
+        ).document
+
+        profile = load_profile()
+        result = run_validation(document, symbols, profile, now=moment)
+
+        if result.engine_version != VALIDATION_ENGINE_VERSION:
+            _require(
+                False,
+                "validation_engine_version_unbound",
+                "a validation result must bind the engine version that produced it",
+            )
+        if not result.evaluated_at == moment:  # noqa: SIM201 - explicit about the contract
+            _require(
+                False,
+                "validation_evaluation_time_unbound",
+                "a validation result must bind the evaluation time it used",
+            )
+
+        # (2) every code an adapter emits is registered, and the legacy models agree.
+        for source in (
+            analyze_diagram_quality(document, symbols).issues,
+            build_engineering_graph(document, symbols).findings,
+            build_engineering_report(document, symbols, scope="all").findings,
+        ):
+            emitted_codes |= {item.code for item in source}
+        emitted_codes |= {issue.code for issue in result.issues}
+        registered_codes = {rule.code for rule in RULE_CATALOG}
+        unregistered = sorted(emitted_codes - registered_codes)
+        if unregistered:
+            _require(
+                False,
+                "validation_unregistered_code",
+                "adapter-emitted codes missing from the rule catalog: "
+                + ", ".join(unregistered),
+            )
+
+        # (3) required public fields, the waiver vocabulary and the threshold rule.
+        for issue in result.issues:
+            payload = issue.model_dump(mode="json")
+            for field in (
+                "code",
+                "severity",
+                "object_ids",
+                "element_ids",
+                "message",
+                "expected",
+                "actual",
+                "suggested_repair",
+                "rule_source",
+                "waiver_status",
+                "validator_id",
+                "rule_id",
+                "registered",
+                "threshold",
+                "details",
+            ):
+                if field not in payload:
+                    _require(
+                        False,
+                        "validation_field_missing",
+                        f"canonical issue is missing the public field {field!r}",
+                    )
+            checked_fields += 1
+            if issue.waiver_status not in {"not_waived", "waived", "expired"}:
+                _require(
+                    False,
+                    "validation_waiver_vocabulary",
+                    f"waiver_status {issue.waiver_status!r} is outside the approved vocabulary",
+                )
+            if issue.severity not in {"info", "warning", "error", "blocker"}:
+                _require(
+                    False,
+                    "validation_severity_vocabulary",
+                    f"severity {issue.severity!r} is outside the approved vocabulary",
+                )
+
+        # (1) the catalog is the reviewed snapshot.
+        catalog = tuple(sorted(rule.rule_id for rule in RULE_CATALOG))
+        if catalog != EXPECTED_RULE_CATALOG:
+            missing = sorted(set(EXPECTED_RULE_CATALOG) - set(catalog))
+            added = sorted(set(catalog) - set(EXPECTED_RULE_CATALOG))
+            _require(
+                False,
+                "validation_rule_catalog_changed",
+                f"rule catalog differs from the reviewed snapshot (added={added}, removed={missing})",
+            )
+
+        # (4a) an unwaived blocker makes the document ineligible for release.
+        blocker_profile = resolve_profile(
+            ValidationProfile(
+                profile_id="harness-blockers",
+                profile_version="1",
+                release_policy=ReleasePolicy(
+                    required_validators=sorted({"engineering-report"}),
+                    fail_on=["blocker"],
+                ),
+                layers=[
+                    ProfileLayer(
+                        layer="project",
+                        source="harness-rules",
+                        rules=[
+                            RuleOverride(
+                                rule_id="engineering-report.TAG_DUPLICATE", severity="blocker"
+                            )
+                        ],
+                    )
+                ],
+            ),
+            source="harness",
+        )
+        blocked = assess_release_readiness(document, symbols, blocker_profile, now=moment)
+        if blocked.state != "not_eligible":
+            _require(
+                False,
+                "validation_blocker_not_gated",
+                "an unwaived blocker must make a document ineligible for release",
+            )
+        if not blocked.unwaived_blockers:
+            _require(
+                False,
+                "validation_blocker_evidence_missing",
+                "readiness must list the unwaived blockers it found",
+            )
+
+        # (4b) a waiver annotates the issue: the document becomes eligible and the issue
+        # is still there, with its evidence.
+        waived_profile = resolve_profile(
+            ValidationProfile(
+                profile_id="harness-waived",
+                profile_version="1",
+                release_policy=blocker_profile.release_policy,
+                layers=[
+                    ProfileLayer(
+                        layer="project",
+                        source="harness-rules",
+                        rules=[
+                            RuleOverride(
+                                rule_id="engineering-report.TAG_DUPLICATE", severity="blocker"
+                            )
+                        ],
+                    )
+                ],
+                waivers=[
+                    Waiver(
+                        waiver_id="harness-waiver",
+                        rule_id="engineering-report.TAG_DUPLICATE",
+                        actor="chief-engineer",
+                        reason="tag renumbered in the next revision",
+                        granted_at=moment,
+                    )
+                ],
+            ),
+            source="harness",
+        )
+        waived = assess_release_readiness(document, symbols, waived_profile, now=moment)
+        if waived.state != "eligible":
+            _require(
+                False,
+                "validation_waiver_not_honoured",
+                "a valid waiver must make the blocker eligible for release",
+            )
+        if waived.counts.blocker < 1:
+            _require(
+                False,
+                "validation_waiver_deleted_issue",
+                "a waiver must never remove the issue from the result",
+            )
+        if "harness-waiver" not in waived.waivers_considered:
+            _require(
+                False,
+                "validation_waiver_evidence_missing",
+                "readiness must list the waivers it considered",
+            )
+
+        # (4c) missing required-validator evidence fails closed.
+        from . import validation_engine as engine_module
+
+        saved_validators = engine_module.VALIDATORS
+
+        def _unavailable(context, effective):
+            raise engine_module.ValidationContextUnavailable(
+                "harness: engineering report context unavailable",
+                code="engineering_report_context_unavailable",
+            )
+
+        engine_module.VALIDATORS = tuple(
+            definition
+            if definition.validator_id != "engineering-report"
+            else engine_module.ValidatorDefinition(
+                validator_id=definition.validator_id,
+                version=definition.version,
+                title=definition.title,
+                requires=definition.requires,
+                collect=_unavailable,
+            )
+            for definition in saved_validators
+        )
+        try:
+            skipped = assess_release_readiness(
+                document, symbols, blocker_profile, now=moment
+            )
+        finally:
+            engine_module.VALIDATORS = saved_validators
+
+        if skipped.state != "not_eligible":
+            _require(
+                False,
+                "validation_missing_evidence_not_closed",
+                "a required validator that did not run must fail the release gate closed",
+            )
+        if not skipped.validators_skipped:
+            _require(
+                False,
+                "validation_skip_not_reported",
+                "a validator that did not run must be reported, with a stable code",
+            )
+        for record in skipped.validators_skipped:
+            if not record.code:
+                _require(
+                    False,
+                    "validation_skip_code_missing",
+                    "a validator skip needs a stable machine code, not only a sentence",
+                )
+
+        # (5) no approval, signature or release-state field anywhere in the payloads.
+        for payload in (
+            result.model_dump(mode="json"),
+            blocked.model_dump(mode="json"),
+            waived.model_dump(mode="json"),
+        ):
+            offending = sorted(_payload_keys(payload) & set(FORBIDDEN_APPROVAL_FIELDS))
+            if offending:
+                _require(
+                    False,
+                    "validation_approval_field_exposed",
+                    "validation/readiness payloads must not expose approval fields: "
+                    + ", ".join(offending),
+                )
+        if waived.human_approval_required is not True:
+            _require(
+                False,
+                "validation_approval_requirement_missing",
+                "readiness evidence must state that human approval is still required",
+            )
+        if waived.release_validator_version != RELEASE_VALIDATOR_VERSION:
+            _require(
+                False,
+                "validation_release_validator_version_unbound",
+                "readiness must bind the release-validator version",
+            )
+
+        details = {
+            "rule_count": len(catalog),
+            "validators_run": list(result.validators_run),
+            "profile_fingerprint": profile.fingerprint,
+            "engine_version": result.engine_version,
+            "result_hash": result.result_hash,
+            "release_readiness_hash": waived.readiness_hash,
+            "blocked_state": blocked.state,
+            "waived_state": waived.state,
+            "skip_codes": sorted({record.code for record in skipped.validators_skipped}),
+            "issue_count": result.counts.total,
+            "checked_issue_fields": checked_fields,
+            "catalog_snapshot_size": len(EXPECTED_RULE_CATALOG),
+        }
+
+    return QualityHarnessCaseResult(
+        name="validation_contract",
+        status="passed",
+        summary=(
+            "Canonical validation: audited rule catalog, registered adapter codes, complete "
+            "issue fields, and a release gate that fails closed and can never approve."
+        ),
+        details=details,
+        findings=[],
+    )
+
+
 def _capture_case(
     name: str,
     runner: Callable[[SymbolRegistry], QualityHarnessCaseResult],
@@ -1893,6 +2320,7 @@ def run_quality_harness(symbols: SymbolRegistry | None = None) -> QualityHarness
             registry,
         ),
         _capture_case("cad_import_contract", _cad_import_case, registry),
+        _capture_case("validation_contract", _validation_contract_case, registry),
     ]
     passed_cases = sum(case.status == "passed" for case in cases)
     return QualityHarnessReport(

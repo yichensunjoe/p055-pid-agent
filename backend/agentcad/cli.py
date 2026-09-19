@@ -276,6 +276,143 @@ def _run_drafting_command(args: argparse.Namespace) -> None:
     raise SystemExit(0 if passed else 2)
 
 
+def _run_validation_command(args: argparse.Namespace) -> None:
+    """Validate a stored document, or assess its release readiness. Both are reads.
+
+    Exit code 0 means the gate passed for the question asked (no unwaived blockers for
+    ``validate``; ``eligible`` for ``release-readiness``), 2 means it did not. Nothing
+    here writes a revision, and this command cannot approve anything: release readiness
+    is evidence, and the formal release stays behind the human Approval Gate.
+
+    ``--as-of`` exists because waivers expire; without it the same document could be
+    validated twice with two answers and no way to see why.
+    """
+    from datetime import datetime
+
+    from .audit_models import AuditContext
+    from .release_validator import assess_document_release_readiness
+    from .service import DocumentNotFoundError, DocumentService
+    from .store import SQLiteDocumentStore
+    from .symbols import SymbolRegistry
+    from .validation_engine import validate_document
+    from .validation_profile import ProfileError, load_profile
+
+    database = args.database or _default_database_path()
+    service = DocumentService(SQLiteDocumentStore(Path(database)), SymbolRegistry())
+    try:
+        profile = load_profile()
+    except ProfileError as exc:
+        print(_json_payload({"error": exc.code, "message": exc.message}))
+        raise SystemExit(2) from exc
+
+    moment = None
+    if args.as_of:
+        try:
+            moment = datetime.fromisoformat(args.as_of.replace("Z", "+00:00"))
+        except ValueError as exc:
+            print(_json_payload({"error": "invalid_as_of", "message": str(exc)}))
+            raise SystemExit(2) from exc
+        if moment.tzinfo is None:
+            print(
+                _json_payload(
+                    {
+                        "error": "as_of_not_timezone_aware",
+                        "message": "--as-of must carry a timezone, e.g. 2026-09-19T12:00:00Z",
+                    }
+                )
+            )
+            raise SystemExit(2)
+    audit_context = AuditContext(
+        actor="cli",
+        surface="cli",
+        tool_name=("validate_document" if args.command == "validate" else "assess_release_readiness"),
+        label=f"{args.command} {args.document_id}",
+    )
+    try:
+        if args.command == "validate":
+            result = validate_document(service, args.document_id, profile, now=moment)
+            payload = result.model_dump(mode="json")
+            passed = not result.has_blockers
+            if args.audit:
+                service.audit.record_event(
+                    "validation.completed",
+                    audit_context,
+                    document_id=result.document_id,
+                    base_revision=result.revision,
+                    evidence={
+                        "validation_hash": result.result_hash,
+                        "profile_id": result.profile_id,
+                        "rule_bundle_fingerprint": result.rule_bundle_fingerprint,
+                        "evaluated_at": result.evaluated_at.isoformat(),
+                        "counts": result.counts.model_dump(mode="json"),
+                    },
+                )
+        else:
+            readiness = assess_document_release_readiness(
+                service, args.document_id, profile, now=moment
+            )
+            payload = readiness.model_dump(mode="json")
+            passed = readiness.state == "eligible"
+            if args.audit:
+                service.audit.record_event(
+                    "release.readiness.assessed",
+                    audit_context,
+                    document_id=readiness.document_id,
+                    base_revision=readiness.revision,
+                    evidence={
+                        "readiness_hash": readiness.readiness_hash,
+                        "state": readiness.state,
+                        "validation_hash": readiness.validation_hash,
+                        "evaluated_at": readiness.evaluated_at.isoformat(),
+                        "human_approval_required": True,
+                    },
+                )
+    except DocumentNotFoundError as exc:
+        print(_json_payload({"error": "document_not_found", "message": str(exc)}))
+        raise SystemExit(2) from exc
+
+    if args.summary:
+        counts = payload["counts"]
+        if args.command == "validate":
+            payload = {
+                "document_id": payload["document_id"],
+                "revision": payload["revision"],
+                "profile_id": payload["profile_id"],
+                "profile_version": payload["profile_version"],
+                "rule_bundle_fingerprint": payload["rule_bundle_fingerprint"],
+                "evaluated_at": payload["evaluated_at"],
+                "result_hash": payload["result_hash"],
+                "counts": counts,
+                "validators_skipped": payload["validators_skipped"],
+                "issues": [
+                    {
+                        "code": issue["code"],
+                        "severity": issue["severity"],
+                        "rule_source": issue["rule_source"],
+                        "waiver_status": issue["waiver_status"],
+                        "element_ids": issue["element_ids"],
+                    }
+                    for issue in payload["issues"]
+                ],
+            }
+        else:
+            payload = {
+                "document_id": payload["document_id"],
+                "state": payload["state"],
+                "reasons": payload["reasons"],
+                "readiness_hash": payload["readiness_hash"],
+                "validation_hash": payload["validation_hash"],
+                "evaluated_at": payload["evaluated_at"],
+                "counts": counts,
+                "human_approval_required": payload["human_approval_required"],
+            }
+    text = _json_payload(payload)
+    if args.output:
+        args.output.write_text(text + "\n", encoding="utf-8")
+    print(text)
+    raise SystemExit(0 if passed else 2)
+
+
 def _run_import_cad_command(args: argparse.Namespace) -> None:
     """Import a DWG/DXF drawing as a governed document (Charter §14).
 
@@ -680,6 +817,44 @@ def main(argv: list[str] | None = None) -> None:
         )
         sub.add_argument("--output", type=Path, default=None, help="Optional JSON report path")
 
+    validate_parser = subparsers.add_parser(
+        "validate",
+        help="Validate a stored document and print the canonical result (read-only)",
+    )
+    _add_database_argument(validate_parser)
+    validate_parser.add_argument("document_id", help="Document id to validate")
+    validate_parser.add_argument(
+        "--as-of",
+        default="",
+        help="Explicit evaluation time for waiver expiry, e.g. 2026-09-19T12:00:00Z",
+    )
+    validate_parser.add_argument(
+        "--audit",
+        action="store_true",
+        help="Record a read/tool evidence event referencing the result hash",
+    )
+    validate_parser.add_argument("--summary", action="store_true", help="Counts and issues only")
+    validate_parser.add_argument("--output", type=Path, default=None, help="Optional JSON path")
+
+    readiness_parser = subparsers.add_parser(
+        "release-readiness",
+        help=(
+            "Assess release readiness (eligible/not_eligible evidence; never an approval)"
+        ),
+    )
+    _add_database_argument(readiness_parser)
+    readiness_parser.add_argument("document_id", help="Document id to assess")
+    readiness_parser.add_argument("--as-of", default="", help="Explicit evaluation time")
+    readiness_parser.add_argument(
+        "--audit",
+        action="store_true",
+        help="Record a read/tool evidence event referencing the readiness hash",
+    )
+    readiness_parser.add_argument(
+        "--summary", action="store_true", help="State and reasons only"
+    )
+    readiness_parser.add_argument("--output", type=Path, default=None, help="Optional JSON path")
+
     import_cad_parser = subparsers.add_parser(
         "import-cad",
         help=(
@@ -791,6 +966,8 @@ def main(argv: list[str] | None = None) -> None:
         _run_project_index_command(args)
     elif args.command == "drafting":
         _run_drafting_command(args)
+    elif args.command in {"validate", "release-readiness"}:
+        _run_validation_command(args)
     elif args.command == "import-cad":
         _run_import_cad_command(args)
     elif args.command == "quality-harness":

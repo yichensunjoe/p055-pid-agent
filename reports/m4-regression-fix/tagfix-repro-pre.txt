@@ -1,0 +1,19 @@
+=== distinct tags (tags=('HV-101', 'HV-102')) ===
+  symbol v1: label='' properties.tag='HV-101'
+  text   v1__label: text='HV-101' role='symbol_label' parent='v1'
+  symbol v2: label='' properties.tag='HV-102'
+  text   v2__label: text='HV-102' role='symbol_label' parent='v2'
+  engineering-report.SYMBOL_REQUIRED_PORT_UNCONNECTED ['v1'] :: v1 的端口 入口 未连接。
+  engineering-report.SYMBOL_REQUIRED_PORT_UNCONNECTED ['v2'] :: v2 的端口 出口 未连接。
+  engineering-report.TAG_MISSING ['v1'] :: 符号 v1 缺少位号。
+  engineering-report.TAG_MISSING ['v2'] :: 符号 v2 缺少位号。
+=== duplicate tags (tags=('HV-101', 'HV-101')) ===
+  symbol v1: label='' properties.tag='HV-101'
+  text   v1__label: text='HV-101' role='symbol_label' parent='v1'
+  symbol v2: label='' properties.tag='HV-101'
+  text   v2__label: text='HV-101' role='symbol_label' parent='v2'
+  engineering-graph.IR_DUPLICATE_IDENTITY [] :: 位号 HV-101 被 2 个对象重复使用。
+  engineering-report.SYMBOL_REQUIRED_PORT_UNCONNECTED ['v1'] :: v1 的端口 入口 未连接。
+  engineering-report.SYMBOL_REQUIRED_PORT_UNCONNECTED ['v2'] :: v2 的端口 出口 未连接。
+  engineering-report.TAG_MISSING ['v1'] :: 符号 v1 缺少位号。
+  engineering-report.TAG_MISSING ['v2'] :: 符号 v2 缺少位号。

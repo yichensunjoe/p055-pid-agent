@@ -1,0 +1,3 @@
+/Users/joe/ai/reasonix/projects/active/P055-PID-Agent/backend/agentcad/semantic_diff_models.py:55: UserWarning: Field name "schema" in "SemanticDiffReport" shadows an attribute in parent "StrictModel"
+  class SemanticDiffReport(StrictModel):
+m4_validation_semantics_invariance: ok

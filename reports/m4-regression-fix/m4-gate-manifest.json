@@ -1,0 +1,58 @@
+{
+  "declaration_finding_count": 0,
+  "declaration_findings": [],
+  "exactly_invariant": [
+    {
+      "fixture_id": "colliding_pair",
+      "polished": false,
+      "reasons": [],
+      "unexpected": []
+    },
+    {
+      "fixture_id": "empty_drawing",
+      "polished": false,
+      "reasons": [],
+      "unexpected": []
+    }
+  ],
+  "expected_corrected_delta": [
+    {
+      "fixture_id": "clean_pair",
+      "polished": true,
+      "reasons": [
+        "TAG_MISSING 消失：['v1'] 现在能解析到位号（来源 ['properties.tag']）",
+        "TAG_MISSING 消失：['v2'] 现在能解析到位号（来源 ['properties.tag']）",
+        "SYMBOL_REQUIRED_PORT_UNCONNECTED 展示名改用解析位号（engineering-report|engineering-report.SYMBOL_REQUIRED_PORT_UNCONNECTED|SYMBOL_REQUIRED_PORT_UNCONNECTED|v1）",
+        "SYMBOL_REQUIRED_PORT_UNCONNECTED 展示名改用解析位号（engineering-report|engineering-report.SYMBOL_REQUIRED_PORT_UNCONNECTED|SYMBOL_REQUIRED_PORT_UNCONNECTED|v2）"
+      ],
+      "unexpected": []
+    },
+    {
+      "fixture_id": "dangling_endpoint",
+      "polished": true,
+      "reasons": [
+        "TAG_MISSING 消失：['v1'] 现在能解析到位号（来源 ['properties.tag']）",
+        "TAG_MISSING 消失：['v2'] 现在能解析到位号（来源 ['properties.tag']）",
+        "SYMBOL_REQUIRED_PORT_UNCONNECTED 展示名改用解析位号（engineering-report|engineering-report.SYMBOL_REQUIRED_PORT_UNCONNECTED|SYMBOL_REQUIRED_PORT_UNCONNECTED|v1）",
+        "SYMBOL_REQUIRED_PORT_UNCONNECTED 展示名改用解析位号（engineering-report|engineering-report.SYMBOL_REQUIRED_PORT_UNCONNECTED|SYMBOL_REQUIRED_PORT_UNCONNECTED|v2）"
+      ],
+      "unexpected": []
+    },
+    {
+      "fixture_id": "duplicate_tags",
+      "polished": true,
+      "reasons": [
+        "TAG_MISSING 消失：['v1'] 现在能解析到位号（来源 ['properties.tag']）",
+        "TAG_MISSING 消失：['v2'] 现在能解析到位号（来源 ['properties.tag']）",
+        "TAG_DUPLICATE 新增：['v1', 'v2'] 解析出同一个位号 'HV-101'",
+        "SYMBOL_REQUIRED_PORT_UNCONNECTED 展示名改用解析位号（engineering-report|engineering-report.SYMBOL_REQUIRED_PORT_UNCONNECTED|SYMBOL_REQUIRED_PORT_UNCONNECTED|v1）",
+        "SYMBOL_REQUIRED_PORT_UNCONNECTED 展示名改用解析位号（engineering-report|engineering-report.SYMBOL_REQUIRED_PORT_UNCONNECTED|SYMBOL_REQUIRED_PORT_UNCONNECTED|v2）"
+      ],
+      "unexpected": []
+    }
+  ],
+  "gate": "m4_validation_semantics_invariance",
+  "m4_accepted_sha": "ecedc00ae3063a4043334bd30367008d00665a29",
+  "ok": true,
+  "unexpected_delta": []
+}

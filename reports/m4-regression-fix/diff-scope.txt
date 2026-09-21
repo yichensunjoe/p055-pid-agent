@@ -1,0 +1,62 @@
+# git diff --stat f6738fc..0600ee7  (M5 start HEAD -> M4 regression-fix SHA)
+ .github/workflows/ci.yml                           |   84 +
+ .gitignore                                         |    3 +
+ HANDOFF.md                                         |   27 +-
+ README.md                                          |    4 +
+ REUSE_AND_PITFALL_LOG.md                           |   24 +
+ backend/agentcad/api_repair.py                     |  154 +
+ backend/agentcad/audit_models.py                   |    6 +
+ backend/agentcad/cli.py                            |  527 +-
+ backend/agentcad/engineering_reports.py            |   19 +-
+ .../frozen/m4-validation-semantics-ecedc00.json    |  739 +++
+ backend/agentcad/m4_invariance.py                  |  740 +++
+ backend/agentcad/main.py                           |    2 +
+ backend/agentcad/mcp_server.py                     |  103 +
+ backend/agentcad/quality_harness.py                |  258 +
+ backend/agentcad/repair_benchmark.py               |  922 +++
+ backend/agentcad/repair_benchmark_runner.py        |  431 ++
+ backend/agentcad/repair_evidence.py                |  563 ++
+ backend/agentcad/repair_model_planner.py           |  407 ++
+ backend/agentcad/repair_models.py                  |  474 ++
+ backend/agentcad/repair_oracle.py                  |  459 ++
+ backend/agentcad/repair_orchestrator.py            | 1098 ++++
+ backend/agentcad/repair_planner.py                 | 1344 ++++
+ backend/agentcad/repair_qualification.py           |  213 +
+ backend/agentcad/repair_safety.py                  |  872 +++
+ backend/agentcad/repair_scale.py                   |  661 ++
+ backend/agentcad/repair_scope.py                   |  447 ++
+ backend/agentcad/surface_contract.py               |   39 +
+ backend/agentcad/tag_resolver.py                   |  136 +
+ backend/agentcad/tool_registry.py                  |   48 +
+ backend/tests/test_m4_invariance.py                |  213 +
+ backend/tests/test_quality_harness.py              |    5 +-
+ backend/tests/test_repair_contract.py              |  628 ++
+ backend/tests/test_repair_model_planner.py         |  414 ++
+ backend/tests/test_repair_safety.py                |  126 +
+ backend/tests/test_repair_scale.py                 |  169 +
+ backend/tests/test_repair_surfaces.py              |  356 +
+ backend/tests/test_tag_resolver.py                 |  342 +
+ docs/continuous-integration.md                     |   26 +-
+ docs/m5-agent-self-repair.md                       |  197 +
+ reports/m5/repair-benchmark-acceptance.json        | 6891 ++++++++++++++++++++
+ reports/m5/repair-benchmark-summary.json           |   85 +
+ reports/m5/repair-qualification.json               |   28 +
+ reports/m5/repair-scale-real.json                  |  226 +
+ reports/m5/repair-scale-synthetic.json             |  130 +
+ scripts/m4_semantics_manifest.py                   |   64 +
+ 45 files changed, 20684 insertions(+), 20 deletions(-)
+
+# git show --stat 0600ee7 (the regression fix alone)
+0600ee7 fix(m4): resolve canonical tags after annotation polish
+ backend/agentcad/engineering_reports.py            |  19 +-
+ .../frozen/m4-validation-semantics-ecedc00.json    |  99 +++++-
+ backend/agentcad/m4_invariance.py                  | 354 ++++++++++++++++++++-
+ backend/agentcad/tag_resolver.py                   | 136 ++++++++
+ backend/tests/test_m4_invariance.py                | 123 +++++++
+ backend/tests/test_tag_resolver.py                 | 342 ++++++++++++++++++++
+ 6 files changed, 1049 insertions(+), 24 deletions(-)
+
+# git show --stat 97a438e (safety fixtures re-staged on real findings)
+97a438e fix: stage the safety fixtures on real findings, not on the tag rule's bug
+ backend/agentcad/repair_safety.py | 66 ++++++++++++++++++++++++++++++++++-----
+ 1 file changed, 59 insertions(+), 7 deletions(-)

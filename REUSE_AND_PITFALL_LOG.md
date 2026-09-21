@@ -1,5 +1,11 @@
 # REUSE_AND_PITFALL_LOG — P055-PID-Agent
 
+## 2026-09-21 · 浏览器套件的“端口覆盖”只做了一半，于是别人的 checkout 变成了被测系统的缺陷（P055-PID-Agent）
+
+- 场景：本机 8000 端口被另一个 checkout 的后端占着（`GET /health` 返回 `P&ID-Agent 2.1.0-alpha.1`）。local-mode 的 `playwright.config.ts` 早就支持 `PID_AGENT_E2E_API_PORT` / `PID_AGENT_E2E_PREVIEW_PORT`，但 `playwright.shared.config.ts` 硬编码 8000/4173（于是 shared 套件直接拒绝启动），而 `e2e/security.shared.spec.ts` 又把 API root 写成常量 `http://127.0.0.1:8000/api/v2`——就算端口改成功，直连 API 的断言也会打到**另一个 checkout 的后端**上。
+- 结论做法：把两个 config 都接到同一组端口变量，并让 preview 的 proxy 指向本次 run 真正启动的端口（`PID_AGENT_API_TARGET`）。`security.shared.spec.ts` 也读同一个变量，否则“浏览器走的服务”和“断言走的服务”会是两台。默认值不变，CI 行为不变。
+- 关键经验：**一个“可配置端口”只要有一处漏读，整套安全测试的结论就无效**——而且失效方向最糟：拿到的是环境错误，报出来的是“shared 部署有安全漏洞”。凡是端口/地址类配置，要在同一个 PR 里检查 config、spec、proxy、mock 四处是否都走同一个源。
+
 ## 2026-09-21 · 一个 TransactionRequest 只能带 1000 个 operation，而 annotation polish 会给每个带 label 的 symbol 再补 2 个（P055-PID-Agent）
 
 - 场景：M5 scale track 要一张几百元素的合成大图，于是把整张图当作**一个**治理事务提交（“一次逻辑变更”，与 CAD 导入的口径一致）。结果：`annotation polish failed for document doc_…: List should have at most 1000 items after validation, not 1023`。那条日志只是 warning，于是真正浮上来的错误是后面的 `assessment invalid`——看起来像校验器拒绝了我的图纸，实际是布景阶段就崩了。

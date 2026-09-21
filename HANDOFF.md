@@ -2,7 +2,16 @@
 
 > 交接文档：每次开新会话先读本文件。更新规则见 `AGENTS.md`「HANDOFF 交接规则」。
 
-## 当前状态（2026-09-21，最新轮次：**M5 candidate，待远端 final Release Gate**）
+## 当前状态（2026-09-21 R2，最新轮次：**M5 candidate R2（M4 tag 修复后重跑），待远端 final Release Gate**）
+
+- **本轮候选 = `68fccb3876934d690c0a8466821a6b24077a6818`**（`68fccb3`）。它**取代**上一轮的 `675af46`，理由：`675af46` 之后发现 M4 tag 规则读的是被 production polish 清空的字段（`0600ee7` 修），这使 `TAG_MISSING` / `TAG_DUPLICATE` 在 operator 目录里根本不存在——F1 只测到 line identity，而报告却称覆盖六个 family。`68fccb3` 补上两个 mutation（19 operator / 14 code）并加了一条对 `MUTATIONS` 全表参数化的守卫测试。
+- **本轮实测（候选 `68fccb3`）**：`ruff check backend` ✓；`pytest -q` **785 passed**；quality harness **9/9**；acceptance **72/72**，S@1 **0.8333** / S@5 **1.0**，六 family S@5 各 1.0，safety **13/13**，governance violations 0，`evidence_verified: true`（`benchmark_result_hash = 8b657b3f…`，`spec_fingerprint = a69369c7…`，`generator_fingerprint = 13cc1254…`）；大图真实 **5/5** / 合成 **5/5**；前端 `npm test` **144 passed**、`npm run build` ✓、Playwright **52 passed / 1 skipped**、shared **2 passed**、`test:e2e:secrets` ✓；`repair-qualification` 退出码 **3**（`awaiting_real_model_qualification`）。
+- **S@1 = 0.8333 的来源已查清**：F1–F5 各 12/12 一次成功，F6 **0/12**（故障注入要求第 2/3/5 次），因此缺口 100% 是 F6 的设计。已在 R2 报告 §3 提请远端裁定 F6 的 S@k 语义。
+- **RSS 口径更正**：`10-` 报告写真实图“峰值 RSS ≈ 140 MB”，本轮同命令实测 **694–870 MB**（合成图 158–189 MB），140 MB 无法复现，以本轮为准。
+- **报告**：`.freebuff/remote-bridge/11-M5-acceptance-report-r2.md`（取代 `10-` 的数字）；机器可读证据 `reports/m5/` 已按本轮候选全部重写。
+- **未推送**：本地有 4 个未推送提交（`0600ee7`、`97a438e`、`68fccb3`、`ed5d399`），等远端批准；push 后按上一轮顺序补 CI run id。
+
+## 上一轮状态（M5 candidate @ `675af46`，数字已被 R2 取代）
 
 - **M5 开工基线**：远端 `REMOTE_BASELINE_2026-09-20_M5_START.md`，**`M5 start HEAD = f6738fc9a39573bb494b4e2c384ad79504bd7f6c`**（= M4 accepted HEAD 的记账提交，本地 HEAD 与之一致）。远端已给“连续执行 + 满足条件后 push”预授权。
 - **M5 是什么**：Agent Self-Repair。一个 planner 契约、一个 orchestrator、一个 success oracle，两条轨道：Track D（deterministic，离线，CI 硬门）与 Track M（真实模型，release 证据）。实现落在 `backend/agentcad/repair_*.py`（15 个模块）与 `backend/agentcad/m4_invariance.py`。

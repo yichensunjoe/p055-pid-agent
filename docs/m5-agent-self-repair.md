@@ -110,6 +110,22 @@ planner 拿到的是 `RepairContext`：**当前**图纸、canonical findings、�
 | F5 local collision / drafting region | `NODE_OVERLAP` / `PIPE_THROUGH_EQUIPMENT` / `SYMBOL_OUT_OF_BOUNDS` | 禁止全图 re-layout |
 | F6 replan / conflict robustness | 上述 family 的 case + 确定性注入的失败 | 2/3/5 attempts 收敛；不建第二套 validator 真相 |
 
+**这张表是 family 的“职责范围”，不是“benchmark 能制造的缺陷”。** 两者今天不相等，差距必须写在明处
+（`f1_symbol_tag_missing` / `f1_symbol_tag_duplicate` 就是因为这个差距被补上的：规则修好之前，
+F1 表里写着 `TAG_MISSING`/`TAG_DUPLICATE`，但目录里没有任何 operator 能制造它们）：
+
+- **目录能制造（19 operator / 14 code，acceptance 里出现 13 个非空 code）**：上表 F1–F5 中
+  `LINE_TAG_MISSING`、`LINE_MEDIUM_MISSING`、`LINE_DIAMETER_MISSING`、`TAG_MISSING`、`TAG_DUPLICATE`、
+  `CONNECTOR_ENDPOINT_DANGLING`、`SYMBOL_REQUIRED_PORT_UNCONNECTED`、`MICRO_SEGMENT`、
+  `UNNECESSARY_BEND`、`PORT_EXIT_MISMATCH`、`NODE_OVERLAP`、`PIPE_THROUGH_EQUIPMENT`、`SYMBOL_OUT_OF_BOUNDS`。
+- **有修复策略、但**没有** operator（即“能修，但今天无法被这个 benchmark 考到”）**：
+  `DUPLICATE_LABEL`、`ANNOTATION_OVERLAP`、`UNBRIDGED_CROSSING`、`PORT_DIRECTION_MISMATCH`、
+  `CONNECTOR_ENDPOINT_PORT_MISSING`、`CONNECTOR_ENDPOINT_POINT_MISMATCH`、`SYMBOL_DEFINITION_MISSING`。
+  它们在 `repair_planner.py` 里有策略、在冻结的 rule catalog 与 severity 映射里是正式规则，
+  所以只要补上 governed mutation（并用 `test_every_registered_operator_stages_the_finding_it_advertises`
+  同款端到端断言绑定），就能进 case 集；在此之前，任何“F1/F2/F4/F5 覆盖了这些 code”的说法都是错的。
+- **上表出现但既无 operator 也无策略**的 entry finding，只表示该 family 的入口语义，不代表被测量。
+
 数量（`§B3`）：
 
 - **dev suite**：24 case，每 family 4，公开固定 seed，只用于开发与快速回归，**不作为最终数字**；

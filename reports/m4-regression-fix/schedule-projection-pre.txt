@@ -1,0 +1,9 @@
+=== the drawing as the product wrote it ===
+  symbol i1: label='' properties.tag='PT-101'
+  text   i1__label: 'PT-101'
+  symbol v1: label='' properties.tag='HV-101'
+  text   v1__label: 'HV-101'
+
+=== schedule projection ===
+  equipment: {"category": "阀门", "connected_port_count": 1, "element_id": "v1", "layer_id": "layer_default", "layer_name": "Default", "name": "", "properties": {"tag": "HV-101"}, "required_port_count": 2, "symbol_key": "ball_valve", "symbol_name": "球阀", "system_id": "system_default", "system_name": "Default", "tag": ""}
+  instruments: {"category": "仪表", "connected_port_count": 1, "element_id": "i1", "layer_id": "layer_default", "layer_name": "Default", "name": "", "properties": {"tag": "PT-101"}, "required_port_count": 1, "symbol_key": "pressure_indicator", "symbol_name": "压力指示仪", "system_id": "system_default", "system_name": "Default", "tag": ""}

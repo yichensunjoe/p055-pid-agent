@@ -96,7 +96,22 @@
         "engineering-graph",
         "engineering-report"
       ],
-      "validators_skipped": []
+      "validators_skipped": [],
+      "polished": true,
+      "messages": {
+        "engineering-report|engineering-report.SYMBOL_REQUIRED_PORT_UNCONNECTED|SYMBOL_REQUIRED_PORT_UNCONNECTED|v1": [
+          "v1 的端口 入口 未连接。"
+        ],
+        "engineering-report|engineering-report.SYMBOL_REQUIRED_PORT_UNCONNECTED|SYMBOL_REQUIRED_PORT_UNCONNECTED|v2": [
+          "v2 的端口 出口 未连接。"
+        ],
+        "engineering-report|engineering-report.TAG_MISSING|TAG_MISSING|v1": [
+          "符号 v1 缺少位号。"
+        ],
+        "engineering-report|engineering-report.TAG_MISSING|TAG_MISSING|v2": [
+          "符号 v2 缺少位号。"
+        ]
+      }
     },
     {
       "fixture_id": "duplicate_tags",
@@ -159,7 +174,25 @@
         "engineering-graph",
         "engineering-report"
       ],
-      "validators_skipped": []
+      "validators_skipped": [],
+      "polished": true,
+      "messages": {
+        "engineering-graph|engineering-graph.IR_DUPLICATE_IDENTITY|IR_DUPLICATE_IDENTITY|vl_47f17d4dbb69|vl_5e0da2ae903d": [
+          "位号 HV-101 被 2 个对象重复使用。"
+        ],
+        "engineering-report|engineering-report.SYMBOL_REQUIRED_PORT_UNCONNECTED|SYMBOL_REQUIRED_PORT_UNCONNECTED|v1": [
+          "v1 的端口 入口 未连接。"
+        ],
+        "engineering-report|engineering-report.SYMBOL_REQUIRED_PORT_UNCONNECTED|SYMBOL_REQUIRED_PORT_UNCONNECTED|v2": [
+          "v2 的端口 出口 未连接。"
+        ],
+        "engineering-report|engineering-report.TAG_MISSING|TAG_MISSING|v1": [
+          "符号 v1 缺少位号。"
+        ],
+        "engineering-report|engineering-report.TAG_MISSING|TAG_MISSING|v2": [
+          "符号 v2 缺少位号。"
+        ]
+      }
     },
     {
       "fixture_id": "dangling_endpoint",
@@ -251,7 +284,35 @@
         "engineering-graph",
         "engineering-report"
       ],
-      "validators_skipped": []
+      "validators_skipped": [],
+      "polished": true,
+      "messages": {
+        "diagram-quality|diagram-quality.PIPE_THROUGH_EQUIPMENT|PIPE_THROUGH_EQUIPMENT|p1": [
+          "connector p1 passes through equipment or another node"
+        ],
+        "diagram-quality|diagram-quality.QUALITY_SCORE_BELOW_TARGET|QUALITY_SCORE_BELOW_TARGET": [
+          "diagram drafting-quality score 90 is below the required 95"
+        ],
+        "engineering-graph|engineering-graph.IR_ISOLATED_OBJECT|IR_ISOLATED_OBJECT|v2|vl_5e0da2ae903d": [
+          "vl_5e0da2ae903d 未与任何管线相连。"
+        ],
+        "engineering-report|engineering-report.CONNECTOR_ENDPOINT_DANGLING|CONNECTOR_ENDPOINT_DANGLING|p1": [
+          "管线 L-1 的 target 端未绑定设备或连接节点。"
+        ],
+        "engineering-report|engineering-report.SYMBOL_REQUIRED_PORT_UNCONNECTED|SYMBOL_REQUIRED_PORT_UNCONNECTED|v1": [
+          "v1 的端口 入口 未连接。"
+        ],
+        "engineering-report|engineering-report.SYMBOL_REQUIRED_PORT_UNCONNECTED|SYMBOL_REQUIRED_PORT_UNCONNECTED|v2": [
+          "v2 的端口 入口 未连接。",
+          "v2 的端口 出口 未连接。"
+        ],
+        "engineering-report|engineering-report.TAG_MISSING|TAG_MISSING|v1": [
+          "符号 v1 缺少位号。"
+        ],
+        "engineering-report|engineering-report.TAG_MISSING|TAG_MISSING|v2": [
+          "符号 v2 缺少位号。"
+        ]
+      }
     },
     {
       "fixture_id": "colliding_pair",
@@ -334,7 +395,33 @@
         "engineering-graph",
         "engineering-report"
       ],
-      "validators_skipped": []
+      "validators_skipped": [],
+      "polished": false,
+      "messages": {
+        "diagram-quality|diagram-quality.ANNOTATION_OVERLAP|ANNOTATION_OVERLAP": [
+          "annotation text overlaps another label, symbol, or connector"
+        ],
+        "diagram-quality|diagram-quality.NODE_OVERLAP|NODE_OVERLAP|v1|v2": [
+          "symbols/nodes overlap: v1, v2"
+        ],
+        "diagram-quality|diagram-quality.QUALITY_SCORE_BELOW_TARGET|QUALITY_SCORE_BELOW_TARGET": [
+          "diagram drafting-quality score 82 is below the required 95"
+        ],
+        "engineering-graph|engineering-graph.IR_ISOLATED_OBJECT|IR_ISOLATED_OBJECT|v1|vl_47f17d4dbb69": [
+          "HV-101 未与任何管线相连。"
+        ],
+        "engineering-graph|engineering-graph.IR_ISOLATED_OBJECT|IR_ISOLATED_OBJECT|v2|vl_5e0da2ae903d": [
+          "HV-102 未与任何管线相连。"
+        ],
+        "engineering-report|engineering-report.SYMBOL_REQUIRED_PORT_UNCONNECTED|SYMBOL_REQUIRED_PORT_UNCONNECTED|v1": [
+          "HV-101 的端口 入口 未连接。",
+          "HV-101 的端口 出口 未连接。"
+        ],
+        "engineering-report|engineering-report.SYMBOL_REQUIRED_PORT_UNCONNECTED|SYMBOL_REQUIRED_PORT_UNCONNECTED|v2": [
+          "HV-102 的端口 入口 未连接。",
+          "HV-102 的端口 出口 未连接。"
+        ]
+      }
     },
     {
       "fixture_id": "empty_drawing",
@@ -345,7 +432,9 @@
         "engineering-graph",
         "engineering-report"
       ],
-      "validators_skipped": []
+      "validators_skipped": [],
+      "polished": false,
+      "messages": {}
     }
   ],
   "m4_accepted_sha": "ecedc00ae3063a4043334bd30367008d00665a29",

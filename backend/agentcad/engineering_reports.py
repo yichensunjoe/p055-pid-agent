@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .exporting import visible_elements
 from .models import ConnectorElement, Document, Element, Point, SymbolElement
 from .symbols import SymbolRegistry
+from .tag_resolver import resolve_symbol_tag
 
 ReportScope = Literal["visible", "all"]
 RuleSeverity = Literal["info", "warning", "error"]
@@ -228,16 +229,24 @@ def _rule_findings(
     connectors = [element for element in selected if element.type == "connector"]
     all_elements = {element.id: element for element in document.elements}
 
+    # The tag is read through ``resolve_symbol_tag`` rather than off ``symbol.label``,
+    # because the production polish moves a symbol's fixed label into an editable
+    # annotation and clears the field. Reading the raw field made every symbol on a
+    # freshly drafted drawing look untagged, and made a duplicate tag unrepresentable.
+    # Comparison (``casefold``), trimming and finding granularity are unchanged; only
+    # the source of the tag text moved.
     tags: dict[str, list[SymbolElement]] = defaultdict(list)
+    resolved: dict[str, str] = {}
     for symbol in symbols:
-        tag = symbol.label.strip()
+        tag = resolve_symbol_tag(document, symbol)
+        resolved[symbol.id] = tag
         if not tag:
             findings.append(_finding("warning", "TAG_MISSING", f"符号 {symbol.id} 缺少位号。", [symbol.id], symbol_key=symbol.symbol_key))
         else:
             tags[tag.casefold()].append(symbol)
     for duplicate in tags.values():
         if len(duplicate) > 1:
-            tag = duplicate[0].label.strip()
+            tag = resolved[duplicate[0].id]
             findings.append(_finding("error", "TAG_DUPLICATE", f"位号 {tag} 被 {len(duplicate)} 个符号重复使用。", [symbol.id for symbol in duplicate], tag=tag))
 
     for symbol in symbols:
@@ -248,7 +257,11 @@ def _rule_findings(
             continue
         for port in definition.ports:
             if port.direction != "none" and not connections.get((symbol.id, port.id)):
-                findings.append(_finding("warning", "SYMBOL_REQUIRED_PORT_UNCONNECTED", f"{symbol.label.strip() or symbol.id} 的端口 {port.name} 未连接。", [symbol.id], port_id=port.id, port_name=port.name, direction=port.direction))
+                # Display name only: the trigger (``port.direction`` and the connection
+                # map) and the locators are untouched, so the finding fires exactly when
+                # it always did and only the symbol it names in prose got more accurate.
+                display = resolved.get(symbol.id) or symbol.id
+                findings.append(_finding("warning", "SYMBOL_REQUIRED_PORT_UNCONNECTED", f"{display} 的端口 {port.name} 未连接。", [symbol.id], port_id=port.id, port_name=port.name, direction=port.direction))
 
     for connector in connectors:
         display = connector.process_tag.strip() or connector.id

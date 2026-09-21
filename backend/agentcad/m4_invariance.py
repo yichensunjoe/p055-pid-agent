@@ -25,13 +25,14 @@ freeze the baseline, which would be impossible if it depended on anything M5 int
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from .models import (
     AddElementOperation,
     CreateDocumentRequest,
+    Document,
     Point,
     SymbolElement,
     TransactionRequest,
@@ -176,13 +177,58 @@ def _empty(service: DocumentService, registry: SymbolRegistry, document_id: str)
     return None
 
 
-FIXTURES: tuple[tuple[str, str, Any], ...] = (
-    ("clean_pair", "two tagged valves joined by a line", _two_valves),
-    ("duplicate_tags", "two valves sharing one tag", _untagged_pair),
-    ("dangling_endpoint", "a line whose target endpoint was cleared", _dangling_endpoint),
-    ("colliding_pair", "two overlapping valves", _colliding_pair),
-    ("empty_drawing", "no elements at all", _empty),
+#: ``polished`` records whether the fixture's drawing is produced by a full-diagram
+#: transaction, i.e. whether the production annotation polish ran on it. It is not decoration:
+#: the tag-resolution fix may only move conclusions on drawings the polish touched, so the gate
+#: asserts exact invariance for every fixture whose ``polished`` is ``False``.
+FIXTURES: tuple[tuple[str, str, Any, bool], ...] = (
+    ("clean_pair", "two tagged valves joined by a line", _two_valves, True),
+    ("duplicate_tags", "two valves sharing one tag", _untagged_pair, True),
+    ("dangling_endpoint", "a line whose target endpoint was cleared", _dangling_endpoint, True),
+    # Staged with a low-level write rather than the semantic compiler, so no polish runs and
+    # the legacy ``symbol.label`` field survives: this corpus must not move at all.
+    ("colliding_pair", "two overlapping valves", _colliding_pair, False),
+    ("empty_drawing", "no elements at all", _empty, False),
 )
+
+
+def issue_key(issue: Any) -> str:
+    """The identity of one conclusion: what fired, on what, and where.
+
+    Rule *identity* rather than code, because a code emitted by the wrong validator is a
+    different conclusion. Message text is deliberately not part of the key — it is compared
+    separately, and only where the allowlist says a message may legitimately change.
+    """
+
+    return "|".join(
+        [
+            issue.validator_id,
+            issue.rule_id,
+            issue.code,
+            *sorted(issue.element_ids),
+            *sorted(issue.object_ids),
+        ]
+    )
+
+
+def tag_sources(document: Document) -> dict[str, dict[str, str]]:
+    """Resolved tag (and where it came from) per symbol.
+
+    Recorded so the gate can *justify* a tag delta instead of assuming one: a disappearing
+    ``TAG_MISSING`` is only the expected correction when the symbol it names really does resolve
+    a tag, and a new ``TAG_DUPLICATE`` is only expected when the symbols it names really do share
+    one. Otherwise the delta is unexplained, and unexplained is what the gate is for.
+    """
+
+    from .tag_resolver import describe_symbol_tag
+
+    sources: dict[str, dict[str, str]] = {}
+    for element in document.elements:
+        if element.type != "symbol":
+            continue
+        described = describe_symbol_tag(document, element)
+        sources[element.id] = {"tag": described.tag, "source": described.source}
+    return sources
 
 
 def fixture_projection(service: DocumentService, registry: SymbolRegistry) -> list[dict[str, Any]]:
@@ -191,18 +237,26 @@ def fixture_projection(service: DocumentService, registry: SymbolRegistry) -> li
     Hashes, timestamps and document identity are deliberately out: they move with the machine,
     and the claim being frozen is about conclusions. Locators are kept, because "the same code on
     a different element" is a different conclusion.
+
+    Messages are kept too, keyed by finding identity. They are not decoration: one of the three
+    changes the tag-resolution fix is allowed to make is a *display name*, and a projection that
+    dropped messages could not tell that change apart from no change at all.
+
+    ``tag_source`` and ``polished`` are recorded for the same reason — they are what makes the
+    allowlist checkable rather than asserted. ``polished`` says whether the fixture's drawing
+    went through the production polish, which is the property that decides whether a conclusion
+    is *expected* to move.
     """
 
     profile = resolve_profile(built_in_profile())
     projection: list[dict[str, Any]] = []
-    for fixture_id, title, builder in FIXTURES:
+    for fixture_id, title, builder, polished in FIXTURES:
         document = service.create_document(
             CreateDocumentRequest(name=f"M4 invariance fixture: {fixture_id}")
         )
         builder(service, registry, document.id)
-        result = run_validation(
-            service.get_document(document.id), registry, profile, service=service
-        )
+        validated = service.get_document(document.id)
+        result = run_validation(validated, registry, profile, service=service)
         issues = sorted(
             {
                 (
@@ -216,14 +270,19 @@ def fixture_projection(service: DocumentService, registry: SymbolRegistry) -> li
                 for issue in result.issues
             }
         )
+        messages: dict[str, list[str]] = {}
+        for issue in result.issues:
+            messages.setdefault(issue_key(issue), []).append(issue.message)
         projection.append(
             {
                 "fixture_id": fixture_id,
                 "title": title,
+                "polished": polished,
                 "validators_run": sorted(result.validators_run),
                 "validators_skipped": sorted(
                     {record.validator_id for record in result.validators_skipped}
                 ),
+                "tag_source": tag_sources(validated),
                 "issues": [
                     {
                         "validator_id": validator_id,
@@ -235,6 +294,9 @@ def fixture_projection(service: DocumentService, registry: SymbolRegistry) -> li
                     }
                     for validator_id, rule_id, code, severity, element_ids, object_ids in issues
                 ],
+                "messages": {
+                    key: sorted(values) for key, values in sorted(messages.items())
+                },
             }
         )
     return projection
@@ -329,24 +391,57 @@ class InvarianceFinding:
 
 
 @dataclass(frozen=True)
+class FixtureDelta:
+    """One fixture's diff, sorted into the three buckets the baseline's §E2 allowlist names.
+
+    ``expected_corrected_delta`` is not a synonym for "a difference we tolerate". Every entry in
+    it carries a reason that a reviewer can check against the fixture (this symbol now resolves a
+    tag; these symbols now share one; only a display name moved), and any difference without such
+    a reason lands in ``unexpected_delta`` — where a non-empty list means the gate fails.
+    """
+
+    fixture_id: str
+    classification: str
+    polished: bool
+    reasons: list[str]
+    unexpected: list[str]
+
+
+@dataclass(frozen=True)
 class InvarianceReport:
     ok: bool
     frozen_sha: str
     findings: list[InvarianceFinding]
+    fixture_deltas: list[FixtureDelta] = field(default_factory=list)
 
     def codes(self) -> list[str]:
         return [finding.path for finding in self.findings]
+
+    def _bucket(self, classification: str) -> list[dict[str, Any]]:
+        return [
+            {
+                "fixture_id": delta.fixture_id,
+                "polished": delta.polished,
+                "reasons": delta.reasons,
+                "unexpected": delta.unexpected,
+            }
+            for delta in self.fixture_deltas
+            if delta.classification == classification
+        ]
 
     def payload(self) -> dict[str, Any]:
         return {
             "gate": "m4_validation_semantics_invariance",
             "ok": self.ok,
             "m4_accepted_sha": self.frozen_sha,
-            "finding_count": len(self.findings),
-            "findings": [
+            "declaration_finding_count": len(self.findings),
+            "declaration_findings": [
                 {"path": finding.path, "frozen": finding.frozen, "current": finding.current}
                 for finding in self.findings[:40]
             ],
+            "expected_corrected_delta": self._bucket("expected_corrected_delta"),
+            "exactly_invariant": self._bucket("exactly_invariant"),
+            "unexpected_delta": self._bucket("unexpected_delta"),
         }
 
 
@@ -390,16 +485,238 @@ def compare_manifests(frozen: dict[str, Any], current: dict[str, Any]) -> list[I
     return findings
 
 
+def compare_declarations(frozen: dict[str, Any], current: dict[str, Any]) -> list[InvarianceFinding]:
+    """Compare only the declarations, leaving the fixture corpus to the allowlist classifier.
+
+    The distinction matters. A declaration is a *promise about the rules* — which rules exist,
+    what severity they carry, which validators are required — and no correction to a tag
+    conclusion has any business changing one. A conclusion is an *observation about a drawing*,
+    and this fix's whole point is that one observation was wrong.
+    """
+
+    findings: list[InvarianceFinding] = []
+    for key in sorted(set(frozen) | set(current)):
+        if key == "fixture_projections":
+            continue
+        if key not in frozen:
+            findings.append(InvarianceFinding(key, None, current[key]))
+        elif key not in current:
+            findings.append(InvarianceFinding(key, frozen[key], None))
+        else:
+            _diff(key, frozen[key], current[key], findings)
+    return findings
+
+
+def _entry_key(entry: dict[str, Any]) -> str:
+    return "|".join(
+        [
+            entry["validator_id"],
+            entry["rule_id"],
+            entry["code"],
+            *sorted(entry["element_ids"]),
+            *sorted(entry["object_ids"]),
+        ]
+    )
+
+
+def _message_display_only(frozen_messages: list[str], current_messages: list[str]) -> bool:
+    """Whether two message sets differ only in the display name in front of the same prose.
+
+    The allowed shape is narrow on purpose: the tail from the first `` 的端口 `` on must be
+    identical, and the part before it must be the symbol id on the frozen side (that is what the
+    pre-fix code printed, because the label had been cleared) and non-empty on the current side.
+    A different port, a different sentence or a dropped message all fail.
+    """
+
+    if len(frozen_messages) != len(current_messages):
+        return False
+    separator = " 的端口 "
+    for before, after in zip(frozen_messages, current_messages, strict=True):
+        if before == after:
+            continue
+        if separator not in before or separator not in after:
+            return False
+        before_head, before_tail = before.split(separator, 1)
+        after_head, after_tail = after.split(separator, 1)
+        if before_tail != after_tail:
+            return False
+        if not after_head.strip():
+            return False
+        if before_head == after_head:
+            continue
+    return True
+
+
+def classify_fixture_delta(
+    frozen: dict[str, Any], current: dict[str, Any]
+) -> FixtureDelta:
+    """Sort one fixture's diff into expected / unexpected, with a checkable reason for each.
+
+    The allowlist is the one the release baseline fixes for this regression fix:
+
+    * a disappearing ``engineering-report.TAG_MISSING`` whose element now resolves a tag;
+    * a new ``engineering-report.TAG_DUPLICATE`` whose elements now resolve the same tag;
+    * a ``SYMBOL_REQUIRED_PORT_UNCONNECTED`` finding whose identity is unchanged and whose
+      message changed only by substituting the resolved tag for the element id.
+
+    Anything else — a different severity, a different locator, a different validator, a
+    changed validator run/skip set, a delta on a corpus that never went through the polish — is
+    unexpected, and a single unexpected delta fails the gate.
+    """
+
+    fixture_id = str(current.get("fixture_id", frozen.get("fixture_id", "?")))
+    polished = bool(current.get("polished", frozen.get("polished", False)))
+    reasons: list[str] = []
+    unexpected: list[str] = []
+
+    frozen_entries = {_entry_key(entry): entry for entry in frozen.get("issues", [])}
+    current_entries = {_entry_key(entry): entry for entry in current.get("issues", [])}
+
+    removed = [frozen_entries[key] for key in sorted(set(frozen_entries) - set(current_entries))]
+    added = [current_entries[key] for key in sorted(set(current_entries) - set(frozen_entries))]
+
+    sources: dict[str, dict[str, str]] = current.get("tag_source", {})
+
+    for entry in removed:
+        if entry["validator_id"] == "engineering-report" and entry["code"] == "TAG_MISSING":
+            unresolved = [
+                element_id
+                for element_id in entry["element_ids"]
+                if sources.get(element_id, {}).get("source", "none") == "none"
+            ]
+            if unresolved:
+                unexpected.append(
+                    f"removed TAG_MISSING on {entry['element_ids']} but {unresolved} resolve no tag"
+                )
+            else:
+                reasons.append(
+                    f"TAG_MISSING 消失：{entry['element_ids']} 现在能解析到位号"
+                    f"（来源 {[sources.get(i, {}).get('source') for i in entry['element_ids']]}）"
+                )
+        else:
+            unexpected.append(
+                f"removed {entry['validator_id']}.{entry['code']} on {entry['element_ids']}"
+            )
+
+    for entry in added:
+        if entry["validator_id"] == "engineering-report" and entry["code"] == "TAG_DUPLICATE":
+            tags = {sources.get(element_id, {}).get("tag", "") for element_id in entry["element_ids"]}
+            if len(tags) == 1 and "" not in tags:
+                reasons.append(
+                    f"TAG_DUPLICATE 新增：{entry['element_ids']} 解析出同一个位号 {sorted(tags)[0]!r}"
+                )
+            else:
+                unexpected.append(
+                    f"added TAG_DUPLICATE on {entry['element_ids']} but the resolved tags are {tags}"
+                )
+        else:
+            unexpected.append(
+                f"added {entry['validator_id']}.{entry['code']} on {entry['element_ids']}"
+            )
+
+    # A finding that exists on both sides must be *identical* on both sides. The key covers
+    # validator/rule/code/locators, so this comparison is what catches a severity that moved or
+    # any other field a future change might add — the allowlist is about which conclusions
+    # appear and disappear, never about one conclusion quietly changing shape.
+    for key in sorted(set(frozen_entries) & set(current_entries)):
+        if frozen_entries[key] != current_entries[key]:
+            unexpected.append(
+                f"finding changed shape: {frozen_entries[key]} -> {current_entries[key]}"
+            )
+
+    # Messages are compared only for findings that exist on *both* sides. A finding that was
+    # added or removed already had its message accounted for when the finding itself was judged,
+    # and counting it twice would turn every allowed correction into an unexplained one.
+    frozen_messages = frozen.get("messages", {})
+    current_messages = current.get("messages", {})
+    shared = set(frozen_entries) & set(current_entries)
+    for key in sorted(shared):
+        before = frozen_messages.get(key)
+        after = current_messages.get(key)
+        if before == after:
+            continue
+        if before is None or after is None:
+            unexpected.append(f"message projection missing on one side for {key!r}")
+            continue
+        entry = current_entries.get(key) or {}
+        if (
+            entry.get("validator_id") == "engineering-report"
+            and entry.get("code") == "SYMBOL_REQUIRED_PORT_UNCONNECTED"
+            and _message_display_only(before, after)
+        ):
+            reasons.append(f"SYMBOL_REQUIRED_PORT_UNCONNECTED 展示名改用解析位号（{key}）")
+        else:
+            unexpected.append(f"message changed for {key!r}: {before!r} -> {after!r}")
+
+    for field_name in ("validators_run", "validators_skipped"):
+        before = frozen.get(field_name, [])
+        after = current.get(field_name, [])
+        if before != after:
+            unexpected.append(f"{field_name} changed: {before} -> {after}")
+
+    # A corpus that never went through the polish kept its legacy label field, so the tag
+    # source never moved and nothing about it may change. Proving that is the point of keeping
+    # such a corpus in the set at all.
+    if not polished and (removed or added or reasons or unexpected):
+        unexpected.append("a corpus that never went through the production polish changed")
+        reasons = []
+
+    if unexpected:
+        classification = "unexpected_delta"
+    elif reasons:
+        classification = "expected_corrected_delta"
+    else:
+        classification = "exactly_invariant"
+    return FixtureDelta(
+        fixture_id=fixture_id,
+        classification=classification,
+        polished=polished,
+        reasons=reasons,
+        unexpected=unexpected,
+    )
+
+
 def run_gate(path: Path | None = None) -> InvarianceReport:
-    """Regenerate the manifest and compare it with the frozen one."""
+    """Regenerate the manifest, then apply the allowlist to what moved.
+
+    Declarations are compared strictly. Fixtures are classified, so the report can say which
+    corrections were *expected* and justified rather than only that something differs.
+    """
 
     frozen = load_frozen_manifest(path)
     current = build_manifest()
-    findings = compare_manifests(frozen, current)
+    findings = compare_declarations(frozen, current)
+
+    frozen_fixtures = {item["fixture_id"]: item for item in frozen.get("fixture_projections", [])}
+    current_fixtures = {item["fixture_id"]: item for item in current.get("fixture_projections", [])}
+    deltas: list[FixtureDelta] = []
+    for fixture_id in sorted(set(frozen_fixtures) | set(current_fixtures)):
+        if fixture_id not in frozen_fixtures or fixture_id not in current_fixtures:
+            deltas.append(
+                FixtureDelta(
+                    fixture_id=fixture_id,
+                    classification="unexpected_delta",
+                    polished=bool(
+                        current_fixtures.get(fixture_id, frozen_fixtures.get(fixture_id, {}))
+                        .get("polished", False)
+                    ),
+                    reasons=[],
+                    unexpected=["fixture appears in only one of the two manifests"],
+                )
+            )
+            continue
+        deltas.append(
+            classify_fixture_delta(frozen_fixtures[fixture_id], current_fixtures[fixture_id])
+        )
+
+    ok = not findings and not any(
+        delta.classification == "unexpected_delta" for delta in deltas
+    )
     return InvarianceReport(
-        ok=not findings,
+        ok=ok,
         frozen_sha=str(frozen.get("m4_accepted_sha", "")),
         findings=findings,
+        fixture_deltas=deltas,
     )
 
 
@@ -408,11 +725,16 @@ __all__ = [
     "FROZEN_MANIFEST",
     "M4_ACCEPTED_SHA",
     "MANIFEST_VERSION",
+    "FixtureDelta",
     "InvarianceFinding",
     "InvarianceReport",
     "build_manifest",
+    "classify_fixture_delta",
+    "compare_declarations",
     "compare_manifests",
     "fixture_projection",
+    "issue_key",
     "load_frozen_manifest",
     "run_gate",
+    "tag_sources",
 ]

@@ -33,6 +33,15 @@
   新 SHA 的树与 `12c2e87` **只差 `86eaedb` 那 12 行**（`git diff --stat 12c2e87 <new> = HANDOFF.md | 12 ---`），
   `86eaedb` 不在新 SHA 的 ancestry 里；它本身按远端要求继续隔离在本地分支 `backup-pre-m5-replay`（未推送）。
   三个指纹（`spec_fingerprint` / `core_corpus_fingerprint` / `coverage_fingerprint`）都未因这次重放而改变。
+  **push 结果：`origin/main = 30a43393…`**；`spec_fingerprint = c8520c5e…`、`core_corpus_fingerprint = c4fb71fb…`、
+  `coverage_fingerprint = c198eb77…` 三个值与远端记录一致，`repair-coverage` 的 `report_hash = f56c2c50…` 也一致。
+- **CI 第一轮红了，原因不是功能而是“冻结指纹被解释器绑定”（已修）**：CI `Backend · Python 3.11` 的
+  `test_extension_corpus_is_frozen` 断言失败：CI 算出 `073252f38b4a…`，本机（3.12）算出 `c198eb77…`。
+  根因：`coverage_manifest()` 把 `generator_fingerprint`（**CPython 字节码**摘要）也放进被哈希的 payload。
+  修法：新增 `coverage_corpus_digest()`（去掉 `ENVIRONMENT_DERIVED_KEYS` 后的 manifest 哈希，跨解释器恒定，
+  测试钉死它）并保留原 `coverage_fingerprint()` 原值发布、按解释器记进 `PUBLISHED_FINGERPRINTS_BY_INTERPRETER`。
+  另发现一条同类问题（已写进 `REUSE_AND_PITFALL_LOG.md`，未改代码）：`benchmark_result_hash` 的
+  volatile 逃逸口只作用于顶层，同一 SHA 两次运行的哈希不同（细节待远端裁决）。
 - **M5 spec v2 的判据记录不在本文件里，在 `docs/m5-agent-self-repair.md`**（`9d53b69` 已 push）：
   `S@1…S@4` 只发布不作硬门，硬门是 `attempt_contract` 与 `f6_s5_overall`；`BENCHMARK_SPEC_VERSION = 2`。
 

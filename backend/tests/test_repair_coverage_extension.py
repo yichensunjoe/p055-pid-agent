@@ -12,6 +12,7 @@ believed:
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -27,12 +28,14 @@ from agentcad.repair_benchmark import (
 from agentcad.repair_benchmark_runner import BenchmarkContext
 from agentcad.repair_coverage_extension import (
     COVERAGE_ENTRIES,
+    ENVIRONMENT_DERIVED_KEYS,
     EXTENSION_CORPUS_ID,
     EXTENSION_CORPUS_VERSION,
     EXTENSION_MUTATIONS,
     UNREACHABLE_ENTRIES,
     Manifestation,
     classify_row,
+    coverage_corpus_digest,
     coverage_fingerprint,
     coverage_manifest,
     extension_cases,
@@ -49,9 +52,22 @@ from agentcad.store import SQLiteDocumentStore
 from agentcad.symbols import SymbolRegistry
 from agentcad.validation_profile import built_in_profile, resolve_profile
 
-#: The published corpus fingerprint. Changing a producer, a base drawing or a target binding has
-#: to move this on purpose, because every published coverage number is read against it.
-FROZEN_EXTENSION_FINGERPRINT = "c198eb77c73157b25eba537fd3fef4264110897f23325d30b37c2bad9d6095e4"
+#: The corpus identity. Changing a producer, a base drawing or a target binding has to move this
+#: on purpose, because every published coverage number is read against it. It is the manifest
+#: *without* ``ENVIRONMENT_DERIVED_KEYS``, so it is the same number on every CPython: the full
+#: fingerprint cannot be, because ``generator_fingerprint`` digests bytecode.
+FROZEN_EXTENSION_CORPUS_DIGEST = "3dc8ca1ade6c5adbe5f8c3a5fab8709eff3ffdeb4f904a4da4fd8f7ae6b19969"
+
+#: The full published fingerprint, recorded per interpreter because it *is* interpreter-bound. The
+#: first CI run of the pushed coverage commit (run 35568914459, CPython 3.11.16) computed
+#: ``073252f3…`` where this workstation computed ``c198eb77…`` on CPython 3.12; the assertion below
+#: failed there and that is exactly why the corpus identity is pinned separately above. An
+#: interpreter that is not listed fails loudly on purpose — check the corpus digest first, confirm
+#: it did not move, then record the measured value here.
+PUBLISHED_FINGERPRINTS_BY_INTERPRETER: dict[tuple[int, int], str] = {
+    (3, 11): "073252f38b4a52c125c1b8bd3fbc2faaa60981c8937f298858a9af4cc18ab8c0",
+    (3, 12): "c198eb77c73157b25eba537fd3fef4264110897f23325d30b37c2bad9d6095e4",
+}
 
 
 @pytest.fixture()
@@ -274,9 +290,32 @@ def test_coverage_growth_does_not_move_the_frozen_corpus() -> None:
 def test_extension_corpus_is_frozen() -> None:
     assert EXTENSION_CORPUS_ID == "m5-coverage-extension"
     assert EXTENSION_CORPUS_VERSION == "1"
-    assert coverage_fingerprint() == FROZEN_EXTENSION_FINGERPRINT
+    assert coverage_corpus_digest() == FROZEN_EXTENSION_CORPUS_DIGEST
     assert len(extension_cases()) == len(COVERAGE_ENTRIES)
     assert set(EXTENSION_MUTATIONS) == {entry.operator_id for entry in COVERAGE_ENTRIES}
+
+
+def test_the_published_fingerprint_is_environment_bound_and_recorded() -> None:
+    """What the published fingerprint is allowed to be, and why it is not the frozen identity.
+
+    ``coverage_fingerprint`` hashes the whole manifest, ``generator_fingerprint`` included, and that
+    one digests bytecode. So the published number is a fact about an interpreter *and* a corpus; the
+    guard is that it still equals the manifest's own hash and that the interpreter is a known one.
+    """
+
+    manifest = coverage_manifest()
+    assert coverage_fingerprint() == payload_hash(manifest)
+    assert set(ENVIRONMENT_DERIVED_KEYS) <= set(manifest)
+    assert coverage_corpus_digest() != coverage_fingerprint()
+
+    recorded = PUBLISHED_FINGERPRINTS_BY_INTERPRETER.get(sys.version_info[:2])
+    assert recorded is not None, (
+        "no published coverage fingerprint is recorded for CPython "
+        f"{sys.version_info.major}.{sys.version_info.minor}: confirm "
+        "coverage_corpus_digest() still equals FROZEN_EXTENSION_CORPUS_DIGEST, then record the "
+        "measured value instead of deleting the assertion"
+    )
+    assert coverage_fingerprint() == recorded
 
 
 def test_published_payload_is_recomputable(context: BenchmarkContext) -> None:

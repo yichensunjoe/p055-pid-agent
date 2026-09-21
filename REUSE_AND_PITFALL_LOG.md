@@ -1,5 +1,38 @@
 # REUSE_AND_PITFALL_LOG — P055-PID-Agent
 
+## 2026-09-21 · 语料指纹一旦含解释器派生的值，“冻结”就变成“在这台机器上冻结”（P055-PID-Agent）
+
+- 场景：coverage-extension 提交 push 之后，CI 的 Backend job 红了，而本地 `pytest` 811 passed。唯一失败是
+  `test_extension_corpus_is_frozen`：CI（CPython 3.11.16）算出 `073252f38b4a…`，本地（CPython 3.12）算出
+  `c198eb77c731…`。根因不在测试：`coverage_manifest()` 把 `generator_fingerprint` 一起放进被哈希的 payload，
+  而 `generator_fingerprint()` 取的是 **CPython 字节码**（`build_base_drawing` 与每个 operator 的 `co_code`）
+  ——同一份语料、同一个 SHA，换个解释器就是另一个指纹。`core_corpus_fingerprint()` 同理
+  （它也只被断言“不等于 coverage 指纹”，所以没报红）。
+- 结论做法：把“语料身份”和“环境指纹”分开。`coverage_corpus_digest()` = 去掉 `ENVIRONMENT_DERIVED_KEYS`
+  （`spec_fingerprint` / `generator_fingerprint`）后的 manifest 哈希，它是**跨解释器恒定**的，被测试钉死；
+  `coverage_fingerprint()` 原样发布（远端用于核对的 `c198eb77…` 没有移动），但按解释器记进
+  `PUBLISHED_FINGERPRINTS_BY_INTERPRETER`（3.11 → CI 实测值、3.12 → 本机实测值），未记录的解释器会
+  **明确报错**并提示“先确认 corpus digest 未变，再记录新值”。
+- 关键经验：**凡是被当成“冻结”的哈希，输入里不能有任何一个“跑它的机器”字段**。字节码、编译器版本、
+  路径、时区都属此列；正确做法是它们继续**发布**（可审计），但不进身份的哈希。另一个教训：`pytest` 全绿
+  不等于推送安全——本地 3.12、CI 3.11，只有一条断言会在 CI 上死，而那条断言恰好就是“冻结”的守卫，
+  说明守卫本身有价值，只是守卫错了对象。
+
+## 2026-09-21 · 结果哈希的 `exclude` 只作用于顶层，于是它绑定了计时字段（P055-PID-Agent）
+
+- 场景：同一个 candidate SHA 连跑两次 M5 acceptance，`counts` / `sats` / `gates` / 每条 case 记录（去掉 volatile 字段后）
+  **逐字段相同**，但发布的 `benchmark_result_hash` 两次不同（`2d827c1e…` vs `e98863ef…`）。原因：
+  `repair_digest` → `canonical_digest` → `canonical_payload(model, exclude=...)` 把 `exclude` 直接交给 pydantic 的
+  `model_dump(exclude=...)`，而 pydantic 的 `exclude` **只删顶层键**；`REPAIR_VOLATILE_FIELDS` 里的
+  `latency_ms` / `timings_ms` / `*_validation_hash` / `document_id` 嵌在 `cases[i]` 里，于是全部进了哈希（实测
+  两次运行有 724 处嵌套 volatile 叶子不同）。本地独立验证脚本：`.freebuff/diag_result_hash_determinism.py`。
+- 结论做法：暂不动哈希函数（它同时被 M4 的 `release_validator` / `validation_engine` 用来做 provenance，改口径
+  等于改 M4 的语义，需远端裁决）。改用**跨运行可比的表示**：把所有 volatile 字段在各层剥掉后求 canonical 哈希，
+  两次运行得到同一个值 `a208bdb0…`；coverage-extension track 的 `payload_hash` 本来就是这种递归剥法，所以
+  `report_hash` 两次一致（`f56c2c50…`）—— 同一个仓库里已经存在正确做法，冻结语料那条只是没走它。
+- 关键经验：**发布一个哈希时，必须能回答“它绑定了什么”**。凡是“exclude / ignore / normalize”这类逃逸口，
+  都要用测试固定它在嵌套结构里的行为；否则哈希会在 README 里当“结果指纹”用，而它实际记录的是那天机器的快慢。
+
 ## 2026-09-21 · “写请求没报错”不等于“缺陷真的存在”（P055-PID-Agent）
 
 - 场景：要给 `CONNECTOR_ENDPOINT_POINT_MISMATCH` / `SYMBOL_DEFINITION_MISSING` 这类“有修复策略但 benchmark 造不出”的 code 补 producer。第一版 producer 的做法是“改字段、看有没有抛异常”：`_patch(p1, {"target": {..., "point": 偏移}})` —— `apply_transaction` **返回成功**，revision +1，history 里有一条真实事务，但读回图纸时缺陷**不在**：`_normalize_endpoint` 在 `_prepare_element` 阶段把绑定点从 port 重新导出，未知 symbol_key / 未知 port_id 则直接 `InvalidOperationError`。写面与导入面（`import_document_payload` → `_validate_import_document`）的拒绝方式还不一样：前者会“接受并重算”，后者硬拒。

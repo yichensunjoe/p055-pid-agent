@@ -225,10 +225,27 @@ manifest，`test_m4_invariance.py` 在每次运行时比对：M5 代码不得改
   `CONNECTOR_ENDPOINT_POINT_MISMATCH` 的写请求**会成功**（`accepted=true`），但绑定点被
   `_normalize_endpoint` 重算，缺陷从不落地——只断言“没抛异常”的测试会把它误判成可达。
 
+  远端对这个结论的裁决（2026-09-21）把它固定成三个正式 disposition，而不是继续叫"漏测"：
+
+  - `SYMBOL_DEFINITION_MISSING` → `unreachable_at_supported_ingress`
+  - `CONNECTOR_ENDPOINT_PORT_MISSING` → `unreachable_at_supported_ingress`
+  - `CONNECTOR_ENDPOINT_POINT_MISMATCH` → `normalized_or_rejected_at_supported_ingress`
+
+  rule 与 planner 策略保留作纵深防御，守卫测试保留：任何受支持入口哪天开始允许这些状态存在，
+  测试立刻红，并触发 **coverage promotion**，而不是静默改变结论。store 层的 validator 单测可以有，
+  但它属于内部 validator coverage，不得伪装成 repair benchmark 的 producer。
+  将来签 coverage-promotion Gate 时**不是**把 7 个 code 机械变成 7 个 case：4 个 reachable 才能晋升为
+  正式 repair case，3 个 unreachable 进 representability / disposition ledger（保留机械不可达证明），
+  届时才切下一版 spec 与新的完整指纹。
+
 Corpus 边界（review 明确要求）：
 
 - extension 有自己的 `corpus_id = m5-coverage-extension`、`corpus_version = 1`、`case_count = 4`；
   `coverage_fingerprint()` 覆盖 producer/目标绑定/语料定义，producer 一改指纹就变；
+  `coverage_corpus_digest()` 是它的**语料身份**（manifest 去掉 `ENVIRONMENT_DERIVED_KEYS`）：
+  `generator_fingerprint` 取的是 CPython 字节码（`co_code`），换个解释器就不一样，所以"冻结"必须是
+  **语料**冻结，不能是"在这台机器上冻结"。两者都发布，只有 corpus digest 被测试钉死；
+  已发布指纹按解释器记录在 `PUBLISHED_FINGERPRINTS_BY_INTERPRETER` 里。
 - 冻结语料有自己的 `corpus_id = m5-core-corpus`、`corpus_version = 2`、`case_count = 72`、
   `operator_count = 19`、`supported_codes`（`core_corpus_manifest()` / `core_corpus_fingerprint()`）。
   **两者分开指纹**：增加覆盖不该让「M5 当时到底验收了什么」变得无法回答；

@@ -513,8 +513,36 @@ def coverage_manifest() -> dict[str, Any]:
     }
 
 
+#: Manifest keys that describe the *environment* rather than the corpus. ``generator_fingerprint``
+#: digests CPython bytecode (``co_code`` of the base builder and every operator), so the identical
+#: corpus hashed by 3.11 and by 3.12 publishes two different numbers: the first CI run of the
+#: pushed commit computed ``073252f3…`` while the workstation computed ``c198eb77…``. A frozen
+#: fingerprint that moves with the interpreter would make "frozen" mean "frozen on this machine",
+#: so these two stay published but are not part of the corpus identity — the same rule the evidence
+#: layer already applies to its volatile fields.
+ENVIRONMENT_DERIVED_KEYS: tuple[str, ...] = ("spec_fingerprint", "generator_fingerprint")
+
+
 def coverage_fingerprint() -> str:
+    """The published fingerprint: the whole manifest, environment-derived digests included."""
+
     return payload_hash(coverage_manifest())
+
+
+def coverage_corpus_manifest() -> dict[str, Any]:
+    """The manifest without the fields that only describe the interpreter running it."""
+
+    return {
+        key: value
+        for key, value in coverage_manifest().items()
+        if key not in ENVIRONMENT_DERIVED_KEYS
+    }
+
+
+def coverage_corpus_digest() -> str:
+    """The corpus identity: identical on every interpreter, so a change here is a coverage change."""
+
+    return payload_hash(coverage_corpus_manifest())
 
 
 def payload_hash(payload: dict[str, Any]) -> str:
@@ -1218,6 +1246,9 @@ __all__ = [
     "UnreachableEntry",
     "classify_row",
     "canonical_payload_json",
+    "ENVIRONMENT_DERIVED_KEYS",
+    "coverage_corpus_digest",
+    "coverage_corpus_manifest",
     "coverage_fingerprint",
     "coverage_manifest",
     "extension_cases",

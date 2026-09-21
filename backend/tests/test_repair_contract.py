@@ -23,7 +23,12 @@ from agentcad.repair_benchmark import (
     generator_fingerprint,
     spec_fingerprint,
 )
-from agentcad.repair_benchmark_runner import BenchmarkContext, run_benchmark, run_case
+from agentcad.repair_benchmark_runner import (
+    BenchmarkContext,
+    _target_issue,
+    run_benchmark,
+    run_case,
+)
 from agentcad.repair_evidence import verify_benchmark_result
 from agentcad.repair_models import repair_digest, repair_payload
 from agentcad.repair_oracle import (
@@ -84,12 +89,16 @@ def _request_for(
     mutation = operator.apply(context.service, drawing, random.Random(seed))
     document = context.service.get_document(drawing.document_id)
     result = run_validation(document, context.registry, context.profile, service=context.service)
-    issue = next(
-        issue
-        for issue in result.issues
-        if issue.code == mutation.target_code
-        and set(issue.element_ids) & set(mutation.target_element_ids)
+    # The runner's own lookup, so a drawing-wide finding (out-of-bounds reports no locators) is
+    # bound to the element the case broke exactly as it is in a benchmark run.
+    issue = _target_issue(
+        mutation.target_code,
+        mutation.target_validator_id,
+        mutation.target_element_ids,
+        result.issues,
+        mutation.target_details,
     )
+    assert issue is not None, f"{operator_id} did not produce {mutation.target_code}"
     request = build_repair_request(
         document,
         result,
@@ -144,6 +153,20 @@ def test_acceptance_cases_follow_the_candidate_sha():
     second = generate_suite(candidate_sha="b" * 40, suite="acceptance")
     assert [case.seed for case in first] != [case.seed for case in second]
     assert [case.case_id for case in first] == [case.case_id for case in second]
+
+
+@pytest.mark.parametrize("operator_id", sorted(MUTATIONS))
+def test_every_registered_operator_stages_the_finding_it_advertises(tmp_path: Path, operator_id: str):
+    """An operator that cannot stage its own target code makes its family's rate fiction.
+
+    This is the guard the M4 tag defect needed: while the canonical rules read a field the
+    production polish clears, ``TAG_MISSING`` and ``TAG_DUPLICATE`` could not be produced at
+    all — a repair rate over those families would have silently excluded identity. The check is
+    end-to-end (stage the drawing, run the real validators, bind the issue into a request)
+    precisely so a rule that stops firing is a failure here and not a mystery in CI.
+    """
+
+    _request_for(_context(tmp_path), operator_id=operator_id)
 
 
 # -- M5-1: the request binds evidence ----------------------------------------- #

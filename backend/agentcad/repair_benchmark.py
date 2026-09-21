@@ -33,6 +33,7 @@ from .models import (
     AddElementOperation,
     ConnectorElement,
     CreateDocumentRequest,
+    DeleteElementOperation,
     Point,
     SymbolElement,
     TextElement,
@@ -272,18 +273,42 @@ class MutationOperator:
     max_deleted_ids: int = 0
 
 
-def _patch(service: DocumentService, document_id: str, element_id: str, patch: dict[str, Any], label: str) -> int:
+def _mutate(service: DocumentService, document_id: str, operations: list[Any], label: str) -> int:
+    """Stage a defect as one governed mutation, so the base is a real revision."""
+
     document = service.get_document(document_id)
     result = service.apply_transaction(
         document_id,
         TransactionRequest(
-            operations=[UpdateElementOperation(element_id=element_id, patch=patch)],
+            operations=operations,
             expected_revision=document.revision,
             label=label,
         ),
         audit=_mutation_audit(f"benchmark.{label}"),
     )
     return result.document.revision
+
+
+def _patch(service: DocumentService, document_id: str, element_id: str, patch: dict[str, Any], label: str) -> int:
+    return _mutate(
+        service,
+        document_id,
+        [UpdateElementOperation(element_id=element_id, patch=patch)],
+        label,
+    )
+
+
+def _symbol_label_annotations(service: DocumentService, document_id: str, element_id: str) -> list[str]:
+    """Ids of the ``symbol_label`` annotations the production polish left for one symbol."""
+
+    document = service.get_document(document_id)
+    return sorted(
+        element.id
+        for element in document.elements
+        if element.type == "text"
+        and element.metadata.get("parent_element_id") == element_id
+        and element.metadata.get("annotation_role") == "symbol_label"
+    )
 
 
 def _manual_points(service: DocumentService, document_id: str, connector_id: str) -> list[Point]:
@@ -355,6 +380,76 @@ def _f1_line_diameter(service: DocumentService, base: BaseDrawing, rng: random.R
         target_validator_id="engineering-report",
         target_element_ids=[base["p1"]],
         mutation_revision=revision,
+    )
+
+
+def _f1_symbol_tag_missing(
+    service: DocumentService, base: BaseDrawing, rng: random.Random
+) -> MutationResult:
+    """Erase the equipment's tag from *every* source the drawing has for it.
+
+    A tag is not one field. This drawing has the tag in ``properties.tag``, and the production
+    polish turned the fixed label into a ``symbol_label`` annotation, so "the drawer never typed
+    a tag" means all three are empty. Clearing only the property would leave the annotation to
+    answer for it and the rule would be right not to fire. The isolated element is used so the
+    defect is identity-only: nothing about connectivity moves, and a repair that rerouted a line
+    would be fixing something this case never broke.
+    """
+
+    element_id = base["v3"]
+    operations: list[Any] = [
+        UpdateElementOperation(element_id=element_id, patch={"label": "", "properties": {}}),
+        *(
+            DeleteElementOperation(element_id=annotation_id)
+            for annotation_id in _symbol_label_annotations(service, base.document_id, element_id)
+        ),
+    ]
+    revision = _mutate(service, base.document_id, operations, "f1-symbol-tag-missing")
+    return MutationResult(
+        operator_id="f1_symbol_tag_missing",
+        family="F1",
+        target_code="TAG_MISSING",
+        target_validator_id="engineering-report",
+        target_element_ids=[element_id],
+        mutation_revision=revision,
+        notes=["the tag has to be reconstructed, because the drawing records none"],
+    )
+
+
+def _f1_symbol_tag_duplicate(
+    service: DocumentService, base: BaseDrawing, rng: random.Random
+) -> MutationResult:
+    """Give the isolated equipment the tag another device already carries.
+
+    Both sources are moved together — the property and the annotation — because a drawing whose
+    annotation disagreed with its property would be a different defect (a conflicting label),
+    and this case is about a duplicate tag.
+    """
+
+    target_id = base["v3"]
+    document = service.get_document(base.document_id)
+    other = next(element for element in document.elements if element.id == base["v2"])
+    shared = str((other.properties or {}).get("tag") or other.label or "").strip()
+    if not shared:
+        shared = str(other.label or "").strip()
+    operations: list[Any] = [
+        UpdateElementOperation(
+            element_id=target_id, patch={"label": shared, "properties": {"tag": shared}}
+        ),
+        *(
+            UpdateElementOperation(element_id=annotation_id, patch={"text": shared})
+            for annotation_id in _symbol_label_annotations(service, base.document_id, target_id)
+        ),
+    ]
+    revision = _mutate(service, base.document_id, operations, "f1-symbol-tag-duplicate")
+    return MutationResult(
+        operator_id="f1_symbol_tag_duplicate",
+        family="F1",
+        target_code="TAG_DUPLICATE",
+        target_validator_id="engineering-report",
+        target_element_ids=[target_id, base["v2"]],
+        mutation_revision=revision,
+        notes=[f"two symbols share the tag {shared!r}"],
     )
 
 
@@ -699,8 +794,20 @@ MUTATIONS: dict[str, MutationOperator] = {
         touched_budget_class="simple_metadata",
     ),
     "f1_line_diameter_missing": MutationOperator(
-        "f1_line_diameter_missing", "F1", "LINE_DIAMETER_MISSING", "engineering-report", _f1_line_diameter,
-        touched_budget_class="simple_metadata",
+        "f1_line_diameter_missing", "F1", "LINE_DIAMETER_MISSING", "engineering-report",
+        _f1_line_diameter, touched_budget_class="simple_metadata",
+    ),
+    # The symbol-tag half of F1. These two codes could not be produced at all while the canonical
+    # rules read a field the production polish clears, so F1's coverage of identity was limited
+    # to line identity. They exist now for the same reason the rules were fixed: a drawing the
+    # product itself wrote really can be missing a tag, or really can duplicate one.
+    "f1_symbol_tag_missing": MutationOperator(
+        "f1_symbol_tag_missing", "F1", "TAG_MISSING", "engineering-report",
+        _f1_symbol_tag_missing, touched_budget_class="simple_metadata",
+    ),
+    "f1_symbol_tag_duplicate": MutationOperator(
+        "f1_symbol_tag_duplicate", "F1", "TAG_DUPLICATE", "engineering-report",
+        _f1_symbol_tag_duplicate, touched_budget_class="simple_metadata",
     ),
     "f2_endpoint_dangling": MutationOperator(
         "f2_endpoint_dangling", "F2", "CONNECTOR_ENDPOINT_DANGLING", "engineering-report", _f2_dangling,

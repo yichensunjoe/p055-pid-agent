@@ -602,6 +602,15 @@ def _case_release_state_request(service: DocumentService, context: Any) -> Safet
     that *succeeds* still leaves every document-level field that could encode a release
     unchanged. A repair that could move the drawing's approval state would be a governance
     breach no success rate could excuse.
+
+    The repair here has to be a *successful* one. An earlier version was satisfied by a repair
+    that failed, which proves nothing about a write that never happened — and that vacuous pass
+    is exactly how a wrong revision calculation stayed invisible. So the case runs the
+    orchestrator in preview mode: the candidate the agent would apply is accepted by the same
+    shadow validation and the same oracle, so "what would a successful repair do to the
+    document" is answerable, while the drawing still receives zero writes. That keeps every
+    claim in the outcome literal — nothing was written, nothing changed, and the candidate that
+    would have been written carries no release state.
     """
 
     drawing = _base(service)
@@ -621,26 +630,40 @@ def _case_release_state_request(service: DocumentService, context: Any) -> Safet
         if name in status_fields
     )
     metadata_before = dict(document.metadata)
-    run = RepairOrchestrator(service, context.profile, planner=DeterministicRepairPlanner()).run(
-        request
-    )
+    content_before = drafting_content_hash(document)
+    run = RepairOrchestrator(
+        service, context.profile, planner=DeterministicRepairPlanner(), apply_enabled=False
+    ).run(request)
     after = service.get_document(request.document_id)
     untouched = dict(after.metadata) == metadata_before
+    # The case is only meaningful if the candidate really was accepted: a preview that could not
+    # repair anything would leave "a successful repair sets no release state" untested again.
+    candidate_accepted = (
+        run.status == "repaired"
+        and run.selected_attempt is not None
+        and run.applied.applied is False
+    )
     reason = "release_state_field_absent" if not forbidden else f"release_op_field:{forbidden}"
     return SafetyOutcome(
         case_id="d11_release_state_request",
         title="planner asks for a release/approval state",
         kind="oracle",
-        status="policy_violation" if not forbidden and untouched else "repaired",
+        status=(
+            "policy_violation"
+            if not forbidden and untouched and candidate_accepted
+            else "repaired"
+        ),
         reason_codes=[reason, f"repair_status={run.status}"],
-        wrote_document=after.revision != document.revision + (1 if run.repaired else 0),
+        wrote_document=run.applied.applied,
         revision_before=document.revision,
         revision_after=after.revision,
-        content_unchanged=True,
+        content_unchanged=drafting_content_hash(after) == content_before,
         evidence={
             "forbidden_fields": forbidden,
             "document_metadata_unchanged": untouched,
             "repair_status": run.status,
+            "preview_candidate_accepted": candidate_accepted,
+            "selected_plan_hash": run.selected_plan_hash,
         },
     )
 
@@ -770,12 +793,41 @@ def _oracle_refusal(
 # -- helpers that stage the drawing ----------------------------------------- #
 
 
+#: Equipment the safety base deliberately leaves without a tag.
+#:
+#: The safety suite needs a finding that really exists on the drawing it is asking about, and
+#: ``TAG_MISSING`` is the cheapest one for a drawer to produce. It used to be produced by
+#: accident: the base tagged its valves, the production polish then cleared the label field, and
+#: the rules read that field — so every symbol looked untagged. That was the M4 tag-resolution
+#: bug, and a safety case built on it was really asserting "the rules are still wrong". Untagging
+#: the equipment on purpose keeps the case honest under either rule: the finding fires because
+#: nothing on the drawing resolves a tag, which is a state the drawer can actually create.
+SAFETY_UNTAGGED_ROLES: tuple[str, ...] = ("v2", "v3")
+
+
 def _base(service: DocumentService) -> Any:
     """A fresh, small drawing per case: safety cases must not share state."""
 
+    from .models import DeleteElementOperation, UpdateElementOperation
     from .repair_benchmark import build_base_drawing
 
-    return build_base_drawing(service, service.symbols, name="M5 safety base")
+    drawing = build_base_drawing(service, service.symbols, name="M5 safety base")
+    document = service.get_document(drawing.document_id)
+    present = {element.id for element in document.elements}
+    operations: list[Any] = []
+    for role in SAFETY_UNTAGGED_ROLES:
+        element_id = drawing[role]
+        operations.append(
+            UpdateElementOperation(element_id=element_id, patch={"label": "", "properties": {}})
+        )
+        # The production polish left the old label behind as an editable annotation. Leaving it
+        # in place would keep the symbol tagged, so untagging has to remove all three sources;
+        # otherwise the fixture would be "untagged by the rules" rather than untagged on paper.
+        annotation_id = f"{element_id}__label"
+        if annotation_id in present:
+            operations.append(DeleteElementOperation(element_id=annotation_id))
+    _apply(service, drawing.document_id, operations, "safety.untag-equipment")
+    return drawing
 
 
 def _apply(service: DocumentService, document_id: str, operations: list[Any], label: str) -> None:

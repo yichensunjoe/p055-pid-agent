@@ -1,0 +1,747 @@
+{
+  "ledger": {
+    "ledger_id": "m5-coverage-ledger",
+    "ledger_version": "1",
+    "spec_version": "3",
+    "spec_fingerprint": "8f522c758b67fc71e53d7d382f1c09fc3d922663ea500a7fc09106ece054c810",
+    "generator_fingerprint": "625033925651313094cfd6aca3ade26c3592010a9af6969c0d91ad847f3ce221",
+    "corpus_id": "m5-core-corpus",
+    "corpus_version": "3",
+    "promoted_count": 4,
+    "unreachable_count": 3,
+    "promoted": [
+      {
+        "code": "DUPLICATE_LABEL",
+        "family": "F1",
+        "validator_id": "diagram-quality",
+        "operator_id": "f1_duplicate_label",
+        "locator_kind": "drawing",
+        "staged_by": "ext_duplicate_label"
+      },
+      {
+        "code": "PORT_DIRECTION_MISMATCH",
+        "family": "F2",
+        "validator_id": "diagram-quality",
+        "operator_id": "f2_port_direction_mismatch",
+        "locator_kind": "element",
+        "staged_by": "ext_port_direction_mismatch"
+      },
+      {
+        "code": "UNBRIDGED_CROSSING",
+        "family": "F4",
+        "validator_id": "diagram-quality",
+        "operator_id": "f4_unbridged_crossing",
+        "locator_kind": "element",
+        "staged_by": "ext_unbridged_crossing"
+      },
+      {
+        "code": "ANNOTATION_OVERLAP",
+        "family": "F5",
+        "validator_id": "diagram-quality",
+        "operator_id": "f5_annotation_overlap",
+        "locator_kind": "drawing",
+        "staged_by": "ext_annotation_overlap"
+      }
+    ],
+    "dispositions": [
+      {
+        "code": "SYMBOL_DEFINITION_MISSING",
+        "family": "F1",
+        "validator_id": "engineering-report",
+        "disposition": "unreachable_at_supported_ingress",
+        "attempted_write": "update a symbol's symbol_key to a key the catalog does not define"
+      },
+      {
+        "code": "CONNECTOR_ENDPOINT_PORT_MISSING",
+        "family": "F2",
+        "validator_id": "engineering-report",
+        "disposition": "unreachable_at_supported_ingress",
+        "attempted_write": "bind a connector endpoint to a port id the device does not define"
+      },
+      {
+        "code": "CONNECTOR_ENDPOINT_POINT_MISMATCH",
+        "family": "F2",
+        "validator_id": "engineering-report",
+        "disposition": "normalized_or_rejected_at_supported_ingress",
+        "attempted_write": "leave a connector endpoint bound to a stale coordinate"
+      }
+    ]
+  },
+  "ledger_fingerprint": "0b3e5e53d83b0cd4f10f98b08cd2e9ef64ed5ed01c1c896d53143296d5372da3",
+  "ledger_digest": "30a5077951324e4984cff9c6b50b5cf7ba1a86c1685bba68ce3a0c84d740294c",
+  "superseded_extension": {
+    "corpus_id": "m5-coverage-extension",
+    "corpus_version": "1",
+    "case_count": 4,
+    "coverage_corpus_digest": "3dc8ca1ade6c5adbe5f8c3a5fab8709eff3ffdeb4f904a4da4fd8f7ae6b19969",
+    "coverage_report_hash": "f56c2c5098119a0b753660ba6a33a0fb7bcc03c24a545f0fd1849f6e44fe0931",
+    "coverage_fingerprint_by_interpreter": {
+      "3.11": "073252f38b4a52c125c1b8bd3fbc2faaa60981c8937f298858a9af4cc18ab8c0",
+      "3.12": "c198eb77c73157b25eba537fd3fef4264110897f23325d30b37c2bad9d6095e4"
+    },
+    "superseded_by": {
+      "corpus_id": "m5-core-corpus",
+      "corpus_version": "3",
+      "spec_version": "3",
+      "ledger_id": "m5-coverage-ledger",
+      "ledger_version": "1"
+    }
+  },
+  "candidate_sha": "coverage-ledger",
+  "promotions": [
+    {
+      "code": "DUPLICATE_LABEL",
+      "operator_id": "f1_duplicate_label",
+      "case_id": "acceptance:F1:00:f1_duplicate_label",
+      "case_index": 0,
+      "seed": 17478016636134,
+      "manifested": true,
+      "added_codes": [
+        "DUPLICATE_LABEL",
+        "QUALITY_SCORE_BELOW_TARGET"
+      ],
+      "target_finding": {
+        "code": "DUPLICATE_LABEL",
+        "severity": "error",
+        "object_ids": [],
+        "element_ids": [
+          "note1"
+        ],
+        "message": "duplicate visible engineering labels remain after layout",
+        "expected": "",
+        "actual": "",
+        "suggested_repair": "",
+        "rule_source": "built-in",
+        "registered": true,
+        "threshold": null,
+        "waiver_status": "not_waived",
+        "waiver": null,
+        "validator_id": "diagram-quality",
+        "rule_id": "diagram-quality.DUPLICATE_LABEL",
+        "profile_id": "built-in",
+        "profile_version": "1",
+        "details": {
+          "count": 1
+        }
+      },
+      "status": "covered",
+      "case": {
+        "schema": "pid-agent.repair-benchmark-case",
+        "case_id": "acceptance:F1:00:f1_duplicate_label",
+        "family": "F1",
+        "operator_id": "f1_duplicate_label",
+        "suite": "acceptance",
+        "seed": 17478016636134,
+        "spec_fingerprint": "8f522c758b67fc71e53d7d382f1c09fc3d922663ea500a7fc09106ece054c810",
+        "generator_fingerprint": "625033925651313094cfd6aca3ade26c3592010a9af6969c0d91ad847f3ce221",
+        "candidate_sha": "coverage-ledger",
+        "document_id": "doc_065599e227cb",
+        "base_revision": 2,
+        "base_content_hash": "85e432bd1d1a7254d6dea185f14bdbaacd10d03c3d5dedfa97de90695828e933",
+        "pre_validation_hash": "b0e8e1d337909598569c36a6937acb2074c62c3e41140d2827cbec0b6c4fca06",
+        "target_code": "DUPLICATE_LABEL",
+        "target_validator_id": "diagram-quality",
+        "target_rule_id": "diagram-quality.DUPLICATE_LABEL",
+        "target_element_ids": [
+          "note1"
+        ],
+        "scope_fingerprint": "a0aa95e988fa742dca47483557ea269c55da61287cf0ff374eb0426d2b6b4dfb",
+        "protected_pre": {
+          "engineering_projection": "25de0014bb84a6ec9ab8212ff07cfaedd75e3907bcb44b9392911750c809a9e6",
+          "drawing_projection": "5fe2816143c006d7986b531ce678ab19d5d0f707f0fc9347f25677743c5e6848",
+          "rule_bundle_fingerprint": "18a2da498c4ebd3538edd496f2cb375793d71443708fa0a56023bb5e91e6e315"
+        },
+        "attempts": 1,
+        "required_attempts": 1,
+        "attempt_plan_hashes": [
+          "ea6f4e58f7270f38d61fceeb3d401f73c43684f63aa16e7ce6f81dd7b5777651"
+        ],
+        "attempt_failure_codes": [
+          ""
+        ],
+        "attempt_shadow_validation_hashes": [
+          "18d634e7d3625d5729657d28fa91fea22f9f3d6f4298ba484ed99e6488b3c9e7"
+        ],
+        "attempt_metrics": [
+          {
+            "attempt": 1,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "context_bytes": 2465,
+            "context_elements": 1,
+            "latency_ms": 0
+          }
+        ],
+        "selected_plan_hash": "ea6f4e58f7270f38d61fceeb3d401f73c43684f63aa16e7ce6f81dd7b5777651",
+        "applied": true,
+        "result_revision": 5,
+        "transaction_hash": "7de716e0e9128e975e4e6beef6713322123cf9e21b67d59d24b4357d7dda9905",
+        "audit_record_id": "audit_2d20509ee1514874a3b3cbda07db4b0f",
+        "post_validation_hash": "18d634e7d3625d5729657d28fa91fea22f9f3d6f4298ba484ed99e6488b3c9e7",
+        "protected_post": {
+          "engineering_projection": "25de0014bb84a6ec9ab8212ff07cfaedd75e3907bcb44b9392911750c809a9e6",
+          "drawing_projection": "5fe2816143c006d7986b531ce678ab19d5d0f707f0fc9347f25677743c5e6848",
+          "rule_bundle_fingerprint": "18a2da498c4ebd3538edd496f2cb375793d71443708fa0a56023bb5e91e6e315"
+        },
+        "undo_restored_base": true,
+        "redo_restored_result": true,
+        "repair_hash": "160dddbd28c549b134989db79613e7572d434f471f3247b14107184de21519e3",
+        "classification": "success",
+        "failure_code": "",
+        "write_count": 1,
+        "reasons": [],
+        "wall_clock_ms": 21,
+        "timings_ms": {
+          "plan_ms": 0,
+          "compile_ms": 1,
+          "shadow_validate_ms": 3,
+          "apply_ms": 12,
+          "post_validate_ms": 2
+        },
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "token_usage_estimated": false,
+        "planner": {
+          "planner_id": "deterministic-repair-planner",
+          "planner_version": "1",
+          "provider_class": "",
+          "base_url_class": "",
+          "model": "",
+          "temperature": null,
+          "top_p": null,
+          "max_output_tokens": null,
+          "timeout_seconds": null,
+          "prompt_fingerprint": "",
+          "schema_fingerprint": "",
+          "token_usage_estimated": false
+        }
+      },
+      "notes": [
+        "the free note repeats the visible label of HV-101 within the duplicate radius; the duplicate is a *visible* label, so no engineering-report code is involved"
+      ]
+    },
+    {
+      "code": "PORT_DIRECTION_MISMATCH",
+      "operator_id": "f2_port_direction_mismatch",
+      "case_id": "acceptance:F2:02:f2_port_direction_mismatch",
+      "case_index": 2,
+      "seed": 94640910937713,
+      "manifested": true,
+      "added_codes": [
+        "PORT_DIRECTION_MISMATCH",
+        "QUALITY_SCORE_BELOW_TARGET"
+      ],
+      "target_finding": {
+        "code": "PORT_DIRECTION_MISMATCH",
+        "severity": "error",
+        "object_ids": [],
+        "element_ids": [
+          "p1"
+        ],
+        "message": "connector p1 flow reverse contradicts port directions out→in",
+        "expected": "",
+        "actual": "",
+        "suggested_repair": "",
+        "rule_source": "built-in",
+        "registered": true,
+        "threshold": null,
+        "waiver_status": "not_waived",
+        "waiver": null,
+        "validator_id": "diagram-quality",
+        "rule_id": "diagram-quality.PORT_DIRECTION_MISMATCH",
+        "profile_id": "built-in",
+        "profile_version": "1",
+        "details": {
+          "inferred_flow_direction": "forward"
+        }
+      },
+      "status": "covered",
+      "case": {
+        "schema": "pid-agent.repair-benchmark-case",
+        "case_id": "acceptance:F2:02:f2_port_direction_mismatch",
+        "family": "F2",
+        "operator_id": "f2_port_direction_mismatch",
+        "suite": "acceptance",
+        "seed": 94640910937713,
+        "spec_fingerprint": "8f522c758b67fc71e53d7d382f1c09fc3d922663ea500a7fc09106ece054c810",
+        "generator_fingerprint": "625033925651313094cfd6aca3ade26c3592010a9af6969c0d91ad847f3ce221",
+        "candidate_sha": "coverage-ledger",
+        "document_id": "doc_9e1251302e1e",
+        "base_revision": 2,
+        "base_content_hash": "f00ba3b751ae05115d8ed1bc6ace9b3762ee0cc13eb5e31ea58d9e5a41f09825",
+        "pre_validation_hash": "3105aa2255f31fdc48eee9ef547de6d2a0114a84bbbcea221321befa65e37e9e",
+        "target_code": "PORT_DIRECTION_MISMATCH",
+        "target_validator_id": "diagram-quality",
+        "target_rule_id": "diagram-quality.PORT_DIRECTION_MISMATCH",
+        "target_element_ids": [
+          "p1"
+        ],
+        "scope_fingerprint": "6398328e6fee3bad01c8e2271cfba612e4d4427a44a272238152c434848e5628",
+        "protected_pre": {
+          "engineering_projection": "07681183b0546ca6e73d93ad978780702303ec833bd767905eba1c54876ba6a9",
+          "drawing_projection": "1657f5f095085fb29a6cc417abc14ed9520bd21bdd95709064c928177e8336a6",
+          "rule_bundle_fingerprint": "18a2da498c4ebd3538edd496f2cb375793d71443708fa0a56023bb5e91e6e315"
+        },
+        "attempts": 1,
+        "required_attempts": 1,
+        "attempt_plan_hashes": [
+          "250a89b2cd57150d799b0f27b36329d5e4f49d5e9051ba1e240a8dc2416e789f"
+        ],
+        "attempt_failure_codes": [
+          ""
+        ],
+        "attempt_shadow_validation_hashes": [
+          "062b7907b82694921e31acfc5837d81957c606d488a28ae74ec4dfbe77299c5d"
+        ],
+        "attempt_metrics": [
+          {
+            "attempt": 1,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "context_bytes": 6325,
+            "context_elements": 7,
+            "latency_ms": 0
+          }
+        ],
+        "selected_plan_hash": "250a89b2cd57150d799b0f27b36329d5e4f49d5e9051ba1e240a8dc2416e789f",
+        "applied": true,
+        "result_revision": 5,
+        "transaction_hash": "4bff88dd59578e59915951025010f6e32dcd9be370603cc00218d4205c157321",
+        "audit_record_id": "audit_66b168b216834239bfecad2192e8ca63",
+        "post_validation_hash": "062b7907b82694921e31acfc5837d81957c606d488a28ae74ec4dfbe77299c5d",
+        "protected_post": {
+          "engineering_projection": "07681183b0546ca6e73d93ad978780702303ec833bd767905eba1c54876ba6a9",
+          "drawing_projection": "1657f5f095085fb29a6cc417abc14ed9520bd21bdd95709064c928177e8336a6",
+          "rule_bundle_fingerprint": "18a2da498c4ebd3538edd496f2cb375793d71443708fa0a56023bb5e91e6e315"
+        },
+        "undo_restored_base": true,
+        "redo_restored_result": true,
+        "repair_hash": "5a8c4117053c34fe6e3e19722bcbc23fd1aaf79a9ef4c40d4387f2cd288cd6cd",
+        "classification": "success",
+        "failure_code": "",
+        "write_count": 1,
+        "reasons": [],
+        "wall_clock_ms": 25,
+        "timings_ms": {
+          "plan_ms": 0,
+          "compile_ms": 1,
+          "shadow_validate_ms": 4,
+          "apply_ms": 14,
+          "post_validate_ms": 2
+        },
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "token_usage_estimated": false,
+        "planner": {
+          "planner_id": "deterministic-repair-planner",
+          "planner_version": "1",
+          "provider_class": "",
+          "base_url_class": "",
+          "model": "",
+          "temperature": null,
+          "top_p": null,
+          "max_output_tokens": null,
+          "timeout_seconds": null,
+          "prompt_fingerprint": "",
+          "schema_fingerprint": "",
+          "token_usage_estimated": false
+        }
+      },
+      "notes": [
+        "the trunk's declared flow contradicts the port directions it is wired to"
+      ]
+    },
+    {
+      "code": "UNBRIDGED_CROSSING",
+      "operator_id": "f4_unbridged_crossing",
+      "case_id": "acceptance:F4:02:f4_unbridged_crossing",
+      "case_index": 2,
+      "seed": 203540457865214,
+      "manifested": true,
+      "added_codes": [
+        "EXCESSIVE_BENDS",
+        "QUALITY_SCORE_BELOW_TARGET",
+        "UNBRIDGED_CROSSING"
+      ],
+      "target_finding": {
+        "code": "UNBRIDGED_CROSSING",
+        "severity": "error",
+        "object_ids": [],
+        "element_ids": [
+          "p1",
+          "q1"
+        ],
+        "message": "connectors p1 and q1 cross without a jump bridge",
+        "expected": "",
+        "actual": "",
+        "suggested_repair": "",
+        "rule_source": "built-in",
+        "registered": true,
+        "threshold": null,
+        "waiver_status": "not_waived",
+        "waiver": null,
+        "validator_id": "diagram-quality",
+        "rule_id": "diagram-quality.UNBRIDGED_CROSSING",
+        "profile_id": "built-in",
+        "profile_version": "1",
+        "details": {
+          "point": {
+            "x": 600.0,
+            "y": 320.0
+          }
+        }
+      },
+      "status": "covered",
+      "case": {
+        "schema": "pid-agent.repair-benchmark-case",
+        "case_id": "acceptance:F4:02:f4_unbridged_crossing",
+        "family": "F4",
+        "operator_id": "f4_unbridged_crossing",
+        "suite": "acceptance",
+        "seed": 203540457865214,
+        "spec_fingerprint": "8f522c758b67fc71e53d7d382f1c09fc3d922663ea500a7fc09106ece054c810",
+        "generator_fingerprint": "625033925651313094cfd6aca3ade26c3592010a9af6969c0d91ad847f3ce221",
+        "candidate_sha": "coverage-ledger",
+        "document_id": "doc_72a106e5a01c",
+        "base_revision": 3,
+        "base_content_hash": "71133db6a349c28a5513a512b52659b3ce17da9e45342097828b77326989d75c",
+        "pre_validation_hash": "3df6112e00c68469311201fada7d60dbe5f3a29d1f948509e6af0908d15e4ac7",
+        "target_code": "UNBRIDGED_CROSSING",
+        "target_validator_id": "diagram-quality",
+        "target_rule_id": "diagram-quality.UNBRIDGED_CROSSING",
+        "target_element_ids": [
+          "p1",
+          "q1"
+        ],
+        "scope_fingerprint": "9281b1e794778c4ee5f5885242daba02abef35cb4c8685a4dcd35942734d19a7",
+        "protected_pre": {
+          "engineering_projection": "999fde47ae9d3ad9a671645e92c076b4fab203234e5f730c0f59bf141ddad55e",
+          "drawing_projection": "4e5240ddafeb0c1f8c71feacf6c2421a8c8608b762af04c30f80fc2f67dba642",
+          "rule_bundle_fingerprint": "18a2da498c4ebd3538edd496f2cb375793d71443708fa0a56023bb5e91e6e315"
+        },
+        "attempts": 1,
+        "required_attempts": 1,
+        "attempt_plan_hashes": [
+          "0b935231a486221341c14469735e6c34ce8458cff3c2142bb4235f7a6c51e3b4"
+        ],
+        "attempt_failure_codes": [
+          ""
+        ],
+        "attempt_shadow_validation_hashes": [
+          "34ee49ea296d668d2e5c799c383fdab0e87bddda996f6e60eb6f14ff3a76a49d"
+        ],
+        "attempt_metrics": [
+          {
+            "attempt": 1,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "context_bytes": 8361,
+            "context_elements": 10,
+            "latency_ms": 0
+          }
+        ],
+        "selected_plan_hash": "0b935231a486221341c14469735e6c34ce8458cff3c2142bb4235f7a6c51e3b4",
+        "applied": true,
+        "result_revision": 6,
+        "transaction_hash": "ae9b55008a4ee6e9d78da8f034c0948ea71acc23b596c768c3321406ad18ce23",
+        "audit_record_id": "audit_e1ad54a85da741f9a39d1828d63d6ada",
+        "post_validation_hash": "34ee49ea296d668d2e5c799c383fdab0e87bddda996f6e60eb6f14ff3a76a49d",
+        "protected_post": {
+          "engineering_projection": "999fde47ae9d3ad9a671645e92c076b4fab203234e5f730c0f59bf141ddad55e",
+          "drawing_projection": "4e5240ddafeb0c1f8c71feacf6c2421a8c8608b762af04c30f80fc2f67dba642",
+          "rule_bundle_fingerprint": "18a2da498c4ebd3538edd496f2cb375793d71443708fa0a56023bb5e91e6e315"
+        },
+        "undo_restored_base": true,
+        "redo_restored_result": true,
+        "repair_hash": "c9e8c146a62a4ca4f33a9d1d163b49cfc297370baf7773d62703e26417e1513b",
+        "classification": "success",
+        "failure_code": "",
+        "write_count": 1,
+        "reasons": [],
+        "wall_clock_ms": 21,
+        "timings_ms": {
+          "plan_ms": 0,
+          "compile_ms": 1,
+          "shadow_validate_ms": 4,
+          "apply_ms": 10,
+          "post_validate_ms": 1
+        },
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "token_usage_estimated": false,
+        "planner": {
+          "planner_id": "deterministic-repair-planner",
+          "planner_version": "1",
+          "provider_class": "",
+          "base_url_class": "",
+          "model": "",
+          "temperature": null,
+          "top_p": null,
+          "max_output_tokens": null,
+          "timeout_seconds": null,
+          "prompt_fingerprint": "",
+          "schema_fingerprint": "",
+          "token_usage_estimated": false
+        }
+      },
+      "notes": [
+        "the branch line is routed across the trunk with no jump bridge on either side; two lines that share a device are never reported as crossing, so the base carries a fourth device for the branch to run between"
+      ]
+    },
+    {
+      "code": "ANNOTATION_OVERLAP",
+      "operator_id": "f5_annotation_overlap",
+      "case_id": "acceptance:F5:00:f5_annotation_overlap",
+      "case_index": 0,
+      "seed": 11545576347837,
+      "manifested": true,
+      "added_codes": [
+        "ANNOTATION_OVERLAP",
+        "QUALITY_SCORE_BELOW_TARGET"
+      ],
+      "target_finding": {
+        "code": "ANNOTATION_OVERLAP",
+        "severity": "error",
+        "object_ids": [],
+        "element_ids": [
+          "v3__label"
+        ],
+        "message": "annotation text overlaps another label, symbol, or connector",
+        "expected": "",
+        "actual": "",
+        "suggested_repair": "",
+        "rule_source": "built-in",
+        "registered": true,
+        "threshold": null,
+        "waiver_status": "not_waived",
+        "waiver": null,
+        "validator_id": "diagram-quality",
+        "rule_id": "diagram-quality.ANNOTATION_OVERLAP",
+        "profile_id": "built-in",
+        "profile_version": "1",
+        "details": {
+          "text_text": 0,
+          "text_symbol": 1,
+          "text_connector": 0
+        }
+      },
+      "status": "covered",
+      "case": {
+        "schema": "pid-agent.repair-benchmark-case",
+        "case_id": "acceptance:F5:00:f5_annotation_overlap",
+        "family": "F5",
+        "operator_id": "f5_annotation_overlap",
+        "suite": "acceptance",
+        "seed": 11545576347837,
+        "spec_fingerprint": "8f522c758b67fc71e53d7d382f1c09fc3d922663ea500a7fc09106ece054c810",
+        "generator_fingerprint": "625033925651313094cfd6aca3ade26c3592010a9af6969c0d91ad847f3ce221",
+        "candidate_sha": "coverage-ledger",
+        "document_id": "doc_b946e641f376",
+        "base_revision": 2,
+        "base_content_hash": "51ed1c49e4f07eb59335fd52b19854bc50a01adcfde1cde289616679c3598186",
+        "pre_validation_hash": "6ea794a554d024e141a72b81d8baa084e0c881cba8a1d7d25d19c960236c2bc4",
+        "target_code": "ANNOTATION_OVERLAP",
+        "target_validator_id": "diagram-quality",
+        "target_rule_id": "diagram-quality.ANNOTATION_OVERLAP",
+        "target_element_ids": [
+          "v3__label"
+        ],
+        "scope_fingerprint": "b1e7129f3592e91c30c4ad78c84554acea1c04ac3e5c432c981422242182ea38",
+        "protected_pre": {
+          "engineering_projection": "e31e8cc3cec007e7b03c2b56d2c7d5ca8200d90bc540fcdaba2481e5e674e71e",
+          "drawing_projection": "8c111cd2007603dd5746298290fb33fcb321185988404cecf6e961079a585f72",
+          "rule_bundle_fingerprint": "18a2da498c4ebd3538edd496f2cb375793d71443708fa0a56023bb5e91e6e315"
+        },
+        "attempts": 1,
+        "required_attempts": 1,
+        "attempt_plan_hashes": [
+          "ad260a4afed5b2ad9546951326d0295d5bb941ea5ec4bd588386b87a5b1989ba"
+        ],
+        "attempt_failure_codes": [
+          ""
+        ],
+        "attempt_shadow_validation_hashes": [
+          "ea5538f603a8e632f760a9af971ea37c5c08a2b1d3d22c79ae05ac3a8d635ea9"
+        ],
+        "attempt_metrics": [
+          {
+            "attempt": 1,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "context_bytes": 4227,
+            "context_elements": 3,
+            "latency_ms": 0
+          }
+        ],
+        "selected_plan_hash": "ad260a4afed5b2ad9546951326d0295d5bb941ea5ec4bd588386b87a5b1989ba",
+        "applied": true,
+        "result_revision": 5,
+        "transaction_hash": "dd825001e78561448dcb9fd1e9b12b3bb66494a2c2eb13a121f05f9fe9f4fc8c",
+        "audit_record_id": "audit_65ccfbd6df30403487f43f9c37905dcd",
+        "post_validation_hash": "ea5538f603a8e632f760a9af971ea37c5c08a2b1d3d22c79ae05ac3a8d635ea9",
+        "protected_post": {
+          "engineering_projection": "e31e8cc3cec007e7b03c2b56d2c7d5ca8200d90bc540fcdaba2481e5e674e71e",
+          "drawing_projection": "8c111cd2007603dd5746298290fb33fcb321185988404cecf6e961079a585f72",
+          "rule_bundle_fingerprint": "18a2da498c4ebd3538edd496f2cb375793d71443708fa0a56023bb5e91e6e315"
+        },
+        "undo_restored_base": true,
+        "redo_restored_result": true,
+        "repair_hash": "3fb073403093ad108f80a83872d35f0a78d37bae7f038ff29aeeef1e37b1553b",
+        "classification": "success",
+        "failure_code": "",
+        "write_count": 1,
+        "reasons": [],
+        "wall_clock_ms": 20,
+        "timings_ms": {
+          "plan_ms": 0,
+          "compile_ms": 1,
+          "shadow_validate_ms": 3,
+          "apply_ms": 11,
+          "post_validate_ms": 2
+        },
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "token_usage_estimated": false,
+        "planner": {
+          "planner_id": "deterministic-repair-planner",
+          "planner_version": "1",
+          "provider_class": "",
+          "base_url_class": "",
+          "model": "",
+          "temperature": null,
+          "top_p": null,
+          "max_output_tokens": null,
+          "timeout_seconds": null,
+          "prompt_fingerprint": "",
+          "schema_fingerprint": "",
+          "token_usage_estimated": false
+        }
+      },
+      "notes": [
+        "the isolated device's label annotation sits on top of the device it labels"
+      ]
+    }
+  ],
+  "promoted": [
+    "ANNOTATION_OVERLAP",
+    "DUPLICATE_LABEL",
+    "PORT_DIRECTION_MISMATCH",
+    "UNBRIDGED_CROSSING"
+  ],
+  "promoted_but_not_covered": [],
+  "representability": [
+    {
+      "code": "SYMBOL_DEFINITION_MISSING",
+      "family": "F1",
+      "validator_id": "engineering-report",
+      "disposition": "unreachable_at_supported_ingress",
+      "attempted_write": "update a symbol's symbol_key to a key the catalog does not define",
+      "reachable": false,
+      "attempts": [
+        {
+          "surface": "governed_write",
+          "accepted": false,
+          "refusal": "InvalidOperationError: 'unknown symbol: ext_symbol_not_in_catalog'",
+          "defect_present": false,
+          "finding": null
+        },
+        {
+          "surface": "import",
+          "accepted": false,
+          "refusal": "ProjectIOError: 'unknown symbol: ext_symbol_not_in_catalog'",
+          "defect_present": false,
+          "finding": null
+        }
+      ],
+      "note": "a catalogue that moved on is the scenario the rule guards"
+    },
+    {
+      "code": "CONNECTOR_ENDPOINT_PORT_MISSING",
+      "family": "F2",
+      "validator_id": "engineering-report",
+      "disposition": "unreachable_at_supported_ingress",
+      "attempted_write": "bind a connector endpoint to a port id the device does not define",
+      "reachable": false,
+      "attempts": [
+        {
+          "surface": "governed_write",
+          "accepted": false,
+          "refusal": "InvalidOperationError: unknown port 'ext_no_such_port' for symbol v2 (ball_valve)",
+          "defect_present": false,
+          "finding": null
+        },
+        {
+          "surface": "import",
+          "accepted": false,
+          "refusal": "ProjectIOError: unknown port 'ext_no_such_port' for symbol v2 (ball_valve)",
+          "defect_present": false,
+          "finding": null
+        }
+      ],
+      "note": "a device library that changed under an existing drawing"
+    },
+    {
+      "code": "CONNECTOR_ENDPOINT_POINT_MISMATCH",
+      "family": "F2",
+      "validator_id": "engineering-report",
+      "disposition": "normalized_or_rejected_at_supported_ingress",
+      "attempted_write": "leave a connector endpoint bound to a stale coordinate",
+      "reachable": false,
+      "attempts": [
+        {
+          "surface": "governed_write",
+          "accepted": true,
+          "refusal": "",
+          "defect_present": false,
+          "finding": null
+        },
+        {
+          "surface": "import",
+          "accepted": false,
+          "refusal": "ProjectIOError: connector p1 target binding point is stale",
+          "defect_present": false,
+          "finding": null
+        }
+      ],
+      "note": "equipment moving without its binding following; the governed write accepts it and re-derives the point, so the defect never lands, and the import path refuses the file"
+    }
+  ],
+  "unreachable": [
+    "CONNECTOR_ENDPOINT_POINT_MISMATCH",
+    "CONNECTOR_ENDPOINT_PORT_MISSING",
+    "SYMBOL_DEFINITION_MISSING"
+  ],
+  "became_reachable": [],
+  "negative_controls": [
+    {
+      "control": "producer_stages_nothing",
+      "expected_signal": "not_manifested",
+      "observed_signal": "not_manifested",
+      "red": true,
+      "detail": "target_present=False"
+    },
+    {
+      "control": "producer_declares_wrong_code",
+      "expected_signal": "not_manifested",
+      "observed_signal": "not_manifested",
+      "red": true,
+      "detail": "declared=NODE_OVERLAP added=['DUPLICATE_LABEL', 'QUALITY_SCORE_BELOW_TARGET']"
+    },
+    {
+      "control": "planner_edits_outside_scope",
+      "expected_signal": "locality_violation",
+      "observed_signal": "locality_violation",
+      "red": true,
+      "detail": "candidate changed elements outside the frozen scope: ['p2']"
+    },
+    {
+      "control": "planner_deletes_the_target",
+      "expected_signal": "deletion_not_permitted",
+      "observed_signal": "deletion_not_permitted",
+      "red": true,
+      "detail": "candidate removed elements the case never permitted: ['note1']"
+    }
+  ],
+  "negative_controls_all_red": true,
+  "report_hash": "f34399505093d3e73796ec7f4d78ff28deb2532871b3717bc2209f3502daf0cb"
+}

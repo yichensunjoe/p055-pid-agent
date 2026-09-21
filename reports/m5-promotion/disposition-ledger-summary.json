@@ -1,0 +1,27 @@
+/Users/joe/ai/reasonix/projects/active/P055-PID-Agent/backend/agentcad/semantic_diff_models.py:55: UserWarning: Field name "schema" in "SemanticDiffReport" shadows an attribute in parent "StrictModel"
+  class SemanticDiffReport(StrictModel):
+{
+  "schema": "pid-agent.repair-coverage-summary",
+  "ledger_id": "m5-coverage-ledger",
+  "ledger_version": "1",
+  "ledger_fingerprint": "0b3e5e53d83b0cd4f10f98b08cd2e9ef64ed5ed01c1c896d53143296d5372da3",
+  "ledger_digest": "30a5077951324e4984cff9c6b50b5cf7ba1a86c1685bba68ce3a0c84d740294c",
+  "corpus_id": "m5-core-corpus",
+  "corpus_version": "3",
+  "spec_version": "3",
+  "promoted": [
+    "ANNOTATION_OVERLAP",
+    "DUPLICATE_LABEL",
+    "PORT_DIRECTION_MISMATCH",
+    "UNBRIDGED_CROSSING"
+  ],
+  "promoted_but_not_covered": [],
+  "unreachable": [
+    "CONNECTOR_ENDPOINT_POINT_MISMATCH",
+    "CONNECTOR_ENDPOINT_PORT_MISSING",
+    "SYMBOL_DEFINITION_MISSING"
+  ],
+  "became_reachable": [],
+  "negative_controls_all_red": true,
+  "complete": true
+}

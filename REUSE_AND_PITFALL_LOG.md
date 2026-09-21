@@ -1,5 +1,31 @@
 # REUSE_AND_PITFALL_LOG — P055-PID-Agent
 
+## 2026-09-21 · 只记 fingerprint 不记 body，等于把旧身份变成只能“信”的数字（P055-PID-Agent）
+
+- 场景：M5 coverage-promotion 要把 `BENCHMARK_SPEC_VERSION` 从 2 切到 3（4 个 reachable code 晋升为正式 case）。
+  一算就发现：切完之后，所有已发布证据里写的 `spec_fingerprint = c8520c5e…` 在仓库里**再也算不出来**了
+  —— v2 的 spec body 只存在于“当时的代码”里，而代码已经变了。远端反复要求的是“发布的东西必须可复算”，
+  所以这不是一个可以接受的副作用。
+- 结论做法：把旧 spec body **整段冻结**在代码里（`_SPEC_V2_OPERATORS` + `_archived_spec_payload()`），于是
+  `spec_fingerprint("2")` 仍返回发布值，并加一条断言把它钅在发布常量上；未知版本**抛错**，不回落到工作 spec。
+  归档表故意**不推导**（不用“今天目录减去新 operator”）：那样旧身份会随无关元数据改动而静默漂移。
+- 关键经验：**“冻结”的对象是 body，不是数字。** 换成文档也一样：只写“当时是 c8520c5e…”等于把身份变成了信任。
+
+## 2026-09-21 · “旧指纹 + 今天的目录”推出来的旧用例集是假的（P055-PID-Agent）
+
+- 场景：写晋升前后的 case 投影时，先用 `generate_cases(..., spec=spec_fingerprint("2"))` 造“v2 的 72 条”。
+  结果“pre”一列里就出现了刚晋升的 `f1_duplicate_label` ——**因为 `spec` 只控制 seed，operator 却是从今天的
+  family 轮转里选的**。换言之：那次投影会向审阅者展示一套从未跑过的旧用例集。
+- 结论做法：把“旧目录”也变成可读的（`archived_operator_catalogue(version)`），并让
+  `generate_cases(..., catalogue=...)` / `operators_for_family(..., catalogue=...)` 接受它；
+  `generate_cases(spec=<旧指纹>, catalogue=<旧目录>)` 就能重放旧 case 集。配守测试：
+  `test_the_published_v2_case_set_is_still_derivable`（断言旧集里没有任何新 operator）。
+- 关键经验：**“用旧参数重跑”必须把决定结果的所有输入都换掉**，只换其中一个（这里是 seed 的那个 spec）
+  会得到一套看起来很对、实际不存在的历史。
+- 附带教训：靠推导得出的目录字段会在第二个特例出现时变成谎言。`base_variant` 原为
+  “有 document_builder 就是 three_valves”，第二个底座（three_valves + 支管）一出现就不对了；现在它是
+  `MutationOperator` 上的显式字段，并且**发布在 spec 里**（审阅者读的就是它）。
+
 ## 2026-09-21 · 语料指纹一旦含解释器派生的值，“冻结”就变成“在这台机器上冻结”（P055-PID-Agent）
 
 - 场景：coverage-extension 提交 push 之后，CI 的 Backend job 红了，而本地 `pytest` 811 passed。唯一失败是

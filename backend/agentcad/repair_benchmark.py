@@ -24,7 +24,7 @@ from __future__ import annotations
 import hashlib
 import json
 import random
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -47,7 +47,14 @@ from .symbols import SymbolRegistry
 #: Bumped when the *gate* changes, because changing what counts as passing changes the spec.
 #: Version 2 removed the deterministic track's global-S@1 rejection (an observation, not a
 #: verdict) and added the F6 convergence gate plus the per-case attempt contract.
-BENCHMARK_SPEC_VERSION = "2"
+#: Version 3 is the coverage promotion (remote ruling §③, "coverage-promotion"): the four codes
+#: the coverage-extension track proved a document in this repository can actually hold --
+#: ``DUPLICATE_LABEL``, ``PORT_DIRECTION_MISMATCH``, ``UNBRIDGED_CROSSING`` and
+#: ``ANNOTATION_OVERLAP`` -- became real cases in the frozen catalogue. The thresholds, the oracle
+#: version, the family structure and the case layout did not move; what changed is which defects
+#: the corpus can stage. The v2 body stays recomputable through :data:`_SPEC_ARCHIVE`, so the
+#: published v2 numbers keep their derivation instead of becoming folklore.
+BENCHMARK_SPEC_VERSION = "3"
 
 #: Offline oracle version. Changing the oracle invalidates every previous number.
 SUCCESS_ORACLE_VERSION = "1"
@@ -83,9 +90,16 @@ SAFETY_CASES = 12
 #: The frozen acceptance corpus. Versioned and fingerprinted separately from the spec because
 #: "what counts as passing" (the spec) and "which cases were run" (the corpus) are different
 #: questions, and a reviewer has to be able to answer "what did M5 accept?" years later. Growing
-#: coverage means a *new* corpus id, never an edit to this one.
+#: coverage means a *new* corpus version, never an edit to the one already published.
+#:
+#: Version 3 keeps the layout intact -- still 12 acceptance cases per family, so the gate this
+#: corpus is judged by does not change shape -- while the *mix* grows from 19 operators to 23:
+#: the coverage promotion added one operator to each of F1, F2, F4 and F5. Because the cases
+#: derive from ``spec_fingerprint()``, that is a different case set with different seeds, and the
+#: v2 numbers are not comparable with v3 ones. They are not rewritten either: ``reports/m5/**``
+#: and the v2 identities recorded in :mod:`agentcad.repair_coverage_ledger` stay as published.
 CORE_CORPUS_ID = "m5-core-corpus"
-CORE_CORPUS_VERSION = "2"
+CORE_CORPUS_VERSION = "3"
 
 
 # -- base drawing ------------------------------------------------------------ #
@@ -204,6 +218,57 @@ def build_base_drawing(
     return BaseDrawing(document_id=document.id, elements=elements)
 
 
+def _three_valves_base(service: DocumentService, registry: SymbolRegistry) -> BaseDrawing:
+    """The base with the middle-to-last valve trunk present (roles ``p1`` and ``p2``).
+
+    Shared by every case whose defect is about a *second* line: F3 detaches it, and the promoted
+    crossing case re-routes it. Named rather than inlined so the two operators cannot drift into
+    two slightly different ``three_valves`` drawings.
+    """
+
+    return build_base_drawing(
+        service, registry, name="M5 benchmark base (three valves)", variant="three_valves"
+    )
+
+
+def _crossing_base(service: DocumentService, registry: SymbolRegistry) -> BaseDrawing:
+    """The three-valve base plus a fourth device and a branch line that runs to it.
+
+    A crossing between two lines that share a device is not a crossing in this model -- the two
+    ends meet at a junction -- so the branch has to run between devices the trunk does not touch.
+    Both the device and its line are added through the semantic compiler as part of the *base*
+    drawing, exactly the way the trunk is built, which keeps the mutation itself a single re-route.
+    """
+
+    from .agent_semantic_models import ConnectPortsOperation
+
+    base = _three_valves_base(service, registry)
+    _apply_semantic(
+        service,
+        base.document_id,
+        [
+            AddElementOperation(
+                element=_symbol("v4", registry, "ball_valve", 400, 700, label="HV-104")
+            ),
+            ConnectPortsOperation(
+                connector_id="q1",
+                source_element_id="v4",
+                source_port_id="out",
+                target_element_id="v3",
+                target_port_id="in",
+                routing="orthogonal",
+                process_tag="L-M5-004",
+                medium="process",
+                nominal_diameter="DN50",
+                flow_direction="forward",
+            ),
+        ],
+        "benchmark.crossing-base",
+    )
+    base.elements.update({"v4": "v4", "q1": "q1"})
+    return base
+
+
 def _apply_semantic(
     service: DocumentService, document_id: str, operations: list[Any], label: str
 ) -> int:
@@ -283,6 +348,13 @@ class MutationOperator:
     max_created_ids: int = 0
     permits_deletion: bool = False
     max_deleted_ids: int = 0
+    #: Which base drawing a case under this operator starts from, published in the spec catalogue
+    #: so a reviewer sees it without reading the builder. Stated explicitly because the old
+    #: derivation ("has a builder implies three_valves") stopped being true the moment a second
+    #: builder joined the catalogue: the crossing base is the three-valve drawing *plus* a branch
+    #: line and a fourth device, and a catalogue that called it "three_valves" would be wrong
+    #: about the drawing the case is judged on.
+    base_variant: str = "standard"
 
 
 def _mutate(service: DocumentService, document_id: str, operations: list[Any], label: str) -> int:
@@ -323,10 +395,15 @@ def _symbol_label_annotations(service: DocumentService, document_id: str, elemen
     )
 
 
-def _manual_points(service: DocumentService, document_id: str, connector_id: str) -> list[Point]:
+def _connector_element(service: DocumentService, document_id: str, connector_id: str) -> ConnectorElement:
     document = service.get_document(document_id)
     connector = next(item for item in document.elements if item.id == connector_id)
     assert isinstance(connector, ConnectorElement)
+    return connector
+
+
+def _manual_points(service: DocumentService, document_id: str, connector_id: str) -> list[Point]:
+    connector = _connector_element(service, document_id, connector_id)
     return [Point.model_validate(point.model_dump()) for point in connector.points]
 
 
@@ -465,6 +542,45 @@ def _f1_symbol_tag_duplicate(
     )
 
 
+def _f1_duplicate_label(service: DocumentService, base: BaseDrawing, rng: random.Random) -> MutationResult:
+    """Make the free note repeat a device's visible label, near that device.
+
+    ``DUPLICATE_LABEL`` counts *visible* labels that are also close together, so the note has to be
+    both textually and spatially a duplicate. It is deliberately not a ``TAG_DUPLICATE``: the
+    device's own tag is untouched, which is why this producer buys exactly one code and is a
+    different case from ``f1_symbol_tag_duplicate``.
+    """
+
+    from .annotation_layout import measure_annotation_quality
+
+    note_id = base["note1"]
+    document = service.get_document(base.document_id)
+    labelled = next(element for element in document.elements if element.id == base["v1"])
+    label = str((labelled.properties or {}).get("tag") or labelled.label or "")
+    revision = _patch(service, base.document_id, note_id, {"text": label}, "f1-duplicate-label")
+    quality = measure_annotation_quality(
+        service.get_document(base.document_id), service.symbols
+    )
+    if quality.duplicate_label_count <= 0:
+        raise BenchmarkSetupError(
+            f"{note_id} was made identical to a visible label but no duplicate was measured"
+        )
+    return MutationResult(
+        operator_id="f1_duplicate_label",
+        family="F1",
+        target_code="DUPLICATE_LABEL",
+        target_validator_id="diagram-quality",
+        target_element_ids=[note_id],
+        declared_scope_ids=[note_id],
+        touched_budget_class="simple_metadata",
+        mutation_revision=revision,
+        notes=[
+            f"the note now reads {label!r}, which is also the visible label of {base['v1']}",
+            f"duplicate_label_count={quality.duplicate_label_count}",
+        ],
+    )
+
+
 # -- F2 : endpoint / connectivity -------------------------------------------- #
 
 
@@ -536,6 +652,40 @@ def _f2_dangling_from_both_ends(
         },
         touched_budget_class="simple_endpoint",
         mutation_revision=revision,
+    )
+
+
+def _f2_port_direction_mismatch(
+    service: DocumentService, base: BaseDrawing, rng: random.Random
+) -> MutationResult:
+    """Declare the trunk's flow opposite to the ports it is wire between.
+
+    Nothing about the route or the binding moves: the two ports still say the medium runs
+    *forward*, and only the connector's own declaration disagrees. A repair that reconnects
+    something has misread the finding.
+    """
+
+    connector_id = base["p1"]
+    revision = _patch(
+        service,
+        base.document_id,
+        connector_id,
+        {"flow_direction": "reverse"},
+        "f2-port-direction-mismatch",
+    )
+    return MutationResult(
+        operator_id="f2_port_direction_mismatch",
+        family="F2",
+        target_code="PORT_DIRECTION_MISMATCH",
+        target_validator_id="diagram-quality",
+        target_element_ids=[connector_id],
+        # The finding fires per connector and carries what the ports imply; pinning that makes the
+        # binding the case's own fact rather than whichever finding sorted first.
+        target_details={"inferred_flow_direction": "forward"},
+        declared_scope_ids=[connector_id],
+        touched_budget_class="simple_endpoint",
+        mutation_revision=revision,
+        notes=["the ports still determine flow 'forward'; only the declaration moved"],
     )
 
 
@@ -663,6 +813,62 @@ def _f4_port_exit(service: DocumentService, base: BaseDrawing, rng: random.Rando
     )
 
 
+def _f4_unbridged_crossing(
+    service: DocumentService, base: BaseDrawing, rng: random.Random
+) -> MutationResult:
+    """Re-route the branch line straight across the trunk, with no jump bridge on either side.
+
+    The line is re-routed rather than added, so the case needs no create permission and the defect
+    stays a geometry defect. Departure and approach stay port-outward and the declared flow keeps
+    agreeing with the ports -- this case is about a crossing, not about a broken exit. The detour
+    costs more than three bends by construction (both ports are horizontal, so any path that
+    crosses a horizontal trunk and returns to the ports has at least four), which the manifestation
+    proof reports as an added ``EXCESSIVE_BENDS`` rather than hides.
+    """
+
+    connector_id = base["q1"]
+    connector = _connector_element(service, base.document_id, connector_id)
+    start = connector.points[0]
+    end = connector.points[-1]
+    grid = max(5.0, service.get_document(base.document_id).canvas.grid_size)
+    # The crossing column is derived from the trunk the branch has to cross, not hard-coded: the
+    # vertical has to pass *through* the trunk, so its x must be strictly inside the trunk's span.
+    # The route then climbs over the trunk and comes back down onto the target port from the left,
+    # which is the only approach its outward normal allows.
+    trunk = _connector_element(service, base.document_id, base["p1"])
+    trunk_xs = [point.x for point in trunk.points]
+    corridor = min(point.y for point in trunk.points) - 5.0 * grid
+    column = min(max(start.x + 7.0 * grid, min(trunk_xs) + grid), max(trunk_xs) - grid)
+    descent = end.x - 3.5 * grid
+    route = [
+        Point(x=start.x, y=start.y),
+        Point(x=column, y=start.y),
+        Point(x=column, y=corridor),
+        Point(x=descent, y=corridor),
+        Point(x=descent, y=end.y),
+        Point(x=end.x, y=end.y),
+    ]
+    revision = _patch(
+        service,
+        base.document_id,
+        connector_id,
+        {"routing": "manual", "points": [point.model_dump(mode="json") for point in route]},
+        "f4-unbridged-crossing-route",
+    )
+    return MutationResult(
+        operator_id="f4_unbridged_crossing",
+        family="F4",
+        target_code="UNBRIDGED_CROSSING",
+        target_validator_id="diagram-quality",
+        target_element_ids=[connector_id],
+        postconditions={"element_ids_preserved": [connector_id, base["p1"]]},
+        declared_scope_ids=[connector_id],
+        touched_budget_class="local_geometry",
+        mutation_revision=revision,
+        notes=[f"{connector_id} crosses {base['p1']} and neither side asks for a jump bridge"],
+    )
+
+
 # -- F5 : local collision / drafting region ---------------------------------- #
 
 
@@ -758,6 +964,44 @@ def _f5_symbol_out_of_bounds(service: DocumentService, base: BaseDrawing, rng: r
     )
 
 
+def _f5_annotation_overlap(
+    service: DocumentService, base: BaseDrawing, rng: random.Random
+) -> MutationResult:
+    """Put the isolated device's label annotation on top of the device itself.
+
+    The annotation is ``symbol_label`` text the production polish generated, so this is a drafting
+    collision between an element and its own label -- not a missing or duplicated tag.
+    """
+
+    element_id = base["v3"]
+    annotations = _symbol_label_annotations(service, base.document_id, element_id)
+    if not annotations:
+        raise BenchmarkSetupError(f"{element_id} has no generated label annotation to overlap")
+    annotation_id = annotations[0]
+    document = service.get_document(base.document_id)
+    placed = next(element for element in document.elements if element.id == element_id)
+    revision = _patch(
+        service,
+        base.document_id,
+        annotation_id,
+        {"position": {"x": placed.position.x, "y": placed.position.y}},
+        "f5-annotation-overlap",
+    )
+    return MutationResult(
+        operator_id="f5_annotation_overlap",
+        family="F5",
+        target_code="ANNOTATION_OVERLAP",
+        target_validator_id="diagram-quality",
+        # The finding is drawing-wide: the case declares which annotation it broke, so the binding
+        # is a fact about the case rather than about sort order.
+        target_element_ids=[annotation_id],
+        declared_scope_ids=[annotation_id, element_id],
+        touched_budget_class="local_geometry",
+        mutation_revision=revision,
+        notes=[f"{annotation_id} now sits at the centre of {element_id}"],
+    )
+
+
 # -- F6 : replan / conflict robustness --------------------------------------- #
 
 
@@ -821,6 +1065,15 @@ MUTATIONS: dict[str, MutationOperator] = {
         "f1_symbol_tag_duplicate", "F1", "TAG_DUPLICATE", "engineering-report",
         _f1_symbol_tag_duplicate, touched_budget_class="simple_metadata",
     ),
+    # Promoted by the coverage promotion (remote ruling §③). The producer, its base and its target
+    # binding are the ones the coverage-extension track proved, moved here unchanged: the point of
+    # the promotion is that these codes stop being a side track and become cases the frozen gate
+    # owns. The extension module keeps the record of *why* they were believed, this keeps the cases.
+    "f1_duplicate_label": MutationOperator(
+        "f1_duplicate_label", "F1", "DUPLICATE_LABEL", "diagram-quality", _f1_duplicate_label,
+        document_builder=_three_valves_base, touched_budget_class="simple_metadata",
+        base_variant="three_valves",
+    ),
     "f2_endpoint_dangling": MutationOperator(
         "f2_endpoint_dangling", "F2", "CONNECTOR_ENDPOINT_DANGLING", "engineering-report", _f2_dangling,
         touched_budget_class="simple_endpoint",
@@ -833,6 +1086,12 @@ MUTATIONS: dict[str, MutationOperator] = {
         "f2_endpoint_dangling_both", "F2", "CONNECTOR_ENDPOINT_DANGLING", "engineering-report",
         _f2_dangling_from_both_ends, touched_budget_class="simple_endpoint",
     ),
+    "f2_port_direction_mismatch": MutationOperator(
+        "f2_port_direction_mismatch", "F2", "PORT_DIRECTION_MISMATCH", "diagram-quality",
+        _f2_port_direction_mismatch,
+        document_builder=_three_valves_base, touched_budget_class="simple_endpoint",
+        base_variant="three_valves",
+    ),
     "f3_delete_middle_detach": MutationOperator(
         "f3_delete_middle_detach", "F3", "CONNECTOR_ENDPOINT_DANGLING", "engineering-report",
         _f3_delete_detach,
@@ -840,6 +1099,7 @@ MUTATIONS: dict[str, MutationOperator] = {
             service, registry, name="M5 benchmark base (three valves)", variant="three_valves"
         ),
         touched_budget_class="multi_connector",
+        base_variant="three_valves",
         # Putting the removed device back is a create. Deleting it left a generated label behind,
         # and the reconstruction consumes that annotation (the element carries the tag again), so
         # the case grants exactly one removal -- and a plan that removes anything else is refused
@@ -861,6 +1121,12 @@ MUTATIONS: dict[str, MutationOperator] = {
         "f4_port_exit_mismatch", "F4", "PORT_EXIT_MISMATCH", "diagram-quality", _f4_port_exit,
         touched_budget_class="local_geometry",
     ),
+    "f4_unbridged_crossing": MutationOperator(
+        "f4_unbridged_crossing", "F4", "UNBRIDGED_CROSSING", "diagram-quality",
+        _f4_unbridged_crossing,
+        document_builder=_crossing_base, touched_budget_class="local_geometry",
+        base_variant="three_valves+crossing",
+    ),
     "f5_node_overlap": MutationOperator(
         "f5_node_overlap", "F5", "NODE_OVERLAP", "diagram-quality", _f5_node_overlap,
         touched_budget_class="complex_collision",
@@ -872,6 +1138,12 @@ MUTATIONS: dict[str, MutationOperator] = {
     "f5_symbol_out_of_bounds": MutationOperator(
         "f5_symbol_out_of_bounds", "F5", "SYMBOL_OUT_OF_BOUNDS", "diagram-quality",
         _f5_symbol_out_of_bounds, touched_budget_class="complex_collision",
+    ),
+    "f5_annotation_overlap": MutationOperator(
+        "f5_annotation_overlap", "F5", "ANNOTATION_OVERLAP", "diagram-quality",
+        _f5_annotation_overlap,
+        document_builder=_three_valves_base, touched_budget_class="local_geometry",
+        base_variant="three_valves",
     ),
     "f6_replan_once": MutationOperator(
         "f6_replan_once", "F6", "", "", _build_f6(2, "f2_endpoint_dangling"),
@@ -888,25 +1160,139 @@ MUTATIONS: dict[str, MutationOperator] = {
 }
 
 
+def _operator_row(operator: MutationOperator) -> dict[str, Any]:
+    return {
+        "operator_id": operator.operator_id,
+        "family": operator.family,
+        "target_code": operator.target_code,
+        "validator_id": operator.target_validator_id,
+        "touched_budget_class": operator.touched_budget_class,
+        "base_variant": operator.base_variant,
+        "permits_creation": operator.permits_creation,
+        "max_created_ids": operator.max_created_ids,
+        "permits_deletion": operator.permits_deletion,
+        "max_deleted_ids": operator.max_deleted_ids,
+    }
+
+
 def _operator_catalog() -> list[dict[str, Any]]:
+    """The working catalogue, in the one order the spec is allowed to be in."""
+
     return [
-        {
-            "operator_id": operator.operator_id,
-            "family": operator.family,
-            "target_code": operator.target_code,
-            "validator_id": operator.target_validator_id,
-            "touched_budget_class": operator.touched_budget_class,
-            "base_variant": "three_valves" if operator.document_builder else "standard",
-            "permits_creation": operator.permits_creation,
-            "max_created_ids": operator.max_created_ids,
-            "permits_deletion": operator.permits_deletion,
-            "max_deleted_ids": operator.max_deleted_ids,
-        }
+        _operator_row(operator)
         for operator in sorted(MUTATIONS.values(), key=lambda item: item.operator_id)
     ]
 
 
-def spec_payload() -> dict[str, Any]:
+# -- the spec archive -------------------------------------------------------- #
+#
+# A fingerprint is only an identity if somebody can recompute it. The working spec grows, so the
+# published v2 fingerprint (``c8520c5e…``) would otherwise become a number a reader has to take on
+# trust: the v2 *body* would exist nowhere in the tree. The archive below is that body, kept
+# verbatim so ``spec_fingerprint("2")`` still answers with the published value, and
+# ``tests/test_repair_contract.py`` asserts the recomputation against the constant that was
+# published -- which is what makes this a checked archive rather than a second source of truth.
+#
+# Nothing here is derived from today's catalogue on purpose. Deriving it ("the v2 operators are
+# the ones not promoted in v3") would silently move the v2 identity the first time an old
+# operator's metadata changed, and the whole point of freezing a spec is that it cannot move.
+
+#: ``(operator_id, family, target_code, validator_id, touched_budget_class, base_variant,
+#: permits_creation, max_created_ids, permits_deletion, max_deleted_ids)``.
+_SPEC_V2_OPERATORS: tuple[tuple[Any, ...], ...] = (
+    ("f1_line_diameter_missing", "F1", "LINE_DIAMETER_MISSING", "engineering-report", "simple_metadata", "standard", False, 0, False, 0),
+    ("f1_line_medium_missing", "F1", "LINE_MEDIUM_MISSING", "engineering-report", "simple_metadata", "standard", False, 0, False, 0),
+    ("f1_line_name_missing", "F1", "LINE_TAG_MISSING", "engineering-report", "simple_metadata", "standard", False, 0, False, 0),
+    ("f1_line_tag_missing", "F1", "LINE_TAG_MISSING", "engineering-report", "simple_metadata", "standard", False, 0, False, 0),
+    ("f1_symbol_tag_duplicate", "F1", "TAG_DUPLICATE", "engineering-report", "simple_metadata", "standard", False, 0, False, 0),
+    ("f1_symbol_tag_missing", "F1", "TAG_MISSING", "engineering-report", "simple_metadata", "standard", False, 0, False, 0),
+    ("f2_endpoint_dangling", "F2", "CONNECTOR_ENDPOINT_DANGLING", "engineering-report", "simple_endpoint", "standard", False, 0, False, 0),
+    ("f2_endpoint_dangling_both", "F2", "CONNECTOR_ENDPOINT_DANGLING", "engineering-report", "simple_endpoint", "standard", False, 0, False, 0),
+    ("f2_required_port_unconnected", "F2", "SYMBOL_REQUIRED_PORT_UNCONNECTED", "engineering-report", "simple_endpoint", "standard", False, 0, False, 0),
+    ("f3_delete_middle_detach", "F3", "CONNECTOR_ENDPOINT_DANGLING", "engineering-report", "multi_connector", "three_valves", True, 1, True, 1),
+    ("f4_micro_segment", "F4", "MICRO_SEGMENT", "diagram-quality", "local_geometry", "standard", False, 0, False, 0),
+    ("f4_port_exit_mismatch", "F4", "PORT_EXIT_MISMATCH", "diagram-quality", "local_geometry", "standard", False, 0, False, 0),
+    ("f4_unnecessary_bend", "F4", "UNNECESSARY_BEND", "diagram-quality", "local_geometry", "standard", False, 0, False, 0),
+    ("f5_node_overlap", "F5", "NODE_OVERLAP", "diagram-quality", "complex_collision", "standard", False, 0, False, 0),
+    ("f5_pipe_through_equipment", "F5", "PIPE_THROUGH_EQUIPMENT", "diagram-quality", "complex_collision", "standard", False, 0, False, 0),
+    ("f5_symbol_out_of_bounds", "F5", "SYMBOL_OUT_OF_BOUNDS", "diagram-quality", "complex_collision", "standard", False, 0, False, 0),
+    ("f6_replan_four_times", "F6", "", "", "simple_metadata", "standard", False, 0, False, 0),
+    ("f6_replan_once", "F6", "", "", "simple_endpoint", "standard", False, 0, False, 0),
+    ("f6_replan_twice", "F6", "", "", "simple_endpoint", "standard", False, 0, False, 0),
+)
+
+_SPEC_OPERATOR_FIELDS: tuple[str, ...] = (
+    "operator_id",
+    "family",
+    "target_code",
+    "validator_id",
+    "touched_budget_class",
+    "base_variant",
+    "permits_creation",
+    "max_created_ids",
+    "permits_deletion",
+    "max_deleted_ids",
+)
+
+#: Published spec identities, kept beside the body they came from. ``spec_fingerprint("2")`` has to
+#: equal the first one; the test that checks it is the reason the archive cannot rot.
+SPEC_FINGERPRINT_V2 = "c8520c5e7b0b1d7e77e3752080393b4965aee60538ad71a6bf95d5fc4ab5ede1"
+
+
+def archived_operator_catalogue(version: str) -> dict[str, dict[str, Any]]:
+    """A superseded spec's operator catalogue, keyed by operator id.
+
+    Published so the *derivation* of an old case set can be repeated, not only its fingerprint
+    recomputed: the operator a family's round-robin picks is read from here, which is what makes
+    "these are the 72 cases v2 ran" a claim somebody can check instead of a reconstruction from a
+    saved JSON file.
+    """
+
+    payload = spec_payload(version)
+    return {row["operator_id"]: row for row in payload["operators"]}
+
+
+def _archived_spec_payload(version: str) -> dict[str, Any] | None:
+    """The frozen body of a superseded spec version, or ``None`` if there is no archive for it."""
+
+    if version != "2":
+        return None
+    return {
+        "spec_version": "2",
+        "oracle_version": "1",
+        "families": ["F1", "F2", "F3", "F4", "F5", "F6"],
+        # v2's thresholds, spelled out rather than read from ``THRESHOLDS``: they happen to be the
+        # same numbers today, and the archive has to stay right even on the day they are not.
+        "thresholds": {
+            "f6_s5_overall": 1.0,
+            "model_family_min": 0.5,
+            "model_s5_overall": 0.8,
+            "s5_family_min": 0.75,
+            "s5_overall": 0.9,
+            "safety_suite": 1.0,
+        },
+        "operators": [
+            dict(zip(_SPEC_OPERATOR_FIELDS, row, strict=True)) for row in _SPEC_V2_OPERATORS
+        ],
+        "dev_cases_per_family": 4,
+        "acceptance_cases_per_family": 12,
+        "safety_cases": 12,
+    }
+
+
+def spec_payload(version: str | None = None) -> dict[str, Any]:
+    """The spec body for ``version`` -- the working one by default, an archived one on request.
+
+    An unknown version raises instead of falling back to the working spec: silently answering with
+    today's body would make ``spec_fingerprint("1")`` look like a successful recomputation.
+    """
+
+    resolved = version or BENCHMARK_SPEC_VERSION
+    if resolved != BENCHMARK_SPEC_VERSION:
+        archived = _archived_spec_payload(resolved)
+        if archived is None:
+            raise ValueError(f"no spec body is archived for version {resolved!r}")
+        return archived
     return {
         "spec_version": BENCHMARK_SPEC_VERSION,
         "oracle_version": SUCCESS_ORACLE_VERSION,
@@ -967,8 +1353,17 @@ def core_corpus_fingerprint() -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def spec_fingerprint() -> str:
-    text = json.dumps(spec_payload(), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+def spec_fingerprint(version: str | None = None) -> str:
+    """Hash of a spec body -- the working one by default, or an archived version on request.
+
+    The optional version exists so a reviewer can still recompute what a published payload names:
+    ``spec_fingerprint("2")`` answers with the value the v2 evidence carries, from the frozen body,
+    after the working spec has moved on.
+    """
+
+    text = json.dumps(
+        spec_payload(version), sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    )
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
@@ -1009,9 +1404,30 @@ def derive_seed(*, spec: str, candidate_sha: str, family: str, index: int) -> in
     return int(digest[:12], 16)
 
 
-def operators_for_family(family: str) -> list[str]:
+def _entry_identity(entry: Any) -> tuple[str, str]:
+    """``(operator_id, family)`` for a working operator or for an archived spec row."""
+
+    if isinstance(entry, Mapping):
+        return str(entry["operator_id"]), str(entry["family"])
+    return entry.operator_id, entry.family
+
+
+def operators_for_family(
+    family: str, *, catalogue: Mapping[str, Any] | None = None
+) -> list[str]:
+    """The round-robin order for one family, sorted so the order cannot drift.
+
+    ``catalogue`` is the operator table to read: the working one by default, or the row mapping an
+    archived spec publishes. It exists for the same reason the archive does -- a superseded case
+    set has to stay re-derivable, which means its *rotation* has to be recoverable and not only its
+    fingerprint.
+    """
+
+    entries = MUTATIONS if catalogue is None else catalogue
     return sorted(
-        operator.operator_id for operator in MUTATIONS.values() if operator.family == family
+        operator_id
+        for operator_id, entry_family in (_entry_identity(entry) for entry in entries.values())
+        if entry_family == family
     )
 
 
@@ -1022,6 +1438,7 @@ def generate_cases(
     count: int,
     suite: str = "acceptance",
     spec: str | None = None,
+    catalogue: Mapping[str, Any] | None = None,
 ) -> list[BenchmarkCase]:
     """Deterministically derive ``count`` cases for one family.
 
@@ -1029,10 +1446,13 @@ def generate_cases(
     ``(spec fingerprint, candidate SHA, family, index)``: same candidate, same cases; different
     candidate, different cases. Nothing here is sampled at run time, so a case cannot be
     dropped because it failed.
+
+    ``spec`` and ``catalogue`` together are what re-derive a superseded case set: pass an archived
+    fingerprint and its archived catalogue and the resulting cases are the ones that spec ran.
     """
 
     spec_fingerprint_value = spec or spec_fingerprint()
-    operator_ids = operators_for_family(family)
+    operator_ids = operators_for_family(family, catalogue=catalogue)
     if not operator_ids:
         raise ValueError(f"no mutation operators registered for family {family}")
     cases: list[BenchmarkCase] = []
@@ -1074,11 +1494,13 @@ __all__ = [
     "FAMILY_TITLES",
     "MUTATIONS",
     "SAFETY_CASES",
+    "SPEC_FINGERPRINT_V2",
     "SUCCESS_ORACLE_VERSION",
     "THRESHOLDS",
     "BaseDrawing",
     "BenchmarkCase",
     "MutationOperator",
+    "archived_operator_catalogue",
     "MutationResult",
     "build_base_drawing",
     "core_corpus_fingerprint",

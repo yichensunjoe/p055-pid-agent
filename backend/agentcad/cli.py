@@ -680,21 +680,23 @@ def _run_repair_scale_command(args: argparse.Namespace) -> None:
 
 
 def _run_repair_coverage_command(args: argparse.Namespace) -> None:
-    """Run the coverage-extension track: the codes the frozen corpus cannot produce.
+    """Run the coverage ledger: where every strategy-present code ended up.
 
-    The command answers two questions and exits 2 if either is unmet: did every supported code's
-    producer really make the canonical validator raise it (and did the governed repair resolve
-    it), and can the unreachable codes still not be staged by the write or the import surface.
+    The command answers two questions and exits 2 if either is unmet. Are the promoted codes still
+    carried by the frozen corpus, with the canonical validator raising the exact code and the
+    ordinary oracle resolving it? And are the codes recorded as unreachable still unreachable at
+    both supported entry surfaces? Plus the third condition that keeps the gate honest: every
+    negative control still goes red.
 
-    Exit codes: 0 means the discovered matrix is complete and every negative control went red; 2
-    means a supported code lost its producer/repair, an "unreachable" code became reachable, or a
-    negative control stopped reporting; 3 means the run could not be set up at all.
+    Exit codes: 0 means all three hold; 2 means a promoted code lost its case or its repair, a code
+    recorded as unreachable became stageable (promote it), or a negative control stopped
+    reporting; 3 means the run could not be set up at all.
     """
 
     import tempfile
 
     from .repair_benchmark_runner import BenchmarkContext
-    from .repair_coverage_extension import extension_payload
+    from .repair_coverage_ledger import CoverageLedgerError, assert_ledger_is_sound, ledger_payload
     from .service import DocumentService
     from .store import SQLiteDocumentStore
     from .symbols import SymbolRegistry
@@ -708,7 +710,13 @@ def _run_repair_coverage_command(args: argparse.Namespace) -> None:
             profile=resolve_profile(built_in_profile()),
             registry=registry,
         )
-        return extension_payload(context)
+        payload = ledger_payload(context)
+        try:
+            assert_ledger_is_sound(payload)
+        except CoverageLedgerError as exc:
+            print(f"coverage ledger is not sound: {exc}", file=sys.stderr)
+            raise SystemExit(2) from exc
+        return payload
 
     if args.database is not None:
         payload = _run(Path(args.database))
@@ -719,30 +727,28 @@ def _run_repair_coverage_command(args: argparse.Namespace) -> None:
     if args.output:
         args.output.write_text(_json_payload(payload) + "\n", encoding="utf-8")
     print(_json_payload(payload))
-    uncovered = payload["uncovered"]
-    reachable = [
-        probe["code"] for probe in payload["representability"] if probe["reachable"]
-    ]
-    complete = not uncovered and not reachable and payload["negative_controls_all_red"]
     print(
         _json_payload(
             {
                 "schema": "pid-agent.repair-coverage-summary",
-                "corpus_id": payload["corpus"]["corpus_id"],
-                "corpus_version": payload["corpus"]["corpus_version"],
-                "corpus_fingerprint": payload["corpus_fingerprint"],
-                "case_count": payload["corpus"]["case_count"],
-                "covered": payload["covered"],
-                "uncovered": uncovered,
+                "ledger_id": payload["ledger"]["ledger_id"],
+                "ledger_version": payload["ledger"]["ledger_version"],
+                "ledger_fingerprint": payload["ledger_fingerprint"],
+                "ledger_digest": payload["ledger_digest"],
+                "corpus_id": payload["ledger"]["corpus_id"],
+                "corpus_version": payload["ledger"]["corpus_version"],
+                "spec_version": payload["ledger"]["spec_version"],
+                "promoted": payload["promoted"],
+                "promoted_but_not_covered": payload["promoted_but_not_covered"],
                 "unreachable": payload["unreachable"],
-                "became_reachable": reachable,
+                "became_reachable": payload["became_reachable"],
                 "negative_controls_all_red": payload["negative_controls_all_red"],
-                "complete": complete,
+                "complete": True,
             }
         ),
         file=sys.stderr,
     )
-    raise SystemExit(0 if complete else 2)
+    raise SystemExit(0)
 
 
 def _run_repair_qualification_command(args: argparse.Namespace) -> None:
@@ -1214,9 +1220,9 @@ def main(argv: list[str] | None = None) -> None:
     repair_coverage_parser = subparsers.add_parser(
         "repair-coverage",
         help=(
-            "Run the M5 coverage-extension track: deterministic producers for the codes the "
-            "frozen 72-case corpus cannot produce, plus the proof that the rest cannot be staged "
-            "by any supported surface"
+            "Run the M5 coverage ledger: prove the promoted codes are carried by the frozen "
+            "corpus, and that the codes recorded as unreachable still cannot be staged by any "
+            "supported surface"
         ),
     )
     repair_coverage_parser.add_argument(

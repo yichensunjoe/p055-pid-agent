@@ -1,0 +1,41 @@
+=== M5 coverage promotion · spec projection ===
+pre  spec_version = 2   fingerprint = c8520c5e7b0b1d7e77e3752080393b4965aee60538ad71a6bf95d5fc4ab5ede1
+post spec_version = 3   fingerprint = 8f522c758b67fc71e53d7d382f1c09fc3d922663ea500a7fc09106ece054c810
+working BENCHMARK_SPEC_VERSION = 3
+core corpus version = 3
+
+--- operators joined ---
++ f1_duplicate_label           family=F1 code=DUPLICATE_LABEL validator=diagram-quality base=three_valves budget=simple_metadata create=False(0) delete=False(0)
++ f2_port_direction_mismatch   family=F2 code=PORT_DIRECTION_MISMATCH validator=diagram-quality base=three_valves budget=simple_endpoint create=False(0) delete=False(0)
++ f4_unbridged_crossing        family=F4 code=UNBRIDGED_CROSSING validator=diagram-quality base=three_valves+crossing budget=local_geometry create=False(0) delete=False(0)
++ f5_annotation_overlap        family=F5 code=ANNOTATION_OVERLAP validator=diagram-quality base=three_valves budget=local_geometry create=False(0) delete=False(0)
+
+--- operators that moved ---
+(none: every pre-existing operator is byte-identical)
+
+--- operators removed ---
+(none)
+
+--- fields that had to stay put ---
+= oracle_version: "1"
+= families: ["F1", "F2", "F3", "F4", "F5", "F6"]
+= thresholds: {"f6_s5_overall": 1.0, "model_family_min": 0.5, "model_s5_overall": 0.8, "s5_family_min": 0.75, "s5_overall": 0.9, "safety_suite": 1.0}
+= dev_cases_per_family: 4
+= acceptance_cases_per_family: 12
+= safety_cases: 12
+operator_count: 19 -> 23
+
+=== M5 coverage promotion · identity table ===
+Each identity is recomputed twice: as published, and with generator_fingerprint replaced by another CPython's value.
+
+identity                     moved?  value
+spec_fingerprint('2')        stable  c8520c5e7b0b1d7e77e3752080393b4965aee60538ad71a6bf95d5fc4ab5ede1
+spec_fingerprint()           stable  8f522c758b67fc71e53d7d382f1c09fc3d922663ea500a7fc09106ece054c810
+core_corpus_fingerprint()    RUNTIME c85995d29d71b7d8ec81e7e152bab7daf880ccd44267ec00d7e1ee2da6b834ca
+ledger_digest()              stable  30a5077951324e4984cff9c6b50b5cf7ba1a86c1685bba68ce3a0c84d740294c
+ledger_fingerprint()         RUNTIME 0b3e5e53d83b0cd4f10f98b08cd2e9ef64ed5ed01c1c896d53143296d5372da3
+generator_fingerprint()      RUNTIME 625033925651313094cfd6aca3ade26c3592010a9af6969c0d91ad847f3ce221
+
+stable = identical on 3.11 and 3.12 for the same ledger, so two machines may compare it.
+RUNTIME = a fact about the interpreter that produced it, published as provenance and never
+used as an identity (the remote's ruling on generator_fingerprint).

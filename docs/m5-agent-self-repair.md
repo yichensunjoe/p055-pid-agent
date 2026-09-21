@@ -16,8 +16,10 @@
 | suite runner 与 evidence 组装 | `backend/agentcad/repair_benchmark_runner.py` |
 | evidence 契约与独立复算器 | `backend/agentcad/repair_evidence.py` |
 | safety-negative suite（§D） | `backend/agentcad/repair_safety.py` |
+| coverage ledger 与晋升证明（§9） | `backend/agentcad/repair_coverage_ledger.py` |
+| 晋升前后投影证据 | `scripts/m5_promotion_projection.py`、`reports/m5-promotion/**` |
 | M4 semantics invariance manifest/门（§E） | `backend/agentcad/m4_invariance.py`、`scripts/m4_semantics_manifest.py` |
-| 契约/门禁测试 | `backend/tests/test_repair_contract.py`、`test_repair_safety.py`、`test_m4_invariance.py` |
+| 契约/门禁测试 | `backend/tests/test_repair_contract.py`、`test_repair_safety.py`、`test_m4_invariance.py`、`test_repair_coverage_ledger.py` |
 
 ---
 
@@ -119,21 +121,19 @@ planner 拿到的是 `RepairContext`：**当前**图纸、canonical findings、�
 （`f1_symbol_tag_missing` / `f1_symbol_tag_duplicate` 就是因为这个差距被补上的：规则修好之前，
 F1 表里写着 `TAG_MISSING`/`TAG_DUPLICATE`，但目录里没有任何 operator 能制造它们）：
 
-- **目录能制造（19 operator / 13 code，acceptance 里出现 13 个非空 code；与
+- **目录能制造（23 operator / 17 code，acceptance 里出现 17 个非空 code；与
   `supported_code_manifest()` 一致）**：上表 F1–F5 中
   `LINE_TAG_MISSING`、`LINE_MEDIUM_MISSING`、`LINE_DIAMETER_MISSING`、`TAG_MISSING`、`TAG_DUPLICATE`、
-  `CONNECTOR_ENDPOINT_DANGLING`、`SYMBOL_REQUIRED_PORT_UNCONNECTED`、`MICRO_SEGMENT`、
-  `UNNECESSARY_BEND`、`PORT_EXIT_MISMATCH`、`NODE_OVERLAP`、`PIPE_THROUGH_EQUIPMENT`、`SYMBOL_OUT_OF_BOUNDS`。
-- **有修复策略、且已补上 governed producer**：`DUPLICATE_LABEL`、`ANNOTATION_OVERLAP`、
-  `UNBRIDGED_CROSSING`、`PORT_DIRECTION_MISMATCH` —— 在独立的 **coverage-extension track**
-  （`repair_coverage_extension.py`，`pid-agent repair-coverage`）里，每个 code 都有一条
-  `producer → canonical finding → repair → oracle` 证据，4/4 首答命中、单次 governed write，
-  见 §9。它们**不进**冻结的 72-case 语料：spec 仍是 v2，`spec_fingerprint` 未动。
+  `DUPLICATE_LABEL`、`CONNECTOR_ENDPOINT_DANGLING`、`SYMBOL_REQUIRED_PORT_UNCONNECTED`、
+  `PORT_DIRECTION_MISMATCH`、`MICRO_SEGMENT`、`UNNECESSARY_BEND`、`PORT_EXIT_MISMATCH`、
+  `UNBRIDGED_CROSSING`、`NODE_OVERLAP`、`PIPE_THROUGH_EQUIPMENT`、`SYMBOL_OUT_OF_BOUNDS`、
+  `ANNOTATION_OVERLAP`。
+  （后四项由 **coverage promotion** 从 coverage-extension track 晋升而来：spec v3 / corpus v3，见 §9。）
 - **有修复策略、但**无法被任何受支持入口制造**：`SYMBOL_DEFINITION_MISSING`、
   `CONNECTOR_ENDPOINT_PORT_MISSING`、`CONNECTOR_ENDPOINT_POINT_MISMATCH`。这三个 code
   在 `repair_planner.py` 里有策略、在冻结的 rule catalog 里是正式规则，但**写路径与导入路径都不
   允许这样的文档存在**，而且两者拒绝的方式不同（
-  `repair_coverage_extension.probe_representability()` 逐个记录）：
+  `repair_coverage_ledger.probe_representability()` 逐个记录）：
 
   | code | governed write | import |
   |---|---|---|
@@ -143,8 +143,9 @@ F1 表里写着 `TAG_MISSING`/`TAG_DUPLICATE`，但目录里没有任何 operato
 
   所以“benchmark 考不到它们”不是遗漏，而是产品自身的入口把它们挡在门外：规则是给**其它来源**
   （旧库、外部生成的文档、将来第三方生产者）留的纵深防御，planner 也照样保留策略。
-  `test_unreachable_codes_cannot_be_staged_by_any_supported_surface` 是这条断言的守卫：
-  哪天某个面开始接受它们，测试就红，必须把它们提升成正式 case。
+  这三个 code 已按规定进 disposition ledger（`repair_coverage_ledger.UNREACHABLE_ENTRIES`，
+  并在 `ledger_manifest()` 里发布），`test_unreachable_codes_cannot_be_staged_by_any_supported_surface`
+  是这条断言的守卫：哪天某个面开始接受它们，测试就红，必须把它们提升成正式 case。
   在补上真正的 producer 之前，任何“F1/F2/F4/F5 覆盖了这三个 code”的说法都是错的。
 - **上表出现但既无 operator 也无策略**的 entry finding，只表示该 family 的入口语义，不代表被测量。
 
@@ -154,7 +155,7 @@ F1 表里写着 `TAG_MISSING`/`TAG_DUPLICATE`，但目录里没有任何 operato
 - **acceptance suite**：72 case，每 family 12，seed 由
   `spec fingerprint + candidate SHA + family + case index` 派生。同一 SHA 本地与 CI 生成同一 case；
   修复产生新 SHA 后 case 集随之改变，证据必须重跑。
-- 阈值冻结在 `THRESHOLDS`（spec **v2**）：`S@5 ≥ 0.90`、单 family `S@5 ≥ 0.75`、
+- 阈值冻结在 `THRESHOLDS`（spec **v3**）：`S@5 ≥ 0.90`、单 family `S@5 ≥ 0.75`、
   `f6_s5_overall = 1.0`、safety suite `100%`、真实模型 `S@5 ≥ 0.80` 且单 family `≥ 0.50`；
   另有非阈值门 `attempt_contract`（见上文）。**全局 `S@1` 已从硬门中移除**（v1 曾为 `≥ 0.60`）。
 
@@ -202,55 +203,90 @@ semantic compiler + governed transaction 追加**一条受管辖的阀组 train*
 canonical payload 字段、severity 映射与 result digest 口径，`scripts/m4_semantics_manifest.py` 生成
 manifest，`test_m4_invariance.py` 在每次运行时比对：M5 代码不得改变 manifest 中的任何一项。
 
-## 9. Coverage-extension track（review §③）
+## 9. Coverage ledger 与 coverage promotion（review §③）
 
-`pid-agent repair-coverage [--database PATH] [--output PATH]`，实现于 `repair_coverage_extension.py`。
-它回答一个比“成功率多少”更早的问题：**冻结语料之外的那些 code，到底哪些能被这个仓库的文档持有？**
+`pid-agent repair-coverage [--database PATH] [--output PATH]`，实现于 `repair_coverage_ledger.py`。
+它回答一个比“成功率多少”更早的问题：**修复策略里认识、但当初的冻结语料造不出来的那些 code，
+最后各自去了哪里？**
 
-两类答案，证据形式不同：
+这个 track 分两步走。第一步（coverage-extension）是**发现**：对 7 个“有策略、无 operator”的 code
+逐个做机械判定，证明 4 个能被这个仓库的文档持有、3 个不能。第二步（**coverage promotion**，
+远端 2026-09-21 签的 Gate）是**结算**：4 个能持有的晋升为冻结语料的正式 case，3 个不可达的进
+disposition ledger。本模块现在是第二步的记录，而且是一份**检查**而不是一份说明。
 
-- **能持有的 4 个 code**（`DUPLICATE_LABEL` / `ANNOTATION_OVERLAP` / `UNBRIDGED_CROSSING` /
-  `PORT_DIRECTION_MISMATCH`）：每个 code 一个确定性 producer，写路径是 `apply_transaction`；
-  然后 **manifestation proof** 用 canonical validator 在同一图纸上比对改动前后的 findings，
-  要求声明的 exact code *真的出现*（不看 operator 名字），再交给与冻结语料**完全相同**的
-  runner / orchestrator / oracle。当前 4/4 `covered`：首答命中、单次 governed write、
-  `case_is_success()` 复算通过、protected 前后一致、safety 不受影响。
-  producer 顺带引入的其它 finding **不会被隐藏**：每条 row 的 `manifestation.added_codes` 就是
-  “这次改动到底多出了哪些 code”。目前只有两处：`QUALITY_SCORE_BELOW_TARGET`（打分规则看整张图，
-  每个 case 都有）与 `UNBRIDGED_CROSSING` case 的 `EXCESSIVE_BENDS`（两个端口都是水平朝向时，
-  任何“穿过横管再回到端口”的正交路径都至少有 4 个拐点）。两者都在**变异后的底座**里，因此不是
-  oracle 意义上的 regression；写出来是为了让审阅者能自己判断。
-- **无法持有的 3 个 code**（见 §4）：`probe_representability()` 在**写面**与**导入面**各试一次，
-  记录“拒绝原文”与“是否真的留下缺陷”两件事。三个 code 的结论不同，这本身就是发现：
-  `CONNECTOR_ENDPOINT_POINT_MISMATCH` 的写请求**会成功**（`accepted=true`），但绑定点被
-  `_normalize_endpoint` 重算，缺陷从不落地——只断言“没抛异常”的测试会把它误判成可达。
+### 9.1 已晋升的 4 个 code（spec v3 / corpus v3）
 
-  远端对这个结论的裁决（2026-09-21）把它固定成三个正式 disposition，而不是继续叫"漏测"：
+`DUPLICATE_LABEL`、`PORT_DIRECTION_MISMATCH`、`UNBRIDGED_CROSSING`、`ANNOTATION_OVERLAP` 各有一个
+确定性 producer，写路径是 `apply_transaction`，现在注册在冻结目录里：
 
-  - `SYMBOL_DEFINITION_MISSING` → `unreachable_at_supported_ingress`
-  - `CONNECTOR_ENDPOINT_PORT_MISSING` → `unreachable_at_supported_ingress`
-  - `CONNECTOR_ENDPOINT_POINT_MISMATCH` → `normalized_or_rejected_at_supported_ingress`
+| code | operator | family | 底座 |
+|---|---|---|---|
+| `DUPLICATE_LABEL` | `f1_duplicate_label` | F1 | `three_valves` |
+| `PORT_DIRECTION_MISMATCH` | `f2_port_direction_mismatch` | F2 | `three_valves` |
+| `UNBRIDGED_CROSSING` | `f4_unbridged_crossing` | F4 | `three_valves+crossing` |
+| `ANNOTATION_OVERLAP` | `f5_annotation_overlap` | F5 | `three_valves` |
 
-  rule 与 planner 策略保留作纵深防御，守卫测试保留：任何受支持入口哪天开始允许这些状态存在，
-  测试立刻红，并触发 **coverage promotion**，而不是静默改变结论。store 层的 validator 单测可以有，
-  但它属于内部 validator coverage，不得伪装成 repair benchmark 的 producer。
-  将来签 coverage-promotion Gate 时**不是**把 7 个 code 机械变成 7 个 case：4 个 reachable 才能晋升为
-  正式 repair case，3 个 unreachable 进 representability / disposition ledger（保留机械不可达证明），
-  届时才切下一版 spec 与新的完整指纹。
+晋升不是把 producer 挪个位置就完事。`prove_promotion()` 对每个 code **从冻结 generator 里取它那一条
+acceptance case**（`promotion_cases()`：同 family、同 candidate SHA、同样的 round-robin 规则），
+要求 canonical validator 在同一图纸上比对改动前后、声明的 exact code *真的出现*（不看 operator 名字），
+再交给与冻结语料**完全相同**的 runner / orchestrator / oracle。当前 4/4 `covered`：
+`case_is_success()` 复算通过、单次 governed write、protected 前后一致。
 
-Corpus 边界（review 明确要求）：
+- **case 是推导出来的，不是手挑的**：如果晋升被回退、或 operator 从 family 轮转里掉出去，
+  `promotion_cases()` 直接失败，而不是继续报告一份语料其实没有的覆盖。
+- producer 顺带引入的其它 finding **不会被隐藏**：proof 里的 `added_codes` 就是“这次改动多出了哪些 code”。
+  目前只有 `QUALITY_SCORE_BELOW_TARGET`（打分规则看整张图）与 `UNBRIDGED_CROSSING` case 的
+  `EXCESSIVE_BENDS`（两个端口都是水平朝向时，任何“穿过横管再回到端口”的正交路径都至少 4 个拐点）。
+  两者都在**变异后的底座**里，因此不是 oracle 意义上的 regression；写出来是为了让审阅者能自己判断。
+- **staging 语料已退休**：原来的 `m5-coverage-extension`（corpus v1、4 case）不再存在——留着它会让两个
+  语料同时声称这 4 个 code。它当初发布的身份（`coverage_corpus_digest = 3dc8ca1a…`、
+  `report_hash = f56c2c50…`、两个解释器各自的 `coverage_fingerprint`）记在
+  `SUPERSEDED_EXTENSION_IDENTITIES` 里：**记录，不重算**，因为产生它们的代码已经变了。
 
-- extension 有自己的 `corpus_id = m5-coverage-extension`、`corpus_version = 1`、`case_count = 4`；
-  `coverage_fingerprint()` 覆盖 producer/目标绑定/语料定义，producer 一改指纹就变；
-  `coverage_corpus_digest()` 是它的**语料身份**（manifest 去掉 `ENVIRONMENT_DERIVED_KEYS`）：
-  `generator_fingerprint` 取的是 CPython 字节码（`co_code`），换个解释器就不一样，所以"冻结"必须是
-  **语料**冻结，不能是"在这台机器上冻结"。两者都发布，只有 corpus digest 被测试钉死；
-  已发布指纹按解释器记录在 `PUBLISHED_FINGERPRINTS_BY_INTERPRETER` 里。
-- 冻结语料有自己的 `corpus_id = m5-core-corpus`、`corpus_version = 2`、`case_count = 72`、
-  `operator_count = 19`、`supported_codes`（`core_corpus_manifest()` / `core_corpus_fingerprint()`）。
-  **两者分开指纹**：增加覆盖不该让「M5 当时到底验收了什么」变得无法回答；
-- `BENCHMARK_SPEC_VERSION` **保持 2**，`spec_fingerprint` 未动（`c8520c5e…`），冻结 72-case
-  证据依旧可复算（重跑：72/72、S@5=1.0、全 gate 绿）。
+### 9.2 不可达的 3 个 code 与其正式 disposition
+
+`probe_representability()` 在**写面**与**导入面**各试一次，记录“拒绝原文”与“是否真的留下缺陷”两件事。
+三个 code 的结论不同，这本身就是发现：`CONNECTOR_ENDPOINT_POINT_MISMATCH` 的写请求**会成功**
+（`accepted=true`），但绑定点被 `_normalize_endpoint` 重算，缺陷从不落地——只断言“没抛异常”的测试会把它
+误判成可达。远端把它固定成正式 disposition，而不是继续叫“漏测”：
+
+| code | disposition | governed write | import |
+|---|---|---|---|
+| `SYMBOL_DEFINITION_MISSING` | `unreachable_at_supported_ingress` | 拒绝：`unknown symbol: …` | 拒绝：`unknown symbol: …` |
+| `CONNECTOR_ENDPOINT_PORT_MISSING` | `unreachable_at_supported_ingress` | 拒绝：`unknown port '…' for symbol …` | 拒绝：`unknown port '…' for symbol …` |
+| `CONNECTOR_ENDPOINT_POINT_MISMATCH` | `normalized_or_rejected_at_supported_ingress` | **接受并重算**：写入成功，绑定点被 `_normalize_endpoint` 重新导出，缺陷从不出现 | 拒绝：`… binding point is stale` |
+
+两个名字必须分开：`unreachable` 表示入口**拒绝**这种状态，`normalized_or_rejected` 表示写入**成功但被重算**
+（或导入被拒）。合并成一个词就会把这条发现藏起来。rule 与 planner 策略保留作纵深防御；
+`test_unreachable_codes_cannot_be_staged_by_any_supported_surface` 是守卫：任何受支持入口哪天开始允许
+这些状态存在，测试立刻红，届时**要把它们提升成正式 case**，而不是静默改变结论。store 层的 validator
+单测可以有，但它属于内部 validator coverage，不得伪装成 repair benchmark 的 producer。
+
+### 9.3 身份、退出码与边界
+
+- ledger 有自己的身份 `ledger_id = m5-coverage-ledger`、`ledger_version = 1`。
+  `ledger_digest()` 是**跨解释器恒定**的那一半（manifest 去掉 `ENVIRONMENT_DERIVED_KEYS`），
+  `ledger_fingerprint()` 是包含 `generator_fingerprint` 的完整发布值——后者摘要的是 CPython 字节码
+  （`co_code`），换个解释器就不一样，所以“冻结”必须是**语料**冻结，不能是“在这台机器上冻结”。
+  `tests/test_repair_coverage_ledger.py` 里有一条不需要第二个解释器就能证明这个性质的测试：
+  把 `generator_fingerprint` 换成另一个运行时的值，digest 不动、fingerprint 动。
+- 冻结语料自己有 `corpus_id = m5-core-corpus`、`corpus_version = 3`、`case_count = 72`、
+  `operator_count = 23`、`supported_codes`（`core_corpus_manifest()` / `core_corpus_fingerprint()`）。
+  **两者分开指纹**：增加覆盖不该让「M5 当时到底验收了什么」变得无法回答。
+- `BENCHMARK_SPEC_VERSION` 从 2 切到 **3**，`spec_fingerprint` 从 `c8520c5e…` 变为 `8f522c75…`。
+  变的只有“语料能制造哪些缺陷”：阈值、oracle 版本、family 列表、case 布局（12×6）与 safety suite
+  全部未动。因此 v3 的重跑仍是 **72/72、S@5 = 1.0、六 family 各 1.0、八项 gate 全绿**，
+  S@1 仍是 0.8333（缺口依旧 100% 来自 F6 的注入契约，不是新 case 带来的）。
+- **v2 的 spec body 被归档**（`_SPEC_V2_OPERATORS` + `_archived_spec_payload()`），所以
+  `spec_fingerprint("2")` 仍能算出发布过的 `c8520c5e…`，`archived_operator_catalogue("2")` 还能把
+  v2 的**轮转顺序**也重现出来：旧用例集是推导出来的，不是从存档 JSON 里猜出来的。
+  归档表被 `test_the_published_v2_spec_is_still_recomputable` 与
+  `test_the_published_v2_case_set_is_still_derivable` 钉住，改动它会立刻红。
+- 已发布的 `reports/m5/**`（v2 的 acceptance 证据、extension 证据、qualification）**不重写**；
+  本轮的新证据放在 `reports/m5-promotion/`（spec/case 投影 + v3 acceptance + disposition ledger）。
+- `verify`/退出码：`repair-coverage` 退出 0 仅当「晋升的 code 全部 covered」+「声称不可达的 code 仍不可达」
+  +「四个对照全红」三者同时成立（由 `assert_ledger_is_sound()` 判定）；否则 2。任何一条变松都会让命令
+  变红，而不是静默降级。
 
 负向能力（review §③ 的“gate 必须能变红”）：`run_negative_controls()` 固定四个对照，
 每个都故意打断链条中的一环，并要求报告里出现预期的信号：
@@ -291,14 +327,15 @@ payload 上同时发布两个结果哈希，用途不同：
   `exclude` 交给 pydantic 的 `model_dump(exclude=…)`，**只删顶层键**；volatile 事实（latency、timings、
   document id、运行时 validation hash 等）藏在 `cases[i]` 里，于是进入哈希。实测同一 candidate SHA 连跑两次，
   `counts`/`s_at`/`gates`/每条 case（剥掉 volatile 后）**逐字段相同**，哈希却不同（本地 `2d827c1e…` /
-  `e98863ef…`、CI `36a2383e…`）。**保留不动**：已发布的 v2 evidence 不重写，它的值仍然可被复算成当初发布的值。
+  `e98863ef…`、CI `36a2383e…`）。**保留不动**：已发布的那三份 acceptance evidence 不重写，
+  它们的值仍然可被复算成当初发布的值（v2 的 spec body 也已归档，见 §9.3）。
 - `benchmark_semantic_hash`（**semantic**）：结果身份。`repair_semantic_digest()` 递归剥掉
   `REPAIR_SEMANTIC_EXCLUDED_FIELDS`（volatile 字段 + 两个哈希 + `generator_fingerprint` +
   `semantic_hash_version`），再对 canonical JSON 取 SHA-256；契约版本发布在 `semantic_hash_version`
   （当前 `REPAIR_SEMANTIC_HASH_VERSION = "1"`）。同样三次运行得到同一个值。
 
 为什么去掉 `generator_fingerprint`：它摘要的是 **CPython 字节码**，同一份语料/结果换解释器就变——这与 §9 里
-`coverage_corpus_digest` 的口径是同一条规则（“语料身份跨解释器恒定，运行时指纹只作 provenance”）。
+`ledger_digest` 的口径是同一条规则（“语料身份跨解释器恒定，运行时指纹只作 provenance”）。
 `spec_fingerprint`、`candidate_sha`、`oracle_version`、每个 case 的结论与每个 gate **留在**哈希里。
 
 边界：
@@ -330,9 +367,21 @@ payload 上同时发布两个结果哈希，用途不同：
 - **同一个模块里 `from x import _symbol` 会被本模块自己的 `_symbol` 覆盖**：coverage-extension 里
   重名私有 helper 导致 `TypeError: _symbol() got an unexpected keyword argument`；导入时显式起别名。
 - **“冻结”的哈希不能把“跑它的机器”算进去**：`generator_fingerprint` 取的是 CPython 字节码，于是 CI 的
-  3.11 与本地 3.12 对同一份语料算出两个 `coverage_fingerprint`（CI 直接红在语料冻结守卫上）。
-  `coverage_corpus_digest()` 是去掉 `ENVIRONMENT_DERIVED_KEYS` 后的语料身份，跨解释器恒定；发布的
-  `coverage_fingerprint()` 按解释器记入 `PUBLISHED_FINGERPRINTS_BY_INTERPRETER`。
+  3.11 与本地 3.12 对同一份语料算出两个指纹（CI 直接红在语料冻结守卫上）。
+  `ledger_digest()` 是去掉 `ENVIRONMENT_DERIVED_KEYS` 后的身份，跨解释器恒定；包含字节码摘要的
+  `ledger_fingerprint()` 只作 provenance。
+- **只记 fingerprint、不记 body，等于没有身份**：spec 一旦切版本，旧指纹就变成只能“信”的数字。
+  切版本时必须同时归档**旧 body**（`_SPEC_V2_OPERATORS`），并用一条断言把它钅在发布过的常量上；
+  归档表要整段冻结，不要用“今天目录减去新 operator”去推导——那会让旧身份随无关元数据改动而静默漂移。
+- **“用旧指纹 + 今天的目录”推出来的旧 case 集是假的**：case 的 operator 由 family 轮转决定，
+  而轮转读的是目录。只覆盖 seed 的 spec 参数会得到一套“从未跑过”的旧用例集（晋升后它会包含新 operator）。
+  正确做法是连目录一起存档（`archived_operator_catalogue()`），`generate_cases(..., catalogue=...)` 同时接受两者。
+- **目录里靠推导得出的字段会在第二个特例出现时变成谎言**：`base_variant` 原来靠“有 builder 就是
+  three_valves”推，第二个底座（three_valves + 支管）一出现就不对了。现在它是 `MutationOperator`
+  上的显式字段，发布在 spec 里。
+- **退休一个语料要留下它的身份**：staging 语料被 promote 后就不能再重算它的 digest/hash（代码变了），
+  因此把它们**录下来**（`SUPERSEDED_EXTENSION_IDENTITIES`）并标注“记录，不重算”，否则下次有人会拿
+  一个算不出来的数字去对账。
 - **`exclude` 只作用于顶层**：`canonical_digest(model, exclude=...)` 里的 volatile 字段名只删顶层，
   嵌套同名键全部留下（实测同一 SHA 两次运行有 724 处嵌套 volatile 叶子进入 legacy 哈希）。
   要跨运行可比就自己递归剥（`canonical_repair_result_payload` / `repair_semantic_digest`）。

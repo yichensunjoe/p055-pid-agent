@@ -1,0 +1,109 @@
+=== M5 coverage promotion · acceptance case projection ===
+candidate_sha = cccccccccccccccccccccccccccccccccccccccc
+pre  derived with spec_fingerprint('2') = c8520c5e7b0b1d7e77e3752080393b4965aee60538ad71a6bf95d5fc4ab5ede1
+post derived with spec_fingerprint()    = 8f522c758b67fc71e53d7d382f1c09fc3d922663ea500a7fc09106ece054c810
+cases: 72 -> 72
+
+idx  family operator (pre)                 operator (post)                seed
+  0  F1     f1_line_diameter_missing       f1_duplicate_label             * 263633712911750 -> 252140947967731
+  1  F1     f1_line_medium_missing         f1_line_diameter_missing       * 94610683990610 -> 31412979503052
+  2  F1     f1_line_name_missing           f1_line_medium_missing         * 163366540467456 -> 55079556751107
+  3  F1     f1_line_tag_missing            f1_line_name_missing           * 11119650539574 -> 33242170119100
+  4  F1     f1_symbol_tag_duplicate        f1_line_tag_missing            * 213023488578313 -> 194867996238395
+  5  F1     f1_symbol_tag_missing          f1_symbol_tag_duplicate        * 254736874644841 -> 176942877418165
+  6  F1     f1_line_diameter_missing       f1_symbol_tag_missing          * 83006670744327 -> 1292955537840
+  7  F1     f1_line_medium_missing         f1_duplicate_label             * 184917067871707 -> 140046087306424
+  8  F1     f1_line_name_missing           f1_line_diameter_missing       * 132893995473042 -> 123739639082065
+  9  F1     f1_line_tag_missing            f1_line_medium_missing         * 79766305369617 -> 12284369829732
+ 10  F1     f1_symbol_tag_duplicate        f1_line_name_missing           * 80726759618890 -> 223065703582749
+ 11  F1     f1_symbol_tag_missing          f1_line_tag_missing            * 209245071764822 -> 218548611527002
+ 12  F2     f2_endpoint_dangling           f2_endpoint_dangling             108999886343018 -> 182140554239815
+ 13  F2     f2_endpoint_dangling_both      f2_endpoint_dangling_both        156613697842500 -> 193819561631837
+ 14  F2     f2_required_port_unconnected   f2_port_direction_mismatch     * 2302894999659 -> 73723454629558
+ 15  F2     f2_endpoint_dangling           f2_required_port_unconnected   * 167876347791512 -> 167329361214114
+ 16  F2     f2_endpoint_dangling_both      f2_endpoint_dangling           * 139236766706402 -> 142880186274113
+ 17  F2     f2_required_port_unconnected   f2_endpoint_dangling_both      * 7909341369957 -> 142645837985793
+ 18  F2     f2_endpoint_dangling           f2_port_direction_mismatch     * 97131415417308 -> 263300601376164
+ 19  F2     f2_endpoint_dangling_both      f2_required_port_unconnected   * 12471806635623 -> 154483867204495
+ 20  F2     f2_required_port_unconnected   f2_endpoint_dangling           * 152648928028319 -> 108727200731308
+ 21  F2     f2_endpoint_dangling           f2_endpoint_dangling_both      * 42968608209015 -> 51405044134027
+ 22  F2     f2_endpoint_dangling_both      f2_port_direction_mismatch     * 248687747356809 -> 17891383830017
+ 23  F2     f2_required_port_unconnected   f2_required_port_unconnected     132045075336032 -> 223283477625457
+ 24  F3     f3_delete_middle_detach        f3_delete_middle_detach          134194060282856 -> 157677949670317
+ 25  F3     f3_delete_middle_detach        f3_delete_middle_detach          128245523269982 -> 36194439321448
+ 26  F3     f3_delete_middle_detach        f3_delete_middle_detach          171128203410004 -> 21735741958012
+ 27  F3     f3_delete_middle_detach        f3_delete_middle_detach          131284654677955 -> 171301157564038
+ 28  F3     f3_delete_middle_detach        f3_delete_middle_detach          226383963026365 -> 73813245245901
+ 29  F3     f3_delete_middle_detach        f3_delete_middle_detach          47443356421111 -> 164999292688442
+ 30  F3     f3_delete_middle_detach        f3_delete_middle_detach          95214308747673 -> 53216055030586
+ 31  F3     f3_delete_middle_detach        f3_delete_middle_detach          214970668679757 -> 222477603143174
+ 32  F3     f3_delete_middle_detach        f3_delete_middle_detach          180778323907554 -> 71516730529858
+ 33  F3     f3_delete_middle_detach        f3_delete_middle_detach          230245873956645 -> 194923213686054
+ 34  F3     f3_delete_middle_detach        f3_delete_middle_detach          72025854576559 -> 199122468770577
+ 35  F3     f3_delete_middle_detach        f3_delete_middle_detach          29425546299703 -> 107075004378545
+ 36  F4     f4_micro_segment               f4_micro_segment                 238074015302718 -> 230395829613846
+ 37  F4     f4_port_exit_mismatch          f4_port_exit_mismatch            197265037519814 -> 142422137858969
+ 38  F4     f4_unnecessary_bend            f4_unbridged_crossing          * 20849868642466 -> 178491605575596
+ 39  F4     f4_micro_segment               f4_unnecessary_bend            * 203403452055268 -> 202761434298608
+ 40  F4     f4_port_exit_mismatch          f4_micro_segment               * 278374899062577 -> 73540260305424
+ 41  F4     f4_unnecessary_bend            f4_port_exit_mismatch          * 149868244945571 -> 212987410133646
+ 42  F4     f4_micro_segment               f4_unbridged_crossing          * 106176847692425 -> 47587494110167
+ 43  F4     f4_port_exit_mismatch          f4_unnecessary_bend            * 222018087840848 -> 62147258096941
+ 44  F4     f4_unnecessary_bend            f4_micro_segment               * 229229231847190 -> 215352675668639
+ 45  F4     f4_micro_segment               f4_port_exit_mismatch          * 112864894438241 -> 28372018801533
+ 46  F4     f4_port_exit_mismatch          f4_unbridged_crossing          * 4086070779614 -> 44476116728913
+ 47  F4     f4_unnecessary_bend            f4_unnecessary_bend              36093974914325 -> 165820440000166
+ 48  F5     f5_node_overlap                f5_annotation_overlap          * 127196347451618 -> 41746686074112
+ 49  F5     f5_pipe_through_equipment      f5_node_overlap                * 125484334051571 -> 175485762434944
+ 50  F5     f5_symbol_out_of_bounds        f5_pipe_through_equipment      * 241422371258401 -> 69075347820812
+ 51  F5     f5_node_overlap                f5_symbol_out_of_bounds        * 173899690352619 -> 234171047194252
+ 52  F5     f5_pipe_through_equipment      f5_annotation_overlap          * 195862178857411 -> 9215657669946
+ 53  F5     f5_symbol_out_of_bounds        f5_node_overlap                * 198393534880383 -> 237199645742478
+ 54  F5     f5_node_overlap                f5_pipe_through_equipment      * 173334732914404 -> 196074929147394
+ 55  F5     f5_pipe_through_equipment      f5_symbol_out_of_bounds        * 124716488249282 -> 112079462080179
+ 56  F5     f5_symbol_out_of_bounds        f5_annotation_overlap          * 119954447052273 -> 267800958653550
+ 57  F5     f5_node_overlap                f5_node_overlap                  39920641223612 -> 56138494494587
+ 58  F5     f5_pipe_through_equipment      f5_pipe_through_equipment        51275536676190 -> 270661416564716
+ 59  F5     f5_symbol_out_of_bounds        f5_symbol_out_of_bounds          230515733786020 -> 88457232056206
+ 60  F6     f6_replan_four_times           f6_replan_four_times             228103737667455 -> 266582966455133
+ 61  F6     f6_replan_once                 f6_replan_once                   38787494744062 -> 50739585049250
+ 62  F6     f6_replan_twice                f6_replan_twice                  276692379096944 -> 166418991655052
+ 63  F6     f6_replan_four_times           f6_replan_four_times             5237591168926 -> 238970861290175
+ 64  F6     f6_replan_once                 f6_replan_once                   230390642312014 -> 44603420648602
+ 65  F6     f6_replan_twice                f6_replan_twice                  221648772759174 -> 8599474811490
+ 66  F6     f6_replan_four_times           f6_replan_four_times             172174104508440 -> 131682920235087
+ 67  F6     f6_replan_once                 f6_replan_once                   233493854581656 -> 111207151344227
+ 68  F6     f6_replan_twice                f6_replan_twice                  183130934407640 -> 205700622319671
+ 69  F6     f6_replan_four_times           f6_replan_four_times             170782633861299 -> 136384032026073
+ 70  F6     f6_replan_once                 f6_replan_once                   73566505471808 -> 75456631335483
+ 71  F6     f6_replan_twice                f6_replan_twice                  220402328104967 -> 150175494321252
+
+cases whose operator changed: 39/72
+case ids are SHA-independent and stay in the same order (the layout did not change); the seeds moved because they derive from the spec fingerprint, which is the point of a spec cut
+
+--- operators carried by the v3 acceptance set ---
+f1_duplicate_label                2
+f1_line_diameter_missing          2
+f1_line_medium_missing            2
+f1_line_name_missing              2
+f1_line_tag_missing               2
+f1_symbol_tag_duplicate           1
+f1_symbol_tag_missing             1
+f2_endpoint_dangling              3
+f2_endpoint_dangling_both         3
+f2_port_direction_mismatch        3
+f2_required_port_unconnected      3
+f3_delete_middle_detach          12
+f4_micro_segment                  3
+f4_port_exit_mismatch             3
+f4_unbridged_crossing             3
+f4_unnecessary_bend               3
+f5_annotation_overlap             3
+f5_node_overlap                   3
+f5_pipe_through_equipment         3
+f5_symbol_out_of_bounds           3
+f6_replan_four_times              4
+f6_replan_once                    4
+f6_replan_twice                   4
+
+registered operators: 23

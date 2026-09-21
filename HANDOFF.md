@@ -2,7 +2,46 @@
 
 > 交接文档：每次开新会话先读本文件。更新规则见 `AGENTS.md`「HANDOFF 交接规则」。
 
-## 当前状态（2026-09-21 R4，最新轮次：**coverage-extension track 已落地（4 个 code 有 producer+证据，3 个证明不可达）**）
+## 当前状态（2026-09-21 R5，最新轮次：**coverage-promotion 已本地提交（spec v3 / corpus v3），未 push，等远端签 Gate**）
+
+- **本轮执行的是 reply15 §③ 定下、reply16 仍未签的 `coverage-promotion`**。基线 `origin/main = 030f7d1a…`；
+  改动已落成本地提交（`HEAD` = 本轮的 `feat(m5): promote the four reachable coverage codes into the frozen corpus`，
+  直接在 `2e7e28f` 之上），**未 push**。**没有征得授权前不要 push。**
+- **晋升结果**：4 个 representable code 进了**冻结目录** —— `f1_duplicate_label`(F1) /
+  `f2_port_direction_mismatch`(F2) / `f4_unbridged_crossing`(F4, 底座 `three_valves+crossing`) /
+  `f5_annotation_overlap`(F5)。**19 → 23 operator**，acceptance 仍是 12×6 = 72 case。
+  **spec 从 2 切到 3**（`spec_fingerprint c8520c5e… → 8f522c75…`），**corpus 从 2 切到 3**
+  （`core_corpus_fingerprint c4fb71fb… → c85995d2…`）。阈值 / oracle 1 / family / 布局 / safety 全未动。
+- **晋升是检查不是记账**：`repair-coverage`（= disposition ledger）对每个晋升 code 从**冻结 generator** 里取出它那一条
+  acceptance case（同 family / 同 candidate SHA / 同轮转），要求 canonical validator 确认 exact code 真的出现，
+  再交给与冻结语料相同的 runner/oracle。当前 **4/4 covered**；晋升被回退或 operator 掉出轮转即失败。
+- **3 个 unreachable 按远端正式名落库**：`SYMBOL_DEFINITION_MISSING` / `CONNECTOR_ENDPOINT_PORT_MISSING` →
+  `unreachable_at_supported_ingress`；`CONNECTOR_ENDPOINT_POINT_MISMATCH` →
+  `normalized_or_rejected_at_supported_ingress`（写请求 accepted 但被 `_normalize_endpoint` 重算，缺陷从不落地）。
+  守卫测试保留：任一面哪天变得可达就先红、要求晋升。
+- **本轮我做了主、已在报告里请远端裁定的三件事**：① **v2 spec body 归档**（`_SPEC_V2_OPERATORS` +
+  `archived_operator_catalogue("2")`，于是 `spec_fingerprint("2")` 与 v2 的 case 集都仍可重现，被测试钉死；
+  未知版本抛错）；② **退休 extension 语料**，其发布过的身份进 `SUPERSEDED_EXTENSION_IDENTITIES`（记录、不重算）；
+  ③ 模块重命名 `repair_coverage_extension.py → repair_coverage_ledger.py`（CLI 命令名不变）+
+  `MutationOperator` 新增显式 `base_variant`。
+- **身份表（不需要第二个解释器就能证明）**：换掉 `generator_fingerprint` 后
+  `spec_fingerprint("2")` / `spec_fingerprint()` / `ledger_digest()` **不动**；`core_corpus_fingerprint()` /
+  `ledger_fingerprint()` / `generator_fingerprint()` 会动（provenance）。值：`ledger_digest = 30a50779…`、
+  `ledger_fingerprint = 0b3e5e53…`、`generator_fingerprint = 62503392…`。
+- **本地实测（本轮）**：`ruff` 全过；`pytest -q` **851 passed**；harness **9/9**；**v3 acceptance 退码 0**
+  （72/72、S@5 1.0、六 family 1.0、八门全 true、safety 13/13、evidence_verified true）；`repair-coverage` 退码 0
+  （4/4 + 3/3 + 负向全红）；`repair-scale` 退码 0；`repair-qualification` 退码 **3**（本机仍无凭据）。
+  前端 `npm test` **144**、build ✓、Playwright **52 passed / 1 skipped**（视觉 10/10 未变）、shared **2 passed**、secrets ✓。
+  （本机 8000 端口被另一会话占用，e2e/shared 用 `PID_AGENT_E2E_API_PORT=8123` + `PID_AGENT_E2E_PREVIEW_PORT=4390`。）
+- **证据与报告**：`reports/m5-promotion/**`（spec 投影 / case 投影：39/72 条换了 operator / v3 acceptance /
+  disposition ledger）；`scripts/m5_promotion_projection.py`；报告
+  `.freebuff/remote-bridge/18-m5-coverage-promotion-report.md`。**`reports/m5/**` 一字节未改。**
+- **未决（非本轮引入）**：真实模型 24-case qualification 仍缺凭据；`core_corpus_fingerprint` 至今把字节码摘要
+  算进身份（建议下一版给它一条 `core_corpus_digest`），本轮**未做**。
+- **下一步**：等远端对 coverage-promotion 的裁定 → 批准后 push → 补 CI / Visual run id，并核对 3.11 上
+  `ledger_digest` / `spec_fingerprint` 与本机一致（预期一致：纯数据、不含字节码）。
+
+## 上一状态（2026-09-21 R4：**coverage-extension track 已落地（4 个 code 有 producer+证据，3 个证明不可达）**）
 
 - **远端授权范围（reply13）已执行完**：`03a1764 → 1749e30 → 519ca23 → 631f1f8 → 9d53b69 → 22a030d`
   已 push；**新 HEAD = `22a030ab…`**。

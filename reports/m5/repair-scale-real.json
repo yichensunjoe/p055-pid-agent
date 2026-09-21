@@ -1,0 +1,226 @@
+{
+  "schema": "pid-agent.repair-scale-report",
+  "version": 1,
+  "track": "deterministic",
+  "candidate_sha": "675af468c9622607e2890dac941e293f3113d853",
+  "source": {
+    "kind": "dwg",
+    "semantic_seed": true,
+    "file_name": "source.dwg",
+    "source_sha256": "5e62ec5c691dacf7a03e52f9ee89497380c0e59a9d16cc4dd69b14d1e4959bd9",
+    "source_bytes": 939381
+  },
+  "document_id": "doc_4a0cb9376d91",
+  "element_count": 9772,
+  "connector_count": 7,
+  "symbol_count": 8,
+  "import_report": {
+    "source": {
+      "filename": "source.dwg",
+      "format": "dwg",
+      "format_detail": "AC1032",
+      "size_bytes": 939381,
+      "sha256": "5e62ec5c691dacf7a03e52f9ee89497380c0e59a9d16cc4dd69b14d1e4959bd9",
+      "encoding": "utf-8",
+      "converter": "autocad-core-console",
+      "converter_version": "AutoCAD Core Engine Console - Copyright 2026 Autodesk, Inc.  All rights reserved. (X.60.M.161)",
+      "converter_command": [
+        "AcCoreConsole",
+        "/i",
+        "<workdir>/input/source.dwg",
+        "/s",
+        "<workdir>/autocad-core-console/converter.scr",
+        "/l",
+        "en-US"
+      ]
+    },
+    "counts": {
+      "layers": 12,
+      "lines": 7167,
+      "polylines": 652,
+      "circles": 398,
+      "texts": 362,
+      "fills": 474,
+      "elements": 9757,
+      "primitives": 9757,
+      "skipped": 0
+    },
+    "source_bounds": [
+      -28912.16720092056,
+      6812.819299454552,
+      29361.63162730139,
+      11584.987796082929
+    ],
+    "imported_bounds": [
+      -28912.16720092056,
+      6812.819299454552,
+      29361.63162730139,
+      11584.987796082929
+    ],
+    "frame": [
+      -28912.16720092056,
+      6812.819299454552,
+      29361.63162730139,
+      11584.987796082929
+    ],
+    "canvas": {
+      "width": 58273.799,
+      "height": 4772.168
+    },
+    "layers": [
+      "0",
+      "11",
+      "4",
+      "6",
+      "Default",
+      "仪表",
+      "取样",
+      "文字",
+      "注释",
+      "管道",
+      "覆盖气",
+      "阀门"
+    ],
+    "issues": [
+      {
+        "code": "CAD_HATCH_BOUNDARY_UNREADABLE",
+        "message": "hatch boundaries could not be decoded and were skipped",
+        "count": 128,
+        "detail": {}
+      },
+      {
+        "code": "CAD_PATTERN_HATCH_SKIPPED",
+        "message": "pattern (non-solid) hatches were skipped: the editor has no hatch pattern, and drawing them solid would misrepresent the sheet",
+        "count": 7,
+        "detail": {}
+      },
+      {
+        "code": "CAD_TEXT_ROTATION_IGNORED",
+        "message": "rotated text was placed at its anchor but not rotated: the editor has no rotated-text primitive yet",
+        "count": 104,
+        "detail": {}
+      }
+    ],
+    "operations": 9769,
+    "revisions": 1,
+    "logical_mutations": 1,
+    "duration_ms": 3782.21,
+    "warnings": []
+  },
+  "semantic_seed": {
+    "used": true,
+    "reason": "the imported drawing contains raw CAD geometry only (no symbol and no connector with bound ports); a repair case needs an element with ports to break",
+    "added_elements": 15
+  },
+  "import_ms": 15743,
+  "base_validation_ms": 445,
+  "role_map": {
+    "p1": "scaleseed_f6_replan_once_p0",
+    "v1": "scaleseed_f6_replan_once_v0",
+    "v2": "scaleseed_f6_replan_once_v1",
+    "p2": "scaleseed_f6_replan_once_p1",
+    "v3": "scaleseed_f6_replan_once_v2"
+  },
+  "cases": [
+    {
+      "case_id": "scale:F1",
+      "family": "F1",
+      "operator_id": "f1_line_medium_missing",
+      "classification": "success",
+      "failure_code": "",
+      "attempts": 1,
+      "scope_size": 4,
+      "touched_existing_ids": 1,
+      "context_bytes": 6452,
+      "context_elements": 5,
+      "shadow_validation_ms": 2763,
+      "plan_ms": 1,
+      "apply_ms": 7073,
+      "validation_ms": 309,
+      "wall_clock_ms": 16725,
+      "rss_bytes": 724959232,
+      "writes": 1
+    },
+    {
+      "case_id": "scale:F2",
+      "family": "F2",
+      "operator_id": "f2_endpoint_dangling",
+      "classification": "success",
+      "failure_code": "",
+      "attempts": 1,
+      "scope_size": 4,
+      "touched_existing_ids": 1,
+      "context_bytes": 7634,
+      "context_elements": 5,
+      "shadow_validation_ms": 2582,
+      "plan_ms": 2,
+      "apply_ms": 7256,
+      "validation_ms": 314,
+      "wall_clock_ms": 16943,
+      "rss_bytes": 740524032,
+      "writes": 1
+    },
+    {
+      "case_id": "scale:F4",
+      "family": "F4",
+      "operator_id": "f4_micro_segment",
+      "classification": "success",
+      "failure_code": "",
+      "attempts": 1,
+      "scope_size": 4,
+      "touched_existing_ids": 1,
+      "context_bytes": 7285,
+      "context_elements": 5,
+      "shadow_validation_ms": 3021,
+      "plan_ms": 2,
+      "apply_ms": 7479,
+      "validation_ms": 308,
+      "wall_clock_ms": 17994,
+      "rss_bytes": 771375104,
+      "writes": 1
+    },
+    {
+      "case_id": "scale:F5",
+      "family": "F5",
+      "operator_id": "f5_node_overlap",
+      "classification": "success",
+      "failure_code": "",
+      "attempts": 1,
+      "scope_size": 5,
+      "touched_existing_ids": 1,
+      "context_bytes": 9144,
+      "context_elements": 7,
+      "shadow_validation_ms": 3142,
+      "plan_ms": 1,
+      "apply_ms": 8504,
+      "validation_ms": 327,
+      "wall_clock_ms": 20372,
+      "rss_bytes": 809172992,
+      "writes": 1
+    },
+    {
+      "case_id": "scale:F6",
+      "family": "F6",
+      "operator_id": "f6_replan_once",
+      "classification": "success",
+      "failure_code": "",
+      "attempts": 2,
+      "scope_size": 4,
+      "touched_existing_ids": 2,
+      "context_bytes": 7690,
+      "context_elements": 5,
+      "shadow_validation_ms": 3688,
+      "plan_ms": 3,
+      "apply_ms": 9085,
+      "validation_ms": 383,
+      "wall_clock_ms": 21789,
+      "rss_bytes": 824147968,
+      "writes": 1
+    }
+  ],
+  "passed_cases": 5,
+  "total_cases": 5,
+  "governance_violations": 0,
+  "planner": null,
+  "reasons": []
+}

@@ -1,0 +1,28 @@
+{
+  "schema": "pid-agent.repair-model-qualification",
+  "version": 1,
+  "status": "awaiting_real_model_qualification",
+  "candidate_sha": "675af468c9622607e2890dac941e293f3113d853",
+  "suite": "dev",
+  "cases_per_family": 4,
+  "planner": null,
+  "thresholds": {},
+  "counts": {},
+  "s_at": {},
+  "family_s_at_5": {},
+  "failure_taxonomy": {},
+  "safety_passed": 0,
+  "safety_total": 0,
+  "input_tokens": 0,
+  "output_tokens": 0,
+  "token_usage_estimated": false,
+  "latency_ms": {},
+  "gates": {},
+  "gate_failures": [],
+  "benchmark_result_hash": "",
+  "evidence_verified": false,
+  "verification_findings": [],
+  "reasons": [
+    "no model provider is configured: set PID_AGENT_LLM_BASE_URL and PID_AGENT_LLM_MODEL (CI has no external provider by design)"
+  ]
+}

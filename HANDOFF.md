@@ -17,7 +17,15 @@
 - **大图 scale track（§G）**：真实图 `.freebuff/repro/source.dwg`（939,381 B / AC1032 / **不在 git 里**），SHA-256 `5e62ec5c…`，导入 9757 elements / 13.6 s，base validation 420 ms；固定 5 case（F1/F2/F4/F5/F6）**5/5 通过**，governance violations 0，context bytes 6.5–9.1 KB（即 9772 元素的图上工作仍然局部），shadow validation ≈ 3 s，单 case wall-clock ≈ 17 s。CI 跑合成大图（几百 elements）。
   - **必须记住的事实**：真实 CAD 文件导入后是 7167 line + 1830 polyline + 398 circle + 362 text，**0 symbol / 0 connector**。修复 case 需要一个带 port 的元素，所以 working copy 会先通过 semantic compiler + 受治理事务追加一条阀组 train，报告里 `semantic_seed` 字段写明这件事；`--no-semantic-seed` 则拒绝并返回退出码 3。
 - **真实模型资格状态**：本机无 model provider 凭据（`PID_AGENT_LLM_BASE_URL` / `PID_AGENT_LLM_MODEL` 未设，本地 Ollama 无模型）。因此 M5 最终状态**只能是 `M5 candidate / awaiting real-model qualification`**，本地不得自行签 accepted。
-- **待办**：candidate commit → 用该 SHA 跑 72-case acceptance → push → 真实 GitHub CI（含手动 dispatch `Visual baselines`）→ 远端 final code review → 远端命名 M5 accepted HEAD。
+- **M5 候选与 CI（已完成的部分）**：
+  - **`M5 candidate / evidence SHA = 675af468c9622607e2890dac941e293f3113d853`**（`675af46`）；
+  - **`M5 CI evidence = CI run 35549650801 (success)`**（四个 job：Backend · Frontend · Browser acceptance · M5 self-repair，全部绿；M5 job 内新增的 scale track 5/5 与 qualification 退码 3 断言均已实跑）；
+  - **`M5 Visual baselines = run 35549826268 (success)`**（手动 dispatch，绑定同一 SHA；workflow 仍为 `ubuntu-24.04` + renderer sentinel + update 不吞错 + sentinel recreation + assert rerun）；
+  - **`M5 accepted HEAD = pending`**（只能由远端 final Release Gate 命名，本地不得自行填写）；
+  - 记账口径：`675af46` 是“改了什么 + CI 测过什么”，后续只允许出现记账/文档提交；若记账提交产生新 SHA，**不得**把它写成 accepted HEAD。
+- **验收报告**：`.freebuff/remote-bridge/10-M5-acceptance-report.md`（本地，交付给远端）；已提交的机器可读证据在 `reports/m5/`（acceptance 72 例全文 + 大图真实/合成 + qualification）。
+- **未决项（唯一 acceptance blocker）**：本机无真实模型凭据（`~/.ollama/models` 为空、无 `.env`、无 keychain 条目），因此按 §A4 只能记 `awaiting real-model qualification`。`reports/deepseek-v4-flash.json` / `reports/ollama-qwen.json` 是早期 `model-matrix` 报告，**不能**当 M5 的 24-case qualification 证据。
+- **待办**：远 final code review → 远端命名 M5 accepted HEAD；凭据可用时补 24-case 真实模型 qualification。
 
 ## 上一轮状态（M4 —— Engineering Validation System，**已由远端 Release Gate 正式 ACCEPTED @ `ecedc00`**）
 

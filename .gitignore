@@ -43,6 +43,9 @@ Thumbs.db
 *.png
 *.dxf
 *.pdf
+# Test output: CI and the local acceptance runs write evidence here. The evidence worth keeping
+# is copied to reports/ deliberately, so this directory stays scratch.
+backend/test-results/
 frontend/dist/
 frontend/test-results/
 frontend/playwright-report/

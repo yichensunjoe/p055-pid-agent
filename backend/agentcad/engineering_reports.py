@@ -164,7 +164,11 @@ def _schedule_symbol(
     connected_port_count = sum(1 for port in required_ports if connections.get((symbol.id, port.id)))
     payload = {
         "element_id": symbol.id,
-        "tag": symbol.label.strip(),
+        # The tag column reads through the canonical resolver, exactly as ``TAG_MISSING`` and
+        # ``TAG_DUPLICATE`` do: the production polish moves a symbol's fixed label into an
+        # editable annotation and clears the field, so the raw label is empty on every drawing
+        # the product itself wrote. Everything else in this row is untouched by that change.
+        "tag": resolve_symbol_tag(document, symbol),
         "name": symbol.name,
         "symbol_key": symbol.symbol_key,
         "symbol_name": definition.name,

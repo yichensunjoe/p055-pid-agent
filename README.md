@@ -385,7 +385,7 @@ npm run test:e2e
 
 `pid-agent repair-benchmark --suite acceptance --candidate-sha <sha>` 跑 M5 agent 自修复的确定性硬门：72 个由 spec fingerprint 与 commit SHA 派生（不可手选）的缺陷案例，每条都经过同一个生产 orchestrator——影子候选、同一个 M4 canonical validator 复跑、成功 oracle、最多一次受治理写入、undo/redo 证明——并发布可由**独立复算器**重算的 evidence。退出码 0 表示 evidence 复算通过且 S@5 ≥ 90%、单 family S@5 ≥ 75%、**F6 自身 S@5 = 100%**、attempt 契约逐条成立、safety-negative suite 100% 全部达标（S@1…S@4 发布为观测值：suite 里存在契约上就要求重试的 case，用它们做拒绝门等于在度量 fixture）。契约、六个 defect family、局部性/保护投影的机械定义与冻结阈值见 [`docs/m5-agent-self-repair.md`](docs/m5-agent-self-repair.md)。
 
-`pid-agent repair-scale [--source FILE.dwg]` 把同样的五个案例放到大图上跑，逐条报 scope size、context bytes/elements、attempts、各阶段耗时、RSS 与 wall-clock；`pid-agent repair` 在 CLI 上修一条 finding（先预览、再受治理写入）。真实模型资格用 `pid-agent repair-qualification`：没有凭据时它明确返回 `awaiting_real_model_qualification`（退出码 3），既不算通过也不算候选失败。
+`pid-agent repair-coverage` 跑 coverage-extension track：为冻结语料造不出来的 code 补确定性 producer，并用 canonical validator 证明它真的被制造出来（4 个可制造 code 各自 producer → finding → repair → oracle 证据；另 3 个 code 则证明写面与导入面都拒绝持有该缺陷，因此不是“漏测”而是产品入口的纵深防御）。它有自己的 corpus id/version/指纹，**不动** spec v2 与 72-case 冻结语料。`pid-agent repair-scale [--source FILE.dwg]` 把同样的五个案例放到大图上跑，逐条报 scope size、context bytes/elements、attempts、各阶段耗时、RSS 与 wall-clock；`pid-agent repair` 在 CLI 上修一条 finding（先预览、再受治理写入）。真实模型资格用 `pid-agent repair-qualification`：没有凭据时它明确返回 `awaiting_real_model_qualification`（退出码 3），既不算通过也不算候选失败。
 
 Playwright 安装、headed 模式、视觉基线更新和 trace 查看方式见 [`docs/browser-e2e-visual-acceptance.md`](docs/browser-e2e-visual-acceptance.md)。
 无需模型或 API Key 的图例、拓扑和 Agent 事务验收见 [`docs/offline-quality-harness.md`](docs/offline-quality-harness.md)。

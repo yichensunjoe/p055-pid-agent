@@ -677,6 +677,72 @@ def _run_repair_scale_command(args: argparse.Namespace) -> None:
     raise SystemExit(0 if passed else 2)
 
 
+def _run_repair_coverage_command(args: argparse.Namespace) -> None:
+    """Run the coverage-extension track: the codes the frozen corpus cannot produce.
+
+    The command answers two questions and exits 2 if either is unmet: did every supported code's
+    producer really make the canonical validator raise it (and did the governed repair resolve
+    it), and can the unreachable codes still not be staged by the write or the import surface.
+
+    Exit codes: 0 means the discovered matrix is complete and every negative control went red; 2
+    means a supported code lost its producer/repair, an "unreachable" code became reachable, or a
+    negative control stopped reporting; 3 means the run could not be set up at all.
+    """
+
+    import tempfile
+
+    from .repair_benchmark_runner import BenchmarkContext
+    from .repair_coverage_extension import extension_payload
+    from .service import DocumentService
+    from .store import SQLiteDocumentStore
+    from .symbols import SymbolRegistry
+    from .validation_profile import built_in_profile, resolve_profile
+
+    def _run(database: Path) -> dict[str, Any]:
+        registry = SymbolRegistry()
+        service = DocumentService(SQLiteDocumentStore(database), registry)
+        context = BenchmarkContext(
+            service=service,
+            profile=resolve_profile(built_in_profile()),
+            registry=registry,
+        )
+        return extension_payload(context)
+
+    if args.database is not None:
+        payload = _run(Path(args.database))
+    else:
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = _run(Path(tmp) / "repair-coverage.db")
+
+    if args.output:
+        args.output.write_text(_json_payload(payload) + "\n", encoding="utf-8")
+    print(_json_payload(payload))
+    uncovered = payload["uncovered"]
+    reachable = [
+        probe["code"] for probe in payload["representability"] if probe["reachable"]
+    ]
+    complete = not uncovered and not reachable and payload["negative_controls_all_red"]
+    print(
+        _json_payload(
+            {
+                "schema": "pid-agent.repair-coverage-summary",
+                "corpus_id": payload["corpus"]["corpus_id"],
+                "corpus_version": payload["corpus"]["corpus_version"],
+                "corpus_fingerprint": payload["corpus_fingerprint"],
+                "case_count": payload["corpus"]["case_count"],
+                "covered": payload["covered"],
+                "uncovered": uncovered,
+                "unreachable": payload["unreachable"],
+                "became_reachable": reachable,
+                "negative_controls_all_red": payload["negative_controls_all_red"],
+                "complete": complete,
+            }
+        ),
+        file=sys.stderr,
+    )
+    raise SystemExit(0 if complete else 2)
+
+
 def _run_repair_qualification_command(args: argparse.Namespace) -> None:
     """Run the real-model qualification, or report that the project has no credential (§A4).
 
@@ -1143,6 +1209,24 @@ def main(argv: list[str] | None = None) -> None:
         "--output", type=Path, default=None, help="Write the scale report here"
     )
 
+    repair_coverage_parser = subparsers.add_parser(
+        "repair-coverage",
+        help=(
+            "Run the M5 coverage-extension track: deterministic producers for the codes the "
+            "frozen 72-case corpus cannot produce, plus the proof that the rest cannot be staged "
+            "by any supported surface"
+        ),
+    )
+    repair_coverage_parser.add_argument(
+        "--database",
+        type=Path,
+        default=None,
+        help="SQLite database path; defaults to a temporary database per run",
+    )
+    repair_coverage_parser.add_argument(
+        "--output", type=Path, default=None, help="Write the coverage report here"
+    )
+
     qualification_parser = subparsers.add_parser(
         "repair-qualification",
         help=(
@@ -1478,6 +1562,8 @@ def main(argv: list[str] | None = None) -> None:
         _run_repair_benchmark_command(args)
     elif args.command == "repair-scale":
         _run_repair_scale_command(args)
+    elif args.command == "repair-coverage":
+        _run_repair_coverage_command(args)
     elif args.command == "repair-qualification":
         _run_repair_qualification_command(args)
     elif args.command == "quality-harness":

@@ -1,5 +1,11 @@
 # REUSE_AND_PITFALL_LOG — P055-PID-Agent
 
+## 2026-09-21 · “写请求没报错”不等于“缺陷真的存在”（P055-PID-Agent）
+
+- 场景：要给 `CONNECTOR_ENDPOINT_POINT_MISMATCH` / `SYMBOL_DEFINITION_MISSING` 这类“有修复策略但 benchmark 造不出”的 code 补 producer。第一版 producer 的做法是“改字段、看有没有抛异常”：`_patch(p1, {"target": {..., "point": 偏移}})` —— `apply_transaction` **返回成功**，revision +1，history 里有一条真实事务，但读回图纸时缺陷**不在**：`_normalize_endpoint` 在 `_prepare_element` 阶段把绑定点从 port 重新导出，未知 symbol_key / 未知 port_id 则直接 `InvalidOperationError`。写面与导入面（`import_document_payload` → `_validate_import_document`）的拒绝方式还不一样：前者会“接受并重算”，后者硬拒。
+- 结论做法：把 “representability” 当成一条要机器验证的断言：`probe_representability()` 对每个 code 在两个入口各试一次，分别记录 `accepted`（有没有抛异常）与 `defect_present`（**用 canonical validator 读回图纸、searched by exact code+validator**）两个字段；只有 `defect_present` 才决定“可达”。测试因此断言：写面 `accepted=True` 但 `defect_present=False`（point mismatch）、导入面 `accepted=False` 且 refusal 里带 `stale`，其余两个 code 两面 hard-refuse。
+- 关键经验：**布景代码的正确性不能由写调用的返回值决定**：只要系统在写入/导入时会规范化、重算或补齐字段，就存在“写成功、缺陷不存在”的静默分支；只断言“没抛异常”的守卫会把它当成覆盖，最终在覆盖率上多出一个不存在的数。另一个相关坑：同一个模块里 `from x import _symbol` 会被本模块自己定义的同名 `_symbol` 静默覆盖（报错形式是 `TypeError: _symbol() got an unexpected keyword argument`），导入时显式起别名。
+
 ## 2026-09-21 · 浏览器套件的“端口覆盖”只做了一半，于是别人的 checkout 变成了被测系统的缺陷（P055-PID-Agent）
 
 - 场景：本机 8000 端口被另一个 checkout 的后端占着（`GET /health` 返回 `P&ID-Agent 2.1.0-alpha.1`）。local-mode 的 `playwright.config.ts` 早就支持 `PID_AGENT_E2E_API_PORT` / `PID_AGENT_E2E_PREVIEW_PORT`，但 `playwright.shared.config.ts` 硬编码 8000/4173（于是 shared 套件直接拒绝启动），而 `e2e/security.shared.spec.ts` 又把 API root 写成常量 `http://127.0.0.1:8000/api/v2`——就算端口改成功，直连 API 的断言也会打到**另一个 checkout 的后端**上。

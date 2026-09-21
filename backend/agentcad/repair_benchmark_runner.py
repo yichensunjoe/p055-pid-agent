@@ -15,6 +15,7 @@ The runner owns the three things that decide whether the published success rate 
 from __future__ import annotations
 
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -25,6 +26,7 @@ from .repair_benchmark import (
     THRESHOLDS,
     BaseDrawing,
     BenchmarkCase,
+    MutationOperator,
     MutationResult,
     build_base_drawing,
     generate_suite,
@@ -165,6 +167,7 @@ def run_case(
     apply_enabled: bool = True,
     candidate_sha: str = "",
     base_drawing: BaseDrawing | None = None,
+    operators: Mapping[str, MutationOperator] | None = None,
 ) -> RepairCaseRecord:
     """Run one case end to end and return its record.
 
@@ -172,9 +175,15 @@ def run_case(
     run against a real imported drawing, not only against the tiny benchmark base. Roles are what
     make that possible — the operator names ``p1``/``v2`` and the track's role map resolves them to
     whatever those elements are called in the drawing being measured.
+
+    ``operators`` exists for the coverage-extension track: a case outside the frozen 72-case
+    corpus needs the *same* oracle and governance with a different defect catalogue, and the
+    catalogue is the only thing it may swap. The default stays :data:`MUTATIONS`, so the frozen
+    corpus cannot be run against anything but its own operators.
     """
 
-    operator = MUTATIONS[case.operator_id]
+    catalogue = MUTATIONS if operators is None else operators
+    operator = catalogue[case.operator_id]
     if base_drawing is not None:
         base = base_drawing
     else:

@@ -1,0 +1,800 @@
+{
+  "corpus": {
+    "corpus_id": "m5-coverage-extension",
+    "corpus_version": "1",
+    "spec_version": "2",
+    "spec_fingerprint": "c8520c5e7b0b1d7e77e3752080393b4965aee60538ad71a6bf95d5fc4ab5ede1",
+    "generator_fingerprint": "13cc1254795b8fa6bcc13c31a8d0d96f85befbcc9c7247023e69761ef2d1eadc",
+    "case_count": 4,
+    "supported_codes": [
+      {
+        "code": "DUPLICATE_LABEL",
+        "family": "F1",
+        "validator_id": "diagram-quality",
+        "operator_id": "ext_duplicate_label",
+        "locator_kind": "drawing",
+        "representable": true
+      },
+      {
+        "code": "PORT_DIRECTION_MISMATCH",
+        "family": "F2",
+        "validator_id": "diagram-quality",
+        "operator_id": "ext_port_direction_mismatch",
+        "locator_kind": "element",
+        "representable": true
+      },
+      {
+        "code": "UNBRIDGED_CROSSING",
+        "family": "F4",
+        "validator_id": "diagram-quality",
+        "operator_id": "ext_unbridged_crossing",
+        "locator_kind": "element",
+        "representable": true
+      },
+      {
+        "code": "ANNOTATION_OVERLAP",
+        "family": "F5",
+        "validator_id": "diagram-quality",
+        "operator_id": "ext_annotation_overlap",
+        "locator_kind": "drawing",
+        "representable": true
+      }
+    ],
+    "unreachable_codes": [
+      {
+        "code": "SYMBOL_DEFINITION_MISSING",
+        "family": "F1",
+        "validator_id": "engineering-report",
+        "representable": false,
+        "attempted_write": "update a symbol's symbol_key to a key the catalog does not define"
+      },
+      {
+        "code": "CONNECTOR_ENDPOINT_PORT_MISSING",
+        "family": "F2",
+        "validator_id": "engineering-report",
+        "representable": false,
+        "attempted_write": "bind a connector endpoint to a port id the device does not define"
+      },
+      {
+        "code": "CONNECTOR_ENDPOINT_POINT_MISMATCH",
+        "family": "F2",
+        "validator_id": "engineering-report",
+        "representable": false,
+        "attempted_write": "leave a connector endpoint bound to a stale coordinate"
+      }
+    ]
+  },
+  "corpus_fingerprint": "c198eb77c73157b25eba537fd3fef4264110897f23325d30b37c2bad9d6095e4",
+  "rows": [
+    {
+      "code": "DUPLICATE_LABEL",
+      "family": "F1",
+      "validator_id": "diagram-quality",
+      "operator_id": "ext_duplicate_label",
+      "locator_kind": "drawing",
+      "status": "covered",
+      "manifestation": {
+        "code": "DUPLICATE_LABEL",
+        "validator_id": "diagram-quality",
+        "produced": true,
+        "base_codes": [
+          "SYMBOL_REQUIRED_PORT_UNCONNECTED",
+          "SYMBOL_REQUIRED_PORT_UNCONNECTED"
+        ],
+        "produced_codes": [
+          "DUPLICATE_LABEL",
+          "QUALITY_SCORE_BELOW_TARGET",
+          "SYMBOL_REQUIRED_PORT_UNCONNECTED",
+          "SYMBOL_REQUIRED_PORT_UNCONNECTED"
+        ],
+        "added_codes": [
+          "DUPLICATE_LABEL",
+          "QUALITY_SCORE_BELOW_TARGET"
+        ],
+        "target_finding": {
+          "code": "DUPLICATE_LABEL",
+          "severity": "error",
+          "object_ids": [],
+          "element_ids": [
+            "note1"
+          ],
+          "message": "duplicate visible engineering labels remain after layout",
+          "expected": "",
+          "actual": "",
+          "suggested_repair": "",
+          "rule_source": "built-in",
+          "registered": true,
+          "threshold": null,
+          "waiver_status": "not_waived",
+          "waiver": null,
+          "validator_id": "diagram-quality",
+          "rule_id": "diagram-quality.DUPLICATE_LABEL",
+          "profile_id": "built-in",
+          "profile_version": "1",
+          "details": {
+            "count": 1
+          }
+        },
+        "base_revision": 1,
+        "revision": 2,
+        "notes": [
+          "the note now reads 'HV-101', which is also the visible label of v1",
+          "duplicate_label_count=1"
+        ]
+      },
+      "case": {
+        "schema": "pid-agent.repair-benchmark-case",
+        "case_id": "m5-coverage-extension:F1:00:ext_duplicate_label",
+        "family": "F1",
+        "operator_id": "ext_duplicate_label",
+        "suite": "coverage-extension",
+        "seed": 114597518146573,
+        "spec_fingerprint": "c8520c5e7b0b1d7e77e3752080393b4965aee60538ad71a6bf95d5fc4ab5ede1",
+        "generator_fingerprint": "13cc1254795b8fa6bcc13c31a8d0d96f85befbcc9c7247023e69761ef2d1eadc",
+        "candidate_sha": "m5-coverage-extension",
+        "document_id": "doc_bc209ef86c2b",
+        "base_revision": 2,
+        "base_content_hash": "10c7e10c698451c93b172da5dc8426c18f9e5071ecad62410bf7932be20a430b",
+        "pre_validation_hash": "057943d2a34a9399556155d00197e855d83320ed2758a6c9d2f92882a871a9c8",
+        "target_code": "DUPLICATE_LABEL",
+        "target_validator_id": "diagram-quality",
+        "target_rule_id": "diagram-quality.DUPLICATE_LABEL",
+        "target_element_ids": [
+          "note1"
+        ],
+        "scope_fingerprint": "a0aa95e988fa742dca47483557ea269c55da61287cf0ff374eb0426d2b6b4dfb",
+        "protected_pre": {
+          "engineering_projection": "25de0014bb84a6ec9ab8212ff07cfaedd75e3907bcb44b9392911750c809a9e6",
+          "drawing_projection": "5fe2816143c006d7986b531ce678ab19d5d0f707f0fc9347f25677743c5e6848",
+          "rule_bundle_fingerprint": "18a2da498c4ebd3538edd496f2cb375793d71443708fa0a56023bb5e91e6e315"
+        },
+        "attempts": 1,
+        "required_attempts": 1,
+        "attempt_plan_hashes": [
+          "ea6f4e58f7270f38d61fceeb3d401f73c43684f63aa16e7ce6f81dd7b5777651"
+        ],
+        "attempt_failure_codes": [
+          ""
+        ],
+        "attempt_shadow_validation_hashes": [
+          "4fbbff793020a0f49141051cc2760875e6c436aba41fcd3287f9eb5d9bc958a8"
+        ],
+        "attempt_metrics": [
+          {
+            "attempt": 1,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "context_bytes": 2465,
+            "context_elements": 1,
+            "latency_ms": 0
+          }
+        ],
+        "selected_plan_hash": "ea6f4e58f7270f38d61fceeb3d401f73c43684f63aa16e7ce6f81dd7b5777651",
+        "applied": true,
+        "result_revision": 5,
+        "transaction_hash": "ec20387666311df28fb38b70f46188c5675beca51f5d98313ceba6224a1208a1",
+        "audit_record_id": "audit_e33e75feb64e4b958f6ef53b41df2c5d",
+        "post_validation_hash": "4fbbff793020a0f49141051cc2760875e6c436aba41fcd3287f9eb5d9bc958a8",
+        "protected_post": {
+          "engineering_projection": "25de0014bb84a6ec9ab8212ff07cfaedd75e3907bcb44b9392911750c809a9e6",
+          "drawing_projection": "5fe2816143c006d7986b531ce678ab19d5d0f707f0fc9347f25677743c5e6848",
+          "rule_bundle_fingerprint": "18a2da498c4ebd3538edd496f2cb375793d71443708fa0a56023bb5e91e6e315"
+        },
+        "undo_restored_base": true,
+        "redo_restored_result": true,
+        "repair_hash": "50b2ce9d179ddba9ff6c15ed2566c218d528433cfe036752b26f7044ded0e90a",
+        "classification": "success",
+        "failure_code": "",
+        "write_count": 1,
+        "reasons": [],
+        "wall_clock_ms": 22,
+        "timings_ms": {
+          "plan_ms": 0,
+          "compile_ms": 1,
+          "shadow_validate_ms": 3,
+          "apply_ms": 12,
+          "post_validate_ms": 2
+        },
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "token_usage_estimated": false,
+        "planner": {
+          "planner_id": "deterministic-repair-planner",
+          "planner_version": "1",
+          "provider_class": "",
+          "base_url_class": "",
+          "model": "",
+          "temperature": null,
+          "top_p": null,
+          "max_output_tokens": null,
+          "timeout_seconds": null,
+          "prompt_fingerprint": "",
+          "schema_fingerprint": "",
+          "token_usage_estimated": false
+        }
+      },
+      "notes": [
+        "the free note repeats the visible label of HV-101 within the duplicate radius; the duplicate is a *visible* label, so no engineering-report code is involved"
+      ]
+    },
+    {
+      "code": "PORT_DIRECTION_MISMATCH",
+      "family": "F2",
+      "validator_id": "diagram-quality",
+      "operator_id": "ext_port_direction_mismatch",
+      "locator_kind": "element",
+      "status": "covered",
+      "manifestation": {
+        "code": "PORT_DIRECTION_MISMATCH",
+        "validator_id": "diagram-quality",
+        "produced": true,
+        "base_codes": [
+          "SYMBOL_REQUIRED_PORT_UNCONNECTED",
+          "SYMBOL_REQUIRED_PORT_UNCONNECTED"
+        ],
+        "produced_codes": [
+          "PORT_DIRECTION_MISMATCH",
+          "QUALITY_SCORE_BELOW_TARGET",
+          "SYMBOL_REQUIRED_PORT_UNCONNECTED",
+          "SYMBOL_REQUIRED_PORT_UNCONNECTED"
+        ],
+        "added_codes": [
+          "PORT_DIRECTION_MISMATCH",
+          "QUALITY_SCORE_BELOW_TARGET"
+        ],
+        "target_finding": {
+          "code": "PORT_DIRECTION_MISMATCH",
+          "severity": "error",
+          "object_ids": [],
+          "element_ids": [
+            "p1"
+          ],
+          "message": "connector p1 flow reverse contradicts port directions out→in",
+          "expected": "",
+          "actual": "",
+          "suggested_repair": "",
+          "rule_source": "built-in",
+          "registered": true,
+          "threshold": null,
+          "waiver_status": "not_waived",
+          "waiver": null,
+          "validator_id": "diagram-quality",
+          "rule_id": "diagram-quality.PORT_DIRECTION_MISMATCH",
+          "profile_id": "built-in",
+          "profile_version": "1",
+          "details": {
+            "inferred_flow_direction": "forward"
+          }
+        },
+        "base_revision": 1,
+        "revision": 2,
+        "notes": [
+          "the ports still determine flow 'forward'; only the declaration moved"
+        ]
+      },
+      "case": {
+        "schema": "pid-agent.repair-benchmark-case",
+        "case_id": "m5-coverage-extension:F2:01:ext_port_direction_mismatch",
+        "family": "F2",
+        "operator_id": "ext_port_direction_mismatch",
+        "suite": "coverage-extension",
+        "seed": 270727385449498,
+        "spec_fingerprint": "c8520c5e7b0b1d7e77e3752080393b4965aee60538ad71a6bf95d5fc4ab5ede1",
+        "generator_fingerprint": "13cc1254795b8fa6bcc13c31a8d0d96f85befbcc9c7247023e69761ef2d1eadc",
+        "candidate_sha": "m5-coverage-extension",
+        "document_id": "doc_f8a98114f86d",
+        "base_revision": 2,
+        "base_content_hash": "f0b8429beb095fb39856d56ddcba41c26495df9280ba7d21d707dc15194168cb",
+        "pre_validation_hash": "e5079ca2251d21a220c0f36ab149c4b3087d3af333591ee70cf4ffde38c995be",
+        "target_code": "PORT_DIRECTION_MISMATCH",
+        "target_validator_id": "diagram-quality",
+        "target_rule_id": "diagram-quality.PORT_DIRECTION_MISMATCH",
+        "target_element_ids": [
+          "p1"
+        ],
+        "scope_fingerprint": "6398328e6fee3bad01c8e2271cfba612e4d4427a44a272238152c434848e5628",
+        "protected_pre": {
+          "engineering_projection": "07681183b0546ca6e73d93ad978780702303ec833bd767905eba1c54876ba6a9",
+          "drawing_projection": "1657f5f095085fb29a6cc417abc14ed9520bd21bdd95709064c928177e8336a6",
+          "rule_bundle_fingerprint": "18a2da498c4ebd3538edd496f2cb375793d71443708fa0a56023bb5e91e6e315"
+        },
+        "attempts": 1,
+        "required_attempts": 1,
+        "attempt_plan_hashes": [
+          "250a89b2cd57150d799b0f27b36329d5e4f49d5e9051ba1e240a8dc2416e789f"
+        ],
+        "attempt_failure_codes": [
+          ""
+        ],
+        "attempt_shadow_validation_hashes": [
+          "02fd12085fa3123585e68bb6a008fb2bfc3a8a3333e7e3d5068877cb47e55a0f"
+        ],
+        "attempt_metrics": [
+          {
+            "attempt": 1,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "context_bytes": 6325,
+            "context_elements": 7,
+            "latency_ms": 0
+          }
+        ],
+        "selected_plan_hash": "250a89b2cd57150d799b0f27b36329d5e4f49d5e9051ba1e240a8dc2416e789f",
+        "applied": true,
+        "result_revision": 5,
+        "transaction_hash": "10d857d26a7661454af4a70c0d8d59c5f8734c3ad2fb75344a6704a09d104e28",
+        "audit_record_id": "audit_c4020ab4ea6846588d59c6d79d672b0c",
+        "post_validation_hash": "02fd12085fa3123585e68bb6a008fb2bfc3a8a3333e7e3d5068877cb47e55a0f",
+        "protected_post": {
+          "engineering_projection": "07681183b0546ca6e73d93ad978780702303ec833bd767905eba1c54876ba6a9",
+          "drawing_projection": "1657f5f095085fb29a6cc417abc14ed9520bd21bdd95709064c928177e8336a6",
+          "rule_bundle_fingerprint": "18a2da498c4ebd3538edd496f2cb375793d71443708fa0a56023bb5e91e6e315"
+        },
+        "undo_restored_base": true,
+        "redo_restored_result": true,
+        "repair_hash": "84e54259933b373c760277f80eb3dccdf1ea4f7702dfc60c194fad1f1288425e",
+        "classification": "success",
+        "failure_code": "",
+        "write_count": 1,
+        "reasons": [],
+        "wall_clock_ms": 21,
+        "timings_ms": {
+          "plan_ms": 0,
+          "compile_ms": 2,
+          "shadow_validate_ms": 3,
+          "apply_ms": 11,
+          "post_validate_ms": 2
+        },
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "token_usage_estimated": false,
+        "planner": {
+          "planner_id": "deterministic-repair-planner",
+          "planner_version": "1",
+          "provider_class": "",
+          "base_url_class": "",
+          "model": "",
+          "temperature": null,
+          "top_p": null,
+          "max_output_tokens": null,
+          "timeout_seconds": null,
+          "prompt_fingerprint": "",
+          "schema_fingerprint": "",
+          "token_usage_estimated": false
+        }
+      },
+      "notes": [
+        "the trunk's declared flow contradicts the port directions it is wired to"
+      ]
+    },
+    {
+      "code": "UNBRIDGED_CROSSING",
+      "family": "F4",
+      "validator_id": "diagram-quality",
+      "operator_id": "ext_unbridged_crossing",
+      "locator_kind": "element",
+      "status": "covered",
+      "manifestation": {
+        "code": "UNBRIDGED_CROSSING",
+        "validator_id": "diagram-quality",
+        "produced": true,
+        "base_codes": [
+          "SYMBOL_REQUIRED_PORT_UNCONNECTED",
+          "SYMBOL_REQUIRED_PORT_UNCONNECTED",
+          "SYMBOL_REQUIRED_PORT_UNCONNECTED"
+        ],
+        "produced_codes": [
+          "EXCESSIVE_BENDS",
+          "QUALITY_SCORE_BELOW_TARGET",
+          "SYMBOL_REQUIRED_PORT_UNCONNECTED",
+          "SYMBOL_REQUIRED_PORT_UNCONNECTED",
+          "SYMBOL_REQUIRED_PORT_UNCONNECTED",
+          "UNBRIDGED_CROSSING"
+        ],
+        "added_codes": [
+          "EXCESSIVE_BENDS",
+          "QUALITY_SCORE_BELOW_TARGET",
+          "UNBRIDGED_CROSSING"
+        ],
+        "target_finding": {
+          "code": "UNBRIDGED_CROSSING",
+          "severity": "error",
+          "object_ids": [],
+          "element_ids": [
+            "p1",
+            "q1"
+          ],
+          "message": "connectors p1 and q1 cross without a jump bridge",
+          "expected": "",
+          "actual": "",
+          "suggested_repair": "",
+          "rule_source": "built-in",
+          "registered": true,
+          "threshold": null,
+          "waiver_status": "not_waived",
+          "waiver": null,
+          "validator_id": "diagram-quality",
+          "rule_id": "diagram-quality.UNBRIDGED_CROSSING",
+          "profile_id": "built-in",
+          "profile_version": "1",
+          "details": {
+            "point": {
+              "x": 600.0,
+              "y": 320.0
+            }
+          }
+        },
+        "base_revision": 2,
+        "revision": 3,
+        "notes": [
+          "q1 crosses p1 and neither side asks for a jump bridge"
+        ]
+      },
+      "case": {
+        "schema": "pid-agent.repair-benchmark-case",
+        "case_id": "m5-coverage-extension:F4:02:ext_unbridged_crossing",
+        "family": "F4",
+        "operator_id": "ext_unbridged_crossing",
+        "suite": "coverage-extension",
+        "seed": 123567364812021,
+        "spec_fingerprint": "c8520c5e7b0b1d7e77e3752080393b4965aee60538ad71a6bf95d5fc4ab5ede1",
+        "generator_fingerprint": "13cc1254795b8fa6bcc13c31a8d0d96f85befbcc9c7247023e69761ef2d1eadc",
+        "candidate_sha": "m5-coverage-extension",
+        "document_id": "doc_e849c314c838",
+        "base_revision": 3,
+        "base_content_hash": "0d2d5cd7713f51bbda9fd7dbd62af2455222ac0448e359153bf7a36668306e96",
+        "pre_validation_hash": "570e7d332cd0b370bf3bfb78b554f9f722c5412e3c75a481c3589eb7b6667177",
+        "target_code": "UNBRIDGED_CROSSING",
+        "target_validator_id": "diagram-quality",
+        "target_rule_id": "diagram-quality.UNBRIDGED_CROSSING",
+        "target_element_ids": [
+          "p1",
+          "q1"
+        ],
+        "scope_fingerprint": "9281b1e794778c4ee5f5885242daba02abef35cb4c8685a4dcd35942734d19a7",
+        "protected_pre": {
+          "engineering_projection": "999fde47ae9d3ad9a671645e92c076b4fab203234e5f730c0f59bf141ddad55e",
+          "drawing_projection": "4e5240ddafeb0c1f8c71feacf6c2421a8c8608b762af04c30f80fc2f67dba642",
+          "rule_bundle_fingerprint": "18a2da498c4ebd3538edd496f2cb375793d71443708fa0a56023bb5e91e6e315"
+        },
+        "attempts": 1,
+        "required_attempts": 1,
+        "attempt_plan_hashes": [
+          "0b935231a486221341c14469735e6c34ce8458cff3c2142bb4235f7a6c51e3b4"
+        ],
+        "attempt_failure_codes": [
+          ""
+        ],
+        "attempt_shadow_validation_hashes": [
+          "9fd4dfe352bdcba4a4158ff83d4bc3bebad5f21d09965860604577b57efd0d05"
+        ],
+        "attempt_metrics": [
+          {
+            "attempt": 1,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "context_bytes": 8361,
+            "context_elements": 10,
+            "latency_ms": 0
+          }
+        ],
+        "selected_plan_hash": "0b935231a486221341c14469735e6c34ce8458cff3c2142bb4235f7a6c51e3b4",
+        "applied": true,
+        "result_revision": 6,
+        "transaction_hash": "e3024fe4e9e4f980856b1720ccdd39c72ec4ab4b82dc48db237ec67c81dd542c",
+        "audit_record_id": "audit_8586327f70214cdda332c929fde520d2",
+        "post_validation_hash": "9fd4dfe352bdcba4a4158ff83d4bc3bebad5f21d09965860604577b57efd0d05",
+        "protected_post": {
+          "engineering_projection": "999fde47ae9d3ad9a671645e92c076b4fab203234e5f730c0f59bf141ddad55e",
+          "drawing_projection": "4e5240ddafeb0c1f8c71feacf6c2421a8c8608b762af04c30f80fc2f67dba642",
+          "rule_bundle_fingerprint": "18a2da498c4ebd3538edd496f2cb375793d71443708fa0a56023bb5e91e6e315"
+        },
+        "undo_restored_base": true,
+        "redo_restored_result": true,
+        "repair_hash": "eb8476bc8d2aa1c07bc36da161c01f07698ccb003f2a53c5db9b2f42814e9534",
+        "classification": "success",
+        "failure_code": "",
+        "write_count": 1,
+        "reasons": [],
+        "wall_clock_ms": 20,
+        "timings_ms": {
+          "plan_ms": 0,
+          "compile_ms": 2,
+          "shadow_validate_ms": 3,
+          "apply_ms": 10,
+          "post_validate_ms": 1
+        },
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "token_usage_estimated": false,
+        "planner": {
+          "planner_id": "deterministic-repair-planner",
+          "planner_version": "1",
+          "provider_class": "",
+          "base_url_class": "",
+          "model": "",
+          "temperature": null,
+          "top_p": null,
+          "max_output_tokens": null,
+          "timeout_seconds": null,
+          "prompt_fingerprint": "",
+          "schema_fingerprint": "",
+          "token_usage_estimated": false
+        }
+      },
+      "notes": [
+        "the branch line is routed across the trunk with no jump bridge on either side; two lines that share a device are never reported as crossing, so the base carries a fourth device for the branch to run between"
+      ]
+    },
+    {
+      "code": "ANNOTATION_OVERLAP",
+      "family": "F5",
+      "validator_id": "diagram-quality",
+      "operator_id": "ext_annotation_overlap",
+      "locator_kind": "drawing",
+      "status": "covered",
+      "manifestation": {
+        "code": "ANNOTATION_OVERLAP",
+        "validator_id": "diagram-quality",
+        "produced": true,
+        "base_codes": [
+          "SYMBOL_REQUIRED_PORT_UNCONNECTED",
+          "SYMBOL_REQUIRED_PORT_UNCONNECTED"
+        ],
+        "produced_codes": [
+          "ANNOTATION_OVERLAP",
+          "QUALITY_SCORE_BELOW_TARGET",
+          "SYMBOL_REQUIRED_PORT_UNCONNECTED",
+          "SYMBOL_REQUIRED_PORT_UNCONNECTED"
+        ],
+        "added_codes": [
+          "ANNOTATION_OVERLAP",
+          "QUALITY_SCORE_BELOW_TARGET"
+        ],
+        "target_finding": {
+          "code": "ANNOTATION_OVERLAP",
+          "severity": "error",
+          "object_ids": [],
+          "element_ids": [
+            "v3__label"
+          ],
+          "message": "annotation text overlaps another label, symbol, or connector",
+          "expected": "",
+          "actual": "",
+          "suggested_repair": "",
+          "rule_source": "built-in",
+          "registered": true,
+          "threshold": null,
+          "waiver_status": "not_waived",
+          "waiver": null,
+          "validator_id": "diagram-quality",
+          "rule_id": "diagram-quality.ANNOTATION_OVERLAP",
+          "profile_id": "built-in",
+          "profile_version": "1",
+          "details": {
+            "text_text": 0,
+            "text_symbol": 1,
+            "text_connector": 0
+          }
+        },
+        "base_revision": 1,
+        "revision": 2,
+        "notes": [
+          "v3__label now sits at the centre of v3"
+        ]
+      },
+      "case": {
+        "schema": "pid-agent.repair-benchmark-case",
+        "case_id": "m5-coverage-extension:F5:03:ext_annotation_overlap",
+        "family": "F5",
+        "operator_id": "ext_annotation_overlap",
+        "suite": "coverage-extension",
+        "seed": 169710124685468,
+        "spec_fingerprint": "c8520c5e7b0b1d7e77e3752080393b4965aee60538ad71a6bf95d5fc4ab5ede1",
+        "generator_fingerprint": "13cc1254795b8fa6bcc13c31a8d0d96f85befbcc9c7247023e69761ef2d1eadc",
+        "candidate_sha": "m5-coverage-extension",
+        "document_id": "doc_c73467c9d8ee",
+        "base_revision": 2,
+        "base_content_hash": "0cb3da3aa18ce574fe2b9cafb7c0b13139fc6cb73c3106872b4ffbd63bb278e6",
+        "pre_validation_hash": "3c3dc6f2c84b17c70a2b0352290b011e70ab6ad0df92fb92dc980167af22d497",
+        "target_code": "ANNOTATION_OVERLAP",
+        "target_validator_id": "diagram-quality",
+        "target_rule_id": "diagram-quality.ANNOTATION_OVERLAP",
+        "target_element_ids": [
+          "v3__label"
+        ],
+        "scope_fingerprint": "b1e7129f3592e91c30c4ad78c84554acea1c04ac3e5c432c981422242182ea38",
+        "protected_pre": {
+          "engineering_projection": "e31e8cc3cec007e7b03c2b56d2c7d5ca8200d90bc540fcdaba2481e5e674e71e",
+          "drawing_projection": "8c111cd2007603dd5746298290fb33fcb321185988404cecf6e961079a585f72",
+          "rule_bundle_fingerprint": "18a2da498c4ebd3538edd496f2cb375793d71443708fa0a56023bb5e91e6e315"
+        },
+        "attempts": 1,
+        "required_attempts": 1,
+        "attempt_plan_hashes": [
+          "ad260a4afed5b2ad9546951326d0295d5bb941ea5ec4bd588386b87a5b1989ba"
+        ],
+        "attempt_failure_codes": [
+          ""
+        ],
+        "attempt_shadow_validation_hashes": [
+          "13fdb5f357d5fd83b264b6639c7b65a4347772a900e8a7e51e44788366c4c27b"
+        ],
+        "attempt_metrics": [
+          {
+            "attempt": 1,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "context_bytes": 4227,
+            "context_elements": 3,
+            "latency_ms": 0
+          }
+        ],
+        "selected_plan_hash": "ad260a4afed5b2ad9546951326d0295d5bb941ea5ec4bd588386b87a5b1989ba",
+        "applied": true,
+        "result_revision": 5,
+        "transaction_hash": "caaa05ee675deb1537c4bc3d99ecbfc6a8ea602a08c35374858fa9ee3ec63ed5",
+        "audit_record_id": "audit_6fccf14d835746b0a80df5d66ec05daf",
+        "post_validation_hash": "13fdb5f357d5fd83b264b6639c7b65a4347772a900e8a7e51e44788366c4c27b",
+        "protected_post": {
+          "engineering_projection": "e31e8cc3cec007e7b03c2b56d2c7d5ca8200d90bc540fcdaba2481e5e674e71e",
+          "drawing_projection": "8c111cd2007603dd5746298290fb33fcb321185988404cecf6e961079a585f72",
+          "rule_bundle_fingerprint": "18a2da498c4ebd3538edd496f2cb375793d71443708fa0a56023bb5e91e6e315"
+        },
+        "undo_restored_base": true,
+        "redo_restored_result": true,
+        "repair_hash": "75f2fe7697e6925dc5caaabee02304e802de8d3e3cd1181482fdc99912cf3c9f",
+        "classification": "success",
+        "failure_code": "",
+        "write_count": 1,
+        "reasons": [],
+        "wall_clock_ms": 19,
+        "timings_ms": {
+          "plan_ms": 0,
+          "compile_ms": 1,
+          "shadow_validate_ms": 3,
+          "apply_ms": 11,
+          "post_validate_ms": 2
+        },
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "token_usage_estimated": false,
+        "planner": {
+          "planner_id": "deterministic-repair-planner",
+          "planner_version": "1",
+          "provider_class": "",
+          "base_url_class": "",
+          "model": "",
+          "temperature": null,
+          "top_p": null,
+          "max_output_tokens": null,
+          "timeout_seconds": null,
+          "prompt_fingerprint": "",
+          "schema_fingerprint": "",
+          "token_usage_estimated": false
+        }
+      },
+      "notes": [
+        "the isolated device's label annotation sits on top of the device it labels"
+      ]
+    }
+  ],
+  "covered": [
+    "ANNOTATION_OVERLAP",
+    "DUPLICATE_LABEL",
+    "PORT_DIRECTION_MISMATCH",
+    "UNBRIDGED_CROSSING"
+  ],
+  "uncovered": [],
+  "representability": [
+    {
+      "code": "SYMBOL_DEFINITION_MISSING",
+      "family": "F1",
+      "validator_id": "engineering-report",
+      "attempted_write": "update a symbol's symbol_key to a key the catalog does not define",
+      "reachable": false,
+      "attempts": [
+        {
+          "surface": "governed_write",
+          "accepted": false,
+          "refusal": "InvalidOperationError: 'unknown symbol: ext_symbol_not_in_catalog'",
+          "defect_present": false,
+          "finding": null
+        },
+        {
+          "surface": "import",
+          "accepted": false,
+          "refusal": "ProjectIOError: 'unknown symbol: ext_symbol_not_in_catalog'",
+          "defect_present": false,
+          "finding": null
+        }
+      ],
+      "note": "a catalogue that moved on is the scenario the rule guards"
+    },
+    {
+      "code": "CONNECTOR_ENDPOINT_PORT_MISSING",
+      "family": "F2",
+      "validator_id": "engineering-report",
+      "attempted_write": "bind a connector endpoint to a port id the device does not define",
+      "reachable": false,
+      "attempts": [
+        {
+          "surface": "governed_write",
+          "accepted": false,
+          "refusal": "InvalidOperationError: unknown port 'ext_no_such_port' for symbol v2 (ball_valve)",
+          "defect_present": false,
+          "finding": null
+        },
+        {
+          "surface": "import",
+          "accepted": false,
+          "refusal": "ProjectIOError: unknown port 'ext_no_such_port' for symbol v2 (ball_valve)",
+          "defect_present": false,
+          "finding": null
+        }
+      ],
+      "note": "a device library that changed under an existing drawing"
+    },
+    {
+      "code": "CONNECTOR_ENDPOINT_POINT_MISMATCH",
+      "family": "F2",
+      "validator_id": "engineering-report",
+      "attempted_write": "leave a connector endpoint bound to a stale coordinate",
+      "reachable": false,
+      "attempts": [
+        {
+          "surface": "governed_write",
+          "accepted": true,
+          "refusal": "",
+          "defect_present": false,
+          "finding": null
+        },
+        {
+          "surface": "import",
+          "accepted": false,
+          "refusal": "ProjectIOError: connector p1 target binding point is stale",
+          "defect_present": false,
+          "finding": null
+        }
+      ],
+      "note": "equipment moving without its binding following"
+    }
+  ],
+  "unreachable": [
+    "CONNECTOR_ENDPOINT_POINT_MISMATCH",
+    "CONNECTOR_ENDPOINT_PORT_MISSING",
+    "SYMBOL_DEFINITION_MISSING"
+  ],
+  "negative_controls": [
+    {
+      "control": "producer_stages_nothing",
+      "expected_signal": "not_manifested",
+      "observed_signal": "not_manifested",
+      "red": true,
+      "detail": "target_present=False"
+    },
+    {
+      "control": "producer_declares_wrong_code",
+      "expected_signal": "not_manifested",
+      "observed_signal": "not_manifested",
+      "red": true,
+      "detail": "declared=NODE_OVERLAP added=['DUPLICATE_LABEL', 'QUALITY_SCORE_BELOW_TARGET']"
+    },
+    {
+      "control": "planner_edits_outside_scope",
+      "expected_signal": "locality_violation",
+      "observed_signal": "locality_violation",
+      "red": true,
+      "detail": "candidate changed elements outside the frozen scope: ['p2']"
+    },
+    {
+      "control": "planner_deletes_the_target",
+      "expected_signal": "deletion_not_permitted",
+      "observed_signal": "deletion_not_permitted",
+      "red": true,
+      "detail": "candidate removed elements the case never permitted: ['note1']"
+    }
+  ],
+  "negative_controls_all_red": true,
+  "report_hash": "f56c2c5098119a0b753660ba6a33a0fb7bcc03c24a545f0fd1849f6e44fe0931"
+}

@@ -80,6 +80,13 @@ DEV_CASES_PER_FAMILY = 4
 ACCEPTANCE_CASES_PER_FAMILY = 12
 SAFETY_CASES = 12
 
+#: The frozen acceptance corpus. Versioned and fingerprinted separately from the spec because
+#: "what counts as passing" (the spec) and "which cases were run" (the corpus) are different
+#: questions, and a reviewer has to be able to answer "what did M5 accept?" years later. Growing
+#: coverage means a *new* corpus id, never an edit to this one.
+CORE_CORPUS_ID = "m5-core-corpus"
+CORE_CORPUS_VERSION = "2"
+
 
 # -- base drawing ------------------------------------------------------------ #
 
@@ -912,6 +919,54 @@ def spec_payload() -> dict[str, Any]:
     }
 
 
+def supported_code_manifest() -> list[dict[str, str]]:
+    """The codes the frozen catalogue can actually produce, one row per operator.
+
+    ``target_code`` is what the operator claims and the case's binding is checked against at run
+    time, so this manifest is a claim the benchmark itself enforces: an operator that stops
+    producing its code turns its cases into ``invalid_case`` (baseline §A7).
+    """
+
+    return [
+        {
+            "operator_id": operator.operator_id,
+            "family": operator.family,
+            "target_code": operator.target_code,
+            "validator_id": operator.target_validator_id,
+        }
+        for operator in sorted(MUTATIONS.values(), key=lambda item: item.operator_id)
+        if operator.target_code
+    ]
+
+
+def core_corpus_manifest() -> dict[str, Any]:
+    """Identify the frozen acceptance corpus independently of the spec it is judged by."""
+
+    return {
+        "corpus_id": CORE_CORPUS_ID,
+        "corpus_version": CORE_CORPUS_VERSION,
+        "spec_version": BENCHMARK_SPEC_VERSION,
+        "spec_fingerprint": spec_fingerprint(),
+        "generator_fingerprint": generator_fingerprint(),
+        "families": list(FAMILIES),
+        "cases_per_family": ACCEPTANCE_CASES_PER_FAMILY,
+        "dev_cases_per_family": DEV_CASES_PER_FAMILY,
+        "case_count": ACCEPTANCE_CASES_PER_FAMILY * len(FAMILIES),
+        "safety_case_count": SAFETY_CASES,
+        "operator_count": len(MUTATIONS),
+        "supported_codes": supported_code_manifest(),
+    }
+
+
+def core_corpus_fingerprint() -> str:
+    """Fingerprint of the corpus definition: the case layout plus the code manifest it supports."""
+
+    text = json.dumps(
+        core_corpus_manifest(), sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    )
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
 def spec_fingerprint() -> str:
     text = json.dumps(spec_payload(), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
@@ -1012,6 +1067,8 @@ def generate_suite(*, candidate_sha: str, suite: str) -> list[BenchmarkCase]:
 __all__ = [
     "ACCEPTANCE_CASES_PER_FAMILY",
     "BENCHMARK_SPEC_VERSION",
+    "CORE_CORPUS_ID",
+    "CORE_CORPUS_VERSION",
     "DEV_CASES_PER_FAMILY",
     "FAMILIES",
     "FAMILY_TITLES",
@@ -1024,6 +1081,8 @@ __all__ = [
     "MutationOperator",
     "MutationResult",
     "build_base_drawing",
+    "core_corpus_fingerprint",
+    "core_corpus_manifest",
     "derive_seed",
     "generate_cases",
     "generate_suite",
@@ -1031,4 +1090,5 @@ __all__ = [
     "operators_for_family",
     "spec_fingerprint",
     "spec_payload",
+    "supported_code_manifest",
 ]

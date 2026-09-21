@@ -119,16 +119,33 @@ planner 拿到的是 `RepairContext`：**当前**图纸、canonical findings、�
 （`f1_symbol_tag_missing` / `f1_symbol_tag_duplicate` 就是因为这个差距被补上的：规则修好之前，
 F1 表里写着 `TAG_MISSING`/`TAG_DUPLICATE`，但目录里没有任何 operator 能制造它们）：
 
-- **目录能制造（19 operator / 14 code，acceptance 里出现 13 个非空 code）**：上表 F1–F5 中
+- **目录能制造（19 operator / 13 code，acceptance 里出现 13 个非空 code；与
+  `supported_code_manifest()` 一致）**：上表 F1–F5 中
   `LINE_TAG_MISSING`、`LINE_MEDIUM_MISSING`、`LINE_DIAMETER_MISSING`、`TAG_MISSING`、`TAG_DUPLICATE`、
   `CONNECTOR_ENDPOINT_DANGLING`、`SYMBOL_REQUIRED_PORT_UNCONNECTED`、`MICRO_SEGMENT`、
   `UNNECESSARY_BEND`、`PORT_EXIT_MISMATCH`、`NODE_OVERLAP`、`PIPE_THROUGH_EQUIPMENT`、`SYMBOL_OUT_OF_BOUNDS`。
-- **有修复策略、但**没有** operator（即“能修，但今天无法被这个 benchmark 考到”）**：
-  `DUPLICATE_LABEL`、`ANNOTATION_OVERLAP`、`UNBRIDGED_CROSSING`、`PORT_DIRECTION_MISMATCH`、
-  `CONNECTOR_ENDPOINT_PORT_MISSING`、`CONNECTOR_ENDPOINT_POINT_MISMATCH`、`SYMBOL_DEFINITION_MISSING`。
-  它们在 `repair_planner.py` 里有策略、在冻结的 rule catalog 与 severity 映射里是正式规则，
-  所以只要补上 governed mutation（并用 `test_every_registered_operator_stages_the_finding_it_advertises`
-  同款端到端断言绑定），就能进 case 集；在此之前，任何“F1/F2/F4/F5 覆盖了这些 code”的说法都是错的。
+- **有修复策略、且已补上 governed producer**：`DUPLICATE_LABEL`、`ANNOTATION_OVERLAP`、
+  `UNBRIDGED_CROSSING`、`PORT_DIRECTION_MISMATCH` —— 在独立的 **coverage-extension track**
+  （`repair_coverage_extension.py`，`pid-agent repair-coverage`）里，每个 code 都有一条
+  `producer → canonical finding → repair → oracle` 证据，4/4 首答命中、单次 governed write，
+  见 §9。它们**不进**冻结的 72-case 语料：spec 仍是 v2，`spec_fingerprint` 未动。
+- **有修复策略、但**无法被任何受支持入口制造**：`SYMBOL_DEFINITION_MISSING`、
+  `CONNECTOR_ENDPOINT_PORT_MISSING`、`CONNECTOR_ENDPOINT_POINT_MISMATCH`。这三个 code
+  在 `repair_planner.py` 里有策略、在冻结的 rule catalog 里是正式规则，但**写路径与导入路径都不
+  允许这样的文档存在**，而且两者拒绝的方式不同（
+  `repair_coverage_extension.probe_representability()` 逐个记录）：
+
+  | code | governed write | import |
+  |---|---|---|
+  | `SYMBOL_DEFINITION_MISSING` | 拒绝：`unknown symbol: …` | 拒绝：`unknown symbol: …` |
+  | `CONNECTOR_ENDPOINT_PORT_MISSING` | 拒绝：`unknown port '…' for symbol …` | 拒绝：`unknown port '…' for symbol …` |
+  | `CONNECTOR_ENDPOINT_POINT_MISMATCH` | **接受并重算**：写入成功，绑定点被 `_normalize_endpoint` 重新导出，缺陷从不出现 | 拒绝：`… binding point is stale` |
+
+  所以“benchmark 考不到它们”不是遗漏，而是产品自身的入口把它们挡在门外：规则是给**其它来源**
+  （旧库、外部生成的文档、将来第三方生产者）留的纵深防御，planner 也照样保留策略。
+  `test_unreachable_codes_cannot_be_staged_by_any_supported_surface` 是这条断言的守卫：
+  哪天某个面开始接受它们，测试就红，必须把它们提升成正式 case。
+  在补上真正的 producer 之前，任何“F1/F2/F4/F5 覆盖了这三个 code”的说法都是错的。
 - **上表出现但既无 operator 也无策略**的 entry finding，只表示该 family 的入口语义，不代表被测量。
 
 数量（`§B3`）：
@@ -185,16 +202,63 @@ semantic compiler + governed transaction 追加**一条受管辖的阀组 train*
 canonical payload 字段、severity 映射与 result digest 口径，`scripts/m4_semantics_manifest.py` 生成
 manifest，`test_m4_invariance.py` 在每次运行时比对：M5 代码不得改变 manifest 中的任何一项。
 
-## 9. 表层（surfaces）
+## 9. Coverage-extension track（review §③）
+
+`pid-agent repair-coverage [--database PATH] [--output PATH]`，实现于 `repair_coverage_extension.py`。
+它回答一个比“成功率多少”更早的问题：**冻结语料之外的那些 code，到底哪些能被这个仓库的文档持有？**
+
+两类答案，证据形式不同：
+
+- **能持有的 4 个 code**（`DUPLICATE_LABEL` / `ANNOTATION_OVERLAP` / `UNBRIDGED_CROSSING` /
+  `PORT_DIRECTION_MISMATCH`）：每个 code 一个确定性 producer，写路径是 `apply_transaction`；
+  然后 **manifestation proof** 用 canonical validator 在同一图纸上比对改动前后的 findings，
+  要求声明的 exact code *真的出现*（不看 operator 名字），再交给与冻结语料**完全相同**的
+  runner / orchestrator / oracle。当前 4/4 `covered`：首答命中、单次 governed write、
+  `case_is_success()` 复算通过、protected 前后一致、safety 不受影响。
+  producer 顺带引入的其它 finding **不会被隐藏**：每条 row 的 `manifestation.added_codes` 就是
+  “这次改动到底多出了哪些 code”。目前只有两处：`QUALITY_SCORE_BELOW_TARGET`（打分规则看整张图，
+  每个 case 都有）与 `UNBRIDGED_CROSSING` case 的 `EXCESSIVE_BENDS`（两个端口都是水平朝向时，
+  任何“穿过横管再回到端口”的正交路径都至少有 4 个拐点）。两者都在**变异后的底座**里，因此不是
+  oracle 意义上的 regression；写出来是为了让审阅者能自己判断。
+- **无法持有的 3 个 code**（见 §4）：`probe_representability()` 在**写面**与**导入面**各试一次，
+  记录“拒绝原文”与“是否真的留下缺陷”两件事。三个 code 的结论不同，这本身就是发现：
+  `CONNECTOR_ENDPOINT_POINT_MISMATCH` 的写请求**会成功**（`accepted=true`），但绑定点被
+  `_normalize_endpoint` 重算，缺陷从不落地——只断言“没抛异常”的测试会把它误判成可达。
+
+Corpus 边界（review 明确要求）：
+
+- extension 有自己的 `corpus_id = m5-coverage-extension`、`corpus_version = 1`、`case_count = 4`；
+  `coverage_fingerprint()` 覆盖 producer/目标绑定/语料定义，producer 一改指纹就变；
+- 冻结语料有自己的 `corpus_id = m5-core-corpus`、`corpus_version = 2`、`case_count = 72`、
+  `operator_count = 19`、`supported_codes`（`core_corpus_manifest()` / `core_corpus_fingerprint()`）。
+  **两者分开指纹**：增加覆盖不该让「M5 当时到底验收了什么」变得无法回答；
+- `BENCHMARK_SPEC_VERSION` **保持 2**，`spec_fingerprint` 未动（`c8520c5e…`），冻结 72-case
+  证据依旧可复算（重跑：72/72、S@5=1.0、全 gate 绿）。
+
+负向能力（review §③ 的“gate 必须能变红”）：`run_negative_controls()` 固定四个对照，
+每个都故意打断链条中的一环，并要求报告里出现预期的信号：
+
+| 对照 | 预期信号 |
+|---|---|
+| producer 只写不造缺陷 | `not_manifested`（不因“写入成功”而计入覆盖） |
+| producer 真造了缺陷但声明错误的 code | `not_manifested`（按 exact code 判，不看名字） |
+| planner 修好 target 后越 scope 改一个中性字段 | `locality_violation` |
+| planner 直接删掉 target 元素 | `deletion_not_permitted`（§C4 伪修复） |
+
+`verify`/退出码：`repair-coverage` 退出 0 仅当「支持的 code 全部 covered」+「声称不可达的 code 仍不可达」
++「四个对照全红」三者同时成立；否则 2。任何一条变松都会让命令变红，而不是静默降级。
+
+## 10. 表层（surfaces）
 
 - **CLI**：`pid-agent repair [policies]`、`pid-agent repair-benchmark [--suite dev|acceptance]`、
-  `pid-agent repair-scale`、`pid-agent repair-qualification`，全部只用同一个 server-side orchestrator；
+  `pid-agent repair-scale`、`pid-agent repair-coverage`、`pid-agent repair-qualification`，
+  全部只用同一个 server-side orchestrator；
   `repair-benchmark` 退出码 0 表示 evidence 复算通过且全部阈值达标，2 表示没有。
 - **REST / MCP**：与 CLI 共用同一个 server-side orchestrator 与同一个 success oracle，不出现第二套判定；
   对外 payload 同源（parity）。
 - UI 只展示 server 证据，不在浏览器里重算成功与否。
 
-## 10. Evidence 可复算性（§N）
+## 11. Evidence 可复算性（§N）
 
 `pid-agent.repair-benchmark-result/v1` 的每条 case record 自带：spec/generator fingerprint、candidate
 SHA、seed、base revision、pre/post validation hash、每次 attempt 的 plan hash 与 shadow validation
@@ -202,7 +266,7 @@ hash、audit id、undo/redo 证明。`verify_benchmark_result()` **独立于 run
 重算 canonical hash、全部计数、S@1..S@5、per-family 率与 failure taxonomy，并检查分母未被裁剪、
 每个 success 的证据完整、fingerprint 未变。复算失败即 gate 失败。
 
-## 11. 常见坑（本地实测）
+## 12. 常见坑（本地实测）
 
 - **production build 会静默换掉 shared-mode 测试所需的 dist**：跑 shared-mode 前先 `npm run build:e2e`。
 - **acceptance case 集随 SHA 变**：不要用上一轮的 acceptance 数字描述新提交。
@@ -217,3 +281,9 @@ hash、audit id、undo/redo 证明。`verify_benchmark_result()` **独立于 run
 - **`@dataclass` 挂在异常类上会让它无法携带 message**：`BenchmarkSetupError(f"...")` 会以
   `TypeError: takes 1 positional argument but 2 were given` 冒出来，把真正的 setup 失败盖掉。
 - **`hash()` 不能进 benchmark seed**：它按进程加盐，evidence 每次跑都不一样。
+- **“写请求没报错”不等于“缺陷被制造出来了”**：`_normalize_endpoint` / `_prepare_element` 会接受
+  一个 stale binding 或未知 port，然后把它重算/拒绝掉。判断一个 defect 是否真实存在的唯一可靠方式是
+  **用 canonical validator 读回图纸**，而不是看写调用是否抛异常（`probe_representability()` 因此记录
+  `accepted` 与 `defect_present` 两个字段）。
+- **同一个模块里 `from x import _symbol` 会被本模块自己的 `_symbol` 覆盖**：coverage-extension 里
+  重名私有 helper 导致 `TypeError: _symbol() got an unexpected keyword argument`；导入时显式起别名。

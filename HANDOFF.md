@@ -2,7 +2,41 @@
 
 > 交接文档：每次开新会话先读本文件。更新规则见 `AGENTS.md`「HANDOFF 交接规则」。
 
-## 当前状态（2026-09-21 R3，最新轮次：**M4 regression fix 已获远端 Release Gate；schedule 小修已做完待授权推送**）
+## 当前状态（2026-09-21 R4，最新轮次：**coverage-extension track 已落地（4 个 code 有 producer+证据，3 个证明不可达）**）
+
+- **远端授权范围（reply13）已执行完**：`03a1764 → 1749e30 → 519ca23 → 631f1f8 → 9d53b69 → 22a030d`
+  已 push；**新 HEAD = `22a030ab…`**。
+  **`CI = run 35560585468 (success)`**、**`Visual baselines = run 35560614284 (success)`**
+  （即远端要求的“push 后新 HEAD 的 CI run IDs”）。
+- **本轮（coverage work）**：把“有策略、无 operator”的 7 个 code 分成两类结论：
+  - **4 个能制造，已进 extension 语料**（`DUPLICATE_LABEL` / `PORT_DIRECTION_MISMATCH` /
+    `UNBRIDGED_CROSSING` / `ANNOTATION_OVERLAP`）：每个都有 deterministic producer（受治理写入）、
+    manifestation proof（canonical validator 读回、exact code 必须出现）、以及同一个 runner/oracle 的
+    repair case；当前 **4/4 covered**，首答命中、单次 governed write。
+  - **3 个任何受支持入口都造不出来**（`SYMBOL_DEFINITION_MISSING` / `CONNECTOR_ENDPOINT_PORT_MISSING` /
+    `CONNECTOR_ENDPOINT_POINT_MISMATCH`）：写面与导入面都拒绝，且拒绝方式不同——前两个两面均
+    hard-refuse；`POINT_MISMATCH` 的写请求**会成功但被 `_normalize_endpoint` 重算**，缺陷从不落地
+    （只断言“没抛异常”的测试会误判）。结论：不是“漏测”，而是产品入口把它们挡在门外；规则与策略
+    仍保留作纵深防御，`test_unreachable_codes_cannot_be_staged_by_any_supported_surface` 是这条断言的守卫。
+- **corpus 边界（远端明确要求）**：extension 独立指纹
+  `m5-coverage-extension / v1 / 4 case`（`coverage_fingerprint = c198eb77…`）；冻结语料另有一套
+  `m5-core-corpus / v2 / 72 case / 19 operator`（`core_corpus_fingerprint = c4fb71fb…`）。
+  **`BENCHMARK_SPEC_VERSION` 仍为 2，`spec_fingerprint` 未动（`c8520c5e…`）**；
+  本轮重跑冻结 acceptance 仍是 **72/72**、S@5 = 1.0、八项 gate 全绿、safety 通过（与已发布 evidence 逐字段一致）。
+- **负向能力**：`run_negative_controls()` 四个对照全部按预期变红（producer 只写不造缺陷 → `not_manifested`；
+  声明错误 code → `not_manifested`；越 scope 的中性改动 → `locality_violation`；删 target → `deletion_not_permitted`）。
+- **本地实测（本轮）**：`ruff check backend` ✓；`pytest -q` **811 passed**（新增 15 例）；
+  quality harness ✓；`repair-coverage` 退出码 **0**（covered 4/4、unreachable 3/3、对照全红）。
+- **本轮提交不是直接推 `12c2e87`**：远端 reply14 给了 Release Gate，但要求先证明它没有捎带上未被授权的祖先。
+  实测 `86eaedb`（只改 HANDOFF 的记账提交）**是** `12c2e87` 的直接父提交，所以本地按远端要求
+  「以 `origin/main = 22a030d` 为干净基线，只重放 coverage-extension 内容」重做了一个新 SHA。
+  新 SHA 的树与 `12c2e87` **只差 `86eaedb` 那 12 行**（`git diff --stat 12c2e87 <new> = HANDOFF.md | 12 ---`），
+  `86eaedb` 不在新 SHA 的 ancestry 里；它本身按远端要求继续隔离在本地分支 `backup-pre-m5-replay`（未推送）。
+  三个指纹（`spec_fingerprint` / `core_corpus_fingerprint` / `coverage_fingerprint`）都未因这次重放而改变。
+- **M5 spec v2 的判据记录不在本文件里，在 `docs/m5-agent-self-repair.md`**（`9d53b69` 已 push）：
+  `S@1…S@4` 只发布不作硬门，硬门是 `attempt_contract` 与 `f6_s5_overall`；`BENCHMARK_SPEC_VERSION = 2`。
+
+## 上一状态（2026-09-21 R3：**M4 regression fix 已获远端 Release Gate；schedule 小修已做完待授权推送**）
 
 - **远端已正式 ACCEPTED `0600ee7`**（标签解析 regression fix 的 Release Gate）。`ecedc00` 继续是永久 M4 accepted anchor。
 - **push 已执行（授权范围 = 7 个 SHA）**：`bccd807..9254b8e` → `origin/main`。

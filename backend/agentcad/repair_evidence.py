@@ -24,11 +24,14 @@ from typing import Any, Literal
 from pydantic import Field
 
 from .repair_models import (
+    REPAIR_LEGACY_HASH_EXCLUDES,
+    REPAIR_SEMANTIC_HASH_VERSION,
     RepairAttemptMetrics,
     RepairContractModel,
     RepairPlannerIdentity,
     repair_digest,
     repair_payload,
+    repair_semantic_digest,
 )
 
 BENCHMARK_RESULT_SCHEMA = "pid-agent.repair-benchmark-result"
@@ -154,12 +157,24 @@ class RepairBenchmarkResult(RepairContractModel):
     latency_ms: dict[str, int] = Field(default_factory=dict)
     #: Who planned, for the model track (baseline §A4). Empty on the deterministic track.
     planner: RepairPlannerIdentity | None = None
+    #: The original result hash, kept exactly as it was: it binds the whole payload the way pydantic's
+    #: top-level ``exclude`` allows, so on two runs of one candidate it moves with the wall clock.
+    #: Published v2 evidence is not rewritten, so this stays as the legacy field.
     benchmark_result_hash: str = ""
+    #: The result identity that a comparison may use: volatile facts dropped at every depth by
+    #: :func:`~agentcad.repair_models.repair_semantic_digest`, so the same candidate, corpus and
+    #: result hash to the same value on any machine and any run.
+    benchmark_semantic_hash: str = ""
+    #: Which semantic hash contract produced :attr:`benchmark_semantic_hash`.
+    semantic_hash_version: str = ""
 
     def summary_payload(self) -> dict[str, Any]:
         """Everything except the per-case records, which a summary does not need."""
 
-        return repair_payload(self, exclude=frozenset({"cases", "benchmark_result_hash"}))
+        return repair_payload(
+            self,
+            exclude=frozenset({"cases", "benchmark_result_hash", "benchmark_semantic_hash"}),
+        )
 
 
 class VerificationFinding(RepairContractModel):
@@ -171,6 +186,7 @@ class VerificationReport(RepairContractModel):
     ok: bool = False
     findings: list[VerificationFinding] = Field(default_factory=list)
     recomputed_result_hash: str = ""
+    recomputed_semantic_hash: str = ""
     recomputed_counts: RepairBenchmarkCounts = Field(default_factory=RepairBenchmarkCounts)
     recomputed_s_at: dict[str, float] = Field(default_factory=dict)
     recomputed_family_s_at_5: dict[str, float] = Field(default_factory=dict)
@@ -396,7 +412,19 @@ def build_benchmark_result(**kwargs: Any) -> RepairBenchmarkResult:
     result = RepairBenchmarkResult(cases=cases, counts=counts, s_at=s_at, family_s_at_5=family_s_at_5, failure_taxonomy=taxonomy, family_counts=family_counts, **kwargs)
     gates, failures = evaluate_gates(result, safety_passed=result.safety_passed)
     result = result.model_copy(update={"gates": gates, "gate_failures": failures})
-    return result.model_copy(update={"benchmark_result_hash": repair_digest(result)})
+    # Two hashes, on purpose. The legacy one is what the published v2 evidence carries and is only
+    # meaningful for the run that produced it; the semantic one is the value two runs (or two
+    # machines) can be compared with. The version is stamped before hashing so the published
+    # payload says which contract produced it.
+    stamped = result.model_copy(update={"semantic_hash_version": REPAIR_SEMANTIC_HASH_VERSION})
+    return stamped.model_copy(
+        update={
+            "benchmark_result_hash": repair_digest(
+                stamped, exclude=REPAIR_LEGACY_HASH_EXCLUDES
+            ),
+            "benchmark_semantic_hash": repair_semantic_digest(stamped),
+        }
+    )
 
 
 def verify_benchmark_result(payload: dict[str, Any] | RepairBenchmarkResult) -> VerificationReport:
@@ -561,7 +589,10 @@ def verify_benchmark_result(payload: dict[str, Any] | RepairBenchmarkResult) -> 
             )
         )
 
-    recomputed_hash = repair_digest(model.model_copy(update={"benchmark_result_hash": ""}))
+    recomputed_hash = repair_digest(
+        model.model_copy(update={"benchmark_result_hash": ""}),
+        exclude=REPAIR_LEGACY_HASH_EXCLUDES,
+    )
     if model.benchmark_result_hash and recomputed_hash != model.benchmark_result_hash:
         findings.append(
             VerificationFinding(
@@ -570,10 +601,38 @@ def verify_benchmark_result(payload: dict[str, Any] | RepairBenchmarkResult) -> 
             )
         )
 
+    if model.semantic_hash_version and model.semantic_hash_version != REPAIR_SEMANTIC_HASH_VERSION:
+        findings.append(
+            VerificationFinding(
+                code="semantic_hash_version_unknown",
+                detail=(
+                    f"payload declares semantic hash contract {model.semantic_hash_version}, this "
+                    f"build computes {REPAIR_SEMANTIC_HASH_VERSION}"
+                ),
+            )
+        )
+    elif model.semantic_hash_version and not model.benchmark_semantic_hash:
+        findings.append(
+            VerificationFinding(
+                code="semantic_hash_missing",
+                detail="the payload declares a semantic hash contract but publishes no hash",
+            )
+        )
+
+    recomputed_semantic_hash = repair_semantic_digest(model)
+    if model.benchmark_semantic_hash and recomputed_semantic_hash != model.benchmark_semantic_hash:
+        findings.append(
+            VerificationFinding(
+                code="semantic_hash_mismatch",
+                detail="the payload does not hash to its own benchmark_semantic_hash",
+            )
+        )
+
     return VerificationReport(
         ok=not findings,
         findings=findings,
         recomputed_result_hash=recomputed_hash,
+        recomputed_semantic_hash=recomputed_semantic_hash,
         recomputed_counts=counts,
         recomputed_s_at=s_at,
         recomputed_family_s_at_5=family_s_at_5,

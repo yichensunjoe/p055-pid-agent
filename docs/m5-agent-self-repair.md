@@ -283,6 +283,31 @@ hash、audit id、undo/redo 证明。`verify_benchmark_result()` **独立于 run
 重算 canonical hash、全部计数、S@1..S@5、per-family 率与 failure taxonomy，并检查分母未被裁剪、
 每个 success 的证据完整、fingerprint 未变。复算失败即 gate 失败。
 
+### 11.1 两个哈希：legacy 与 semantic（远端裁决 ⑥-2）
+
+payload 上同时发布两个结果哈希，用途不同：
+
+- `benchmark_result_hash`（**legacy**）：原来的那个。它经 `repair_digest` → `canonical_digest` 计算，而
+  `exclude` 交给 pydantic 的 `model_dump(exclude=…)`，**只删顶层键**；volatile 事实（latency、timings、
+  document id、运行时 validation hash 等）藏在 `cases[i]` 里，于是进入哈希。实测同一 candidate SHA 连跑两次，
+  `counts`/`s_at`/`gates`/每条 case（剥掉 volatile 后）**逐字段相同**，哈希却不同（本地 `2d827c1e…` /
+  `e98863ef…`、CI `36a2383e…`）。**保留不动**：已发布的 v2 evidence 不重写，它的值仍然可被复算成当初发布的值。
+- `benchmark_semantic_hash`（**semantic**）：结果身份。`repair_semantic_digest()` 递归剥掉
+  `REPAIR_SEMANTIC_EXCLUDED_FIELDS`（volatile 字段 + 两个哈希 + `generator_fingerprint` +
+  `semantic_hash_version`），再对 canonical JSON 取 SHA-256；契约版本发布在 `semantic_hash_version`
+  （当前 `REPAIR_SEMANTIC_HASH_VERSION = "1"`）。同样三次运行得到同一个值。
+
+为什么去掉 `generator_fingerprint`：它摘要的是 **CPython 字节码**，同一份语料/结果换解释器就变——这与 §9 里
+`coverage_corpus_digest` 的口径是同一条规则（“语料身份跨解释器恒定，运行时指纹只作 provenance”）。
+`spec_fingerprint`、`candidate_sha`、`oracle_version`、每个 case 的结论与每个 gate **留在**哈希里。
+
+边界：
+
+- semantic 哈希**不算 M4 的** `canonical_digest`：那个规则服务 M4 provenance，不动它；repair 层是新增一条更深的规则。
+- **case 顺序属于协议语义**：case 列表是序列不是集合，重排即另一个结果（因此纳哈希）。
+- 未知的 `semantic_hash_version` 会在 `verify_benchmark_result()` 里报 `semantic_hash_version_unknown`，不静默比较。
+- 待下一次正式 promotion 时：`benchmark_result_hash` 降级为 deprecated，semantic 哈希成为唯一结果身份。
+
 ## 12. 常见坑（本地实测）
 
 - **production build 会静默换掉 shared-mode 测试所需的 dist**：跑 shared-mode 前先 `npm run build:e2e`。
@@ -304,3 +329,12 @@ hash、audit id、undo/redo 证明。`verify_benchmark_result()` **独立于 run
   `accepted` 与 `defect_present` 两个字段）。
 - **同一个模块里 `from x import _symbol` 会被本模块自己的 `_symbol` 覆盖**：coverage-extension 里
   重名私有 helper 导致 `TypeError: _symbol() got an unexpected keyword argument`；导入时显式起别名。
+- **“冻结”的哈希不能把“跑它的机器”算进去**：`generator_fingerprint` 取的是 CPython 字节码，于是 CI 的
+  3.11 与本地 3.12 对同一份语料算出两个 `coverage_fingerprint`（CI 直接红在语料冻结守卫上）。
+  `coverage_corpus_digest()` 是去掉 `ENVIRONMENT_DERIVED_KEYS` 后的语料身份，跨解释器恒定；发布的
+  `coverage_fingerprint()` 按解释器记入 `PUBLISHED_FINGERPRINTS_BY_INTERPRETER`。
+- **`exclude` 只作用于顶层**：`canonical_digest(model, exclude=...)` 里的 volatile 字段名只删顶层，
+  嵌套同名键全部留下（实测同一 SHA 两次运行有 724 处嵌套 volatile 叶子进入 legacy 哈希）。
+  要跨运行可比就自己递归剥（`canonical_repair_result_payload` / `repair_semantic_digest`）。
+- **一个没有 contract 的 payload 不该看起来像不匹配**：给已发布的旧 payload 加检查时，必须区分
+  “没有这个字段”与“字段不匹配”，否则历史 evidence 会在新验证器下集体变红。

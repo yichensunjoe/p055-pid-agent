@@ -42,6 +42,17 @@
   测试钉死它）并保留原 `coverage_fingerprint()` 原值发布、按解释器记进 `PUBLISHED_FINGERPRINTS_BY_INTERPRETER`。
   另发现一条同类问题（已写进 `REUSE_AND_PITFALL_LOG.md`，未改代码）：`benchmark_result_hash` 的
   volatile 逃逸口只作用于顶层，同一 SHA 两次运行的哈希不同（细节待远端裁决）。
+- **远端 reply15 裁决（已执行）**：`84d7399` = coverage-extension **Release Gate accepted**；`30a4339`
+  的第一次 CI 红保留为已知失败历史点，不作 accepted anchor。⑥-1 **关闭**（按“跨解释器恒定语料身份 +
+  运行时指纹”口径）；⑥-2 定为真缺陷，批准 **a′ 方案**：不动 M4 的 `canonical_digest`，在 repair 层新增
+  `repair_semantic_digest()` / `benchmark_semantic_hash`（`REPAIR_SEMANTIC_HASH_VERSION = "1"`、递归剥
+  `REPAIR_SEMANTIC_EXCLUDED_FIELDS`：volatile 字段 + 两个哈希 + `generator_fingerprint` +
+  `semantic_hash_version`），legacy `benchmark_result_hash` **保留且规则冻结**（已发布的三份 acceptance
+  payload 仍复算成当初发布的值）；`benchmark_result_hash` 待下一次正式 promotion 时降级为 deprecated。
+- **本轮（semantic-hash 修复）本地未推送**：等远端对这一步签下一次 Release Gate。三次运行（本地 3.12
+  两次 + CI 3.11 一次、同一 candidate `30a4339`）剥 volatile 后的语义哈希一致（`2c8000e7…`）；
+  `spec_fingerprint`、`core_corpus_fingerprint`、`coverage_corpus_digest`、`repair-coverage` 的
+  `report_hash` 均未动。
 - **M5 spec v2 的判据记录不在本文件里，在 `docs/m5-agent-self-repair.md`**（`9d53b69` 已 push）：
   `S@1…S@4` 只发布不作硬门，硬门是 `attempt_contract` 与 `f6_s5_overall`；`BENCHMARK_SPEC_VERSION = 2`。
 

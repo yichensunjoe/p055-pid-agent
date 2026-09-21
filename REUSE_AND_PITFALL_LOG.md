@@ -32,6 +32,14 @@
   `report_hash` 两次一致（`f56c2c50…`）—— 同一个仓库里已经存在正确做法，冻结语料那条只是没走它。
 - 关键经验：**发布一个哈希时，必须能回答“它绑定了什么”**。凡是“exclude / ignore / normalize”这类逃逸口，
   都要用测试固定它在嵌套结构里的行为；否则哈希会在 README 里当“结果指纹”用，而它实际记录的是那天机器的快慢。
+- 后续（远端 2026-09-21 批准 a′ 方案）：不改 M4 的 `canonical_digest`，而在 repair 层新增
+  `canonical_repair_result_payload()` / `repair_semantic_digest()` 与 `benchmark_semantic_hash`
+  （契约版本 `REPAIR_SEMANTIC_HASH_VERSION = "1"`），legacy `benchmark_result_hash` 保留且规则冻结
+  （已发布的三份 acceptance payload 仍复算成它们当初发布的值）。实现过程中又多出两条口径：
+  (a) **`generator_fingerprint` 也不进语义哈希**——它摘要 CPython 字节码，同一结果在 3.11/3.12 会被算成
+  两个结果；(b) **契约版本字段本身不进哈希**，否则“加字段前发布的 payload”与“加字段后发布的 payload”
+  永远无法比较，而那正是审阅者最想做的比较（改为在验证器里单独检查版本）。同时候选 30a4339 的三次
+  运行（本地 3.12 两次 + CI 3.11 一次）剥 volatile 后得到同一个语义哈希 `2c8000e7…`。
 
 ## 2026-09-21 · “写请求没报错”不等于“缺陷真的存在”（P055-PID-Agent）
 

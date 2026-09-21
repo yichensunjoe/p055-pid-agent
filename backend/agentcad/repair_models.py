@@ -28,11 +28,13 @@ formal release state (Charter §11, §44-10, remote baseline §L).
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Iterable
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import Field, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from .validation_models import (
     ContractModel,
@@ -443,16 +445,110 @@ def repair_json(value: RepairContractModel, *, exclude: frozenset[str] = frozens
 
 
 def repair_digest(value: RepairContractModel, *, exclude: frozenset[str] = frozenset()) -> str:
-    """SHA-256 binding exactly what a surface would show for a repair record."""
+    """SHA-256 binding exactly what a surface would show for a repair record.
+
+    Note what this can and cannot promise: ``canonical_digest`` hands ``exclude`` to pydantic, and
+    pydantic's ``exclude`` drops *top-level* keys only. For one repair record that is the rule that
+    was audited; for a benchmark *result*, whose volatile facts live inside ``cases[i]``, it is not
+    enough — see :func:`repair_semantic_digest`.
+    """
 
     return canonical_digest(value, exclude=REPAIR_VOLATILE_FIELDS | exclude)
 
 
+#: Version of the repair *semantic* hash contract. It is part of the hash: a published
+#: ``benchmark_semantic_hash`` is only comparable with another one computed under the same version,
+#: so bump this when either the field list or the canonicalisation rule changes.
+REPAIR_SEMANTIC_HASH_VERSION = "1"
+
+#: What the semantic hash drops, by field name, **at every depth**: the volatile facts above, the
+#: hashes themselves, and ``generator_fingerprint``.
+#:
+#: A result hash is a statement about the run, not about the repair, so the legacy hash is
+#: runtime-bound by construction and would carry the very instability the semantic hash exists to
+#: remove. ``generator_fingerprint`` is the other half: it digests CPython bytecode, so the same
+#: candidate repaired identically on two interpreters would look like two different results. The
+#: remote drew that line for the corpus identity (stable ``coverage_corpus_digest`` vs runtime
+#: fingerprint) and measured it -- the frozen acceptance payload from CPython 3.11 and the one from
+#: 3.12 differ in exactly this field plus the volatile ones, and in nothing else.
+#: What stays in, deliberately: ``candidate_sha``, ``spec_version``/``spec_fingerprint``,
+#: ``oracle_version``, every case's outcome and every gate.
+#: ``semantic_hash_version`` is published but not hashed: it is the *name* of the contract, and a
+#: rule change already moves the hash by moving the payload. Hashing it would break comparability
+#: exactly once — between a payload produced before the field existed and one produced after — which
+#: is the one comparison a reviewer is most likely to make. Verification checks the declared version
+#: separately instead.
+REPAIR_SEMANTIC_EXCLUDED_FIELDS: frozenset[str] = REPAIR_VOLATILE_FIELDS | frozenset(
+    {
+        "benchmark_result_hash",
+        "benchmark_semantic_hash",
+        "generator_fingerprint",
+        "semantic_hash_version",
+    }
+)
+
+#: Fields that exist only for the semantic hash. ``repair_digest`` keeps them out so the legacy
+#: value of a record is the same number it was before they existed.
+REPAIR_LEGACY_HASH_EXCLUDES: frozenset[str] = frozenset(
+    {"benchmark_semantic_hash", "semantic_hash_version"}
+)
+
+
+def canonical_repair_result_payload(value: Any) -> Any:
+    """Recursive canonical form of a repair record: volatile facts dropped at every depth.
+
+    A benchmark result is not one record but a record per case, and the volatile facts sit inside
+    them (``cases[i].latency_ms``, ``cases[i].document_id``, the runtime validation hashes). Measured
+    twice, the same candidate therefore hashed to two different numbers while every semantic field
+    matched — a hash that cannot answer "is this the same result" is not doing the one job a result
+    hash has.
+
+    Models are dumped through the canonical public form first (public aliases, JSON mode), so a
+    digest over a model and a digest over the payload a reviewer was handed are the same value.
+    Reachable *nested* containers are all that is traversed: this is not a "delete any key that
+    happens to share a name" pass over arbitrary objects, it is the same field contract
+    (:data:`REPAIR_SEMANTIC_EXCLUDED_FIELDS`) applied at every record depth.
+    """
+
+    if isinstance(value, BaseModel):
+        value = canonical_payload(value)
+    if isinstance(value, dict):
+        return {
+            key: canonical_repair_result_payload(item)
+            for key, item in value.items()
+            if key not in REPAIR_SEMANTIC_EXCLUDED_FIELDS
+        }
+    if isinstance(value, (list, tuple)):
+        return [canonical_repair_result_payload(item) for item in value]
+    return value
+
+
+def repair_semantic_digest(value: Any) -> str:
+    """The result identity: same candidate, same corpus and same result, on any machine.
+
+    Accepts a model or the plain payload, so a reviewer recomputes it from the JSON they were
+    handed rather than from this process's memory.
+    """
+
+    text = json.dumps(
+        canonical_repair_result_payload(value),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
 __all__ = [
     "MAX_REPAIR_ATTEMPTS",
+    "REPAIR_LEGACY_HASH_EXCLUDES",
     "REPAIR_REQUEST_SCHEMA",
     "REPAIR_RESULT_SCHEMA",
+    "REPAIR_SEMANTIC_EXCLUDED_FIELDS",
+    "REPAIR_SEMANTIC_HASH_VERSION",
     "REPAIR_VOLATILE_FIELDS",
+    "canonical_repair_result_payload",
+    "repair_semantic_digest",
     "RepairApplyProof",
     "RepairAttemptMetrics",
     "RepairAttemptRecord",

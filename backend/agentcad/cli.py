@@ -580,6 +580,8 @@ def _run_repair_benchmark_command(args: argparse.Namespace) -> None:
         "latency_ms": result.latency_ms,
         "planner": (result.planner.model_dump(mode="json") if result.planner is not None else None),
         "benchmark_result_hash": result.benchmark_result_hash,
+        "benchmark_semantic_hash": result.benchmark_semantic_hash,
+        "semantic_hash_version": result.semantic_hash_version,
         "evidence_verified": report_ok,
         "verification_findings": findings,
     }

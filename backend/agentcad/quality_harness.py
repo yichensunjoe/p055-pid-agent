@@ -2562,6 +2562,8 @@ def _agent_self_repair_case(symbols: SymbolRegistry) -> QualityHarnessCaseResult
             "safety_total": suite.safety_total,
             "safety_passed": suite.safety_passed,
             "benchmark_result_hash": suite.benchmark_result_hash,
+            "benchmark_semantic_hash": suite.benchmark_semantic_hash,
+            "semantic_hash_version": suite.semantic_hash_version,
         }
 
     return QualityHarnessCaseResult(

@@ -2,7 +2,7 @@
   "schema": "pid-agent.repair-model-qualification",
   "version": 1,
   "status": "awaiting_real_model_qualification",
-  "candidate_sha": "68fccb3876934d690c0a8466821a6b24077a6818",
+  "candidate_sha": "9d53b69c4387a8f4e656cdb27edea2562838d61a",
   "suite": "dev",
   "cases_per_family": 4,
   "planner": null,

@@ -1,0 +1,282 @@
+{
+  "schema": "pid-agent.quality-harness",
+  "version": 4,
+  "passed": true,
+  "total_cases": 9,
+  "passed_cases": 9,
+  "failed_cases": 0,
+  "symbol_count": 84,
+  "cases": [
+    {
+      "name": "symbol_catalog_integrity",
+      "status": "passed",
+      "summary": "84 symbols validated and rendered",
+      "details": {
+        "symbol_count": 84,
+        "category_count": 15,
+        "categories": {
+          "仪表": 6,
+          "基础图元": 10,
+          "安全附件": 3,
+          "容器": 8,
+          "工艺设备": 1,
+          "换热设备": 7,
+          "排放与边界": 4,
+          "泵": 5,
+          "混合设备": 2,
+          "管件": 5,
+          "管道附件": 8,
+          "边界与跨图连接": 2,
+          "过滤设备": 6,
+          "阀门": 15,
+          "风机": 2
+        }
+      },
+      "findings": []
+    },
+    {
+      "name": "atomic_topology_transaction",
+      "status": "passed",
+      "summary": "one seven-element topology was committed atomically to temporary SQLite",
+      "details": {
+        "through_symbol_key": "ball_valve",
+        "branch_symbol_key": "pressure_indicator",
+        "revision": 1,
+        "element_count": 7,
+        "connector_count": 3,
+        "junction_degree": 3
+      },
+      "findings": []
+    },
+    {
+      "name": "semantic_agent_output_contract",
+      "status": "passed",
+      "summary": "valid model-shaped JSON compiled and applied; a hallucinated port was rejected",
+      "details": {
+        "through_symbol_key": "ball_valve",
+        "instrument_symbol_key": "pressure_indicator",
+        "semantic_operation_count": 2,
+        "compiled_operation_count": 9,
+        "final_revision": 2,
+        "final_element_count": 9,
+        "junction_degree": 3,
+        "rejected_issue_codes": [
+          "unknown_port"
+        ]
+      },
+      "findings": []
+    },
+    {
+      "name": "drafting_quality_contract",
+      "status": "passed",
+      "summary": "canonical route scored 100; micro-dogleg fixture was deterministically rejected",
+      "details": {
+        "good_score": 100.0,
+        "good_bends": 0,
+        "rejected_issue_codes": [
+          "MICRO_SEGMENT",
+          "PORT_EXIT_MISMATCH",
+          "QUALITY_SCORE_BELOW_TARGET",
+          "UNNECESSARY_BEND"
+        ]
+      },
+      "findings": []
+    },
+    {
+      "name": "engineering_graph_contract",
+      "status": "passed",
+      "summary": "derived graph stayed deterministic and reference-closed; identity survived a full tag rename; duplicate tags were disambiguated; signals stayed out of process topology; the trace was flow-aware; the index verified fresh and left the drawing untouched",
+      "details": {
+        "through_symbol_key": "ball_valve",
+        "object_count": 4,
+        "equipment_count": 0,
+        "line_count": 1,
+        "signal_count": 0,
+        "edge_count": 1,
+        "error_findings": 1,
+        "content_hash": "96b97e8fb88d6d2ddedeab2b1562c1a8516ffa067de46d804849777fd1b51db4",
+        "graph_hash": "539222e8a057a52a09319dd28b8763949393b89e5a64d3c7e621ba5970452057",
+        "index_objects": 4,
+        "builder_version": 2
+      },
+      "findings": []
+    },
+    {
+      "name": "deterministic_drafting_contract",
+      "status": "passed",
+      "summary": "drafting preview was reproducible, preview-only, lock-honouring, monotone and topology-preserving; it routed around the legend, evicted the symbol that sat on it, settled on re-run, and admitted the residue it must not fix",
+      "details": {
+        "through_symbol_key": "ball_valve",
+        "engine_version": 2,
+        "transaction_digest": "e60fc0b977875471689d591f42a85d7bb19ce5a5740f116988c8b0819cca21a6",
+        "operation_count": 4,
+        "moved_element_ids": [
+          "draft_overlap",
+          "draft_source"
+        ],
+        "rerouted_connector_ids": [
+          "draft_pipe"
+        ],
+        "bridged_connector_ids": [],
+        "locked_element_ids": [
+          "draft_locked"
+        ],
+        "skipped_locked_element_ids": [],
+        "score_before": 9.75,
+        "score_after": 92.0,
+        "improvements": [
+          "node_overlaps: 1 -> 0",
+          "pipe_obstacle_intersections: 4 -> 0",
+          "text_text_overlaps: 1 -> 0",
+          "text_symbol_overlaps: 3 -> 0",
+          "text_connector_intersections: 1 -> 0",
+          "reserved_region_intrusions: 2 -> 0",
+          "error_issue_count: 5 -> 2"
+        ],
+        "regressions": [],
+        "reserved_region_intrusions_before": 2,
+        "reserved_region_intrusions_after": 0,
+        "gate_passed": false,
+        "residual_issue_codes": [
+          "DUPLICATE_LABEL",
+          "QUALITY_SCORE_BELOW_TARGET"
+        ],
+        "residual_blocker_codes": [],
+        "residual_blocker_element_ids": [],
+        "resolved_port_count": 8,
+        "element_count": 6
+      },
+      "findings": []
+    },
+    {
+      "name": "cad_import_contract",
+      "status": "passed",
+      "summary": "a DXF was reproduced with its layers, geometry kinds, text and block provenance; the frame and unit scale moved nothing relative to itself; the write was audited and confined to a new document as one logical mutation that one undo reverses and one redo restores; the report named every loss; the same bytes produced the same document; a dry run wrote nothing and an unreadable source was refused",
+      "details": {
+        "source_format": "dxf",
+        "sha256": "7fcf8af309b210a59e417b1cfe6d9463a4d9b805a131f2db630ff62e1d650b01",
+        "converters_available": [
+          "autocad-core-console",
+          "libredwg-object-stream",
+          "libredwg-dxf"
+        ],
+        "element_count": 11,
+        "counts": {
+          "layers": 3,
+          "lines": 5,
+          "polylines": 1,
+          "circles": 1,
+          "texts": 2,
+          "fills": 1,
+          "elements": 11,
+          "primitives": 11,
+          "skipped": 0
+        },
+        "layer_names": [
+          "0",
+          "Default",
+          "PIPE",
+          "仪表"
+        ],
+        "issue_codes": [
+          "CAD_PATTERN_HATCH_SKIPPED",
+          "CAD_TEXT_ROTATION_IGNORED",
+          "CAD_UNSUPPORTED_ENTITIES"
+        ],
+        "issue_counts": {
+          "CAD_PATTERN_HATCH_SKIPPED": 1,
+          "CAD_TEXT_ROTATION_IGNORED": 1,
+          "CAD_UNSUPPORTED_ENTITIES": 1
+        },
+        "logical_mutations": 1,
+        "operations": 14,
+        "frame": [
+          0.0,
+          0.0,
+          1000.0,
+          508.0
+        ],
+        "canvas": {
+          "width": 1000.0,
+          "height": 508.0
+        },
+        "cropped_element_count": 2,
+        "cropped_canvas": {
+          "width": 250.0,
+          "height": 150.0
+        },
+        "dry_run_elements": 11,
+        "dry_run_logical_mutations": 0,
+        "duration_ms": 0.88
+      },
+      "findings": []
+    },
+    {
+      "name": "validation_contract",
+      "status": "passed",
+      "summary": "Canonical validation: audited rule catalog, registered adapter codes, complete issue fields, and a release gate that fails closed and can never approve.",
+      "details": {
+        "rule_count": 37,
+        "validators_run": [
+          "diagram-quality",
+          "engineering-graph",
+          "engineering-report"
+        ],
+        "profile_fingerprint": "18a2da498c4ebd3538edd496f2cb375793d71443708fa0a56023bb5e91e6e315",
+        "engine_version": "1",
+        "result_hash": "afb26116bb9d4e64800319fc8f67cf05199e624db17b8aa361fdff18c917c674",
+        "release_readiness_hash": "3f09d1faf850d4aacf90dc4a5242da3e559ac6e15b4b39d14657e0432b6c927f",
+        "blocked_state": "not_eligible",
+        "waived_state": "eligible",
+        "skip_codes": [
+          "engineering_report_context_unavailable"
+        ],
+        "issue_count": 10,
+        "checked_issue_fields": 10,
+        "catalog_snapshot_size": 37,
+        "emitted_rule_ids": [
+          "diagram-quality.ANNOTATION_OVERLAP",
+          "diagram-quality.QUALITY_SCORE_BELOW_TARGET",
+          "engineering-graph.IR_DUPLICATE_IDENTITY",
+          "engineering-graph.IR_ISOLATED_OBJECT",
+          "engineering-report.SYMBOL_REQUIRED_PORT_UNCONNECTED",
+          "engineering-report.TAG_DUPLICATE"
+        ]
+      },
+      "findings": []
+    },
+    {
+      "name": "agent_self_repair_contract",
+      "status": "passed",
+      "summary": "Self-repair: frozen benchmark spec and SHA-derived cases, recomputable evidence, a 100% safe-negative suite, and one governed write with an undo/redo proof.",
+      "details": {
+        "spec_version": "2",
+        "spec_fingerprint": "c8520c5e7b0b1d7e77e3752080393b4965aee60538ad71a6bf95d5fc4ab5ede1",
+        "generator_fingerprint": "13cc1254795b8fa6bcc13c31a8d0d96f85befbcc9c7247023e69761ef2d1eadc",
+        "oracle_version": "1",
+        "acceptance_cases": 72,
+        "dev_cases": 24,
+        "s_at": {
+          "S@1": 0.8333,
+          "S@2": 0.875,
+          "S@3": 0.9167,
+          "S@4": 0.9167,
+          "S@5": 1.0
+        },
+        "family_s_at_5": {
+          "F1": 1.0,
+          "F2": 1.0,
+          "F3": 1.0,
+          "F4": 1.0,
+          "F5": 1.0,
+          "F6": 1.0
+        },
+        "failure_taxonomy": {},
+        "safety_total": 13,
+        "safety_passed": 13,
+        "benchmark_result_hash": "13f11a02da0777c7d4568495af676c691ca01c35c4a9d2f099338aa8b51195e1"
+      },
+      "findings": []
+    }
+  ]
+}

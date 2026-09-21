@@ -2,11 +2,103 @@
 
 > 交接文档：每次开新会话先读本文件。更新规则见 `AGENTS.md`「HANDOFF 交接规则」。
 
-## 当前状态（2026-09-21 R5，最新轮次：**coverage-promotion 已本地提交（spec v3 / corpus v3），未 push，等远端签 Gate**）
+## 当前状态（2026-09-21 R7，最新轮次：**A5 corpus identity closeout 本地做完（未 commit、未 push），等远端签 Gate**）
+
+- **基线**：`origin/main = 1ba141c`（R6 已 push 并验证，v3 冻结 anchor）；本轮按远端 `reply19` 的 A5 授权做。
+  改动已落成本地提交（`feat(m5): give the frozen corpus an identity that does not move with the interpreter`，
+  直接在 `1ba141c` 之上，单提交，5 个源码文件 + 2 个新测试文件 + 测试/CI/文档/证据），**未 push**。
+- **A5 做了什么（identity-layer additive fix，不动语料）**：
+  - **新增 `core_corpus_digest(version=None)`**：跨解释器恒定的语料身份 = manifest 去掉
+    `CORPUS_IDENTITY_EXCLUDED_KEYS = (spec_fingerprint, generator_fingerprint)` 后取 canonical SHA-256。
+    golden：v3 `a60e07f11d55…`、归档 v2 `acb4a3bde4ed…`（**A5 之后派生出来的 archival 身份**，v2 从未发布过该字段）。
+  - `core_corpus_manifest("2")` 从冻结的 v2 spec body 重放（19 operator / 16 带 code / 72 case）；
+    v2 manifest **没有** `generator_fingerprint`（v2 operator 字节码已随代码消失，缺席而非伪造）。
+  - **`core_corpus_fingerprint()` 未改、未删**：仍是 runtime provenance（本机 3.12 `c85995d2…` /
+    3.11 `82b37b04…`，允许不同）。
+  - 结果 payload 新增 `corpus_version` + `core_corpus_digest`（**故意不发布** `core_corpus_fingerprint`）；
+    两个名字同时进了 `REPAIR_SEMANTIC_EXCLUDED_FIELDS` 与 `REPAIR_LEGACY_HASH_EXCLUDES`。
+  - `quality-harness` 的 self-repair contract 发布 `corpus_version`/`core_corpus_digest`，并新增断言：
+    identity 输入里不得出现环境键（否则同一语料会在两个解释器上身份不同）。
+  - **CI 的 M5 job 新增 `repair-coverage` 步骤**（exit 非 0 即红），报告进 evidence artifact。
+  - **版本轴全未动**：spec_version 3 / corpus_version 3 / oracle_version 1 / payload version 1。
+- **新增测试**：`tests/test_core_corpus_identity.py`（7 条：两个 golden、v2 重放、未知版本抛错、
+  identity vs provenance 对比、payload 发布后两个哈希不变、冻结 v3/v2 evidence 仍可复算）；
+  `tests/test_retired_extension_evidence.py`（5 条：extension 四个 pin + 四 case/三 unreachable 可读）。
+- **本地门禁（全绿）**：`ruff` 全过；`pytest -q` **863 passed**（851 → +12）；harness **9/9**；
+  **acceptance 72/72**（S@5 1.0、六 family 1.0、八门全 true、`gate_failures []`、safety 13/13、
+  `evidence_verified true`）；`repair-coverage` **exit 0**（promoted 4/4 manifested、unreachable 3、
+  `became_reachable []`、负向全红、`ledger_digest 30a50779…`）；`repair-scale` **exit 0**；
+  `repair-qualification` **exit 3**（无凭据，non-blocking）。
+- **跨解释器实测（不是断言）**：identity 的输入以纯 JSON 发布（`reports/m5-closeout/corpus-identity-inputs.json`），
+  `scripts/m5_closeout_identity_311_check.py` 不 import 任何 `agentcad` 代码、只用标准库，
+  在 **CPython 3.11.15 与 3.12.13** 上各跑一次，两个 corpus（v3 / v2）都得到与记录相同的 digest
+  （输出：`reports/m5-closeout/corpus-identity-3.11.txt` / `-3.12.txt`）；push 后 CI 的 3.11 会再用真代码算一次。
+- **pre/post-A5 兼容实测**：candidate `1ba141c` 的 **post-A5 live run** 与 pre-A5 的 CI 35579988999
+  得到**同一个** `benchmark_semantic_hash`（`d719c89b…`）；冻结 v3 evidence 的 legacy `17be0e45…` /
+  semantic `530e56f1…` 在“发布态”与“加上语料坐标”两种情况下复算一致（legacy 需先把两个哈希字段置空，
+  与 runner 的做法一致）。
+- **证据与脚本**：`reports/m5-closeout/**`（`corpus-identity.txt` / `.json`、`acceptance-closeout(-summary).json`、
+  `coverage-closeout(-summary).json`、`scale-closeout.json`）由 `scripts/m5_closeout_identity.py` 与 CLI 生成；
+  **`reports/m5/**` 与 `reports/m5-promotion/**` 一字节未改**。
+- **下一步**：把 A5 汇报给远端（reply19 列的 1–7 项）→ 签 Gate 后 push → CI/Visual 上核对 3.11 的
+  `core_corpus_digest` 与本机一致（应该一致：纯数据），并确认 CI 新的 `repair-coverage` 步骤绿；
+  随后 **B（F6 首答/注入契约）**。
+
+## 上一状态（2026-09-21 R6：**coverage-promotion 已 push 并验证（`origin/main = 1ba141c`），v3 冻结；远端已授权 A5**）
+
+- **已推送并验证**：`origin/main = 1ba141c`（范围 `030f7d1..1ba141c`，2 个提交：`2e7e28f` 上一轮记账 +
+  `1ba141c` promotion）。远端 reply17 先以「祖先 `2e7e28f` 未披露」暂缓签，披露范围后 reply18 **签了 push Gate**
+  （并明确 v3 无需再等第二次 Gate）。往返原文：`.freebuff/remote-bridge/reply17.txt` / `reply18.txt`。
+- **CI / Visual（都在 1ba141c 上）**：`CI 35579988999 success`（4 job：Frontend·Node 24 / Backend·Python 3.11 /
+  M5 72-case gate / Browser acceptance·Chromium）；`Visual baselines 35580046077 success`。
+- **3.11 上的数字**：pytest **851 passed**（163s）；harness 9/9（`spec_version "3"`）；acceptance **72/72**、
+  invalid 0、governance 0、S@5 1.0、六 family 1.0、八门全 true、`gate_failures []`、safety 13/13、
+  `evidence_verified true`；scale `passed_cases 5`；qualification 步骤断言 exit 3。
+- **跨解释器语义**：candidate `1ba141c` 上本机 3.12 与 CI 3.11 的 `benchmark_semantic_hash` **相同**
+  （`d719c89b…`）——上一轮的语义哈希修复在 v3 语料上继续成立。
+- **身份核对（含两条口径更正，已写进 20-* 报告）**：`spec_fingerprint() = 8f522c75…` 双解释器一致；
+  `spec_fingerprint("2") = c8520c5e…` 仍可复算；`ledger_digest = 30a50779…` 对 3.11 的 generator fingerprint **不变**（已验）；
+  `generator_fingerprint` 3.12 `62503392…` / 3.11 `43979207…`；因此 **`core_corpus_fingerprint` 本机 `c85995d2…`、
+  3.11 会是 `82b37b04…`**（它 manifest 里含 generator fingerprint，本来就是 RUNTIME）——这正是 A5 的目标，
+  不是回归。**`repair-coverage` 不是 CI 步骤**：其断言由 `tests/test_repair_coverage_ledger.py` 在 3.11 的 851 里跑；
+  push 后本机复跑 CLI **exit 0**（4/4 manifested、3 unreachable、`became_reachable []`、4 负向全红、
+  `report_hash f3439950…` 可复现）。
+- **远端 reply18 的授权（下一步）**：**A5 已批准** —— 新增 `core_corpus_digest`（stable / interpreter-independent，
+  **不删除不重定义**现有 `core_corpus_fingerprint`，后者标为 runtime provenance），并按当前 v3 corpus 钉 golden；
+  **extension pin test 也已批准**（不复活旧 generator，直接钉 immutable evidence：file sha256 `663461da…`、
+  `coverage_corpus_digest 3dc8ca1a…`、`coverage_report_hash f56c2c50…`；若要钉 `corpus_fingerprint c198eb77…`，
+  必须注明是 historical interpreter-specific identity）。**A6** 真实模型 qualification = non-blocking external
+  credential dependency；**B（F6 首答/注入契约）**排在 A5 之后，**C** 更后。
+- **reply19：A3/A4 通过，A5 scope 扩大并批准**（原文 `reply19.txt`）：
+  1. `core_corpus_digest` = stable、interpreter-independent、**不含 `spec_fingerprint` 也不含
+     `generator_fingerprint`**；`core_corpus_fingerprint` **保留**、不重定义、不删除，标为 legacy/runtime provenance。
+     建议 helper 带版本参数：`core_corpus_digest()`（v3）与 `core_corpus_digest("2")`（归档 v2），两者都钉 golden；
+     v2 那个要注明是「A5 后推导出的 archival stable identity」，**不是当年发布过的字段**。
+  2. **不能引发版本漂移**：`spec_version 3 / corpus_version 3 / oracle_version 1 / payload version 1` 均不变
+     （identity-layer additive fix）。
+  3. **必须有 hash compatibility 测试**：把新字段发布进 payload 后，`benchmark_semantic_hash`（v1）与 legacy
+     `benchmark_result_hash` **必须不变**；若该字段进了这两个 canonical payload，要作为 derived metadata 从
+     digest 输入里排除。
+  4. **extension pin test 加码**：钉四层（file sha256 `663461da…`、`coverage_corpus_digest 3dc8ca1a…`、
+     `coverage_report_hash f56c2c50…`、**historical published `corpus_fingerprint c198eb77…`**），最后一条测试名/注释
+     必须写明「historical interpreter-specific published identity; not the stable corpus identity」，且从 frozen JSON
+     自校验，**不用当前 generator 重生**。
+  5. **`repair-coverage` 加进现有 M5 deterministic CI job**（不新建 workflow）：exit 0、promoted manifested 4/4、
+     unreachable 3/3、`became_reachable []`、负向对照按预期红。
+  6. **不回写已冻结 evidence**：`reports/m5-promotion/acceptance-v3.json` / `disposition-ledger.json` /
+     `reports/m5/repair-coverage-extension.json` 保持原样；A5 的新机器证据放**新路径**（如 `reports/m5-closeout/**`）。
+  7. **A5 完成后的 Gate 汇报清单**：本地 SHA / range + diff stat；`core_corpus_digest` 的 v3 golden + v2 archival golden
+     + 3.11/3.12 相同证明；`core_corpus_fingerprint` 允许不同但仍是 runtime provenance；pre/post-A5 的 hash compatibility；
+     extension 四项 pin 全过；完整门禁（pytest / ruff / harness / acceptance 72-72 / repair-coverage CLI / scale /
+     qualification exit 3）；并确认 spec v3、72-case corpus、已冻结 evidence 均未动。**A5 本地完成后先不要 push。**
+- **本地状态**：本节 HANDOFF 更新 + bridge 记录（`20-push-verification.txt` / `20-chat-body.txt`）**尚未 commit**，
+  按惯例留作随行记账提交。
+
+## 上一状态（2026-09-21 R5：**coverage-promotion 已提交（spec v3 / corpus v3），等远端签 Gate**）
 
 - **本轮执行的是 reply15 §③ 定下、reply16 仍未签的 `coverage-promotion`**。基线 `origin/main = 030f7d1a…`；
-  改动已落成本地提交（`HEAD` = 本轮的 `feat(m5): promote the four reachable coverage codes into the frozen corpus`，
-  直接在 `2e7e28f` 之上），**未 push**。**没有征得授权前不要 push。**
+  改动当时落成本地提交（`HEAD` = 本轮的 `feat(m5): promote the four reachable coverage codes into the frozen corpus`，
+  直接在 `2e7e28f` 之上）；**该提交随后已在 R6 获得远端签 Gate 并 push（`origin/main = 1ba141c`）。**
 - **晋升结果**：4 个 representable code 进了**冻结目录** —— `f1_duplicate_label`(F1) /
   `f2_port_direction_mismatch`(F2) / `f4_unbridged_crossing`(F4, 底座 `three_valves+crossing`) /
   `f5_annotation_overlap`(F5)。**19 → 23 operator**，acceptance 仍是 12×6 = 72 case。
@@ -38,7 +130,7 @@
   `.freebuff/remote-bridge/18-m5-coverage-promotion-report.md`。**`reports/m5/**` 一字节未改。**
 - **未决（非本轮引入）**：真实模型 24-case qualification 仍缺凭据；`core_corpus_fingerprint` 至今把字节码摘要
   算进身份（建议下一版给它一条 `core_corpus_digest`），本轮**未做**。
-- **下一步**：等远端对 coverage-promotion 的裁定 → 批准后 push → 补 CI / Visual run id，并核对 3.11 上
+- **当时的下一步（R6 已执行）**：等远端对 coverage-promotion 的裁定 → 批准后 push → 补 CI / Visual run id，并核对 3.11 上
   `ledger_digest` / `spec_fingerprint` 与本机一致（预期一致：纯数据、不含字节码）。
 
 ## 上一状态（2026-09-21 R4：**coverage-extension track 已落地（4 个 code 有 producer+证据，3 个证明不可达）**）

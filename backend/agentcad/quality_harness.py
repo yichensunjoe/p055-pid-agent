@@ -2361,9 +2361,13 @@ def _agent_self_repair_case(symbols: SymbolRegistry) -> QualityHarnessCaseResult
     from .drafting_geometry import drafting_content_hash
     from .repair_benchmark import (
         BENCHMARK_SPEC_VERSION,
+        CORE_CORPUS_VERSION,
+        CORPUS_IDENTITY_EXCLUDED_KEYS,
         MUTATIONS,
         SUCCESS_ORACLE_VERSION,
         build_base_drawing,
+        core_corpus_digest,
+        core_corpus_digest_manifest,
         generate_suite,
         generator_fingerprint,
         spec_fingerprint,
@@ -2397,6 +2401,22 @@ def _agent_self_repair_case(symbols: SymbolRegistry) -> QualityHarnessCaseResult
             spec_fingerprint() == spec and generator_fingerprint() == generator,
             "repair_fingerprint_unstable",
             "spec and generator fingerprints must be stable within a build",
+        )
+        # (1b) the corpus's own identity, which is the one number two interpreters must agree on:
+        # it has to be a function of the definition alone. The fingerprints above answer "this
+        # definition, this code"; this answers "this definition".
+        corpus_digest = core_corpus_digest()
+        digest_input = core_corpus_digest_manifest()
+        _require(
+            corpus_digest == core_corpus_digest() and bool(corpus_digest),
+            "repair_corpus_digest_unstable",
+            "the corpus identity must be stable within a build",
+        )
+        _require(
+            not set(digest_input) & set(CORPUS_IDENTITY_EXCLUDED_KEYS),
+            "repair_corpus_digest_environment_bound",
+            "the corpus identity must not hash the spec fingerprint or the generator bytecode "
+            "digest, or the same corpus would identify differently on two interpreters",
         )
         first = generate_suite(candidate_sha="a" * 40, suite="acceptance")
         second = generate_suite(candidate_sha="b" * 40, suite="acceptance")
@@ -2553,6 +2573,8 @@ def _agent_self_repair_case(symbols: SymbolRegistry) -> QualityHarnessCaseResult
             "spec_version": suite.spec_version,
             "spec_fingerprint": spec,
             "generator_fingerprint": generator,
+            "corpus_version": CORE_CORPUS_VERSION,
+            "core_corpus_digest": corpus_digest,
             "oracle_version": SUCCESS_ORACLE_VERSION,
             "acceptance_cases": len(first),
             "dev_cases": suite.counts.total,

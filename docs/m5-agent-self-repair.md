@@ -271,8 +271,23 @@ acceptance case**（`promotion_cases()`：同 family、同 candidate SHA、同�
   `tests/test_repair_coverage_ledger.py` 里有一条不需要第二个解释器就能证明这个性质的测试：
   把 `generator_fingerprint` 换成另一个运行时的值，digest 不动、fingerprint 动。
 - 冻结语料自己有 `corpus_id = m5-core-corpus`、`corpus_version = 3`、`case_count = 72`、
-  `operator_count = 23`、`supported_codes`（`core_corpus_manifest()` / `core_corpus_fingerprint()`）。
+  `operator_count = 23`、`supported_codes`（`core_corpus_manifest()`）。
   **两者分开指纹**：增加覆盖不该让「M5 当时到底验收了什么」变得无法回答。
+- **语料身份现在是两层（A5）**：
+  - `core_corpus_digest()` = **跨解释器恒定**的语料身份，输入是 manifest 去掉
+    `CORPUS_IDENTITY_EXCLUDED_KEYS = (spec_fingerprint, generator_fingerprint)` 的那一半；
+    v3 golden `a60e07f1…`。去掉 `spec_fingerprint` 的理由与 ledger 同源：它标识的是**它是按哪版 spec 判的**，
+    而 spec 已有自己的稳定身份；把两件事混起来会让一次 spec 修订看起来像一次语料变化。
+  - `core_corpus_digest("2")` = 归档语料的同一身份，`acb4a3bd…`（从冻结的 v2 spec body 重放：19 operator /
+    16 个带 code / 72 case）。它是 **A5 之后派生出来的 archival 身份**，v2 从未发布过这个字段。
+  - `core_corpus_fingerprint()` = **未重定义**、未删除，仍是“这份定义 + 这份代码 + 这台机器”的 provenance：
+    本机 3.12 `c85995d2…`、3.11 `82b37b04…`，两者不同是预期行为。
+  - 三个 golden 钉在 `tests/test_core_corpus_identity.py`；`reports/m5-closeout/corpus-identity.*` 是证据。
+  - **跨解释器不是断言，是实测**：identity 的输入以纯 JSON 发布（`corpus-identity-inputs.json`），
+    `scripts/m5_closeout_identity_311_check.py` 不 import 任何 `agentcad` 代码，只用标准库在
+    CPython 3.11.15 与 3.12.13 上各跑一次（输出 `corpus-identity-3.11.txt` / `-3.12.txt`），两次都要等于记录值。
+  - v2 的 manifest 里**没有** `generator_fingerprint`：v2 operator 的字节码随代码一起消失了，
+    该字段无法重算，所以它被“缺席”而不是被伪造（这也正是身份要独立于指纹的原因）。
 - `BENCHMARK_SPEC_VERSION` 从 2 切到 **3**，`spec_fingerprint` 从 `c8520c5e…` 变为 `8f522c75…`。
   变的只有“语料能制造哪些缺陷”：阈值、oracle 版本、family 列表、case 布局（12×6）与 safety suite
   全部未动。因此 v3 的重跑仍是 **72/72、S@5 = 1.0、六 family 各 1.0、八项 gate 全绿**，
@@ -331,8 +346,14 @@ payload 上同时发布两个结果哈希，用途不同：
   它们的值仍然可被复算成当初发布的值（v2 的 spec body 也已归档，见 §9.3）。
 - `benchmark_semantic_hash`（**semantic**）：结果身份。`repair_semantic_digest()` 递归剥掉
   `REPAIR_SEMANTIC_EXCLUDED_FIELDS`（volatile 字段 + 两个哈希 + `generator_fingerprint` +
-  `semantic_hash_version`），再对 canonical JSON 取 SHA-256；契约版本发布在 `semantic_hash_version`
-  （当前 `REPAIR_SEMANTIC_HASH_VERSION = "1"`）。同样三次运行得到同一个值。
+  `semantic_hash_version` + 语料坐标），再对 canonical JSON 取 SHA-256；契约版本发布在
+  `semantic_hash_version`（当前 `REPAIR_SEMANTIC_HASH_VERSION = "1"`）。同样三次运行得到同一个值。
+- **语料坐标是派生元数据，不进任何一个哈希**：A5 起结果 payload 发布 `corpus_version` 与
+  `core_corpus_digest`（`core_corpus_fingerprint` **故意不发布**：它按解释器变，放进去会被误读成结果身份）。
+  两个名字同时进了 `REPAIR_SEMANTIC_EXCLUDED_FIELDS` 与 `REPAIR_LEGACY_HASH_EXCLUDES`，所以
+  “A5 之前发布的 v3 payload”与“同一结果加上两个字段”算出的 legacy 与 semantic 哈希**完全相同**：
+  冻结的 `reports/m5-promotion/acceptance-v3.json` 实测 legacy `17be0e45…`、semantic `530e56f1…` 两侧一致。
+  真语料变了，case 记录本身（operator、target code、结论）就会让哈希变；不需要派生字段再变一次。
 
 为什么去掉 `generator_fingerprint`：它摘要的是 **CPython 字节码**，同一份语料/结果换解释器就变——这与 §9 里
 `ledger_digest` 的口径是同一条规则（“语料身份跨解释器恒定，运行时指纹只作 provenance”）。
@@ -370,6 +391,14 @@ payload 上同时发布两个结果哈希，用途不同：
   3.11 与本地 3.12 对同一份语料算出两个指纹（CI 直接红在语料冻结守卫上）。
   `ledger_digest()` 是去掉 `ENVIRONMENT_DERIVED_KEYS` 后的身份，跨解释器恒定；包含字节码摘要的
   `ledger_fingerprint()` 只作 provenance。
+- **一个数字兼两个角色，最后一定会让人拿错那一个**：`core_corpus_fingerprint` 同时被当成“语料身份”和
+  “provenance”用了整整一轮，结果 3.11 上必然对不上本机，看起来像回归。身份与指纹要**分开命名、分开发布**：
+  `core_corpus_digest` 给两机器对齐，`core_corpus_fingerprint` 留作运行现场。旧名不许“顺手重定义”，
+  否则已经发布过的值会变成另一个东西。
+- **新增派生字段会静默改掉旧哈希**：把 `corpus_version` / `core_corpus_digest` 加进 payload 时，若不同时把
+  它们排除出 canonical 输入，同一份冻结 evidence 的 legacy 与 semantic 哈希就都变了——而它一个字节都没改。
+  加字段的同时要在两个 exclusion 集合里登记，并用**已发布的冻结 payload**做 pre/post 对照试验，
+  不要只测“新建的结果自洽”。
 - **只记 fingerprint、不记 body，等于没有身份**：spec 一旦切版本，旧指纹就变成只能“信”的数字。
   切版本时必须同时归档**旧 body**（`_SPEC_V2_OPERATORS`），并用一条断言把它钅在发布过的常量上；
   归档表要整段冻结，不要用“今天目录减去新 operator”去推导——那会让旧身份随无关元数据改动而静默漂移。

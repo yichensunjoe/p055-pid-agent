@@ -1,0 +1,258 @@
+{
+  "2": {
+    "case_count": 72,
+    "cases_per_family": 12,
+    "corpus_id": "m5-core-corpus",
+    "corpus_version": "2",
+    "dev_cases_per_family": 4,
+    "families": [
+      "F1",
+      "F2",
+      "F3",
+      "F4",
+      "F5",
+      "F6"
+    ],
+    "operator_count": 19,
+    "safety_case_count": 12,
+    "spec_version": "2",
+    "supported_codes": [
+      {
+        "family": "F1",
+        "operator_id": "f1_line_diameter_missing",
+        "target_code": "LINE_DIAMETER_MISSING",
+        "validator_id": "engineering-report"
+      },
+      {
+        "family": "F1",
+        "operator_id": "f1_line_medium_missing",
+        "target_code": "LINE_MEDIUM_MISSING",
+        "validator_id": "engineering-report"
+      },
+      {
+        "family": "F1",
+        "operator_id": "f1_line_name_missing",
+        "target_code": "LINE_TAG_MISSING",
+        "validator_id": "engineering-report"
+      },
+      {
+        "family": "F1",
+        "operator_id": "f1_line_tag_missing",
+        "target_code": "LINE_TAG_MISSING",
+        "validator_id": "engineering-report"
+      },
+      {
+        "family": "F1",
+        "operator_id": "f1_symbol_tag_duplicate",
+        "target_code": "TAG_DUPLICATE",
+        "validator_id": "engineering-report"
+      },
+      {
+        "family": "F1",
+        "operator_id": "f1_symbol_tag_missing",
+        "target_code": "TAG_MISSING",
+        "validator_id": "engineering-report"
+      },
+      {
+        "family": "F2",
+        "operator_id": "f2_endpoint_dangling",
+        "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+        "validator_id": "engineering-report"
+      },
+      {
+        "family": "F2",
+        "operator_id": "f2_endpoint_dangling_both",
+        "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+        "validator_id": "engineering-report"
+      },
+      {
+        "family": "F2",
+        "operator_id": "f2_required_port_unconnected",
+        "target_code": "SYMBOL_REQUIRED_PORT_UNCONNECTED",
+        "validator_id": "engineering-report"
+      },
+      {
+        "family": "F3",
+        "operator_id": "f3_delete_middle_detach",
+        "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+        "validator_id": "engineering-report"
+      },
+      {
+        "family": "F4",
+        "operator_id": "f4_micro_segment",
+        "target_code": "MICRO_SEGMENT",
+        "validator_id": "diagram-quality"
+      },
+      {
+        "family": "F4",
+        "operator_id": "f4_port_exit_mismatch",
+        "target_code": "PORT_EXIT_MISMATCH",
+        "validator_id": "diagram-quality"
+      },
+      {
+        "family": "F4",
+        "operator_id": "f4_unnecessary_bend",
+        "target_code": "UNNECESSARY_BEND",
+        "validator_id": "diagram-quality"
+      },
+      {
+        "family": "F5",
+        "operator_id": "f5_node_overlap",
+        "target_code": "NODE_OVERLAP",
+        "validator_id": "diagram-quality"
+      },
+      {
+        "family": "F5",
+        "operator_id": "f5_pipe_through_equipment",
+        "target_code": "PIPE_THROUGH_EQUIPMENT",
+        "validator_id": "diagram-quality"
+      },
+      {
+        "family": "F5",
+        "operator_id": "f5_symbol_out_of_bounds",
+        "target_code": "SYMBOL_OUT_OF_BOUNDS",
+        "validator_id": "diagram-quality"
+      }
+    ]
+  },
+  "3": {
+    "case_count": 72,
+    "cases_per_family": 12,
+    "corpus_id": "m5-core-corpus",
+    "corpus_version": "3",
+    "dev_cases_per_family": 4,
+    "families": [
+      "F1",
+      "F2",
+      "F3",
+      "F4",
+      "F5",
+      "F6"
+    ],
+    "operator_count": 23,
+    "safety_case_count": 12,
+    "spec_version": "3",
+    "supported_codes": [
+      {
+        "family": "F1",
+        "operator_id": "f1_duplicate_label",
+        "target_code": "DUPLICATE_LABEL",
+        "validator_id": "diagram-quality"
+      },
+      {
+        "family": "F1",
+        "operator_id": "f1_line_diameter_missing",
+        "target_code": "LINE_DIAMETER_MISSING",
+        "validator_id": "engineering-report"
+      },
+      {
+        "family": "F1",
+        "operator_id": "f1_line_medium_missing",
+        "target_code": "LINE_MEDIUM_MISSING",
+        "validator_id": "engineering-report"
+      },
+      {
+        "family": "F1",
+        "operator_id": "f1_line_name_missing",
+        "target_code": "LINE_TAG_MISSING",
+        "validator_id": "engineering-report"
+      },
+      {
+        "family": "F1",
+        "operator_id": "f1_line_tag_missing",
+        "target_code": "LINE_TAG_MISSING",
+        "validator_id": "engineering-report"
+      },
+      {
+        "family": "F1",
+        "operator_id": "f1_symbol_tag_duplicate",
+        "target_code": "TAG_DUPLICATE",
+        "validator_id": "engineering-report"
+      },
+      {
+        "family": "F1",
+        "operator_id": "f1_symbol_tag_missing",
+        "target_code": "TAG_MISSING",
+        "validator_id": "engineering-report"
+      },
+      {
+        "family": "F2",
+        "operator_id": "f2_endpoint_dangling",
+        "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+        "validator_id": "engineering-report"
+      },
+      {
+        "family": "F2",
+        "operator_id": "f2_endpoint_dangling_both",
+        "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+        "validator_id": "engineering-report"
+      },
+      {
+        "family": "F2",
+        "operator_id": "f2_port_direction_mismatch",
+        "target_code": "PORT_DIRECTION_MISMATCH",
+        "validator_id": "diagram-quality"
+      },
+      {
+        "family": "F2",
+        "operator_id": "f2_required_port_unconnected",
+        "target_code": "SYMBOL_REQUIRED_PORT_UNCONNECTED",
+        "validator_id": "engineering-report"
+      },
+      {
+        "family": "F3",
+        "operator_id": "f3_delete_middle_detach",
+        "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+        "validator_id": "engineering-report"
+      },
+      {
+        "family": "F4",
+        "operator_id": "f4_micro_segment",
+        "target_code": "MICRO_SEGMENT",
+        "validator_id": "diagram-quality"
+      },
+      {
+        "family": "F4",
+        "operator_id": "f4_port_exit_mismatch",
+        "target_code": "PORT_EXIT_MISMATCH",
+        "validator_id": "diagram-quality"
+      },
+      {
+        "family": "F4",
+        "operator_id": "f4_unbridged_crossing",
+        "target_code": "UNBRIDGED_CROSSING",
+        "validator_id": "diagram-quality"
+      },
+      {
+        "family": "F4",
+        "operator_id": "f4_unnecessary_bend",
+        "target_code": "UNNECESSARY_BEND",
+        "validator_id": "diagram-quality"
+      },
+      {
+        "family": "F5",
+        "operator_id": "f5_annotation_overlap",
+        "target_code": "ANNOTATION_OVERLAP",
+        "validator_id": "diagram-quality"
+      },
+      {
+        "family": "F5",
+        "operator_id": "f5_node_overlap",
+        "target_code": "NODE_OVERLAP",
+        "validator_id": "diagram-quality"
+      },
+      {
+        "family": "F5",
+        "operator_id": "f5_pipe_through_equipment",
+        "target_code": "PIPE_THROUGH_EQUIPMENT",
+        "validator_id": "diagram-quality"
+      },
+      {
+        "family": "F5",
+        "operator_id": "f5_symbol_out_of_bounds",
+        "target_code": "SYMBOL_OUT_OF_BOUNDS",
+        "validator_id": "diagram-quality"
+      }
+    ]
+  }
+}

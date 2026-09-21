@@ -132,6 +132,15 @@ class RepairBenchmarkResult(RepairContractModel):
     spec_fingerprint: str
     generator_fingerprint: str
     oracle_version: str
+    #: The frozen corpus this result was drawn from, published as its own two coordinates.
+    #: ``corpus_version`` names it; ``core_corpus_digest`` identifies it on any interpreter, so a
+    #: reviewer on 3.11 and a run on 3.12 can agree on "same cases" from the payload alone.
+    #: ``core_corpus_fingerprint`` is deliberately *not* published here: it digests the operator
+    #: bytecode, so it would print a different number on every interpreter and read like part of
+    #: the result's identity instead of what it is -- provenance. Both fields below are derived
+    #: metadata and are excluded from both hashes (see ``REPAIR_LEGACY_HASH_EXCLUDES``).
+    corpus_version: str = ""
+    core_corpus_digest: str = ""
     candidate_sha: str
     profile_id: str = ""
     profile_version: str = ""

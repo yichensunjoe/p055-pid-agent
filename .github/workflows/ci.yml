@@ -115,6 +115,18 @@ jobs:
             --candidate-sha "${{ github.sha }}" \
             --output backend/test-results/repair-scale.json > /dev/null
 
+      # The coverage ledger is no longer a side experiment: after the four representable codes were
+      # promoted into the frozen corpus, `repair-coverage` is the executable assertion that they are
+      # still carried by it, and that the three codes recorded as unreachable still cannot be staged
+      # by any supported surface. Its exit code is the gate: a reverted promotion, an operator
+      # dropping out of the rotation, or a code that quietly became reachable exits non-zero.
+      - name: Coverage ledger · promoted codes and unreachable dispositions
+        shell: bash
+        run: |
+          pid-agent repair-coverage \
+            --output backend/test-results/repair-coverage.json \
+            > /dev/null
+
       # §A4: a missing credential must be reported as such, never as a pass and never as a
       # failed candidate. The step therefore asserts exit code 3 specifically.
       - name: Real-model qualification · awaiting credential
@@ -140,6 +152,7 @@ jobs:
             backend/test-results/repair-benchmark-acceptance.json
             backend/test-results/repair-benchmark-summary.json
             backend/test-results/repair-benchmark-dev.json
+            backend/test-results/repair-coverage.json
             backend/test-results/repair-scale.json
             backend/test-results/repair-qualification.json
             backend/test-results/repair-qualification-summary.json

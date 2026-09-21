@@ -1,0 +1,54 @@
+== corpus identity ==
+interpreter generator_fingerprint : 625033925651313094cfd6aca3ade26c3592010a9af6969c0d91ad847f3ce221
+3.11 generator_fingerprint (CI)   : 43979207ca8f9b608996277f63cf993cc33175c6e5cb79dd2ae71ee4ba60857c
+
+-- v3 (working) --
+core_corpus_digest('3')              : a60e07f11d55769e235f05da7f975f7a1b4617fc73b5f49bc7d4e12b16a1bd49
+corpus_version / spec_version        : 3 / 3
+cases / operators / supported codes  : 72 / 23 / 20
+environment keys inside the identity : none
+environment keys beside it           : ['generator_fingerprint', 'spec_fingerprint']
+core_corpus_fingerprint()            : c85995d29d71b7d8ec81e7e152bab7daf880ccd44267ec00d7e1ee2da6b834ca   (runtime provenance)
+same fingerprint on 3.11 bytecode    : 82b37b0428a62ea259c4fa89aa06542790566df74dc22919d1ad21c9a56b6fc5
+fingerprint identical under 3.11?    : False   (expected: no)
+digest identical under 3.11?         : True   (expected: yes)
+
+-- v2 (archived) --
+core_corpus_digest('2')              : acb4a3bde4ed0b313588d344f717c2c2fad68ffbc782b3b1d3e710b363102900
+corpus_version / spec_version        : 2 / 2
+cases / operators / supported codes  : 72 / 19 / 16
+environment keys inside the identity : none
+environment keys beside it           : ['spec_fingerprint']
+core_corpus_fingerprint for v2      : not recomputable (the v2 operators' bytecode is gone)
+v2 spec_fingerprint (recorded)      : c8520c5e7b0b1d7e77e3752080393b4965aee60538ad71a6bf95d5fc4ab5ede1
+v2 spec_fingerprint (recomputed)    : c8520c5e7b0b1d7e77e3752080393b4965aee60538ad71a6bf95d5fc4ab5ede1
+
+== published identities ==
+BENCHMARK_SPEC_VERSION : 3
+CORE_CORPUS_VERSION    : 3
+spec_fingerprint()     : 8f522c758b67fc71e53d7d382f1c09fc3d922663ea500a7fc09106ece054c810
+spec_fingerprint('2')  : c8520c5e7b0b1d7e77e3752080393b4965aee60538ad71a6bf95d5fc4ab5ede1
+ledger_digest          : 30a5077951324e4984cff9c6b50b5cf7ba1a86c1685bba68ce3a0c84d740294c
+ledger_fingerprint     : 0b3e5e53d83b0cd4f10f98b08cd2e9ef64ed5ed01c1c896d53143296d5372da3   (runtime provenance)
+
+== hash compatibility: frozen v3 acceptance payload ==
+candidate_sha                     : 2e7e28fe016ad51450fb396d168a42caa53060e6
+recorded benchmark_result_hash    : 17be0e458ac3621946b06878c86e6902e7d8c0736d532f78c9d595689e22cc04
+recorded benchmark_semantic_hash  : 530e56f1cce052fb0eaf0a3fee8b5f7b32ef795bdb07e442269e8cfd2c93f1c8
+semantic_hash_version             : 1 (contract 1)
+
+recomputed legacy   (as published): 17be0e458ac3621946b06878c86e6902e7d8c0736d532f78c9d595689e22cc04
+recomputed legacy   (+coordinates): 17be0e458ac3621946b06878c86e6902e7d8c0736d532f78c9d595689e22cc04
+legacy unchanged                  : True
+recomputed semantic (as published): 530e56f1cce052fb0eaf0a3fee8b5f7b32ef795bdb07e442269e8cfd2c93f1c8
+recomputed semantic (+coordinates): 530e56f1cce052fb0eaf0a3fee8b5f7b32ef795bdb07e442269e8cfd2c93f1c8
+semantic unchanged                : True
+
+== retired extension: published identities, recomputed from the frozen file ==
+file_sha256               : 663461da0f6203efbe034f43a4a88bdf59897a77f1ef5b2967398825ca95b5fd
+coverage_corpus_digest    : 3dc8ca1ade6c5adbe5f8c3a5fab8709eff3ffdeb4f904a4da4fd8f7ae6b19969
+coverage_report_hash      : f56c2c5098119a0b753660ba6a33a0fb7bcc03c24a545f0fd1849f6e44fe0931
+corpus_fingerprint_3_12   : c198eb77c73157b25eba537fd3fef4264110897f23325d30b37c2bad9d6095e4
+
+(recorded in the disposition ledger as an index, not as the evidence)
+cases held                : DUPLICATE_LABEL, PORT_DIRECTION_MISMATCH, UNBRIDGED_CROSSING, ANNOTATION_OVERLAP

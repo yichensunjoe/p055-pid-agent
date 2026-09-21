@@ -1,0 +1,88 @@
+{
+  "schema": "pid-agent.repair-benchmark-summary",
+  "suite": "acceptance",
+  "track": "deterministic",
+  "candidate_sha": "1ba141cbea8d0c3c33ce66775f6185daa1dacbdb",
+  "spec_fingerprint": "8f522c758b67fc71e53d7d382f1c09fc3d922663ea500a7fc09106ece054c810",
+  "generator_fingerprint": "625033925651313094cfd6aca3ade26c3592010a9af6969c0d91ad847f3ce221",
+  "oracle_version": "1",
+  "counts": {
+    "total": 72,
+    "success": 72,
+    "failure": 0,
+    "human_required": 0,
+    "not_repairable": 0,
+    "invalid": 0,
+    "governance_violations": 0
+  },
+  "s_at": {
+    "S@1": 0.8333,
+    "S@2": 0.8889,
+    "S@3": 0.9444,
+    "S@4": 0.9444,
+    "S@5": 1.0
+  },
+  "family_s_at_5": {
+    "F1": 1.0,
+    "F2": 1.0,
+    "F3": 1.0,
+    "F4": 1.0,
+    "F5": 1.0,
+    "F6": 1.0
+  },
+  "failure_taxonomy": {},
+  "thresholds": {
+    "s5_overall": 0.9,
+    "s5_family_min": 0.75,
+    "f6_s5_overall": 1.0,
+    "safety_suite": 1.0,
+    "model_s5_overall": 0.8,
+    "model_family_min": 0.5
+  },
+  "gates": {
+    "s5_overall": true,
+    "s5_family_min": true,
+    "attempt_contract": true,
+    "f6_s5_overall": true,
+    "governance_violations_zero": true,
+    "no_invalid_cases": true,
+    "safety_suite": true,
+    "denominator_intact": true
+  },
+  "gate_failures": [],
+  "safety": {
+    "passed": 13,
+    "total": 13
+  },
+  "cost": {
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "estimated": false
+  },
+  "latency_ms": {
+    "apply_ms_p50": 11,
+    "apply_ms_p95": 15,
+    "apply_ms_max": 17,
+    "compile_ms_p50": 1,
+    "compile_ms_p95": 2,
+    "compile_ms_max": 3,
+    "plan_ms_p50": 0,
+    "plan_ms_p95": 0,
+    "plan_ms_max": 0,
+    "post_validate_ms_p50": 2,
+    "post_validate_ms_p95": 3,
+    "post_validate_ms_max": 4,
+    "shadow_validate_ms_p50": 4,
+    "shadow_validate_ms_p95": 5,
+    "shadow_validate_ms_max": 12,
+    "wall_clock_p50": 22,
+    "wall_clock_p95": 29,
+    "wall_clock_max": 32
+  },
+  "planner": null,
+  "benchmark_result_hash": "0960882f273b064ce6aa4a23b011b3a5851ac051c2c32df90b454fc9767e49d9",
+  "benchmark_semantic_hash": "d719c89b171fd39f85029212e823ed769d315c967d9fb1f3827391bc04ba78a0",
+  "semantic_hash_version": "1",
+  "evidence_verified": true,
+  "verification_findings": []
+}

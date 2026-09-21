@@ -484,13 +484,26 @@ REPAIR_SEMANTIC_EXCLUDED_FIELDS: frozenset[str] = REPAIR_VOLATILE_FIELDS | froze
         "benchmark_semantic_hash",
         "generator_fingerprint",
         "semantic_hash_version",
+        # Corpus coordinates are *derived metadata*: they restate which frozen case set the run
+        # drew from, and the run already says that through its own records. A corpus that really
+        # changed changes those records (a case's operator, its target code, its outcome), so the
+        # hash moves on its own; hashing a restatement as well would mean a payload published
+        # before the field existed could not be compared with the same result after it did — which
+        # is the one comparison this hash exists to make possible.
+        "corpus_version",
+        "core_corpus_digest",
     }
 )
 
-#: Fields that exist only for the semantic hash. ``repair_digest`` keeps them out so the legacy
-#: value of a record is the same number it was before they existed.
+#: Fields that exist only for the semantic hash or as derived metadata. ``repair_digest`` keeps them
+#: out so the legacy value of a record is the same number it was before they existed.
 REPAIR_LEGACY_HASH_EXCLUDES: frozenset[str] = frozenset(
-    {"benchmark_semantic_hash", "semantic_hash_version"}
+    {
+        "benchmark_semantic_hash",
+        "semantic_hash_version",
+        "corpus_version",
+        "core_corpus_digest",
+    }
 )
 
 

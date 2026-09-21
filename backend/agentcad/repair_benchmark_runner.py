@@ -21,6 +21,7 @@ from typing import Any
 
 from .repair_benchmark import (
     BENCHMARK_SPEC_VERSION,
+    CORE_CORPUS_VERSION,
     MUTATIONS,
     SUCCESS_ORACLE_VERSION,
     THRESHOLDS,
@@ -29,6 +30,7 @@ from .repair_benchmark import (
     MutationOperator,
     MutationResult,
     build_base_drawing,
+    core_corpus_digest,
     generate_suite,
     generator_fingerprint,
     spec_fingerprint,
@@ -421,6 +423,8 @@ def run_benchmark(
         spec_fingerprint=spec_fingerprint(),
         generator_fingerprint=generator_fingerprint(),
         oracle_version=SUCCESS_ORACLE_VERSION,
+        corpus_version=CORE_CORPUS_VERSION,
+        core_corpus_digest=core_corpus_digest(),
         candidate_sha=candidate_sha,
         profile_id=context.profile.profile_id,
         profile_version=context.profile.profile_version,

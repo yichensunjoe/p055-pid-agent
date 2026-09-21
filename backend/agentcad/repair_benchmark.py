@@ -1325,9 +1325,27 @@ def supported_code_manifest() -> list[dict[str, str]]:
     ]
 
 
-def core_corpus_manifest() -> dict[str, Any]:
-    """Identify the frozen acceptance corpus independently of the spec it is judged by."""
+def core_corpus_manifest(version: str | None = None) -> dict[str, Any]:
+    """Identify the frozen acceptance corpus -- the working one, or an archived version.
 
+    The manifest carries both the corpus's own coordinates and the two fingerprints of the world
+    it ran in. Those two are why the *identity* of the corpus is published separately, as
+    :func:`core_corpus_digest`.
+
+    An archived version is rebuilt from its frozen spec body rather than from today's catalogue,
+    for the same reason ``spec_fingerprint("2")`` is: "these are the cases v2 ran" has to stay a
+    claim somebody can check. One field cannot come back, and the manifest says so by leaving it
+    out: ``generator_fingerprint`` digests the *bytecode* of the v2 operators, and that bytecode is
+    gone. The archived manifest therefore has no such key, which is exactly why the corpus identity
+    (and not the fingerprint) is the thing that survives a code move.
+    """
+
+    resolved = version or CORE_CORPUS_VERSION
+    if resolved != CORE_CORPUS_VERSION:
+        archived = _archived_core_corpus_manifest(resolved)
+        if archived is None:
+            raise ValueError(f"no corpus manifest is archived for version {resolved!r}")
+        return archived
     return {
         "corpus_id": CORE_CORPUS_ID,
         "corpus_version": CORE_CORPUS_VERSION,
@@ -1344,8 +1362,86 @@ def core_corpus_manifest() -> dict[str, Any]:
     }
 
 
+def _archived_core_corpus_manifest(version: str) -> dict[str, Any] | None:
+    """The corpus manifest of a superseded version, or ``None`` when no spec body is archived."""
+
+    try:
+        payload = spec_payload(version)
+    except ValueError:
+        return None
+    operators = sorted(payload["operators"], key=lambda row: str(row["operator_id"]))
+    return {
+        "corpus_id": CORE_CORPUS_ID,
+        "corpus_version": version,
+        "spec_version": payload["spec_version"],
+        "spec_fingerprint": spec_fingerprint(version),
+        "families": list(payload["families"]),
+        "cases_per_family": payload["acceptance_cases_per_family"],
+        "dev_cases_per_family": payload["dev_cases_per_family"],
+        "case_count": payload["acceptance_cases_per_family"] * len(payload["families"]),
+        "safety_case_count": payload["safety_cases"],
+        "operator_count": len(operators),
+        "supported_codes": [
+            {
+                "operator_id": row["operator_id"],
+                "family": row["family"],
+                "target_code": row["target_code"],
+                "validator_id": row["validator_id"],
+            }
+            for row in operators
+            if row["target_code"]
+        ],
+    }
+
+
+#: Manifest keys that name the world the corpus ran in rather than the corpus itself, so they stay
+#: out of the corpus *identity*.
+#:
+#: ``generator_fingerprint`` digests CPython bytecode, so the identical corpus publishes a different
+#: number on every interpreter. ``spec_fingerprint`` is not interpreter-derived, but it identifies
+#: the *spec* -- the thresholds and the judgement -- and the spec already has its own stable
+#: identity, so folding it in would make a spec revision look like a corpus change. What the corpus
+#: identity answers is narrower and more useful: "is this the same frozen set of cases and codes",
+#: which is precisely the question two machines must be able to agree on.
+CORPUS_IDENTITY_EXCLUDED_KEYS: tuple[str, ...] = ("spec_fingerprint", "generator_fingerprint")
+
+
+def core_corpus_digest(version: str | None = None) -> str:
+    """The corpus identity: interpreter-independent, so two machines compute the same value.
+
+    Published beside :func:`core_corpus_fingerprint` rather than replacing it. The fingerprint
+    keeps answering the provenance question it has always answered ("this definition, this code,
+    on this machine"); the digest answers the one a comparison needs ("this definition").
+    """
+
+    text = json.dumps(
+        core_corpus_digest_manifest(version),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def core_corpus_digest_manifest(version: str | None = None) -> dict[str, Any]:
+    """The digest's input, published so a reviewer can recompute it instead of trusting it."""
+
+    return {
+        key: value
+        for key, value in core_corpus_manifest(version).items()
+        if key not in CORPUS_IDENTITY_EXCLUDED_KEYS
+    }
+
+
 def core_corpus_fingerprint() -> str:
-    """Fingerprint of the corpus definition: the case layout plus the code manifest it supports."""
+    """Fingerprint of the corpus definition *as this interpreter and this code build it*.
+
+    Runtime provenance, not an identity: it hashes :func:`core_corpus_manifest` whole, so it moves
+    both with the operator bytecode and with the spec the corpus is judged by. The published values
+    are recorded in the closeout evidence rather than pinned here, because pinning one would make
+    "frozen" mean "frozen on the workstation that pinned it". Use :func:`core_corpus_digest` for
+    anything two machines have to agree on.
+    """
 
     text = json.dumps(
         core_corpus_manifest(), sort_keys=True, separators=(",", ":"), ensure_ascii=False
@@ -1489,6 +1585,7 @@ __all__ = [
     "BENCHMARK_SPEC_VERSION",
     "CORE_CORPUS_ID",
     "CORE_CORPUS_VERSION",
+    "CORPUS_IDENTITY_EXCLUDED_KEYS",
     "DEV_CASES_PER_FAMILY",
     "FAMILIES",
     "FAMILY_TITLES",
@@ -1503,6 +1600,8 @@ __all__ = [
     "archived_operator_catalogue",
     "MutationResult",
     "build_base_drawing",
+    "core_corpus_digest",
+    "core_corpus_digest_manifest",
     "core_corpus_fingerprint",
     "core_corpus_manifest",
     "derive_seed",

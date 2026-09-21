@@ -1,7 +1,9 @@
 import { expect, test, type APIRequestContext } from "@playwright/test";
 
 const TOKEN = process.env.PID_AGENT_E2E_SHARED_TOKEN ?? "pid-agent-shared-e2e-token";
-const API = "http://127.0.0.1:8000/api/v2";
+// The config's port override (PID_AGENT_E2E_API_PORT) has to reach the direct API calls too, or
+// the suite talks to a different server than the browser does.
+const API = `http://127.0.0.1:${process.env.PID_AGENT_E2E_API_PORT ?? 8000}/api/v2`;
 const authorization = { Authorization: `Bearer ${TOKEN}` };
 
 async function resetDocuments(request: APIRequestContext) {

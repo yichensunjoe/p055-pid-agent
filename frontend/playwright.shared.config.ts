@@ -5,6 +5,17 @@ const sharedToken = process.env.PID_AGENT_E2E_SHARED_TOKEN ?? "pid-agent-shared-
 const databasePath = path.resolve("test-results", `pid-agent-shared-e2e-${process.pid}.db`);
 const diagnosticsPath = path.resolve("test-results", `pid-agent-shared-e2e-${process.pid}.diagnostics.jsonl`);
 
+// The same override the local config documents, for the same reason: the shared-mode suite has to
+// be runnable on a machine where the default backend or preview port is already held by another
+// checkout. CI uses the defaults, and the spec reads the API root from the same variables.
+const apiPort = Number(process.env.PID_AGENT_E2E_API_PORT ?? 8000);
+const previewPort = Number(process.env.PID_AGENT_E2E_PREVIEW_PORT ?? 4173);
+const apiOrigin = `http://127.0.0.1:${apiPort}`;
+const previewOrigin = `http://127.0.0.1:${previewPort}`;
+// The preview server proxied /api to the default backend regardless of the port override, so the
+// browser and the spec would have talked to a different server than the one this run started.
+process.env.PID_AGENT_API_TARGET ??= apiOrigin;
+
 export default defineConfig({
   testDir: "./e2e",
   testMatch: "security.shared.spec.ts",
@@ -19,7 +30,7 @@ export default defineConfig({
     ? [["line"], ["html", { outputFolder: "test-results/shared-playwright-report", open: "never" }]]
     : [["list"]],
   use: {
-    baseURL: "http://127.0.0.1:4173",
+    baseURL: previewOrigin,
     viewport: { width: 1440, height: 960 },
     locale: "zh-CN",
     timezoneId: "Asia/Shanghai",
@@ -40,7 +51,7 @@ export default defineConfig({
       reuseExistingServer: false,
     },
     {
-      command: "python -m uvicorn agentcad.main:app --host 127.0.0.1 --port 8000",
+      command: `python -m uvicorn agentcad.main:app --host 127.0.0.1 --port ${apiPort}`,
       cwd: "..",
       env: {
         ...process.env,
@@ -51,17 +62,17 @@ export default defineConfig({
         PID_AGENT_DEPLOYMENT_MODE: "shared",
         PID_AGENT_API_TOKEN: sharedToken,
         PID_AGENT_E2E_SHARED_TOKEN: sharedToken,
-        PID_AGENT_CORS_ORIGINS: "http://127.0.0.1:4173",
+        PID_AGENT_CORS_ORIGINS: previewOrigin,
         PID_AGENT_PROVIDER_ALLOW_HOSTS: "127.0.0.1",
       },
-      url: "http://127.0.0.1:8000/health",
+      url: `${apiOrigin}/health`,
       timeout: 30_000,
       reuseExistingServer: false,
     },
     {
-      command: "npm run preview -- --host 127.0.0.1 --port 4173",
+      command: `npm run preview -- --host 127.0.0.1 --port ${previewPort}`,
       cwd: ".",
-      url: "http://127.0.0.1:4173",
+      url: previewOrigin,
       timeout: 30_000,
       reuseExistingServer: false,
     },

@@ -1,0 +1,23 @@
+=== the drawing as the product wrote it ===
+  symbol v1: label='' properties.tag='HV-101'
+  text   v1__label: text='HV-101' role='symbol_label'
+  symbol v2: label='' properties.tag='HV-102'
+  text   v2__label: text='HV-102' role='symbol_label'
+
+=== consumer 1: the canonical resolver (agentcad/tag_resolver.py) ===
+  v1: SymbolTag(tag='HV-101', source='properties.tag', conflicting_annotations=()) -> 'HV-101'
+  v2: SymbolTag(tag='HV-102', source='properties.tag', conflicting_annotations=()) -> 'HV-102'
+
+=== consumer 2: engineering-report rules (TAG_MISSING / TAG_DUPLICATE) ===
+  (no tag findings - correct: two distinct tags)
+
+=== consumer 3: equipment / instrument schedule rows ===
+  schedule row v1: tag='' name=''
+  schedule row v2: tag='' name=''
+
+=== consumer 4: engineering IR records (feeds IR_DUPLICATE_IDENTITY) ===
+  IR valve v1: tag='HV-101' label=''
+  IR valve v2: tag='HV-102' label=''
+  IR annotation v1__label: tag='' label='HV-101'
+  IR annotation v2__label: tag='' label='HV-102'
+  IR line p1: tag='L-1' label='L-1'

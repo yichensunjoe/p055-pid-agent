@@ -2,7 +2,35 @@
 
 > 交接文档：每次开新会话先读本文件。更新规则见 `AGENTS.md`「HANDOFF 交接规则」。
 
-## 当前状态（2026-09-21 R2，最新轮次：**M5 candidate R2（M4 tag 修复后重跑），待远端 final Release Gate**）
+## 当前状态（2026-09-21 R3，最新轮次：**M4 regression fix 已获远端 Release Gate；schedule 小修已做完待授权推送**）
+
+- **远端已正式 ACCEPTED `0600ee7`**（标签解析 regression fix 的 Release Gate）。`ecedc00` 继续是永久 M4 accepted anchor。
+- **push 已执行（授权范围 = 7 个 SHA）**：`bccd807..9254b8e` → `origin/main`。
+  **`M4 regression fix CI evidence = CI run 35557127990 (success, headSha 9254b8e)`**，四 job 全绿
+  （Frontend 14s / Backend 3m40s / Browser acceptance 2m12s / **M5 self-repair 72-case gate 2m4s**）。
+  **`Visual baselines = run 35557384183`**（手动 dispatch，绑定 9254b8e）。
+- **`03a1764`（symbol.label consumer 审计证据）被远端排除在本次授权之外**，按它的要求隔离在本地未推送；
+  下一次回传需补它的 scope（subject + files changed + stat + 是否改代码/测试/证据/语义）。
+- **远端批准并已完成的 schedule 小修 = `1749e30`**（`fix(m4): resolve schedule tags after annotation polish`）：
+  scope 仅 `_schedule_symbol` 的 tag 输出改走 `resolve_symbol_tag`；设备/仪表两条输出路径都覆盖；
+  未动 `engineering_ir.py`、未重排 resolver 优先级、未重构 schedule。
+  证据：`reports/m4-regression-fix/schedule-projection-{pre,post}.txt`（投影 diff = 每行只动 `tag` 字段：
+  `""` → `"HV-101"` / `"PT-101"`）、§E2 仍未变（declarations 0 / unexpected 0）、M4 子集 **118 passed**、后端全量 **791 passed**、harness **9/9**。
+- **登记为 consistency debt（远端明令本次不改）**：`engineering_ir.py:653` 的位号优先级是 `label` → `properties.tag`，
+  与 canonical resolver 的顺序相反。polish 后 label 为空因而主流程无影响，但两者同时存在且冲突时
+  IR 与 engineering-report 会给出不同 identity。
+- **M5 R2 四项裁决（远端已下）**：
+  1. **F6 的 S@k 保持标准 cumulative 定义，不得为提高 S@1 改 F6**；F6 的 gate 应同时检查
+     “first-success attempt 与 case contract 一致”以及 F6 S@5 = 1.0；**全局 S@1 只作观测指标，不得作为 M5 硬拒绝门**。
+     → 这需要改 gate/verifier 口径（当前 `THRESHOLDS.s1_overall` 是硬门），属待落地的下一步。
+  2. 那 7 个“能修但考不到”的 code **不计入已验收能力**；可进入下一阶段 coverage work，
+     每个 code 在宣称 supported 前必须有 deterministic issue producer + 制造证明 + 正式 repair case + acceptance 覆盖。
+  3. **真实模型凭据不是 M5 Release Gate 前置条件**；真实 LLM lane 后续经 secret/env 注入，凭据不得进仓库/fixture/evidence。
+  4. **`semantic_seed` 批准，但只允许存在于 benchmark construction / reproducibility 层**；不得进
+     RepairRequest、planner context、canonical findings、repair hints、candidate generation；一旦泄漏给 planner 即判 case invalid / governance violation。
+- **远端对“下一份回传”的要求**：push 后 CI run IDs/状态、schedule 小修 SHA + pre/post projection、若要推 `03a1764` 则补 scope。
+
+## 上一轮状态（M5 candidate R2 @ `68fccb3`，数字仍有效）
 
 - **本轮候选 = `68fccb3876934d690c0a8466821a6b24077a6818`**（`68fccb3`）。它**取代**上一轮的 `675af46`，理由：`675af46` 之后发现 M4 tag 规则读的是被 production polish 清空的字段（`0600ee7` 修），这使 `TAG_MISSING` / `TAG_DUPLICATE` 在 operator 目录里根本不存在——F1 只测到 line identity，而报告却称覆盖六个 family。`68fccb3` 补上两个 mutation（19 operator / 14 code）并加了一条对 `MUTATIONS` 全表参数化的守卫测试。
 - **本轮实测（候选 `68fccb3`）**：`ruff check backend` ✓；`pytest -q` **785 passed**；quality harness **9/9**；acceptance **72/72**，S@1 **0.8333** / S@5 **1.0**，六 family S@5 各 1.0，safety **13/13**，governance violations 0，`evidence_verified: true`（`benchmark_result_hash = 8b657b3f…`，`spec_fingerprint = a69369c7…`，`generator_fingerprint = 13cc1254…`）；大图真实 **5/5** / 合成 **5/5**；前端 `npm test` **144 passed**、`npm run build` ✓、Playwright **52 passed / 1 skipped**、shared **2 passed**、`test:e2e:secrets` ✓；`repair-qualification` 退出码 **3**（`awaiting_real_model_qualification`）。

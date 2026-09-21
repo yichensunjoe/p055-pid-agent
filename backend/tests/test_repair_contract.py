@@ -469,6 +469,156 @@ def test_invalid_cases_fail_the_gate_and_may_not_be_trimmed(tmp_path: Path):
     assert "invalid_benchmark_case" in failures
 
 
+def _synthetic_success(*, case_id: str, family: str, attempts: int, required_attempts: int) -> dict:
+    """A green case record, so the gate can be tested on the numbers it reads."""
+
+    return {
+        "case_id": case_id,
+        "family": family,
+        "operator_id": f"synthetic_{family.lower()}",
+        "suite": "dev",
+        "seed": 1,
+        "candidate_sha": "sha",
+        "spec_fingerprint": "f",
+        "generator_fingerprint": "g",
+        "classification": "success",
+        "failure_code": "",
+        "applied": True,
+        "attempts": attempts,
+        "required_attempts": required_attempts,
+        "attempt_plan_hashes": [f"plan{index}" for index in range(attempts)],
+        "repair_hash": "r",
+        "post_validation_hash": "p",
+        "audit_record_id": "a",
+        "selected_plan_hash": "s",
+        "transaction_hash": "t",
+        "undo_restored_base": True,
+        "redo_restored_result": True,
+        "protected_pre": {"engineering_projection": "e", "drawing_projection": "d"},
+        "protected_post": {"engineering_projection": "e", "drawing_projection": "d"},
+    }
+
+
+def _synthetic_result(records: list[dict]):
+    from agentcad.repair_benchmark import THRESHOLDS
+    from agentcad.repair_evidence import RepairCaseRecord, build_benchmark_result
+
+    return build_benchmark_result(
+        cases=[RepairCaseRecord(**record) for record in records],
+        suite="dev",
+        track="deterministic",
+        spec_version="1",
+        spec_fingerprint="f",
+        generator_fingerprint="g",
+        oracle_version="1",
+        candidate_sha="sha",
+        thresholds=dict(THRESHOLDS),
+        safety_total=13,
+        safety_passed=13,
+    )
+
+
+def test_the_retry_contract_is_gated_and_a_broken_injection_is_visible():
+    """A case that declares N required attempts must first succeed on attempt N.
+
+    This is what replaced the global S@1 rejection: it proves the injected failure actually
+    happened *and* that the planner needed exactly those attempts, which S@1 cannot say.
+    """
+
+    honest = _synthetic_result(
+        [
+            _synthetic_success(case_id="dev:F6:00", family="F6", attempts=2, required_attempts=2),
+            _synthetic_success(case_id="dev:F1:00", family="F1", attempts=1, required_attempts=1),
+        ]
+    )
+    assert honest.gates["attempt_contract"] is True
+    assert "attempt_contract_mismatch" not in " ".join(honest.gate_failures)
+
+    # The injector never fired (or the planner got lucky), so the run is not the run the case
+    # describes even though the drawing is correct.
+    broken = _synthetic_result(
+        [
+            _synthetic_success(case_id="dev:F6:00", family="F6", attempts=1, required_attempts=2),
+        ]
+    )
+    assert broken.gates["attempt_contract"] is False
+    assert "attempt_contract_mismatch:dev:F6:00" in broken.gate_failures
+    assert "attempt_contract_mismatch" in [
+        finding.code for finding in verify_benchmark_result(broken).findings
+    ]
+
+
+def test_a_case_without_a_retry_contract_makes_no_attempt_claim():
+    """Three attempts on a case that never declared one stays an observation, not a failure."""
+
+    result = _synthetic_result(
+        [_synthetic_success(case_id="dev:F1:00", family="F1", attempts=3, required_attempts=1)]
+    )
+    assert result.gates["attempt_contract"] is True
+    assert result.s_at["S@1"] == 0.0
+
+
+def test_the_global_s1_is_published_and_never_rejects():
+    """The remote's ruling: S@1 measures a suite that contains retry cases, so it observes only."""
+
+    result = _synthetic_result(
+        [
+            _synthetic_success(case_id="dev:F6:00", family="F6", attempts=2, required_attempts=2),
+            _synthetic_success(case_id="dev:F1:00", family="F1", attempts=1, required_attempts=1),
+        ]
+    )
+    # Half the suite needs a retry by construction; the verdict is still a pass.
+    assert result.s_at["S@1"] == 0.5
+    assert "s1_overall" not in result.gates
+    assert result.gates["s5_overall"] is True
+    assert result.gates["f6_s5_overall"] is True
+    assert all(result.gates.values()), result.gate_failures
+
+
+def test_f6_convergence_is_gated_on_its_own():
+    """F6 exists to prove convergence under injected failure, so its S@5 is not left to the minimum."""
+
+    from agentcad.repair_benchmark import THRESHOLDS
+    from agentcad.repair_evidence import RepairCaseRecord, build_benchmark_result
+
+    cases = [
+        RepairCaseRecord(
+            **{
+                **_synthetic_success(case_id=f"dev:F6:{index:02d}", family="F6", attempts=4, required_attempts=4),
+                "classification": "failure" if index == 0 else "success",
+                "failure_code": "budget_exhausted" if index == 0 else "",
+                "applied": index != 0,
+                "repair_hash": "" if index == 0 else "r",
+                "post_validation_hash": "" if index == 0 else "p",
+                "audit_record_id": "" if index == 0 else "a",
+                "selected_plan_hash": "" if index == 0 else "s",
+                "transaction_hash": "" if index == 0 else "t",
+                "undo_restored_base": index != 0,
+                "redo_restored_result": index != 0,
+            }
+        )
+        for index in range(5)
+    ]
+    result = build_benchmark_result(
+        cases=cases,
+        suite="dev",
+        track="deterministic",
+        spec_version="1",
+        spec_fingerprint="f",
+        generator_fingerprint="g",
+        oracle_version="1",
+        candidate_sha="sha",
+        thresholds=dict(THRESHOLDS),
+        safety_total=13,
+        safety_passed=13,
+    )
+    assert result.family_s_at_5["F6"] == 0.8
+    assert result.gates["f6_s5_overall"] is False
+    assert "f6_s5_below_threshold" in result.gate_failures
+    # The family minimum (0.75) still passes: the F6 gate is the stricter one, on purpose.
+    assert result.gates["s5_family_min"] is True
+
+
 def test_planner_context_carries_no_answer_key(tmp_path: Path):
     """The planner's whole input is the request, the drawing and canonical findings.
 
@@ -614,8 +764,15 @@ def test_the_acceptance_suite_meets_every_frozen_threshold(tmp_path: Path):
     assert result.counts.governance_violations == 0
     assert result.safety_total >= 12 and result.safety_passed == result.safety_total
     assert result.s_at["S@5"] >= result.thresholds["s5_overall"]
-    assert result.s_at["S@1"] >= result.thresholds["s1_overall"]
     assert min(result.family_s_at_5.values()) >= result.thresholds["s5_family_min"]
+    # The remote Release Gate ruling: the global S@1 is published and not gated, because the
+    # suite contains cases whose contract requires a retry. What is gated is the contract itself
+    # and F6's own convergence.
+    assert "s1_overall" not in result.gates
+    assert "S@1" in result.s_at
+    assert result.gates["attempt_contract"] is True
+    assert result.gates["f6_s5_overall"] is True
+    assert result.family_s_at_5["F6"] >= result.thresholds["f6_s5_overall"]
     assert all(result.gates.values()), result.gate_failures
 
 

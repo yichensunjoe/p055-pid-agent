@@ -206,6 +206,9 @@ def run_case(
         pre_validation_hash=result.result_hash,
         target_code=mutation.target_code,
         target_validator_id=mutation.target_validator_id,
+        # The case contract travels with the record, so the gate can check that the run that
+        # succeeded is the run the case describes (see ``evaluate_gates``).
+        required_attempts=mutation.required_attempts,
     )
     if issue is None:
         return RepairCaseRecord(

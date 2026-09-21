@@ -385,8 +385,12 @@ def test_the_model_track_is_judged_by_the_model_thresholds():
 
     assert deterministic.gates["s5_overall"] is False
     assert model.gates["s5_overall"] is True
-    assert "s1_overall" in deterministic.gates
+    # Neither track rejects on the global S@1 any more (the remote's ruling): it stays a
+    # published observation on both, and the contract gate carries the meaning instead.
+    assert "s1_overall" not in deterministic.gates
     assert "s1_overall" not in model.gates
+    assert "S@1" in deterministic.s_at and "S@1" in model.s_at
+    assert "attempt_contract" in deterministic.gates
     assert verify_benchmark_result(model).ok is True
 
 

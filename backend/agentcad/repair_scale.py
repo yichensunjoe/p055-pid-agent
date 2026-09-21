@@ -507,19 +507,25 @@ def _import_drawing(
     return result.document_id, result.model_dump(mode="json")["report"]
 
 
-def _seed_semantic_train(context: BenchmarkContext, document_id: str, *, operator_id: str) -> int:
+def _seed_semantic_train(context: BenchmarkContext, document_id: str) -> int:
     """Add one governed valve train to an imported drawing that has nothing to repair.
 
     Required, not convenient: a real CAD file is geometry, and this module will not pretend a
     line element is a connector with ports. The seed is written through the semantic compiler
     and the governed transaction path, so it is an ordinary revision of the working copy — the
     defect the case injects afterwards is still a real governed mutation of a real drawing.
+
+    The ids it writes are deliberately *neutral*: benchmark construction may decide what this
+    fixture is made of, but it may not tell the planner which defect is coming. An id carrying
+    the operator name (or the word "seed") would hand the case's family to the planner through
+    the drawing itself, which is exactly the leak the benchmark's construction layer must not
+    have.
     """
 
     from .agent_semantic_models import ConnectPortsOperation
     from .repair_benchmark import _apply_semantic
 
-    prefix = f"scaleseed_{operator_id.replace(':', '_')}"
+    prefix = "process_train"
     operations: list[Any] = []
     for index in range(_TRAIN_LENGTH):
         tag = f"HV-{9000 + index}"
@@ -545,7 +551,7 @@ def _seed_semantic_train(context: BenchmarkContext, document_id: str, *, operato
                 target_element_id=f"{prefix}_v{index + 1}",
                 target_port_id="in",
                 routing="orthogonal",
-                process_tag=f"L-SEED-{index:02d}",
+                process_tag=f"L-{9100 + index}",
                 medium="process",
                 nominal_diameter="DN50",
                 flow_direction="forward",
@@ -566,7 +572,9 @@ def _stage_working_copy(
             context.service,
             context.registry,
             element_target=source.element_target,
-            name=f"M5 scale base (synthetic, {operator_id})",
+            # The name is part of what the planner can read, so it names the fixture and not the
+            # case: putting the operator into it would say which defect is about to be injected.
+            name="M5 scale base (synthetic)",
         )
     else:
         document_id, import_report = _import_drawing(context, source, operator_id)
@@ -574,7 +582,7 @@ def _stage_working_copy(
             imported = context.service.get_document(document_id)
             if not _has_repairable_connector(imported):
                 before = len(imported.elements)
-                _seed_semantic_train(context, document_id, operator_id=operator_id)
+                _seed_semantic_train(context, document_id)
                 seeded = context.service.get_document(document_id)
                 seed = {
                     "used": True,

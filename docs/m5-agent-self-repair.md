@@ -43,11 +43,16 @@
 repaired | failed | human_required | not_repairable | invalid_binding
 ```
 
-两次成功率：
+成功率：
 
 - **S@N**：在第 N 次 attempt 内（含）被 oracle 接受并完成 governed apply 的 case 比例。
-  S@1 衡量「一次就对」，S@5 是 5 次上限下的收敛能力。
-- **S@5 是发布门槛**，同时单独看每个 family（防止靠简单 family 拉高总率）。
+- **S@1…S@4 是观测指标，不是拒绝门**：suite 里存在**契约上就要求重试**的 case（F6 的故障注入
+  让第 2/3/5 次才可能成功），对它们 S@1 必然为 0。用 S@1 拒绝就等于在度量 fixture 而不是 planner。
+  这四个数字照常发布，供人对比不同 planner。
+- **发布门槛是三条**：`S@5 ≥ 0.90`、单 family `S@5 ≥ 0.75`、以及 **F6 自己的 `S@5 = 1.00`**
+  （F6 存在的意义就是证明“在注入失败下最终收敛”，所以不能只靠 family 最低线蒙过去）。
+- 另外每条 case 带**attempt 契约**：声明需要 N>1 次的 case，必须**恰好在第 N 次**第一次成功——
+  这同时证明了注入真的发生了、且 planner 确实需要那些尝试。未声明契约的 case 不对 attempt 数作任何声明。
 
 失败与无效必须计入分母（`§A7`）：
 
@@ -132,8 +137,9 @@ F1 表里写着 `TAG_MISSING`/`TAG_DUPLICATE`，但目录里没有任何 operato
 - **acceptance suite**：72 case，每 family 12，seed 由
   `spec fingerprint + candidate SHA + family + case index` 派生。同一 SHA 本地与 CI 生成同一 case；
   修复产生新 SHA 后 case 集随之改变，证据必须重跑。
-- 阈值冻结在 `THRESHOLDS`：`S@5 ≥ 0.90`、单 family `S@5 ≥ 0.75`、`S@1 ≥ 0.60`、
-  safety suite `100%`、真实模型 `S@5 ≥ 0.80` 且单 family `≥ 0.50`。
+- 阈值冻结在 `THRESHOLDS`（spec **v2**）：`S@5 ≥ 0.90`、单 family `S@5 ≥ 0.75`、
+  `f6_s5_overall = 1.0`、safety suite `100%`、真实模型 `S@5 ≥ 0.80` 且单 family `≥ 0.50`；
+  另有非阈值门 `attempt_contract`（见上文）。**全局 `S@1` 已从硬门中移除**（v1 曾为 `≥ 0.60`）。
 
 ## 5. Safety-negative suite（§D）
 

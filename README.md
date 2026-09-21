@@ -383,7 +383,7 @@ npm run test:e2e
 
 `pid-agent drafting report <document_id>` 测量一张图纸（端口、跨线、连接点、碰撞、保留区、锁定来源与质量门禁），`pid-agent drafting preview <document_id>` 返回**可复现**的整理事务而不写库；两者在门禁失败时以退出码 2 结束，可直接当作 CI 图面门禁。引擎是只读的：落地只能走普通受治理事务（网页/ MCP `apply_deterministic_drafting`）或人工确认。契约、流水线、锁定语义与明确边界见 [`docs/deterministic-drafting.md`](docs/deterministic-drafting.md)。
 
-`pid-agent repair-benchmark --suite acceptance --candidate-sha <sha>` 跑 M5 agent 自修复的确定性硬门：72 个由 spec fingerprint 与 commit SHA 派生（不可手选）的缺陷案例，每条都经过同一个生产 orchestrator——影子候选、同一个 M4 canonical validator 复跑、成功 oracle、最多一次受治理写入、undo/redo 证明——并发布可由**独立复算器**重算的 evidence。退出码 0 表示 evidence 复算通过且 S@5 ≥ 90%、单 family S@5 ≥ 75%、S@1 ≥ 60%、safety-negative suite 100% 全部达标。契约、六个 defect family、局部性/保护投影的机械定义与冻结阈值见 [`docs/m5-agent-self-repair.md`](docs/m5-agent-self-repair.md)。
+`pid-agent repair-benchmark --suite acceptance --candidate-sha <sha>` 跑 M5 agent 自修复的确定性硬门：72 个由 spec fingerprint 与 commit SHA 派生（不可手选）的缺陷案例，每条都经过同一个生产 orchestrator——影子候选、同一个 M4 canonical validator 复跑、成功 oracle、最多一次受治理写入、undo/redo 证明——并发布可由**独立复算器**重算的 evidence。退出码 0 表示 evidence 复算通过且 S@5 ≥ 90%、单 family S@5 ≥ 75%、**F6 自身 S@5 = 100%**、attempt 契约逐条成立、safety-negative suite 100% 全部达标（S@1…S@4 发布为观测值：suite 里存在契约上就要求重试的 case，用它们做拒绝门等于在度量 fixture）。契约、六个 defect family、局部性/保护投影的机械定义与冻结阈值见 [`docs/m5-agent-self-repair.md`](docs/m5-agent-self-repair.md)。
 
 `pid-agent repair-scale [--source FILE.dwg]` 把同样的五个案例放到大图上跑，逐条报 scope size、context bytes/elements、attempts、各阶段耗时、RSS 与 wall-clock；`pid-agent repair` 在 CLI 上修一条 finding（先预览、再受治理写入）。真实模型资格用 `pid-agent repair-qualification`：没有凭据时它明确返回 `awaiting_real_model_qualification`（退出码 3），既不算通过也不算候选失败。
 

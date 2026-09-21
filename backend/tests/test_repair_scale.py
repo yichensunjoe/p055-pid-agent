@@ -100,6 +100,44 @@ def test_every_case_reports_the_numbers_the_baseline_asks_for(synthetic_report):
         assert case.rss_bytes > 0, case.case_id
 
 
+def test_the_seeded_train_never_names_the_case_it_will_be_used_for(tmp_path: Path):
+    """§G seed rule: construction may shape the fixture, it may not brief the planner.
+
+    The semantic seed is allowed to decide what the fixture is made of; if it also wrote the
+    operator or the word "seed" into an element id, the document handed to the planner would
+    say which defect is about to be injected — the case would have to be judged invalid.
+    """
+
+    from agentcad.repair_benchmark import MUTATIONS
+    from agentcad.repair_scale import _seed_semantic_train, build_synthetic_drawing, role_map_for
+
+    context = _context(tmp_path)
+    # A drawing with a real canvas: the seed train is a drafting object, so seeding into an empty
+    # document would fail its own quality gates for reasons unrelated to naming.
+    document_id = build_synthetic_drawing(
+        context.service, context.registry, element_target=120, name="scale host drawing"
+    )
+    _seed_semantic_train(context, document_id)
+    document = context.service.get_document(document_id)
+
+    visible = " ".join(
+        [document.name]
+        + [
+            f"{element.id} {getattr(element, 'name', '')} "
+            f"{getattr(element, 'label', '')} {getattr(element, 'process_tag', '')}"
+            for element in document.elements
+        ]
+    ).lower()
+    assert "seed" not in visible
+    for operator_id in MUTATIONS:
+        assert operator_id.lower() not in visible
+        assert operator_id.split("_")[0].lower() not in visible
+
+    # The point of the seed still holds: the train is discovered structurally, not by name.
+    roles = role_map_for(document)
+    assert {"p1", "v1", "v2", "v3"} <= set(roles)
+
+
 def test_roles_are_derived_from_the_drawing_not_hard_coded(tmp_path: Path):
     """The role map has to be checkable, and the movable element has to be a movable one."""
 

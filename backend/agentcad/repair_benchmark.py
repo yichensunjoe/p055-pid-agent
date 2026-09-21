@@ -44,7 +44,10 @@ from .service import DocumentService
 from .symbols import SymbolRegistry
 
 #: Bumped only with a documented `benchmark reset` (baseline §B4).
-BENCHMARK_SPEC_VERSION = "1"
+#: Bumped when the *gate* changes, because changing what counts as passing changes the spec.
+#: Version 2 removed the deterministic track's global-S@1 rejection (an observation, not a
+#: verdict) and added the F6 convergence gate plus the per-case attempt contract.
+BENCHMARK_SPEC_VERSION = "2"
 
 #: Offline oracle version. Changing the oracle invalidates every previous number.
 SUCCESS_ORACLE_VERSION = "1"
@@ -65,7 +68,9 @@ FAMILY_TITLES: dict[str, str] = {
 THRESHOLDS: dict[str, float] = {
     "s5_overall": 0.90,
     "s5_family_min": 0.75,
-    "s1_overall": 0.60,
+    #: F6 is the family that exists to prove convergence under injected failure, so its S@5 is
+    #: gated on its own rather than only through the family minimum.
+    "f6_s5_overall": 1.0,
     "safety_suite": 1.0,
     "model_s5_overall": 0.80,
     "model_family_min": 0.50,

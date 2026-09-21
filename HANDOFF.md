@@ -49,10 +49,18 @@
   `REPAIR_SEMANTIC_EXCLUDED_FIELDS`：volatile 字段 + 两个哈希 + `generator_fingerprint` +
   `semantic_hash_version`），legacy `benchmark_result_hash` **保留且规则冻结**（已发布的三份 acceptance
   payload 仍复算成当初发布的值）；`benchmark_result_hash` 待下一次正式 promotion 时降级为 deprecated。
-- **本轮（semantic-hash 修复）本地未推送**：等远端对这一步签下一次 Release Gate。三次运行（本地 3.12
-  两次 + CI 3.11 一次、同一 candidate `30a4339`）剥 volatile 后的语义哈希一致（`2c8000e7…`）；
-  `spec_fingerprint`、`core_corpus_fingerprint`、`coverage_corpus_digest`、`repair-coverage` 的
-  `report_hash` 均未动。
+- **semantic-hash 修复已 push**：远端签了 Release Gate，**`origin/main = 030f7d1a…`**（= `84d7399` +
+  那个提交，fast-forward）。定性：M5 evidence determinism fix、repair-local、backward-compatible、
+  不动 M4 canonical 语义、不动 M5 frozen v2 corpus/spec。
+  **`CI = run 35571088506 (success)`**（四 job 全绿，Backend Python 3.11 的 `pytest` **840 passed**）；
+  **`Visual baselines = run 35571130717 (success)`**。push 后最终校验记录：
+  `.freebuff/remote-bridge/17-push-verification.txt`。
+- **远端 reply16 的裁定（已执行）**：③-a 批准排除 `generator_fingerprint`（`spec_fingerprint` 保持在
+  哈希内——它定义 benchmark 语义环境）；③-b 批准 `semantic_hash_version` 不进哈希、由验证器单独检查；
+  legacy 兼容不变量批准（历史 payload + 新代码验证 = 原 legacy 哈希不变，不重写 `reports/m5/**`）；
+  payload 顶层 `"version": 1` **保持 1**（additive backward-compatible，与 `BENCHMARK_SPEC_VERSION` 是两条
+  独立版本轴）；**semantic golden = `2c8000e7…`（v1）**，`a208bdb0…` 只留作诊断历史。
+- **本地未推送：只有一条 HANDOFF 记账提交**（本节），等下一次授权随行；除此之外工作区干净。
 - **M5 spec v2 的判据记录不在本文件里，在 `docs/m5-agent-self-repair.md`**（`9d53b69` 已 push）：
   `S@1…S@4` 只发布不作硬门，硬门是 `attempt_contract` 与 `f6_s5_overall`；`BENCHMARK_SPEC_VERSION = 2`。
 

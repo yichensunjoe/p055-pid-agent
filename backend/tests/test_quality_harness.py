@@ -11,8 +11,8 @@ def test_offline_quality_harness_passes_without_provider():
     report = run_quality_harness(SymbolRegistry())
 
     assert report.passed is True
-    assert report.total_cases == 8
-    assert report.passed_cases == 8
+    assert report.total_cases == 9
+    assert report.passed_cases == 9
     assert report.failed_cases == 0
     assert [case.name for case in report.cases] == [
         "symbol_catalog_integrity",
@@ -23,6 +23,7 @@ def test_offline_quality_harness_passes_without_provider():
         "deterministic_drafting_contract",
         "cad_import_contract",
         "validation_contract",
+        "agent_self_repair_contract",
     ]
     graph_case = report.cases[4]
     # The M2 case must actually derive engineering objects, not just run.

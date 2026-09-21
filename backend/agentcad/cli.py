@@ -334,7 +334,9 @@ def _run_validation_command(args: argparse.Namespace) -> None:
     audit_context = AuditContext(
         actor="cli",
         surface="cli",
-        tool_name=("validate_document" if args.command == "validate" else "assess_release_readiness"),
+        tool_name=(
+            "validate_document" if args.command == "validate" else "assess_release_readiness"
+        ),
         label=f"{args.command} {args.document_id}",
     )
     try:
@@ -420,6 +422,353 @@ def _run_validation_command(args: argparse.Namespace) -> None:
         args.output.write_text(text + "\n", encoding="utf-8")
     print(text)
     raise SystemExit(0 if passed else 2)
+
+
+def _run_repair_command(args: argparse.Namespace) -> None:
+    """Repair one finding from the terminal, previewing before the governed write.
+
+    Exit codes: 0 means the drawing now satisfies the success oracle (or, for ``--preview``, that
+    a candidate did and no write was needed to say so); 2 means the run refused, failed, or asked
+    for a human (``human_required``); 3 means the request could not be bound to a finding at all
+    (the drawing has no unwaived finding matching the target, or the evaluation time is invalid).
+    """
+
+    from datetime import datetime
+
+    from .repair_models import repair_payload
+    from .repair_orchestrator import RepairStaleEvidence, repair_document_finding
+    from .service import DocumentNotFoundError, DocumentService
+    from .store import SQLiteDocumentStore
+    from .symbols import SymbolRegistry
+    from .validation_engine import ValidationTimeError, normalize_evaluation_time
+    from .validation_profile import ProfileError, load_profile
+
+    database = args.database or _default_database_path()
+    service = DocumentService(SQLiteDocumentStore(Path(database)), SymbolRegistry())
+    try:
+        profile = load_profile()
+    except ProfileError as exc:
+        print(_json_payload({"error": exc.code, "message": exc.message}))
+        raise SystemExit(2) from exc
+
+    moment = None
+    if args.as_of:
+        try:
+            parsed = datetime.fromisoformat(args.as_of.replace("Z", "+00:00"))
+            moment = normalize_evaluation_time(parsed)
+        except (ValueError, ValidationTimeError) as exc:
+            print(
+                _json_payload(
+                    {
+                        "error": "invalid_as_of",
+                        "message": "--as-of must carry a timezone, e.g. 2026-09-20T12:00:00Z",
+                    }
+                )
+            )
+            raise SystemExit(3) from exc
+
+    try:
+        run = repair_document_finding(
+            service,
+            profile,
+            args.document_id,
+            target_code=args.code or None,
+            validator_id=args.validator,
+            element_ids=list(args.element) or None,
+            hop=args.hop,
+            declared_by="surface_request",
+            permits_creation=args.permit_creation,
+            max_created_ids=1 if args.permit_creation else 0,
+            apply_enabled=not args.preview,
+            now=moment,
+        )
+    except DocumentNotFoundError as exc:
+        print(_json_payload({"error": "document_not_found", "document_id": args.document_id}))
+        raise SystemExit(3) from exc
+    except RepairStaleEvidence as exc:
+        print(_json_payload({"error": exc.code, "message": str(exc.args[0])}))
+        raise SystemExit(3) from exc
+
+    payload = repair_payload(run)
+    if args.preview:
+        payload["preview"] = True
+    text = _json_payload(payload)
+    if args.output:
+        args.output.write_text(text + "\n", encoding="utf-8")
+    print(text)
+    raise SystemExit(0 if run.repaired else 2)
+
+
+def _run_repair_benchmark_command(args: argparse.Namespace) -> None:
+    """Run the M5 self-repair benchmark and publish the evidence (baseline §M5-3, §N).
+
+    The gate this command implements is not "the agent repaired things" but "a reviewer can
+    recompute that claim". So it always does the two things that make the number mean something:
+    the case set is derived from ``--candidate-sha`` rather than listed here, and the published
+    payload is handed to the independent verifier, which recomputes the counts, S@1..S@5 and
+    the per-family rates from the case records.
+
+    Exit code 0 means the evidence verified *and* every threshold in the frozen spec was met;
+    2 means the candidate did not pass, or the evidence did not recompute.
+    """
+
+    import tempfile
+
+    from .repair_benchmark import THRESHOLDS
+    from .repair_benchmark_runner import BenchmarkContext, run_benchmark
+    from .repair_evidence import RepairBenchmarkResult, verify_benchmark_result
+    from .service import DocumentService
+    from .store import SQLiteDocumentStore
+    from .symbols import SymbolRegistry
+    from .validation_profile import built_in_profile, resolve_profile
+
+    def _run(database: Path) -> RepairBenchmarkResult:
+        registry = SymbolRegistry()
+        service = DocumentService(SQLiteDocumentStore(database), registry)
+        context = BenchmarkContext(
+            service=service,
+            profile=resolve_profile(built_in_profile()),
+            registry=registry,
+        )
+        result = run_benchmark(
+            context,
+            suite=args.suite,
+            candidate_sha=args.candidate_sha,
+            safety=not args.no_safety,
+        )
+        return result
+
+    if args.database is not None:
+        result = _run(Path(args.database))
+    else:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = _run(Path(tmp) / "repair-benchmark.db")
+
+    payload = result.model_dump(mode="json", by_alias=True)
+    if args.output:
+        args.output.write_text(_json_payload(payload) + "\n", encoding="utf-8")
+
+    report_ok = True
+    findings: list[str] = []
+    if not args.no_verify:
+        report = verify_benchmark_result(result)
+        report_ok = report.ok
+        findings = [f"{finding.code}: {finding.detail}" for finding in report.findings]
+
+    thresholds = result.thresholds or dict(THRESHOLDS)
+    summary = {
+        "schema": "pid-agent.repair-benchmark-summary",
+        "suite": result.suite,
+        "track": result.track,
+        "candidate_sha": result.candidate_sha,
+        "spec_fingerprint": result.spec_fingerprint,
+        "generator_fingerprint": result.generator_fingerprint,
+        "oracle_version": result.oracle_version,
+        "counts": result.counts.model_dump(mode="json"),
+        "s_at": result.s_at,
+        "family_s_at_5": result.family_s_at_5,
+        "failure_taxonomy": result.failure_taxonomy,
+        "thresholds": thresholds,
+        "gates": result.gates,
+        "gate_failures": result.gate_failures,
+        "safety": {"passed": result.safety_passed, "total": result.safety_total},
+        "cost": {
+            "input_tokens": result.input_tokens,
+            "output_tokens": result.output_tokens,
+            "estimated": result.token_usage_estimated,
+        },
+        "latency_ms": result.latency_ms,
+        "planner": (result.planner.model_dump(mode="json") if result.planner is not None else None),
+        "benchmark_result_hash": result.benchmark_result_hash,
+        "evidence_verified": report_ok,
+        "verification_findings": findings,
+    }
+    print(_json_payload(summary))
+    passed = (
+        all(result.gates.values()) and not result.gate_failures and (report_ok or args.no_verify)
+    )
+    raise SystemExit(0 if passed else 2)
+
+
+def _run_repair_scale_command(args: argparse.Namespace) -> None:
+    """Run the M5 scale track on a large drawing (baseline §G).
+
+    The gate here is not a percentage: §G fixes five deterministic cases and requires all five
+    to clear the full oracle, with zero governance violations. What the command is really for is
+    the numbers — scope size, context bytes, attempts and validation time on a drawing with
+    thousands of elements — because "the agent still localizes its work when the drawing is
+    huge" is the claim that needs evidence.
+
+    Exit code 0 means 5/5; 2 means at least one case failed, or a write happened outside the
+    case's policy; 3 means the source could not be prepared at all (a fixture problem, which
+    must not be reported as a repair failure).
+    """
+
+    import tempfile
+
+    from .repair_benchmark_runner import BenchmarkContext
+    from .repair_scale import ScaleSetupError, ScaleSource, run_scale_suite
+    from .service import DocumentService
+    from .store import SQLiteDocumentStore
+    from .symbols import SymbolRegistry
+    from .validation_profile import built_in_profile, resolve_profile
+
+    def _run(database: Path):
+        registry = SymbolRegistry()
+        service = DocumentService(SQLiteDocumentStore(database), registry)
+        context = BenchmarkContext(
+            service=service,
+            profile=resolve_profile(built_in_profile()),
+            registry=registry,
+        )
+        source = (
+            ScaleSource(kind="dwg", path=str(args.source))
+            if args.source is not None
+            else ScaleSource(kind="synthetic", element_target=args.element_target)
+        )
+        if args.no_semantic_seed:
+            source.semantic_seed = False
+        return run_scale_suite(
+            context,
+            source=source,
+            candidate_sha=args.candidate_sha,
+            progress=lambda case_id, record: print(
+                f"{case_id} {record.classification} attempts={record.attempts}",
+                file=sys.stderr,
+                flush=True,
+            ),
+        )
+
+    try:
+        if args.database is not None:
+            report = _run(Path(args.database))
+        else:
+            with tempfile.TemporaryDirectory() as tmp:
+                report = _run(Path(tmp) / "repair-scale.db")
+    except ScaleSetupError as exc:
+        error = {"error": "scale_source_unprepared", "message": str(exc)}
+        print(_json_payload(error), file=sys.stderr)
+        raise SystemExit(3) from exc
+
+    payload = report.model_dump(mode="json", by_alias=True)
+    if args.output:
+        args.output.write_text(_json_payload(payload) + "\n", encoding="utf-8")
+    print(_json_payload(payload))
+    passed = report.passed()
+    print(
+        _json_payload(
+            {
+                "schema": "pid-agent.repair-scale-summary",
+                "track": report.track,
+                "candidate_sha": report.candidate_sha,
+                "source": report.source,
+                "element_count": report.element_count,
+                "symbol_count": report.symbol_count,
+                "connector_count": report.connector_count,
+                "semantic_seed": report.semantic_seed,
+                "passed_cases": report.passed_cases,
+                "total_cases": report.total_cases,
+                "governance_violations": report.governance_violations,
+                "passed": passed,
+            }
+        ),
+        file=sys.stderr,
+    )
+    raise SystemExit(0 if passed else 2)
+
+
+def _run_repair_qualification_command(args: argparse.Namespace) -> None:
+    """Run the real-model qualification, or report that the project has no credential (§A4).
+
+    Exit codes are part of the evidence story: 0 means a real model qualified, 2 means the
+    qualification ran and the candidate did not clear the thresholds (or the evidence did not
+    recompute), and 3 means it could not run because there is no usable provider. A missing
+    credential must not look like a pass *or* like a failed candidate.
+    """
+
+    import tempfile
+
+    from .llm import ProviderNotConfiguredError
+    from .repair_benchmark_runner import BenchmarkContext
+    from .repair_qualification import (
+        awaiting_report,
+        configured_provider,
+        run_qualification,
+    )
+    from .service import DocumentService
+    from .store import SQLiteDocumentStore
+    from .symbols import SymbolRegistry
+    from .validation_profile import built_in_profile, resolve_profile
+
+    provider = configured_provider()
+    if provider is None:
+        report = awaiting_report(
+            candidate_sha=args.candidate_sha,
+            reason=(
+                "no model provider is configured: set PID_AGENT_LLM_BASE_URL and "
+                "PID_AGENT_LLM_MODEL (CI has no external provider by design)"
+            ),
+        )
+        payload = _json_payload(report.model_dump(mode="json", by_alias=True))
+        if args.output:
+            args.output.write_text(payload + "\n", encoding="utf-8")
+        print(payload)
+        raise SystemExit(3)
+
+    if args.dry_run:
+        report = awaiting_report(
+            candidate_sha=args.candidate_sha,
+            reason="a provider is configured; --dry-run does not call it",
+        )
+        payload = _json_payload(report.model_dump(mode="json", by_alias=True))
+        if args.output:
+            args.output.write_text(payload + "\n", encoding="utf-8")
+        print(payload)
+        raise SystemExit(0)
+
+    from .repair_model_planner import ModelRepairPlanner
+
+    try:
+        planner = ModelRepairPlanner(provider=provider)
+    except ProviderNotConfiguredError as exc:
+        report = awaiting_report(candidate_sha=args.candidate_sha, reason=str(exc))
+        payload = _json_payload(report.model_dump(mode="json", by_alias=True))
+        if args.output:
+            args.output.write_text(payload + "\n", encoding="utf-8")
+        print(payload)
+        raise SystemExit(3) from exc
+
+    def _qualify(database: Path):
+        registry = SymbolRegistry()
+        service = DocumentService(SQLiteDocumentStore(database), registry)
+        context = BenchmarkContext(
+            service=service,
+            profile=resolve_profile(built_in_profile()),
+            registry=registry,
+        )
+        return run_qualification(
+            context,
+            planner=planner,
+            candidate_sha=args.candidate_sha,
+        )
+
+    if args.database is not None:
+        report, result = _qualify(Path(args.database))
+    else:
+        with tempfile.TemporaryDirectory() as tmp:
+            report, result = _qualify(Path(tmp) / "repair-qualification.db")
+
+    payload = _json_payload(report.model_dump(mode="json", by_alias=True))
+    if args.output:
+        args.output.write_text(payload + "\n", encoding="utf-8")
+    if args.database is not None:
+        evidence_path = Path(args.database).with_suffix(".evidence.json")
+        evidence_path.write_text(
+            _json_payload(result.model_dump(mode="json", by_alias=True)) + "\n",
+            encoding="utf-8",
+        )
+    print(payload)
+    raise SystemExit(0 if report.status == "qualified" else 2)
 
 
 def _run_import_cad_command(args: argparse.Namespace) -> None:
@@ -598,9 +947,7 @@ def main(argv: list[str] | None = None) -> None:
     database_parser = subparsers.add_parser(
         "db", help="Inspect, back up, or restore the SQLite document database"
     )
-    database_subparsers = database_parser.add_subparsers(
-        dest="database_command", required=True
-    )
+    database_subparsers = database_parser.add_subparsers(dest="database_command", required=True)
     info_parser = database_subparsers.add_parser(
         "info", help="Migrate if needed and print database identity and schema information"
     )
@@ -610,7 +957,9 @@ def main(argv: list[str] | None = None) -> None:
         "backup", help="Create an integrity-checked online SQLite backup"
     )
     _add_database_argument(backup_parser)
-    backup_parser.add_argument("--output", type=Path, required=True, help="Destination .pidbak file")
+    backup_parser.add_argument(
+        "--output", type=Path, required=True, help="Destination .pidbak file"
+    )
     backup_parser.add_argument(
         "--overwrite", action="store_true", help="Replace an existing regular backup file"
     )
@@ -671,7 +1020,153 @@ def main(argv: list[str] | None = None) -> None:
         default=[],
         help="Additional symbol JSON file or directory; may be repeated",
     )
-    quality_parser.add_argument("--output", type=Path, default=None, help="Optional JSON report path")
+    quality_parser.add_argument(
+        "--output", type=Path, default=None, help="Optional JSON report path"
+    )
+
+    repair_parser = subparsers.add_parser(
+        "repair",
+        help=(
+            "Repair one canonical finding with the agent self-repair orchestrator "
+            "(preview first; one governed write when applied)"
+        ),
+    )
+    _add_database_argument(repair_parser)
+    repair_parser.add_argument("document_id", help="Document id to repair")
+    repair_parser.add_argument("--code", default="", help="Finding code to repair")
+    repair_parser.add_argument(
+        "--validator", default="", help="Restrict the target to one validator id"
+    )
+    repair_parser.add_argument(
+        "--element",
+        action="append",
+        default=[],
+        help="Restrict the target to findings touching this element (repeatable)",
+    )
+    repair_parser.add_argument("--hop", type=int, default=1, choices=(1, 2), help="Scope reach")
+    repair_parser.add_argument(
+        "--permit-creation",
+        action="store_true",
+        help="Allow the repair to put deleted equipment back (one new element at most)",
+    )
+    repair_parser.add_argument(
+        "--preview",
+        action="store_true",
+        help="Plan and judge the repair without writing it (the default is to apply)",
+    )
+    repair_parser.add_argument(
+        "--as-of", default="", help="Explicit evaluation time, e.g. 2026-09-20T12:00:00Z"
+    )
+    repair_parser.add_argument("--output", type=Path, default=None, help="Optional JSON path")
+
+    repair_benchmark_parser = subparsers.add_parser(
+        "repair-benchmark",
+        help=(
+            "Run the M5 agent self-repair benchmark (deterministic Track D) and publish "
+            "recomputable evidence"
+        ),
+    )
+    repair_benchmark_parser.add_argument(
+        "--suite",
+        choices=("dev", "acceptance"),
+        default="dev",
+        help="dev is the 24-case development suite; acceptance is the 72-case hard gate",
+    )
+    repair_benchmark_parser.add_argument(
+        "--candidate-sha",
+        default="",
+        help=(
+            "Commit the evidence is about. Acceptance seeds derive from it, so a run without "
+            "one describes no candidate"
+        ),
+    )
+    repair_benchmark_parser.add_argument(
+        "--database",
+        type=Path,
+        default=None,
+        help="SQLite database path; defaults to a temporary database per run",
+    )
+    repair_benchmark_parser.add_argument(
+        "--no-safety",
+        action="store_true",
+        help="Skip the safety-negative suite (development only; the gate always runs it)",
+    )
+    repair_benchmark_parser.add_argument(
+        "--no-verify",
+        action="store_true",
+        help="Skip recomputing the evidence (development only; the gate always verifies)",
+    )
+    repair_benchmark_parser.add_argument(
+        "--output", type=Path, default=None, help="Write the full evidence payload here"
+    )
+
+    repair_scale_parser = subparsers.add_parser(
+        "repair-scale",
+        help=(
+            "Run the M5 scale track (baseline §G): the same repairs on a large drawing, with "
+            "scope size, context bytes and timings reported per case"
+        ),
+    )
+    repair_scale_parser.add_argument(
+        "--source",
+        type=Path,
+        default=None,
+        help=(
+            "Real CAD file to import as the big drawing. Omit to build the synthetic "
+            "large drawing instead (CI has no private drawing)"
+        ),
+    )
+    repair_scale_parser.add_argument(
+        "--element-target",
+        type=int,
+        default=400,
+        help="Approximate element count for the synthetic drawing",
+    )
+    repair_scale_parser.add_argument(
+        "--no-semantic-seed",
+        action="store_true",
+        help=(
+            "Refuse to add the governed valve train that a raw-geometry import needs before "
+            "it has anything repairable. Report the failure instead of papering over it"
+        ),
+    )
+    repair_scale_parser.add_argument(
+        "--candidate-sha", default="", help="Commit the evidence is about"
+    )
+    repair_scale_parser.add_argument(
+        "--database",
+        type=Path,
+        default=None,
+        help="SQLite database path; defaults to a temporary database per run",
+    )
+    repair_scale_parser.add_argument(
+        "--output", type=Path, default=None, help="Write the scale report here"
+    )
+
+    qualification_parser = subparsers.add_parser(
+        "repair-qualification",
+        help=(
+            "Run the M5 real-model qualification (Track M): 24 cases through the same oracle "
+            "and orchestrator as the deterministic gate"
+        ),
+    )
+    qualification_parser.add_argument(
+        "--candidate-sha", default="", help="Commit the qualification is about"
+    )
+    qualification_parser.add_argument(
+        "--database",
+        type=Path,
+        default=None,
+        help="SQLite database path; defaults to a temporary database per run",
+    )
+    qualification_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Report whether a provider is configured, without calling it",
+    )
+    qualification_parser.add_argument(
+        "--output", type=Path, default=None, help="Write the qualification report here"
+    )
 
     audit_parser = subparsers.add_parser(
         "audit",
@@ -698,7 +1193,9 @@ def main(argv: list[str] | None = None) -> None:
     )
     audit_export_parser.add_argument("--document", default=None, help="Limit to one document")
     audit_export_parser.add_argument("--limit", type=int, default=1000)
-    audit_export_parser.add_argument("--output", type=Path, required=True, help="Destination JSON file")
+    audit_export_parser.add_argument(
+        "--output", type=Path, required=True, help="Destination JSON file"
+    )
     audit_evidence_parser = audit_subparsers.add_parser(
         "evidence", help="Print the evidence bound to one document revision"
     )
@@ -847,9 +1344,7 @@ def main(argv: list[str] | None = None) -> None:
 
     readiness_parser = subparsers.add_parser(
         "release-readiness",
-        help=(
-            "Assess release readiness (eligible/not_eligible evidence; never an approval)"
-        ),
+        help=("Assess release readiness (eligible/not_eligible evidence; never an approval)"),
     )
     _add_database_argument(readiness_parser)
     readiness_parser.add_argument("document_id", help="Document id to assess")
@@ -859,9 +1354,7 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Record a read/tool evidence event referencing the readiness hash",
     )
-    readiness_parser.add_argument(
-        "--summary", action="store_true", help="State and reasons only"
-    )
+    readiness_parser.add_argument("--summary", action="store_true", help="State and reasons only")
     readiness_parser.add_argument("--output", type=Path, default=None, help="Optional JSON path")
 
     import_cad_parser = subparsers.add_parser(
@@ -979,6 +1472,14 @@ def main(argv: list[str] | None = None) -> None:
         _run_validation_command(args)
     elif args.command == "import-cad":
         _run_import_cad_command(args)
+    elif args.command == "repair":
+        _run_repair_command(args)
+    elif args.command == "repair-benchmark":
+        _run_repair_benchmark_command(args)
+    elif args.command == "repair-scale":
+        _run_repair_scale_command(args)
+    elif args.command == "repair-qualification":
+        _run_repair_qualification_command(args)
     elif args.command == "quality-harness":
         from .quality_harness import run_quality_harness, symbol_load_failure_report
         from .symbols import SymbolCatalogLoadError, SymbolRegistry

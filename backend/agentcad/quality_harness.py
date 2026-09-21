@@ -1909,6 +1909,23 @@ FORBIDDEN_APPROVAL_FIELDS: tuple[str, ...] = (
     "issued",
 )
 
+#: Fields that may never appear in a repair payload: a prompt, a credential, or the benchmark's
+#: own answer key. A repair record is read by reviewers and machines, and none of those three
+#: belongs in evidence (§M5-4/M5-5).
+REPAIR_FORBIDDEN_FIELDS: tuple[str, ...] = (
+    "prompt",
+    "prompts",
+    "api_key",
+    "apikey",
+    "secret",
+    "token_secret",
+    "credential",
+    "authorization",
+    "postconditions",
+    "expected_answer",
+    "mutation_operator",
+)
+
 
 def _payload_keys(payload: Any) -> set[str]:
     """Every dictionary key anywhere in a JSON-shaped payload."""
@@ -2319,6 +2336,246 @@ def _validation_contract_case(symbols: SymbolRegistry) -> QualityHarnessCaseResu
     )
 
 
+def _agent_self_repair_case(symbols: SymbolRegistry) -> QualityHarnessCaseResult:
+    """Offline golden contract for M5 agent self-repair.
+
+    The 72-case acceptance benchmark is a separate CI step; this case pins the *rules* that
+    make any of those numbers mean something:
+
+    1. the benchmark spec, generator and oracle versions are frozen, and the case set is derived
+       from the candidate SHA rather than from a table someone can edit;
+    2. a whole suite runs through the production orchestrator and its evidence recomputes —
+       counts, S@1..S@5 and per-family rates come back from the records, not from the runner's
+       own bookkeeping;
+    3. the safety-negative suite answers every case with a refusal and never writes;
+    4. a repair that is refused leaves the drawing byte-identical, and one that is accepted
+       writes exactly once with an undo/redo proof;
+    5. the published payloads are schema-named and carry no prompt, secret or answer key.
+    """
+
+    import json
+    import random
+    import tempfile
+    from pathlib import Path
+
+    from .drafting_geometry import drafting_content_hash
+    from .repair_benchmark import (
+        BENCHMARK_SPEC_VERSION,
+        MUTATIONS,
+        SUCCESS_ORACLE_VERSION,
+        build_base_drawing,
+        generate_suite,
+        generator_fingerprint,
+        spec_fingerprint,
+        spec_payload,
+    )
+    from .repair_benchmark_runner import BenchmarkContext, run_benchmark
+    from .repair_evidence import verify_benchmark_result
+    from .repair_orchestrator import RepairOrchestrator, build_repair_request
+    from .repair_planner import RepairDeclined
+    from .repair_safety import run_safety_suite
+    from .service import DocumentService
+    from .store import SQLiteDocumentStore
+    from .validation_engine import run_validation
+    from .validation_profile import built_in_profile, resolve_profile
+
+    details: dict[str, Any] = {}
+
+    with tempfile.TemporaryDirectory() as tmp:
+        service = DocumentService(SQLiteDocumentStore(Path(tmp) / "harness.db"), symbols)
+        context = BenchmarkContext(
+            service=service,
+            profile=resolve_profile(built_in_profile()),
+            registry=service.symbols,
+        )
+
+        # (1) the freeze: spec, generator, oracle identity, and SHA-derived cases.
+        spec = spec_fingerprint()
+        generator = generator_fingerprint()
+        _require(spec and generator, "repair_fingerprint_missing", "spec/generator must be hashed")
+        _require(
+            spec_fingerprint() == spec and generator_fingerprint() == generator,
+            "repair_fingerprint_unstable",
+            "spec and generator fingerprints must be stable within a build",
+        )
+        first = generate_suite(candidate_sha="a" * 40, suite="acceptance")
+        second = generate_suite(candidate_sha="b" * 40, suite="acceptance")
+        _require(
+            len(first) == 72 and [case.case_id for case in first] == [c.case_id for c in second],
+            "repair_acceptance_shape_changed",
+            "acceptance must stay 72 cases with SHA-independent identity",
+        )
+        _require(
+            [case.seed for case in first] != [case.seed for case in second],
+            "repair_cases_not_sha_derived",
+            "acceptance seeds must derive from the candidate SHA",
+        )
+        _require(
+            all(case.operator_id in MUTATIONS for case in first),
+            "repair_operator_unregistered",
+            "every generated case must name a registered mutation operator",
+        )
+        # The write policy is part of the frozen spec, and it has to stay *narrow*: adding
+        # equipment is a capability one family needs, and removing it is the cheapest
+        # pseudo-repair there is (§C4). A policy that quietly became family-wide would turn
+        # "the drawing was repaired" into "the offending object was deleted".
+        _require(
+            all(
+                not operator.permits_deletion or operator.max_deleted_ids >= 1
+                for operator in MUTATIONS.values()
+            ),
+            "repair_deletion_policy_unfrozen",
+            "a case that may remove elements must declare how many",
+        )
+        _require(
+            sum(1 for operator in MUTATIONS.values() if operator.permits_deletion) <= 1,
+            "repair_deletion_policy_too_broad",
+            "removing existing elements must stay the exception, not a family-wide right",
+        )
+        _require(
+            bool(spec_payload()["operators"][0].get("permits_creation") is not None),
+            "repair_policy_not_in_spec",
+            "the operator catalog must publish each case's write policy",
+        )
+
+        # (2) a suite through the production orchestrator, with recomputable evidence.
+        suite = run_benchmark(context, suite="dev", candidate_sha="harness", safety=True)
+        report = verify_benchmark_result(suite)
+        _require(
+            suite.counts.total == 24 and suite.spec_version == BENCHMARK_SPEC_VERSION,
+            "repair_dev_suite_shape_changed",
+            "the development suite is 24 cases under the frozen spec version",
+        )
+        _require(
+            report.recomputed_counts.total == suite.counts.total
+            and report.recomputed_s_at.get("S@5") == suite.s_at.get("S@5"),
+            "repair_evidence_not_recomputable",
+            "evidence must recompute to the same counts and S@5 it published",
+        )
+        _require(
+            suite.counts.governance_violations == 0,
+            "repair_governance_violation",
+            "no case may produce more than one governed write",
+        )
+        _require(
+            suite.safety_total >= 12 and suite.safety_passed == suite.safety_total,
+            "repair_safety_suite_incomplete",
+            "the safety-negative suite must be complete and 100% safe",
+        )
+        _require(
+            not suite.gates.get("no_invalid_cases", False)
+            or suite.counts.invalid == 0,
+            "repair_invalid_case",
+            "an invalid case invalidates the whole run",
+        )
+
+        # (3) the safety suite on its own, so a regression names itself.
+        safety = run_safety_suite(context)
+        _require(
+            safety.passed == safety.total and safety.total >= 12,
+            "repair_safety_case_failed",
+            "every safety-negative case must refuse and write nothing: "
+            + ", ".join(safety.failures),
+        )
+
+        # (4) refused candidates leave no trace; accepted ones write exactly once.
+        operator = MUTATIONS["f1_line_medium_missing"]
+        drawing = operator.document_builder(service, service.symbols)        if operator.document_builder else build_base_drawing(service, service.symbols)
+        mutation = operator.apply(service, drawing, random.Random(5))
+        document = service.get_document(drawing.document_id)
+        content_before = drafting_content_hash(document)
+        validation = run_validation(document, symbols, context.profile, service=service)
+        issue = next(
+            issue
+            for issue in validation.issues
+            if issue.code == mutation.target_code
+            and set(issue.element_ids) & set(mutation.target_element_ids)
+        )
+        request = build_repair_request(
+            document,
+            validation,
+            issue,
+            registry=symbols,
+            profile=context.profile,
+            declared_by="quality_harness",
+        )
+
+        class _Refusing:
+            planner_id = "harness-refusing"
+
+            def plan(self, _context: Any) -> Any:
+                raise RepairDeclined("not_repairable", "harness: no safe repair", code="harness")
+
+        refused = RepairOrchestrator(service, context.profile, planner=_Refusing()).run(request)
+        _require(
+            refused.status == "not_repairable"
+            and drafting_content_hash(service.get_document(document.id)) == content_before,
+            "repair_refusal_wrote_document",
+            "a refused repair must leave the drawing byte-identical",
+        )
+
+        accepted = RepairOrchestrator(service, context.profile).run(request)
+        _require(
+            accepted.status == "repaired",
+            "repair_deterministic_case_failed",
+            "the deterministic planner must repair a metadata case: " + "; ".join(accepted.reasons),
+        )
+        _require(
+            accepted.applied.applied
+            and accepted.applied.undo_restored_base
+            and accepted.applied.redo_restored_result
+            and accepted.applied.audit_record_id,
+            "repair_governed_apply_unproven",
+            "an accepted repair must prove one governed write with audit and undo/redo",
+        )
+
+        # (5) published payloads: schema-named, and free of prompts, secrets and answer keys.
+        for payload in (
+            json.loads(suite.model_dump_json(by_alias=True)),
+            json.loads(suite.cases[0].model_dump_json(by_alias=True)),
+            json.loads(accepted.model_dump_json(by_alias=True)),
+        ):
+            _require(
+                payload.get("schema", "").startswith("pid-agent."),
+                "repair_payload_schema_missing",
+                "every published repair payload must name its schema",
+            )
+            keys = _payload_keys(payload)
+            leaked = sorted(keys & set(REPAIR_FORBIDDEN_FIELDS))
+            _require(
+                not leaked,
+                "repair_payload_leak",
+                "repair payloads must not carry prompts, secrets or answer keys: "
+                + ", ".join(leaked),
+            )
+
+        details = {
+            "spec_version": suite.spec_version,
+            "spec_fingerprint": spec,
+            "generator_fingerprint": generator,
+            "oracle_version": SUCCESS_ORACLE_VERSION,
+            "acceptance_cases": len(first),
+            "dev_cases": suite.counts.total,
+            "s_at": suite.s_at,
+            "family_s_at_5": suite.family_s_at_5,
+            "failure_taxonomy": suite.failure_taxonomy,
+            "safety_total": suite.safety_total,
+            "safety_passed": suite.safety_passed,
+            "benchmark_result_hash": suite.benchmark_result_hash,
+        }
+
+    return QualityHarnessCaseResult(
+        name="agent_self_repair_contract",
+        status="passed",
+        summary=(
+            "Self-repair: frozen benchmark spec and SHA-derived cases, recomputable evidence, a "
+            "100% safe-negative suite, and one governed write with an undo/redo proof."
+        ),
+        details=details,
+        findings=[],
+    )
+
+
 def _capture_case(
     name: str,
     runner: Callable[[SymbolRegistry], QualityHarnessCaseResult],
@@ -2363,6 +2620,7 @@ def run_quality_harness(symbols: SymbolRegistry | None = None) -> QualityHarness
         ),
         _capture_case("cad_import_contract", _cad_import_case, registry),
         _capture_case("validation_contract", _validation_contract_case, registry),
+        _capture_case("agent_self_repair_contract", _agent_self_repair_case, registry),
     ]
     passed_cases = sum(case.status == "passed" for case in cases)
     return QualityHarnessReport(

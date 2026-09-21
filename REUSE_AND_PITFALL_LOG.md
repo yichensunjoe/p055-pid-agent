@@ -1,5 +1,29 @@
 # REUSE_AND_PITFALL_LOG — P055-PID-Agent
 
+## 2026-09-21 · 一个 TransactionRequest 只能带 1000 个 operation，而 annotation polish 会给每个带 label 的 symbol 再补 2 个（P055-PID-Agent）
+
+- 场景：M5 scale track 要一张几百元素的合成大图，于是把整张图当作**一个**治理事务提交（“一次逻辑变更”，与 CAD 导入的口径一致）。结果：`annotation polish failed for document doc_…: List should have at most 1000 items after validation, not 1023`。那条日志只是 warning，于是真正浮上来的错误是后面的 `assessment invalid`——看起来像校验器拒绝了我的图纸，实际是布景阶段就崩了。
+- 结论做法：按 train（一条 8 阀门链）分块提交，每块一个受治理事务。polish 只对**当前还有 label 的** symbol 补 operation，而上一块已经把它们清空，所以每块的 polish 开销有界；总图规模可以任意大。判据不是“元素总数”，而是“单次事务里 operation 数 × 约 2.6”。
+- 关键经验：**benchmark/scale 的布景失败会被下游当成被测系统的失败**。看到“assessment invalid”这类结论先回放布景阶段，尤其当有一行 `… failed: …` 的 warning 出现在它前面时——warning 不等于无害。
+
+## 2026-09-21 · `@dataclass` 挂在异常类上会让它无法携带 message（P055-PID-Agent）
+
+- 场景：`repair_benchmark.py` 里 `@dataclass class BenchmarkSetupError(RuntimeError)`。因为它没有字段，生成出的 `__init__(self)` 不接受任何参数，所以 `raise BenchmarkSetupError(f"{label} could not be compiled: …")` 抛出的不是那句说明，而是 `TypeError: BenchmarkSetupError.__init__() takes 1 positional argument but 2 were given`。这条错误路径在全部测试里从未被走到，所以一直没暴露；一旦走到，它把真正的信息完全盖掉。
+- 结论做法：异常类一律不加 `@dataclass`（除非它真的带字段），并在文档字符串里写清它不这么做的原因。同类模块（`repair_scale.py` 的 `ScaleSetupError`、`repair_orchestrator` 的 setup error）保持无装饰器。
+- 关键经验：**装饰器的默认行为会改变继承来的语义**。给异常、协议类、Protocol 实现加 `@dataclass` 前，先问一句“它还能接住调用者传的那个参数吗？”
+
+## 2026-09-21 · 真实 CAD 文件是几何，不是 P&ID：scale track 必须把这件事说出来（P055-PID-Agent）
+
+- 场景：§G 要求在大图上重跑修复路径，指定文件导入后有 9757 个元素。但一查类型分布：7167 line + 1830 polyline + 398 circle + 362 text，**0 个 symbol、0 个 connector**。修复 operator 需要一个带 port 的元素才能注入 defect——`role_map_for` 直接抛 `ScaleSetupError`。
+- 结论做法：不假装某条 line 是 connector。working copy = 真实导入图 + 一条通过 semantic compiler 与受治理事务追加的阀组 train，并在报告里用 `semantic_seed` 字段写明是否使用、原因、加了多少元素；同时提供 `--no-semantic-seed`，拒绝这么做时以退出码 3（setup 失败）而不是“修复失败”结束。另一个方向的证据（纯导入 metrics：SHA-256 / converter+version / import time / element count / base validation time）与原图一起保留。
+- 关键经验：**“大图上的成功率”这句话里，“大图”是什么必须先回答**。当源文件只有几何时，把“为可修结构补一层”写进证据，比挑一张恰好有语义的图更诚实。
+
+## 2026-09-21 · `hash()` 不能进 benchmark seed（P055-PID-Agent）
+
+- 场景：scale track 的 case 集是固定列表，所以最初用 `abs(hash(case_id))` 当 seed——“列表固定了，seed 自然固定”。但 `hash()` 按进程加盐，同一台机器两次运行的两个数字不同，evidence 就跑不出一致结果。
+- 结论做法：仍然走 `derive_seed(spec, candidate_sha, family, index)`，index 取 case 在冻结列表中的位置。这样“换列表顺序”成为对证据可见的变更，而不是一次静默重掷。
+- 关键经验：**任何进 evidence 的随机量都必须是从已发布的输入派生出来的**，即使当前看起来“固定”。
+
 ## 2026-09-19 · “分批写入”不是“一次用户动作”：原子性与 undo 必须定义在用户级操作边界上（P055-PID-Agent）
 
 - 场景：CAD 导入最初写成“先 `create_document()`，再按 1000 操作/批 `apply_transaction()`”。每一批都走受治理通道、都有 revision/审计/undo，看起来比“一次性写完”更“规范”。但它有两个真实缺陷：① 第 N 批失败会留下一份**看起来正常**的半张图（revision 正常、列表里有、能打开）；② `undo()` 一次只弹一层栈，所以 9242 图元的大图一次 undo 只能撤最后一批。测试当时全绿，因为测的是“有事务”和“能撤销”。

@@ -62,6 +62,90 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  repair-benchmark:
+    name: M5 self-repair · 72-case deterministic gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install project and test dependencies
+        run: python -m pip install --upgrade pip && python -m pip install -e ".[mcp,dev]"
+
+      # The development suite runs first because a failure there names its own family, which
+      # makes the acceptance failure that follows readable.
+      - name: Development suite
+        shell: bash
+        run: |
+          mkdir -p backend/test-results
+          set -o pipefail
+          pid-agent repair-benchmark --suite dev --candidate-sha "${{ github.sha }}" | \
+            tee backend/test-results/repair-benchmark-dev.json
+
+      # The case set derives from this SHA, so the evidence is about *this* commit and cannot be
+      # reused by the next one. The command exits 2 when a threshold is missed or when the
+      # published payload does not recompute, which is what makes the job a gate.
+      - name: Acceptance suite · 72 cases
+        shell: bash
+        run: |
+          set -o pipefail
+          pid-agent repair-benchmark \
+            --suite acceptance \
+            --candidate-sha "${{ github.sha }}" \
+            --output backend/test-results/repair-benchmark-acceptance.json | \
+            tee backend/test-results/repair-benchmark-summary.json
+
+      # §G fixes five deterministic cases on a large drawing. CI has no private drawing, so the
+      # synthetic large drawing is used here; the real-file run is part of the local acceptance
+      # evidence, where the drawing exists and its SHA-256 can be recorded.
+      - name: Scale track · 5 cases on the large synthetic drawing
+        shell: bash
+        run: |
+          set -o pipefail
+          pid-agent repair-scale \
+            --candidate-sha "${{ github.sha }}" \
+            --output backend/test-results/repair-scale.json > /dev/null
+
+      # §A4: a missing credential must be reported as such, never as a pass and never as a
+      # failed candidate. The step therefore asserts exit code 3 specifically.
+      - name: Real-model qualification · awaiting credential
+        shell: bash
+        run: |
+          set -o pipefail
+          set +e
+          pid-agent repair-qualification --candidate-sha "${{ github.sha }}" \
+            --output backend/test-results/repair-qualification.json \
+            > backend/test-results/repair-qualification-summary.json
+          status=$?
+          if [ "$status" -ne 3 ]; then
+            echo "expected 'awaiting credential' (exit 3), got exit $status"
+            exit 1
+          fi
+
+      - name: Upload self-repair evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: repair-benchmark-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            backend/test-results/repair-benchmark-acceptance.json
+            backend/test-results/repair-benchmark-summary.json
+            backend/test-results/repair-benchmark-dev.json
+            backend/test-results/repair-scale.json
+            backend/test-results/repair-qualification.json
+            backend/test-results/repair-qualification-summary.json
+          if-no-files-found: ignore
+          retention-days: 30
+
   frontend:
     name: Frontend · Node 24
     runs-on: ubuntu-latest

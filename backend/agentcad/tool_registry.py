@@ -32,6 +32,21 @@ class HistoryToolInput(DocumentToolInput):
     limit: int = Field(default=100, ge=1, le=5000)
 
 
+class RepairFindingToolInput(DocumentToolInput):
+    """A repair target: which finding, how far the scope may reach, and nothing else.
+
+    Deliberately narrow. A tool that accepted a plan, a waiver, a profile or a success verdict
+    would be a second repair implementation with its own opinion about what "repaired" means.
+    """
+
+    code: str = ""
+    validator_id: str = ""
+    element_ids: list[str] = Field(default_factory=list)
+    hop: int = Field(default=1, ge=1, le=2)
+    permits_creation: bool = False
+    as_of: str = ""
+
+
 class LowLevelTransactionToolInput(DocumentToolInput):
     transaction: TransactionRequest
 
@@ -315,6 +330,39 @@ def get_default_tool_registry() -> ToolRegistry:
                 audit_event="tool.get_document",
                 surfaces=["mcp", "rest", "agent"],
                 tags=["inspect", "document"],
+            ),
+            ToolDefinition(
+                name="preview_repair_finding",
+                description=(
+                    "Plan, compile and judge a self-repair for one canonical finding "
+                    "without writing: every attempt, its failure code, the selected plan "
+                    "and the success oracle's verdict. Read-only."
+                ),
+                input_schema=RepairFindingToolInput.model_json_schema(),
+                output_schema=_object_schema("Canonical self-repair result (not applied)."),
+                permission="allow",
+                risk="read",
+                audit_event="tool.preview_repair_finding",
+                surfaces=["mcp", "rest"],
+                tags=["repair", "preview", "validation", "agent"],
+            ),
+            ToolDefinition(
+                name="repair_finding",
+                description=(
+                    "Repair one canonical finding through the governed write path: one "
+                    "audited revision, and only after a shadow candidate passed the success "
+                    "oracle. Cannot waive a finding or approve a release."
+                ),
+                input_schema=RepairFindingToolInput.model_json_schema(),
+                output_schema=_object_schema("Canonical self-repair result (one write, or none)."),
+                permission="ask",
+                risk="engineering_change",
+                has_side_effect=True,
+                preview_supported=True,
+                idempotency="depends_on_revision",
+                audit_event="tool.repair_finding",
+                surfaces=["mcp", "rest"],
+                tags=["repair", "validation", "agent", "engineering-change"],
             ),
             ToolDefinition(
                 name="get_scene_summary",

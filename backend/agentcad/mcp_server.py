@@ -86,6 +86,48 @@ def _parse_as_of(raw: str):
         ) from exc
 
 
+def _run_repair(
+    service: DocumentService,
+    document_id: str,
+    *,
+    code: str,
+    validator_id: str,
+    element_ids: list[str],
+    hop: int,
+    permits_creation: bool,
+    as_of: str,
+    apply_enabled: bool,
+) -> dict:
+    """One repair, for both MCP tools, through the server-side orchestrator.
+
+    Two tools and one implementation: the preview and the apply differ only in whether the
+    governed write is allowed, so an agent cannot be shown one plan and given another.
+    """
+
+    from .repair_models import repair_payload
+    from .repair_orchestrator import repair_document_finding
+    from .validation_profile import load_profile
+
+    moment = _parse_as_of(as_of)
+    profile = load_profile()
+    document = service.get_document(document_id)
+    run = repair_document_finding(
+        service,
+        profile,
+        document.id,
+        target_code=code or None,
+        validator_id=validator_id,
+        element_ids=element_ids or None,
+        hop=hop,
+        declared_by="surface_request",
+        permits_creation=permits_creation,
+        max_created_ids=1 if permits_creation else 0,
+        apply_enabled=apply_enabled,
+        now=moment,
+    )
+    return repair_payload(run)
+
+
 def emit_read_diagnostics(
     service: DocumentService,
     document,
@@ -455,6 +497,67 @@ def build_mcp_server(settings: Settings | None = None) -> tuple[Any, str]:
             },
         )
         return canonical_payload(readiness)
+
+    @mcp.tool()
+    def preview_repair_finding(
+        document_id: str,
+        code: str = "",
+        validator_id: str = "",
+        element_ids: list[str] | None = None,
+        hop: int = 1,
+        permits_creation: bool = False,
+        as_of: str = "",
+    ) -> dict:
+        """Plan and judge a repair for one finding without writing anything.
+
+        Returns exactly what ``repair_finding`` would return, with ``applied.applied`` false:
+        every attempt, its failure code, the selected plan's hash and the oracle's verdict.
+        Call this before asking a human to authorise a repair; the record is the reason.
+        """
+
+        return _run_repair(
+            service,
+            document_id,
+            code=code,
+            validator_id=validator_id,
+            element_ids=element_ids or [],
+            hop=hop,
+            permits_creation=permits_creation,
+            as_of=as_of,
+            apply_enabled=False,
+        )
+
+    @mcp.tool()
+    def repair_finding(
+        document_id: str,
+        code: str = "",
+        validator_id: str = "",
+        element_ids: list[str] | None = None,
+        hop: int = 1,
+        permits_creation: bool = False,
+        as_of: str = "",
+    ) -> dict:
+        """Repair one canonical finding through the governed write path. Writes at most once.
+
+        The finding is re-derived from a fresh validation of the stored document, so this
+        repairs what the validators currently report rather than a description the caller
+        passed in. Candidates are planned and judged on a shadow copy; only a candidate that
+        passes the success oracle is applied, in one governed transaction with an audit chain
+        and an undo/redo proof. ``permits_creation`` is required to put deleted equipment back,
+        and is off by default. Nothing here can waive a finding or approve a release.
+        """
+
+        return _run_repair(
+            service,
+            document_id,
+            code=code,
+            validator_id=validator_id,
+            element_ids=element_ids or [],
+            hop=hop,
+            permits_creation=permits_creation,
+            as_of=as_of,
+            apply_enabled=True,
+        )
 
     @mcp.tool()
     def get_scene_summary(document_id: str) -> dict:

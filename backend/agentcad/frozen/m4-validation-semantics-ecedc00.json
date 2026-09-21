@@ -1,0 +1,650 @@
+{
+  "canonical": {
+    "release_readiness_schema": "pid-agent.release-readiness",
+    "rule_catalog_size": 37,
+    "validation_result_schema": "pid-agent.validation-result"
+  },
+  "disabled_rules": [],
+  "enabled_rules": [
+    "diagram-quality.ANNOTATION_OVERLAP",
+    "diagram-quality.CONNECTOR_OUT_OF_BOUNDS",
+    "diagram-quality.DUPLICATE_LABEL",
+    "diagram-quality.EXCESSIVE_BENDS",
+    "diagram-quality.MICRO_SEGMENT",
+    "diagram-quality.NODE_OVERLAP",
+    "diagram-quality.NON_ORTHOGONAL_SEGMENT",
+    "diagram-quality.PIPE_THROUGH_EQUIPMENT",
+    "diagram-quality.PORT_DIRECTION_MISMATCH",
+    "diagram-quality.PORT_EXIT_MISMATCH",
+    "diagram-quality.PORT_FACING_MISMATCH",
+    "diagram-quality.QUALITY_SCORE_BELOW_TARGET",
+    "diagram-quality.SYMBOL_OUT_OF_BOUNDS",
+    "diagram-quality.UNBRIDGED_CROSSING",
+    "diagram-quality.UNNECESSARY_BEND",
+    "engineering-graph.IR_DUPLICATE_IDENTITY",
+    "engineering-graph.IR_ENDPOINT_ELEMENT_MISSING",
+    "engineering-graph.IR_IDENTITY_COLLISION",
+    "engineering-graph.IR_ISOLATED_OBJECT",
+    "engineering-graph.IR_OPC_CONNECTION_ID_DUPLICATE",
+    "engineering-graph.IR_OPC_TARGET_MISSING",
+    "engineering-graph.IR_ORPHAN_LINE",
+    "engineering-graph.IR_SIGNAL_UNNAMED",
+    "engineering-graph.IR_SIGNAL_WITHOUT_INSTRUMENT",
+    "engineering-graph.IR_SYMBOL_DEFINITION_MISSING",
+    "engineering-report.CONNECTOR_ENDPOINT_DANGLING",
+    "engineering-report.CONNECTOR_ENDPOINT_ELEMENT_MISSING",
+    "engineering-report.CONNECTOR_ENDPOINT_INVALID_ELEMENT_TYPE",
+    "engineering-report.CONNECTOR_ENDPOINT_POINT_MISMATCH",
+    "engineering-report.CONNECTOR_ENDPOINT_PORT_MISSING",
+    "engineering-report.LINE_DIAMETER_MISSING",
+    "engineering-report.LINE_MEDIUM_MISSING",
+    "engineering-report.LINE_TAG_MISSING",
+    "engineering-report.SYMBOL_DEFINITION_MISSING",
+    "engineering-report.SYMBOL_REQUIRED_PORT_UNCONNECTED",
+    "engineering-report.TAG_DUPLICATE",
+    "engineering-report.TAG_MISSING"
+  ],
+  "engine_version": "1",
+  "fixture_projections": [
+    {
+      "fixture_id": "clean_pair",
+      "issues": [
+        {
+          "code": "SYMBOL_REQUIRED_PORT_UNCONNECTED",
+          "element_ids": [
+            "v1"
+          ],
+          "object_ids": [],
+          "rule_id": "engineering-report.SYMBOL_REQUIRED_PORT_UNCONNECTED",
+          "severity": "warning",
+          "validator_id": "engineering-report"
+        },
+        {
+          "code": "SYMBOL_REQUIRED_PORT_UNCONNECTED",
+          "element_ids": [
+            "v2"
+          ],
+          "object_ids": [],
+          "rule_id": "engineering-report.SYMBOL_REQUIRED_PORT_UNCONNECTED",
+          "severity": "warning",
+          "validator_id": "engineering-report"
+        },
+        {
+          "code": "TAG_MISSING",
+          "element_ids": [
+            "v1"
+          ],
+          "object_ids": [],
+          "rule_id": "engineering-report.TAG_MISSING",
+          "severity": "warning",
+          "validator_id": "engineering-report"
+        },
+        {
+          "code": "TAG_MISSING",
+          "element_ids": [
+            "v2"
+          ],
+          "object_ids": [],
+          "rule_id": "engineering-report.TAG_MISSING",
+          "severity": "warning",
+          "validator_id": "engineering-report"
+        }
+      ],
+      "title": "two tagged valves joined by a line",
+      "validators_run": [
+        "diagram-quality",
+        "engineering-graph",
+        "engineering-report"
+      ],
+      "validators_skipped": []
+    },
+    {
+      "fixture_id": "duplicate_tags",
+      "issues": [
+        {
+          "code": "IR_DUPLICATE_IDENTITY",
+          "element_ids": [],
+          "object_ids": [
+            "vl_47f17d4dbb69",
+            "vl_5e0da2ae903d"
+          ],
+          "rule_id": "engineering-graph.IR_DUPLICATE_IDENTITY",
+          "severity": "error",
+          "validator_id": "engineering-graph"
+        },
+        {
+          "code": "SYMBOL_REQUIRED_PORT_UNCONNECTED",
+          "element_ids": [
+            "v1"
+          ],
+          "object_ids": [],
+          "rule_id": "engineering-report.SYMBOL_REQUIRED_PORT_UNCONNECTED",
+          "severity": "warning",
+          "validator_id": "engineering-report"
+        },
+        {
+          "code": "SYMBOL_REQUIRED_PORT_UNCONNECTED",
+          "element_ids": [
+            "v2"
+          ],
+          "object_ids": [],
+          "rule_id": "engineering-report.SYMBOL_REQUIRED_PORT_UNCONNECTED",
+          "severity": "warning",
+          "validator_id": "engineering-report"
+        },
+        {
+          "code": "TAG_MISSING",
+          "element_ids": [
+            "v1"
+          ],
+          "object_ids": [],
+          "rule_id": "engineering-report.TAG_MISSING",
+          "severity": "warning",
+          "validator_id": "engineering-report"
+        },
+        {
+          "code": "TAG_MISSING",
+          "element_ids": [
+            "v2"
+          ],
+          "object_ids": [],
+          "rule_id": "engineering-report.TAG_MISSING",
+          "severity": "warning",
+          "validator_id": "engineering-report"
+        }
+      ],
+      "title": "two valves sharing one tag",
+      "validators_run": [
+        "diagram-quality",
+        "engineering-graph",
+        "engineering-report"
+      ],
+      "validators_skipped": []
+    },
+    {
+      "fixture_id": "dangling_endpoint",
+      "issues": [
+        {
+          "code": "PIPE_THROUGH_EQUIPMENT",
+          "element_ids": [
+            "p1"
+          ],
+          "object_ids": [],
+          "rule_id": "diagram-quality.PIPE_THROUGH_EQUIPMENT",
+          "severity": "error",
+          "validator_id": "diagram-quality"
+        },
+        {
+          "code": "QUALITY_SCORE_BELOW_TARGET",
+          "element_ids": [],
+          "object_ids": [],
+          "rule_id": "diagram-quality.QUALITY_SCORE_BELOW_TARGET",
+          "severity": "error",
+          "validator_id": "diagram-quality"
+        },
+        {
+          "code": "IR_ISOLATED_OBJECT",
+          "element_ids": [
+            "v2"
+          ],
+          "object_ids": [
+            "vl_5e0da2ae903d"
+          ],
+          "rule_id": "engineering-graph.IR_ISOLATED_OBJECT",
+          "severity": "info",
+          "validator_id": "engineering-graph"
+        },
+        {
+          "code": "CONNECTOR_ENDPOINT_DANGLING",
+          "element_ids": [
+            "p1"
+          ],
+          "object_ids": [],
+          "rule_id": "engineering-report.CONNECTOR_ENDPOINT_DANGLING",
+          "severity": "error",
+          "validator_id": "engineering-report"
+        },
+        {
+          "code": "SYMBOL_REQUIRED_PORT_UNCONNECTED",
+          "element_ids": [
+            "v1"
+          ],
+          "object_ids": [],
+          "rule_id": "engineering-report.SYMBOL_REQUIRED_PORT_UNCONNECTED",
+          "severity": "warning",
+          "validator_id": "engineering-report"
+        },
+        {
+          "code": "SYMBOL_REQUIRED_PORT_UNCONNECTED",
+          "element_ids": [
+            "v2"
+          ],
+          "object_ids": [],
+          "rule_id": "engineering-report.SYMBOL_REQUIRED_PORT_UNCONNECTED",
+          "severity": "warning",
+          "validator_id": "engineering-report"
+        },
+        {
+          "code": "TAG_MISSING",
+          "element_ids": [
+            "v1"
+          ],
+          "object_ids": [],
+          "rule_id": "engineering-report.TAG_MISSING",
+          "severity": "warning",
+          "validator_id": "engineering-report"
+        },
+        {
+          "code": "TAG_MISSING",
+          "element_ids": [
+            "v2"
+          ],
+          "object_ids": [],
+          "rule_id": "engineering-report.TAG_MISSING",
+          "severity": "warning",
+          "validator_id": "engineering-report"
+        }
+      ],
+      "title": "a line whose target endpoint was cleared",
+      "validators_run": [
+        "diagram-quality",
+        "engineering-graph",
+        "engineering-report"
+      ],
+      "validators_skipped": []
+    },
+    {
+      "fixture_id": "colliding_pair",
+      "issues": [
+        {
+          "code": "ANNOTATION_OVERLAP",
+          "element_ids": [],
+          "object_ids": [],
+          "rule_id": "diagram-quality.ANNOTATION_OVERLAP",
+          "severity": "error",
+          "validator_id": "diagram-quality"
+        },
+        {
+          "code": "NODE_OVERLAP",
+          "element_ids": [
+            "v1",
+            "v2"
+          ],
+          "object_ids": [],
+          "rule_id": "diagram-quality.NODE_OVERLAP",
+          "severity": "error",
+          "validator_id": "diagram-quality"
+        },
+        {
+          "code": "QUALITY_SCORE_BELOW_TARGET",
+          "element_ids": [],
+          "object_ids": [],
+          "rule_id": "diagram-quality.QUALITY_SCORE_BELOW_TARGET",
+          "severity": "error",
+          "validator_id": "diagram-quality"
+        },
+        {
+          "code": "IR_ISOLATED_OBJECT",
+          "element_ids": [
+            "v1"
+          ],
+          "object_ids": [
+            "vl_47f17d4dbb69"
+          ],
+          "rule_id": "engineering-graph.IR_ISOLATED_OBJECT",
+          "severity": "info",
+          "validator_id": "engineering-graph"
+        },
+        {
+          "code": "IR_ISOLATED_OBJECT",
+          "element_ids": [
+            "v2"
+          ],
+          "object_ids": [
+            "vl_5e0da2ae903d"
+          ],
+          "rule_id": "engineering-graph.IR_ISOLATED_OBJECT",
+          "severity": "info",
+          "validator_id": "engineering-graph"
+        },
+        {
+          "code": "SYMBOL_REQUIRED_PORT_UNCONNECTED",
+          "element_ids": [
+            "v1"
+          ],
+          "object_ids": [],
+          "rule_id": "engineering-report.SYMBOL_REQUIRED_PORT_UNCONNECTED",
+          "severity": "warning",
+          "validator_id": "engineering-report"
+        },
+        {
+          "code": "SYMBOL_REQUIRED_PORT_UNCONNECTED",
+          "element_ids": [
+            "v2"
+          ],
+          "object_ids": [],
+          "rule_id": "engineering-report.SYMBOL_REQUIRED_PORT_UNCONNECTED",
+          "severity": "warning",
+          "validator_id": "engineering-report"
+        }
+      ],
+      "title": "two overlapping valves",
+      "validators_run": [
+        "diagram-quality",
+        "engineering-graph",
+        "engineering-report"
+      ],
+      "validators_skipped": []
+    },
+    {
+      "fixture_id": "empty_drawing",
+      "issues": [],
+      "title": "no elements at all",
+      "validators_run": [
+        "diagram-quality",
+        "engineering-graph",
+        "engineering-report"
+      ],
+      "validators_skipped": []
+    }
+  ],
+  "m4_accepted_sha": "ecedc00ae3063a4043334bd30367008d00665a29",
+  "manifest_version": "1",
+  "profile": {
+    "id": "built-in",
+    "version": "1"
+  },
+  "release_policy": {
+    "fail_on": [
+      "blocker"
+    ],
+    "human_approval_required": true,
+    "release_validator_version": "1",
+    "required_validators": [
+      "diagram-quality",
+      "engineering-graph",
+      "engineering-report"
+    ],
+    "states": [
+      "eligible",
+      "not_eligible"
+    ]
+  },
+  "rule_catalog": [
+    {
+      "code": "NON_ORTHOGONAL_SEGMENT",
+      "default_severity": "error",
+      "rule_id": "diagram-quality.NON_ORTHOGONAL_SEGMENT",
+      "threshold": null,
+      "validator_id": "diagram-quality"
+    },
+    {
+      "code": "MICRO_SEGMENT",
+      "default_severity": "error",
+      "rule_id": "diagram-quality.MICRO_SEGMENT",
+      "threshold": null,
+      "validator_id": "diagram-quality"
+    },
+    {
+      "code": "UNNECESSARY_BEND",
+      "default_severity": "error",
+      "rule_id": "diagram-quality.UNNECESSARY_BEND",
+      "threshold": null,
+      "validator_id": "diagram-quality"
+    },
+    {
+      "code": "EXCESSIVE_BENDS",
+      "default_severity": "warning",
+      "rule_id": "diagram-quality.EXCESSIVE_BENDS",
+      "threshold": null,
+      "validator_id": "diagram-quality"
+    },
+    {
+      "code": "NODE_OVERLAP",
+      "default_severity": "error",
+      "rule_id": "diagram-quality.NODE_OVERLAP",
+      "threshold": null,
+      "validator_id": "diagram-quality"
+    },
+    {
+      "code": "PIPE_THROUGH_EQUIPMENT",
+      "default_severity": "error",
+      "rule_id": "diagram-quality.PIPE_THROUGH_EQUIPMENT",
+      "threshold": null,
+      "validator_id": "diagram-quality"
+    },
+    {
+      "code": "UNBRIDGED_CROSSING",
+      "default_severity": "error",
+      "rule_id": "diagram-quality.UNBRIDGED_CROSSING",
+      "threshold": null,
+      "validator_id": "diagram-quality"
+    },
+    {
+      "code": "PORT_DIRECTION_MISMATCH",
+      "default_severity": "error",
+      "rule_id": "diagram-quality.PORT_DIRECTION_MISMATCH",
+      "threshold": null,
+      "validator_id": "diagram-quality"
+    },
+    {
+      "code": "PORT_EXIT_MISMATCH",
+      "default_severity": "error",
+      "rule_id": "diagram-quality.PORT_EXIT_MISMATCH",
+      "threshold": null,
+      "validator_id": "diagram-quality"
+    },
+    {
+      "code": "PORT_FACING_MISMATCH",
+      "default_severity": "error",
+      "rule_id": "diagram-quality.PORT_FACING_MISMATCH",
+      "threshold": null,
+      "validator_id": "diagram-quality"
+    },
+    {
+      "code": "SYMBOL_OUT_OF_BOUNDS",
+      "default_severity": "warning",
+      "rule_id": "diagram-quality.SYMBOL_OUT_OF_BOUNDS",
+      "threshold": null,
+      "validator_id": "diagram-quality"
+    },
+    {
+      "code": "CONNECTOR_OUT_OF_BOUNDS",
+      "default_severity": "error",
+      "rule_id": "diagram-quality.CONNECTOR_OUT_OF_BOUNDS",
+      "threshold": null,
+      "validator_id": "diagram-quality"
+    },
+    {
+      "code": "DUPLICATE_LABEL",
+      "default_severity": "error",
+      "rule_id": "diagram-quality.DUPLICATE_LABEL",
+      "threshold": null,
+      "validator_id": "diagram-quality"
+    },
+    {
+      "code": "ANNOTATION_OVERLAP",
+      "default_severity": "error",
+      "rule_id": "diagram-quality.ANNOTATION_OVERLAP",
+      "threshold": null,
+      "validator_id": "diagram-quality"
+    },
+    {
+      "code": "QUALITY_SCORE_BELOW_TARGET",
+      "default_severity": "error",
+      "rule_id": "diagram-quality.QUALITY_SCORE_BELOW_TARGET",
+      "threshold": null,
+      "validator_id": "diagram-quality"
+    },
+    {
+      "code": "IR_IDENTITY_COLLISION",
+      "default_severity": "error",
+      "rule_id": "engineering-graph.IR_IDENTITY_COLLISION",
+      "threshold": null,
+      "validator_id": "engineering-graph"
+    },
+    {
+      "code": "IR_DUPLICATE_IDENTITY",
+      "default_severity": "error",
+      "rule_id": "engineering-graph.IR_DUPLICATE_IDENTITY",
+      "threshold": null,
+      "validator_id": "engineering-graph"
+    },
+    {
+      "code": "IR_ENDPOINT_ELEMENT_MISSING",
+      "default_severity": "error",
+      "rule_id": "engineering-graph.IR_ENDPOINT_ELEMENT_MISSING",
+      "threshold": null,
+      "validator_id": "engineering-graph"
+    },
+    {
+      "code": "IR_SYMBOL_DEFINITION_MISSING",
+      "default_severity": "error",
+      "rule_id": "engineering-graph.IR_SYMBOL_DEFINITION_MISSING",
+      "threshold": null,
+      "validator_id": "engineering-graph"
+    },
+    {
+      "code": "IR_OPC_CONNECTION_ID_DUPLICATE",
+      "default_severity": "error",
+      "rule_id": "engineering-graph.IR_OPC_CONNECTION_ID_DUPLICATE",
+      "threshold": null,
+      "validator_id": "engineering-graph"
+    },
+    {
+      "code": "IR_ORPHAN_LINE",
+      "default_severity": "warning",
+      "rule_id": "engineering-graph.IR_ORPHAN_LINE",
+      "threshold": null,
+      "validator_id": "engineering-graph"
+    },
+    {
+      "code": "IR_OPC_TARGET_MISSING",
+      "default_severity": "warning",
+      "rule_id": "engineering-graph.IR_OPC_TARGET_MISSING",
+      "threshold": null,
+      "validator_id": "engineering-graph"
+    },
+    {
+      "code": "IR_SIGNAL_WITHOUT_INSTRUMENT",
+      "default_severity": "warning",
+      "rule_id": "engineering-graph.IR_SIGNAL_WITHOUT_INSTRUMENT",
+      "threshold": null,
+      "validator_id": "engineering-graph"
+    },
+    {
+      "code": "IR_ISOLATED_OBJECT",
+      "default_severity": "info",
+      "rule_id": "engineering-graph.IR_ISOLATED_OBJECT",
+      "threshold": null,
+      "validator_id": "engineering-graph"
+    },
+    {
+      "code": "IR_SIGNAL_UNNAMED",
+      "default_severity": "info",
+      "rule_id": "engineering-graph.IR_SIGNAL_UNNAMED",
+      "threshold": null,
+      "validator_id": "engineering-graph"
+    },
+    {
+      "code": "TAG_MISSING",
+      "default_severity": "warning",
+      "rule_id": "engineering-report.TAG_MISSING",
+      "threshold": null,
+      "validator_id": "engineering-report"
+    },
+    {
+      "code": "TAG_DUPLICATE",
+      "default_severity": "error",
+      "rule_id": "engineering-report.TAG_DUPLICATE",
+      "threshold": null,
+      "validator_id": "engineering-report"
+    },
+    {
+      "code": "SYMBOL_DEFINITION_MISSING",
+      "default_severity": "error",
+      "rule_id": "engineering-report.SYMBOL_DEFINITION_MISSING",
+      "threshold": null,
+      "validator_id": "engineering-report"
+    },
+    {
+      "code": "SYMBOL_REQUIRED_PORT_UNCONNECTED",
+      "default_severity": "warning",
+      "rule_id": "engineering-report.SYMBOL_REQUIRED_PORT_UNCONNECTED",
+      "threshold": null,
+      "validator_id": "engineering-report"
+    },
+    {
+      "code": "LINE_TAG_MISSING",
+      "default_severity": "warning",
+      "rule_id": "engineering-report.LINE_TAG_MISSING",
+      "threshold": null,
+      "validator_id": "engineering-report"
+    },
+    {
+      "code": "LINE_MEDIUM_MISSING",
+      "default_severity": "warning",
+      "rule_id": "engineering-report.LINE_MEDIUM_MISSING",
+      "threshold": null,
+      "validator_id": "engineering-report"
+    },
+    {
+      "code": "LINE_DIAMETER_MISSING",
+      "default_severity": "warning",
+      "rule_id": "engineering-report.LINE_DIAMETER_MISSING",
+      "threshold": null,
+      "validator_id": "engineering-report"
+    },
+    {
+      "code": "CONNECTOR_ENDPOINT_DANGLING",
+      "default_severity": "error",
+      "rule_id": "engineering-report.CONNECTOR_ENDPOINT_DANGLING",
+      "threshold": null,
+      "validator_id": "engineering-report"
+    },
+    {
+      "code": "CONNECTOR_ENDPOINT_ELEMENT_MISSING",
+      "default_severity": "error",
+      "rule_id": "engineering-report.CONNECTOR_ENDPOINT_ELEMENT_MISSING",
+      "threshold": null,
+      "validator_id": "engineering-report"
+    },
+    {
+      "code": "CONNECTOR_ENDPOINT_PORT_MISSING",
+      "default_severity": "error",
+      "rule_id": "engineering-report.CONNECTOR_ENDPOINT_PORT_MISSING",
+      "threshold": null,
+      "validator_id": "engineering-report"
+    },
+    {
+      "code": "CONNECTOR_ENDPOINT_INVALID_ELEMENT_TYPE",
+      "default_severity": "error",
+      "rule_id": "engineering-report.CONNECTOR_ENDPOINT_INVALID_ELEMENT_TYPE",
+      "threshold": null,
+      "validator_id": "engineering-report"
+    },
+    {
+      "code": "CONNECTOR_ENDPOINT_POINT_MISMATCH",
+      "default_severity": "error",
+      "rule_id": "engineering-report.CONNECTOR_ENDPOINT_POINT_MISMATCH",
+      "threshold": null,
+      "validator_id": "engineering-report"
+    }
+  ],
+  "thresholds": {
+    "quality_score": 95.0,
+    "rule_thresholds": {
+      "diagram-quality.QUALITY_SCORE_BELOW_TARGET": 95.0
+    }
+  },
+  "validator_ids": [
+    "diagram-quality",
+    "engineering-graph",
+    "engineering-report"
+  ],
+  "validator_versions": {
+    "diagram-quality": "1",
+    "engineering-graph": "1",
+    "engineering-report": "1"
+  }
+}

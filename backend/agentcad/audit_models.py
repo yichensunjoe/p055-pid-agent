@@ -40,6 +40,12 @@ AuditEventType = Literal[
     # running a validator must never look like an edit to the drawing.
     "validation.completed",
     "release.readiness.assessed",
+    # M5: one self-repair is one governed write, plus an evidence event that binds the
+    # *outcome* of that write (final validation hash, attempt count, selected plan) to it.
+    # The write-time record cannot carry a post-apply hash for the obvious reason, so the two
+    # records together are the audit of one repair.
+    "repair.completed",
+    "repair.refused",
     "permission.rejected",
     "provider.egress.blocked",
 ]

@@ -2,7 +2,24 @@
 
 > 交接文档：每次开新会话先读本文件。更新规则见 `AGENTS.md`「HANDOFF 交接规则」。
 
-## 当前状态（2026-09-19，最新轮次：**M4 已由远端 Release Gate 正式 ACCEPTED @ `ecedc00`**）
+## 当前状态（2026-09-21，最新轮次：**M5 candidate，待远端 final Release Gate**）
+
+- **M5 开工基线**：远端 `REMOTE_BASELINE_2026-09-20_M5_START.md`，**`M5 start HEAD = f6738fc9a39573bb494b4e2c384ad79504bd7f6c`**（= M4 accepted HEAD 的记账提交，本地 HEAD 与之一致）。远端已给“连续执行 + 满足条件后 push”预授权。
+- **M5 是什么**：Agent Self-Repair。一个 planner 契约、一个 orchestrator、一个 success oracle，两条轨道：Track D（deterministic，离线，CI 硬门）与 Track M（真实模型，release 证据）。实现落在 `backend/agentcad/repair_*.py`（15 个模块）与 `backend/agentcad/m4_invariance.py`。
+- **契约与机械定义**：见 `docs/m5-agent-self-repair.md`。要点：
+  - 失败候选**零写入**，最终最多**一次**受治理写入，带 undo/redo 证明；
+  - scope 在元素存在前冻结；created id 由 create policy 判定并从 protected post 投影中排除；派生 scope 只能加宽；
+  - 六个 family（F1 identity/F2 endpoint/F3 replacement/F4 routing/F5 collision/F6 replan），operator 目录进 spec fingerprint；
+  - acceptance case 集由 `spec fingerprint + candidate SHA + family + index` 派生，不可手选；
+  - `verify_benchmark_result()` 独立于 runner 重算 canonical hash、计数、S@1..S@5、per-family 率与 failure taxonomy。
+- **M5-0…M5-6 已完成**：契约冻结、orchestrator（影子候选 + 局部性 + 原子受治理写入）、deterministic benchmark（dev 24 / acceptance 72）、safety-negative suite 13 例、真实模型 qualification 路径（无凭据时明确返回 `awaiting_real_model_qualification`，退出码 3）、REST/MCP/CLI/UI 四表面同源 + 审计绑定 + payload parity、§G scale track、§E M4 semantics invariance 机械门。
+- **本地实测数字（本轮，未 push 前）**：backend `ruff check` ✓；`pytest -q` **750 passed**；offline quality harness **9/9**；deterministic dev suite **24/24**（S@5 = 1.0，六 family 各 1.0，safety **13/13**，governance violations 0）；前端 `npm test` **144 passed**；`npm run build` ✓；Playwright Chromium **52 passed / 1 skipped**（含视觉快照未变）；shared-mode security acceptance **2 passed**；`test:e2e:secrets` ✓。
+- **大图 scale track（§G）**：真实图 `.freebuff/repro/source.dwg`（939,381 B / AC1032 / **不在 git 里**），SHA-256 `5e62ec5c…`，导入 9757 elements / 13.6 s，base validation 420 ms；固定 5 case（F1/F2/F4/F5/F6）**5/5 通过**，governance violations 0，context bytes 6.5–9.1 KB（即 9772 元素的图上工作仍然局部），shadow validation ≈ 3 s，单 case wall-clock ≈ 17 s。CI 跑合成大图（几百 elements）。
+  - **必须记住的事实**：真实 CAD 文件导入后是 7167 line + 1830 polyline + 398 circle + 362 text，**0 symbol / 0 connector**。修复 case 需要一个带 port 的元素，所以 working copy 会先通过 semantic compiler + 受治理事务追加一条阀组 train，报告里 `semantic_seed` 字段写明这件事；`--no-semantic-seed` 则拒绝并返回退出码 3。
+- **真实模型资格状态**：本机无 model provider 凭据（`PID_AGENT_LLM_BASE_URL` / `PID_AGENT_LLM_MODEL` 未设，本地 Ollama 无模型）。因此 M5 最终状态**只能是 `M5 candidate / awaiting real-model qualification`**，本地不得自行签 accepted。
+- **待办**：candidate commit → 用该 SHA 跑 72-case acceptance → push → 真实 GitHub CI（含手动 dispatch `Visual baselines`）→ 远端 final code review → 远端命名 M5 accepted HEAD。
+
+## 上一轮状态（M4 —— Engineering Validation System，**已由远端 Release Gate 正式 ACCEPTED @ `ecedc00`**）
 
 - **M4 验收口径（远端 `REMOTE_BASELINE_2026-09-19_M4_ACCEPTED.md` 正式签发）**：
   - **`M4 accepted HEAD = ecedc00ae3063a4043334bd30367008d00665a29`**（`ecedc00`）

@@ -219,6 +219,32 @@ HTTP_SURFACE_BINDINGS: tuple[SurfaceBinding, ...] = (
             "governed transaction channel, so drafting has no private write path."
         ),
     ),
+    # --- engineering self-repair (M5) ----------------------------------------- #
+    # One finding, one governed write at most, and no private write path: the preview
+    # route is a read, and the apply route goes through the same orchestrator the CLI, the
+    # MCP tools and the benchmark use. ``repair_finding`` is declared for it because the
+    # route and the tool are one operation reached two ways, not two implementations.
+    _http(
+        "POST",
+        "/api/v2/documents/{document_id}/repair/preview",
+        "read",
+        tool="preview_repair_finding",
+        notes=(
+            "Plans, compiles and judges a candidate on a shadow copy; nothing is written. "
+            "Verified by test_repair_surfaces.py."
+        ),
+    ),
+    _http(
+        "POST",
+        "/api/v2/documents/{document_id}/repair",
+        "engineering_write",
+        tool="repair_finding",
+        audited=True,
+        notes=(
+            "One repair, one audited revision, and only after a shadow candidate passed the "
+            "success oracle; a refused candidate leaves the drawing byte-identical."
+        ),
+    ),
     _http(
         "POST",
         "/api/v2/documents/{document_id}/transactions/analyze",
@@ -475,6 +501,19 @@ MCP_SURFACE_BINDINGS: tuple[SurfaceBinding, ...] = (
     mcp("inspect_validation_profile", "read", tool="inspect_validation_profile"),
     mcp("validate_document", "read", tool="validate_document"),
     mcp("assess_release_readiness", "read", tool="assess_release_readiness"),
+    # M5 self-repair. The preview is a read; the apply is one governed write and records
+    # ``repair.completed`` / ``repair.refused`` evidence bound to the revision it describes.
+    mcp("preview_repair_finding", "read", tool="preview_repair_finding"),
+    mcp(
+        "repair_finding",
+        "engineering_write",
+        tool="repair_finding",
+        audited=True,
+        notes=(
+            "Repairs one canonical finding through the governed path. Declines, policy "
+            "refusals and oracle failures write nothing."
+        ),
+    ),
     mcp("get_engineering_graph", "read", tool="get_engineering_graph"),
     mcp("trace_engineering_object", "read", tool="trace_engineering_object"),
     mcp("find_engineering_object", "read", tool="find_engineering_object"),

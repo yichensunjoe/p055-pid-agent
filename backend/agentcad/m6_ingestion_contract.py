@@ -86,8 +86,12 @@ INGESTION_LAYERS: tuple[IngestionLayer, ...] = (
         produced_by="deterministic extraction",
         write_authority="none",
         requires_human_decision=False,
-        evidence_obligations=("artifact_id", "geometry_bounds", "text_spans"),
-        note="What part of the artifact a judgement is about, so a reviewer can re-crop it later.",
+        evidence_obligations=("artifact_id", "geometry_selector", "element_refs", "text_spans"),
+        note=(
+            "What part of the artifact a judgement is about, so a reviewer can re-crop it later. "
+            "All three selector kinds are stored; a scan has only geometry, a vector drawing can "
+            "also carry element refs, an OCR pass adds text spans."
+        ),
     ),
     IngestionLayer(
         position=3,
@@ -169,6 +173,80 @@ INGESTION_LAYERS: tuple[IngestionLayer, ...] = (
 
 #: The one layer allowed to write the engineering model. Asserted, not assumed.
 SOLE_WRITE_LAYER = "apply_v2_transaction"
+
+# --------------------------------------------------------------------------------------
+# §2b Region identity, and where the review queue lives
+# --------------------------------------------------------------------------------------
+
+#: Region identity is *not* "the coordinates never change".
+REGION_IDENTITY_CONTRACT = (
+    "under the same source_document_id + source_revision, the evidence region can be "
+    "deterministically re-located and re-cropped"
+)
+SOURCE_REGION_SELECTOR_KINDS: tuple[str, ...] = (
+    "geometry_selector",
+    "element_refs",
+    "text_spans",
+)
+SOURCE_REGION_FRAME_FIELDS: tuple[str, ...] = (
+    "source_revision",
+    "page",
+    "layer",
+    "coordinate_frame",
+)
+#: A changed source revision must produce a new region identity; silently reusing the old one
+#: would let a crop from a superseded drawing stand as evidence for a fact about the new one.
+SOURCE_REVISION_CHANGE_PRODUCES_NEW_REGION_IDENTITY = True
+
+
+@dataclass(frozen=True)
+class ReviewPersistence:
+    """The remote gate's ruling on where review state lives: same store, own lifecycle."""
+
+    datastore: str
+    aggregate: str
+    shares_lifecycle_with_drawing_objects: bool
+    cascades_on_document_or_element_delete: bool
+    review_decision_id_is_referenced_not_folded: bool
+    may_share_a_database_transaction_with_apply: bool
+    custom_views: tuple[str, ...]
+    note: str
+
+
+REVIEW_PERSISTENCE = ReviewPersistence(
+    datastore="same as the document store",
+    aggregate="separate tables / aggregate",
+    shares_lifecycle_with_drawing_objects=False,
+    cascades_on_document_or_element_delete=False,
+    review_decision_id_is_referenced_not_folded=True,
+    may_share_a_database_transaction_with_apply=True,
+    custom_views=("get_review_queue", "list_review_history"),
+    note=(
+        "Same database for foreign keys, revision comparison and transaction integrity — not so that "
+        "review status can live inside a drawing object. The apply transaction may reference a review "
+        "decision in the same commit, but must never fold the review_decision_id away."
+    ),
+)
+
+# --------------------------------------------------------------------------------------
+# §2c Conflict baseline: what "already stated" is compared against
+# --------------------------------------------------------------------------------------
+
+#: The single authoritative baseline. Not the raw drawing, not a candidate, not model output.
+CONFLICT_BASELINE = "current committed engineering semantic state managed by apply-v2"
+CONFLICT_BASELINE_IS_NOT: tuple[str, ...] = ("raw_drawing", "candidate", "typesafe_output")
+CONFLICT_COMPARISON_KEY: tuple[str, ...] = ("target_engineering_identity", "semantic_path")
+CONFLICT_COMPARISON_KEY_EXAMPLES: tuple[str, ...] = (
+    "equipment:P-201 / equipment_tag",
+    "equipment:P-201 / equipment_class",
+    "connector:C-17 / endpoints",
+    "relationship:T-101->T-102 / existence",
+)
+#: Optimistic concurrency control: a confirmed fact that was true against the reviewed baseline is
+#: not automatically true against the revision that exists at apply time.
+CONFLICT_RECHECKS_BASELINE_BEFORE_APPLY = True
+BASELINE_CHANGE_FORCES_CONFLICTED = True
+CONFLICT_RESOLUTION_REQUIRES_NEW_REVIEW_DECISION = True
 
 # --------------------------------------------------------------------------------------
 # §3 SemanticCandidate is its own schema
@@ -325,6 +403,25 @@ CONFIDENCE_MEANING = (
 )
 CONFIDENCE_CAN_AUTHORISE_A_WRITE = False
 
+#: ``measured_on_gold_corpus`` is not a label a producer can award itself, and there is no
+#: "N items and you are calibrated" rule: the milestone deliberately refuses to invent a sample
+#: size threshold just to have one. Until an independent Calibration Gate signs, every producer
+#: reports ``not_measured``.
+CALIBRATION_DEFAULT_CLASS = "not_measured"
+CALIBRATION_GATE_REQUIRED_FOR: tuple[str, ...] = ("measured_on_gold_corpus",)
+CALIBRATION_GATE_SIGNER = "remote Release Gate"
+CALIBRATION_CLASS_AUTO_PROMOTION_RULE: str | None = None
+CALIBRATION_GATE_REQUIRED_EVIDENCE: tuple[str, ...] = (
+    "immutable_gold_corpus_id_and_version",
+    "candidate_type",
+    "train_and_research_material_do_not_overlap_held_out_gold",
+    "sample_count_and_label_outcome_distribution",
+    "calibration_metric_and_computation_version",
+    "coverage_and_abstention_conventions",
+    "producer_and_model_version",
+    "calibration_report_hash",
+)
+
 # --------------------------------------------------------------------------------------
 # §6 The review queue is an explicit state machine
 # --------------------------------------------------------------------------------------
@@ -376,10 +473,16 @@ CANDIDATE_TRANSITIONS: tuple[CandidateTransition, ...] = (
         "needs_review", "superseded", "replaced_during_review", ("successor_candidate_id",)
     ),
     CandidateTransition(
+        "confirmed",
+        "conflicted",
+        "authoritative_baseline_changed_before_apply",
+        ("baseline_recheck", "conflict_record"),
+    ),
+    CandidateTransition(
         "conflicted",
         "needs_review",
         "human_resolves_conflict",
-        ("conflict_resolution", "reviewer_action"),
+        ("conflict_resolution", "new_review_decision", "reviewer_action"),
     ),
     CandidateTransition("conflicted", "rejected", "human_rejects_conflict", ("reviewer_action",)),
     CandidateTransition(
@@ -389,7 +492,13 @@ CANDIDATE_TRANSITIONS: tuple[CandidateTransition, ...] = (
         "confirmed",
         "applied",
         "apply_v2_accepted",
-        ("compiled_patch", "policy_verdict", "conflict_check", "apply_v2_validation"),
+        (
+            "compiled_patch",
+            "policy_verdict",
+            "baseline_recheck",
+            "conflict_check",
+            "apply_v2_validation",
+        ),
     ),
     CandidateTransition(
         "confirmed", "superseded", "replaced_after_confirmation", ("successor_candidate_id",)
@@ -414,6 +523,23 @@ FORBIDDEN_TRANSITIONS: tuple[tuple[str, str], ...] = (
     ("applied", "confirmed"),
     ("applied", "rejected"),
 )
+
+#: Evidence names the state machine requires, referenced by name so a rename cannot quietly
+#: drop a guarantee.
+BASELINE_RECHECK_EVIDENCE = "baseline_recheck"
+FRESH_REVIEW_DECISION_EVIDENCE = "new_review_decision"
+
+# --------------------------------------------------------------------------------------
+# §6b The transaction layer records the outcome; the candidate state machine does not
+# --------------------------------------------------------------------------------------
+
+#: Undo is a compensating governed transaction, so the *transaction* layer must be able to say
+#: what happened to a write without the candidate pretending the confirmation never occurred.
+TRANSACTION_STATES: tuple[str, ...] = ("applied", "reverted", "superseded")
+TRANSACTION_REVERTED_MEANS_COMPENSATED_NOT_ERASED = True
+CANDIDATE_LEVEL_REVERTED_STATE = False
+REVERTED_IS_A_DERIVED_PRESENTATION_STATE = True
+REVERTED_PRESENTATION_STATE = "confirmed + last applied transaction reverted"
 
 #: Reaching ``confirmed`` must record a person's action; ``validate_contract()`` only
 #: tolerates a missing reviewer action when the auto-accept whitelist is non-empty.
@@ -517,10 +643,21 @@ REPLAY_FROZEN_INPUTS: tuple[str, ...] = (
     "review_decision",
     "patch_compiler_version",
     "patch_compiler_rules",
+    "authoritative_baseline_revision",
 )
-REPLAY_COMPARISON_TARGET = "applied_transaction_operations"
-REPLAY_MUST_BE_BIT_IDENTICAL = True
-UNDO_MECHANISM = "reverse_governed_transaction_through_apply_v2"
+
+#: Replay is verified at two layers, and neither of them is "the raw serialized transaction is
+#: byte-identical". Transaction ids, timestamps and audit times are legitimate volatile
+#: provenance: requiring them to match would fail a correct replay for a bookkeeping reason,
+#: which is the same mistake as letting runtime metadata into an identity digest.
+REPLAY_CANONICAL_PATCH_MUST_MATCH = True
+REPLAY_SEMANTIC_POSTSTATE_MUST_MATCH = True
+REPLAY_RAW_TRANSACTION_BYTES_MUST_MATCH = False
+REPLAY_VOLATILE_FIELDS_EXCLUDED: tuple[str, ...] = ("transaction_id", "timestamps", "audit_time")
+REPLAY_COMPARISON_TARGET = (
+    "canonical compiled patch digest AND resulting engineering semantic state digest"
+)
+UNDO_MECHANISM = "compensating_governed_transaction_through_apply_v2"
 
 # --------------------------------------------------------------------------------------
 # §14 Phase boundary: what this phase may and may not contain
@@ -704,10 +841,118 @@ def validate_contract() -> list[str]:
         if GOLD_CORPUS_PATH.startswith(path):
             problems.append(f"gold corpus path must not live under seed material {path!r}")
 
-    # §11: replay is defined against frozen inputs, and it is not undo.
-    if not REPLAY_MUST_BE_BIT_IDENTICAL:
-        problems.append("replay must require an identical result, otherwise it proves nothing")
-    if UNDO_MECHANISM not in {"reverse_governed_transaction_through_apply_v2"}:
+    # §2b: a region must survive re-cropping, and must not survive a source revision change.
+    for selector in ("geometry_selector", "element_refs", "text_spans"):
+        if selector not in SOURCE_REGION_SELECTOR_KINDS:
+            problems.append(
+                f"region selectors must store {selector!r}: the three kinds are not optional"
+            )
+    if not SOURCE_REVISION_CHANGE_PRODUCES_NEW_REGION_IDENTITY:
+        problems.append("a changed source revision must produce a new region identity")
+
+    # §2b: review state lives in the same store but not in the drawing's lifecycle.
+    if REVIEW_PERSISTENCE.shares_lifecycle_with_drawing_objects:
+        problems.append("review state must not share a lifecycle with drawing objects")
+    if REVIEW_PERSISTENCE.cascades_on_document_or_element_delete:
+        problems.append("deleting a document or element must not delete review history")
+    if not REVIEW_PERSISTENCE.review_decision_id_is_referenced_not_folded:
+        problems.append("an apply transaction must reference the review decision, not fold it away")
+    if not REVIEW_PERSISTENCE.may_share_a_database_transaction_with_apply:
+        problems.append(
+            "confirm-and-apply must be able to commit in one database transaction, so a crash cannot "
+            "leave a consumed decision without its write"
+        )
+
+    # §2c: the conflict baseline is the committed state, and it is re-read before apply.
+    for wrong_baseline in ("raw_drawing", "candidate", "typesafe_output"):
+        if wrong_baseline not in CONFLICT_BASELINE_IS_NOT:
+            problems.append(
+                f"{wrong_baseline!r} must be named as a non-authoritative conflict baseline"
+            )
+    if "apply-v2" not in CONFLICT_BASELINE:
+        problems.append("the conflict baseline must be the state apply-v2 manages")
+    if not CONFLICT_RECHECKS_BASELINE_BEFORE_APPLY:
+        problems.append("the baseline must be re-read before apply, not trusted from review time")
+    if not BASELINE_CHANGE_FORCES_CONFLICTED:
+        problems.append("a baseline that moved after review must force a conflict")
+    if not CONFLICT_RESOLUTION_REQUIRES_NEW_REVIEW_DECISION:
+        problems.append("resolving a conflict must produce a fresh review decision")
+    if len(CONFLICT_COMPARISON_KEY) < 2:
+        problems.append("the conflict comparison key needs an identity and a semantic path")
+
+    # §6: optimistic concurrency is a property of the machine, not a note in the task book.
+    apply_edges = [edge for edge in CANDIDATE_TRANSITIONS if edge.to_state == "applied"]
+    for edge in apply_edges:
+        if BASELINE_RECHECK_EVIDENCE not in edge.requires:
+            problems.append("every edge into 'applied' must carry a fresh baseline recheck")
+    if not any(
+        edge.from_state == "confirmed"
+        and edge.to_state == "conflicted"
+        and edge.trigger == "authoritative_baseline_changed_before_apply"
+        for edge in CANDIDATE_TRANSITIONS
+    ):
+        problems.append(
+            "a confirmed fact must be able to fall into conflict when the baseline moved"
+        )
+    # Re-entering the confirmation path from a conflict must cost a *new* decision: the old one was
+    # made against a baseline that no longer exists. Replacing the conflicted candidate outright
+    # (superseded) is not re-entering it, so that edge is exempt on purpose.
+    for edge in [edge for edge in CANDIDATE_TRANSITIONS if edge.from_state == "conflicted"]:
+        if (
+            edge.to_state in {"needs_review", "confirmed", "applied"}
+            and FRESH_REVIEW_DECISION_EVIDENCE not in edge.requires
+        ):
+            problems.append(
+                f"leaving {edge.from_state!r} for {edge.to_state!r} must require a fresh review decision"
+            )
+    if ("conflicted", "applied") not in FORBIDDEN_TRANSITIONS:
+        problems.append("conflicted->applied must be declared forbidden")
+
+    # §6b: undo is a transaction outcome, not a candidate state.
+    if TRANSACTION_STATES != ("applied", "reverted", "superseded"):
+        problems.append(
+            f"the transaction layer must express applied/reverted/superseded, got {TRANSACTION_STATES}"
+        )
+    if not TRANSACTION_REVERTED_MEANS_COMPENSATED_NOT_ERASED:
+        problems.append("a reverted transaction is compensated, not erased")
+    if CANDIDATE_LEVEL_REVERTED_STATE:
+        problems.append("reverting must not become a candidate state")
+    if "reverted" in CANDIDATE_STATES:
+        problems.append("'reverted' must not appear among the candidate states")
+
+    # §5: calibrated is a claim a gate signs, never one a producer awards itself.
+    if not CALIBRATION_GATE_REQUIRED_FOR:
+        problems.append("at least one calibration class must require a gate")
+    if "measured_on_gold_corpus" not in CALIBRATION_GATE_REQUIRED_FOR:
+        problems.append("measured_on_gold_corpus must require an independent calibration gate")
+    if CALIBRATION_CLASS_AUTO_PROMOTION_RULE is not None:
+        problems.append("there must be no automatic calibration promotion rule in M6 v1")
+    if CALIBRATION_DEFAULT_CLASS not in CONFIDENCE_CALIBRATION_CLASSES:
+        problems.append(
+            f"the default calibration class {CALIBRATION_DEFAULT_CLASS!r} must be declarable"
+        )
+    if CALIBRATION_DEFAULT_CLASS == "measured_on_gold_corpus":
+        problems.append("the default calibration class cannot be the gated one")
+    if len(CALIBRATION_GATE_REQUIRED_EVIDENCE) < 5:
+        problems.append("the calibration gate must require a substantive evidence package")
+
+    # §11: replay is defined against frozen inputs, at two layers, and it is not undo.
+    if not REPLAY_CANONICAL_PATCH_MUST_MATCH or not REPLAY_SEMANTIC_POSTSTATE_MUST_MATCH:
+        problems.append(
+            "replay must require both the canonical patch and the semantic post-state to match"
+        )
+    if REPLAY_RAW_TRANSACTION_BYTES_MUST_MATCH:
+        problems.append(
+            "raw transaction byte identity must not be a replay contract: volatile provenance would "
+            "fail a correct replay for a bookkeeping reason"
+        )
+    for volatile in ("transaction_id", "timestamps"):
+        if volatile not in REPLAY_VOLATILE_FIELDS_EXCLUDED:
+            problems.append(f"replay must exclude the volatile field {volatile!r}")
+    for frozen in ("patch_compiler_version", "authoritative_baseline_revision"):
+        if frozen not in REPLAY_FROZEN_INPUTS:
+            problems.append(f"replay must freeze {frozen!r}")
+    if UNDO_MECHANISM != "compensating_governed_transaction_through_apply_v2":
         problems.append("undo must run through the same governed write path as everything else")
 
     return problems
@@ -720,14 +965,35 @@ def contract_document() -> dict[str, object]:
         "contract": M6_CONTRACT_VERSION,
         "layers": [asdict(layer) for layer in INGESTION_LAYERS],
         "sole_write_layer": SOLE_WRITE_LAYER,
+        "region_identity_contract": REGION_IDENTITY_CONTRACT,
+        "source_region_selector_kinds": list(SOURCE_REGION_SELECTOR_KINDS),
+        "source_region_frame_fields": list(SOURCE_REGION_FRAME_FIELDS),
+        "source_revision_change_produces_new_region_identity": (
+            SOURCE_REVISION_CHANGE_PRODUCES_NEW_REGION_IDENTITY
+        ),
+        "review_persistence": asdict(REVIEW_PERSISTENCE),
+        "conflict_baseline": CONFLICT_BASELINE,
+        "conflict_baseline_is_not": list(CONFLICT_BASELINE_IS_NOT),
+        "conflict_comparison_key": list(CONFLICT_COMPARISON_KEY),
         "candidate_fields": [asdict(field) for field in SEMANTIC_CANDIDATE_FIELDS],
         "unconfirmable_candidate_types": list(UNCONFIRMABLE_CANDIDATE_TYPES),
         "producers": [asdict(producer) for producer in JUDGMENT_PRODUCERS],
         "auto_accept_whitelist": list(AUTO_ACCEPT_WHITELIST),
         "authority_decision_inputs": list(AUTHORITY_DECISION_INPUTS),
+        "calibration_default_class": CALIBRATION_DEFAULT_CLASS,
+        "calibration_gate_required_for": list(CALIBRATION_GATE_REQUIRED_FOR),
+        "calibration_gate_signer": CALIBRATION_GATE_SIGNER,
         "candidate_states": list(CANDIDATE_STATES),
+        "transaction_states": list(TRANSACTION_STATES),
         "candidate_transitions": [asdict(edge) for edge in CANDIDATE_TRANSITIONS],
         "forbidden_transitions": [list(pair) for pair in FORBIDDEN_TRANSITIONS],
+        "replay": {
+            "frozen_inputs": list(REPLAY_FROZEN_INPUTS),
+            "canonical_patch_must_match": REPLAY_CANONICAL_PATCH_MUST_MATCH,
+            "semantic_poststate_must_match": REPLAY_SEMANTIC_POSTSTATE_MUST_MATCH,
+            "raw_transaction_bytes_must_match": REPLAY_RAW_TRANSACTION_BYTES_MUST_MATCH,
+            "volatile_fields_excluded": list(REPLAY_VOLATILE_FIELDS_EXCLUDED),
+        },
         "write_policy_v1": [asdict(row) for row in WRITE_POLICY_V1],
         "gold_corpus_dimensions": list(GOLD_CORPUS_DIMENSIONS),
         "gold_item_required_fields": list(GOLD_ITEM_REQUIRED_FIELDS),

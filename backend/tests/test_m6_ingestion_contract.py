@@ -153,6 +153,45 @@ def test_the_task_book_names_every_candidate_field_and_producer(task_book: str) 
     assert "AUTO_ACCEPT_WHITELIST" in task_book
 
 
+def test_the_task_book_names_the_ruled_region_and_concurrency_contract(task_book: str) -> None:
+    for selector in contract.SOURCE_REGION_SELECTOR_KINDS:
+        assert selector in task_book, f"task book does not store region selector {selector!r}"
+    for frame in contract.SOURCE_REGION_FRAME_FIELDS:
+        assert frame in task_book, f"task book does not pin region frame field {frame!r}"
+    assert contract.SOURCE_REVISION_CHANGE_PRODUCES_NEW_REGION_IDENTITY is True
+    assert "REGION_IDENTITY_CONTRACT" in task_book
+    assert "CONFLICT_BASELINE" in task_book
+    for not_baseline in contract.CONFLICT_BASELINE_IS_NOT:
+        assert not_baseline in task_book, (
+            f"task book does not exclude {not_baseline!r} as a baseline"
+        )
+    for key_part in contract.CONFLICT_COMPARISON_KEY:
+        assert key_part in task_book, f"task book does not name comparison key part {key_part!r}"
+
+
+def test_the_task_book_names_the_ruled_review_persistence(task_book: str) -> None:
+    assert "REVIEW_PERSISTENCE" in task_book
+    assert "review_decision_id_is_referenced_not_folded" in task_book
+    assert "cascades_on_document_or_element_delete" in task_book
+
+
+def test_the_task_book_names_the_ruled_replay_and_calibration(task_book: str) -> None:
+    for name in (
+        "REPLAY_CANONICAL_PATCH_MUST_MATCH",
+        "REPLAY_SEMANTIC_POSTSTATE_MUST_MATCH",
+        "REPLAY_RAW_TRANSACTION_BYTES_MUST_MATCH",
+        "REPLAY_VOLATILE_FIELDS_EXCLUDED",
+        "CALIBRATION_GATE_REQUIRED_EVIDENCE",
+        "CALIBRATION_CLASS_AUTO_PROMOTION_RULE",
+        "CALIBRATION_DEFAULT_CLASS",
+    ):
+        assert name in task_book, f"task book does not document {name}"
+    for state in contract.TRANSACTION_STATES:
+        assert state in task_book, f"task book does not list transaction state {state!r}"
+    for frozen in contract.REPLAY_FROZEN_INPUTS:
+        assert frozen in task_book, f"task book does not freeze replay input {frozen!r}"
+
+
 def test_the_task_book_says_seed_material_is_not_truth(task_book: str) -> None:
     assert contract.GOLD_CORPUS_PATH in task_book
     for path in contract.SEED_MATERIAL_PATHS:
@@ -319,9 +358,161 @@ def test_the_validator_reports_an_opened_auto_accept_whitelist_without_reviewer_
 
 
 def test_the_validator_reports_undo_as_a_state_rollback(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(contract, "UNDO_IS_A_STATE_ROLLBACK", True)
+    monkeypatch.setattr(contract, "CANDIDATE_LEVEL_REVERTED_STATE", True)
     problems = contract.validate_contract()
-    assert any("undo must not be modelled as a state rollback" in problem for problem in problems)
+    assert any("reverting must not become a candidate state" in problem for problem in problems)
+
+
+def test_a_baseline_that_moved_after_review_cannot_reach_applied() -> None:
+    """The optimistic-concurrency ruling, as a machine invariant rather than a paragraph.
+
+    A person confirmed a fact against the revision they saw. If the baseline moved before the
+    write, that confirmation is no longer a permission: the only thing it may lead to is a
+    conflict, and leaving that conflict costs a *new* decision.
+    """
+
+    edges = contract.CANDIDATE_TRANSITIONS
+    assert contract.BASELINE_CHANGE_FORCES_CONFLICTED is True
+    assert contract.CONFLICT_RESOLUTION_REQUIRES_NEW_REVIEW_DECISION is True
+
+    # The fall into conflict exists, and it records the recheck that found the drift.
+    fall = [
+        edge
+        for edge in edges
+        if edge.from_state == "confirmed"
+        and edge.to_state == "conflicted"
+        and edge.trigger == "authoritative_baseline_changed_before_apply"
+    ]
+    assert len(fall) == 1, (
+        "a confirmed fact must be able to fall into conflict when the baseline moved"
+    )
+    assert contract.BASELINE_RECHECK_EVIDENCE in fall[0].requires
+
+    # Every edge into `applied` re-reads the baseline, so a stale confirmation cannot be applied.
+    apply_edges = [edge for edge in edges if edge.to_state == "applied"]
+    assert apply_edges, "there must be an edge into 'applied'"
+    for edge in apply_edges:
+        assert contract.BASELINE_RECHECK_EVIDENCE in edge.requires, (
+            "applying without re-reading the authoritative baseline is the stale-confirmation bug"
+        )
+
+    # Leaving the conflict back onto the confirmation path requires a *new* decision, and
+    # `conflicted` cannot jump to `applied`.
+    for edge in [edge for edge in edges if edge.from_state == "conflicted"]:
+        if edge.to_state in {"needs_review", "confirmed", "applied"}:
+            assert contract.FRESH_REVIEW_DECISION_EVIDENCE in edge.requires
+    assert ("conflicted", "applied") in contract.FORBIDDEN_TRANSITIONS
+    assert ("conflicted", "applied") not in {(e.from_state, e.to_state) for e in edges}
+
+    # And the two structural guarantees still hold together: the only way in is via confirmed,
+    # and confirmed itself needs a person (the v1 whitelist is empty).
+    incoming = [edge.from_state for edge in edges if edge.to_state == "applied"]
+    assert incoming == ["confirmed"]
+    assert contract.AUTO_ACCEPT_WHITELIST == ()
+
+
+def test_the_validator_reports_a_stale_confirmation_that_can_be_applied(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mutation: drop the baseline recheck from the apply edge."""
+
+    relaxed = tuple(
+        contract.CandidateTransition(
+            edge.from_state,
+            edge.to_state,
+            edge.trigger,
+            tuple(r for r in edge.requires if r != contract.BASELINE_RECHECK_EVIDENCE),
+        )
+        if edge.to_state == "applied"
+        else edge
+        for edge in contract.CANDIDATE_TRANSITIONS
+    )
+    monkeypatch.setattr(contract, "CANDIDATE_TRANSITIONS", relaxed)
+    problems = contract.validate_contract()
+    assert any("must carry a fresh baseline recheck" in problem for problem in problems)
+
+
+def test_the_validator_reports_a_missing_fall_into_conflict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mutation: remove the confirmed -> conflicted edge, so a moved baseline goes unnoticed."""
+
+    relaxed = tuple(
+        edge
+        for edge in contract.CANDIDATE_TRANSITIONS
+        if not (edge.from_state == "confirmed" and edge.to_state == "conflicted")
+    )
+    monkeypatch.setattr(contract, "CANDIDATE_TRANSITIONS", relaxed)
+    problems = contract.validate_contract()
+    assert any("must be able to fall into conflict" in problem for problem in problems)
+
+
+def test_the_validator_reports_reusing_the_old_confirmation_after_a_conflict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mutation: let a conflicted candidate return to review without a fresh decision."""
+
+    relaxed = tuple(
+        contract.CandidateTransition(
+            edge.from_state,
+            edge.to_state,
+            edge.trigger,
+            tuple(r for r in edge.requires if r != contract.FRESH_REVIEW_DECISION_EVIDENCE),
+        )
+        if edge.from_state == "conflicted"
+        else edge
+        for edge in contract.CANDIDATE_TRANSITIONS
+    )
+    monkeypatch.setattr(contract, "CANDIDATE_TRANSITIONS", relaxed)
+    problems = contract.validate_contract()
+    assert any("must require a fresh review decision" in problem for problem in problems)
+    assert any(
+        "needs_review' must require a fresh review decision" in problem for problem in problems
+    )
+
+
+def test_the_validator_reports_raw_transaction_bytes_as_a_replay_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mutation: put the byte-identity requirement back."""
+
+    monkeypatch.setattr(contract, "REPLAY_RAW_TRANSACTION_BYTES_MUST_MATCH", True)
+    problems = contract.validate_contract()
+    assert any(
+        "raw transaction byte identity must not be a replay contract" in problem
+        for problem in problems
+    )
+
+
+def test_the_validator_reports_an_automatic_calibration_promotion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mutation: invent a sample-count threshold that awards `measured_on_gold_corpus`."""
+
+    monkeypatch.setattr(
+        contract, "CALIBRATION_CLASS_AUTO_PROMOTION_RULE", "n_items_then_calibrated"
+    )
+    problems = contract.validate_contract()
+    assert any("no automatic calibration promotion rule" in problem for problem in problems)
+
+
+def test_the_validator_reports_a_review_queue_that_cascades(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mutation: let deleting a drawing delete its review history."""
+
+    monkeypatch.setattr(
+        contract,
+        "REVIEW_PERSISTENCE",
+        contract.ReviewPersistence(
+            **{
+                **contract.REVIEW_PERSISTENCE.__dict__,
+                "cascades_on_document_or_element_delete": True,
+            }
+        ),
+    )
+    problems = contract.validate_contract()
+    assert any("must not delete review history" in problem for problem in problems)
 
 
 def test_the_contract_document_is_serializable() -> None:

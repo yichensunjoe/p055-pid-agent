@@ -45,7 +45,7 @@ Charter 参考：§51（原「Existing Drawing Understanding」）、§7（权�
 | # | 层（layer key） | 不可变 id | 由谁产生 | 工程写权限 | 需要人的决定 | 证据义务 |
 |---|---|---|---|---|---|---|
 | 1 | `imported_artifact` | `artifact_id` | 导入表层（人） | 无 | 否 | `source_document_id`、`source_revision` |
-| 2 | `source_region` | `region_id` | 确定性抽取 | 无 | 否 | `artifact_id`、几何范围、文本 span |
+| 2 | `source_region` | `region_id` | 确定性抽取 | 无 | 否 | `artifact_id`、`geometry_selector`、`element_refs`、`text_spans` |
 | 3 | `semantic_candidate` | `candidate_id` | 规则引擎 / TypeSafe / repair-LLM | 无 | 否 | `region_id`、producer 与版本、confidence、evidence |
 | 4 | `review_decision` | `review_decision_id` | 人工审阅者 | 无 | **是** | `candidate_id`、reviewer action、审阅者身份、时间 |
 | 5 | `confirmed_semantic_finding` | `finding_id` | 审阅决定 | 无 | **是** | `review_decision_id`、被确认的事实、provenance 链 |
@@ -66,6 +66,63 @@ Charter 参考：§51（原「Existing Drawing Understanding」）、§7（权�
 **为什么 candidate 必须独立建模**：未经人工确认的模型判断**绝不能天然获得 patch 权限**。如果把
 candidate 直接表示成 `StructuredEngineeringPatch` 或 `SemanticDiff`，那么"产生一个判断"和"获得一次写入"
 在类型上就变成同一件事，治理边界只能靠约定维持。分层让边界变成类型问题。
+
+### 2.1 区域身份（`region_id`）不是「坐标永远不变」
+
+`source_region` 同时存三类 selector（`SOURCE_REGION_SELECTOR_KINDS`），不二选一：`geometry_selector`
+（几何区域）、`element_refs`（元素引用）、`text_spans`（文本 span）；另存 frame 字段
+（`SOURCE_REGION_FRAME_FIELDS`）：`source_revision`、`page`、`layer`、`coordinate_frame`。
+扫描件可以只有几何区域；矢量图可以同时有 element refs；OCR 抽取可以附 text span。
+
+`region_id` 的契约（`REGION_IDENTITY_CONTRACT`）是：
+
+> **在同一个 `source_document_id` + `source_revision` 下，可以确定性重新定位 / 裁出同一证据区域。**
+
+不是「坐标永远不变」。因此 `SOURCE_REVISION_CHANGE_PRODUCES_NEW_REGION_IDENTITY = True`：
+source revision 一变，**必须产生新的区域身份**，不能静默沿用旧区域——否则一张已经作废的图上的裁剪
+会被当成新图事实的证据。
+
+### 2.2 review queue 的位置：同库、独立聚合、独立生命周期
+
+远端裁定（`REVIEW_PERSISTENCE`）：**同一个 datastore，独立表 / 聚合**，理由是 FK、revision 比较与
+事务完整性；**不是为了把 review 状态塞进图纸对象**。两条硬约束：
+
+- `candidate` / `review_decision` / `confirmed_semantic_finding` 是**独立持久化实体**，各有不可变 ID；
+- 删除文档或工程元素时**不得**级联删除审阅历史（`cascades_on_document_or_element_delete = False`，
+  `shares_lifecycle_with_drawing_objects = False`）。
+
+人工点「确认并应用」时，review decision 与 apply-v2 **可以处在同一个数据库事务里**
+（`may_share_a_database_transaction_with_apply = True`，这样崩溃不会留下「确认被吃掉、写入没发生」），
+但逻辑上必须仍然留下独立的 `review_decision_id`：apply transaction **只能引用它，不能把它折叠掉**
+（`review_decision_id_is_referenced_not_folded = True`）。
+
+### 2.3 conflict 基准与乐观并发控制
+
+「既有权威语义」有一个唯一基准（`CONFLICT_BASELINE`）：
+
+> **apply-v2 管理的、当前已提交的工程语义状态（current committed engineering semantic state）。**
+
+**不是**原始图纸、**不是** candidate、**不是** TypeSafe 的输出（`CONFLICT_BASELINE_IS_NOT` =
+`raw_drawing` / `candidate` / `typesafe_output`）。
+
+比较键至少抽象成 **目标工程身份 + 语义路径**（`CONFLICT_COMPARISON_KEY` = `target_engineering_identity` +
+`semantic_path`），例如：
+
+```text
+equipment:P-201 / equipment_tag
+equipment:P-201 / equipment_class
+connector:C-17 / endpoints
+relationship:T-101->T-102 / existence
+```
+
+review 时记录 `baseline_revision` 与 baseline semantic digest；**真正 apply 之前必须重新读取 current
+committed revision**（`CONFLICT_RECHECKS_BASELINE_BEFORE_APPLY = True`）。若
+`reviewed baseline != current authoritative value`，就进入 `conflicted`——**即使 candidate 本身没有变化**
+也不能覆盖（`BASELINE_CHANGE_FORCES_CONFLICTED = True`）。这就是 M6 的乐观并发控制：防止「人确认时是对的，
+但应用前工程模型已经被别人改了」。
+
+解除 conflict 必须产生**新的 reviewer decision 或明确的 conflict-resolution decision**
+（`CONFLICT_RESOLUTION_REQUIRES_NEW_REVIEW_DECISION = True`），不能复用旧确认偷偷覆盖新状态。
 
 ## 3. `SemanticCandidate` 独立 schema
 
@@ -151,8 +208,21 @@ review_status · policy_verdict · conflict_state · apply_v2_validation
 confidence **不在**这四项里，而且契约自检会拒绝任何一个"看起来像置信度"的名字混进决定输入。
 一个来自不同 producer 的 1.00 和一个 0.62 在法律上都一样：都只是一条待审阅的提案。
 
-`calibration_class` 必须诚实声明。在 gold corpus 建立之前，TypeSafe 的判断只能是
-`not_measured`；用 `measured_on_gold_corpus` 必须有 §12 那条语料与对应的测量证据。
+`calibration_class` 必须诚实声明。**M6 v1 默认禁止 `measured_on_gold_corpus`**：它是一个由独立
+Calibration Gate 签发的身份，不是 producer 可以自己颁的标签；并且**不得自行写一条「达到 N 条就自动获得
+calibrated 身份」的规则**（`CALIBRATION_CLASS_AUTO_PROMOTION_RULE = None`）——为了赶 v1 随手造一个
+没有统计意义的样本量阈值，比诚实地写 `not_measured` 更差。在 Gate 出现以前，所有 producer 报
+`CALIBRATION_DEFAULT_CLASS = "not_measured"`。
+
+Calibration Gate（由**远端 Release Gate** 签署，`CALIBRATION_GATE_SIGNER`）至少必须签
+（`CALIBRATION_GATE_REQUIRED_EVIDENCE`）：
+
+```text
+immutable_gold_corpus_id_and_version · candidate_type
+train_and_research_material_do_not_overlap_held_out_gold
+sample_count_and_label_outcome_distribution · calibration_metric_and_computation_version
+coverage_and_abstention_conventions · producer_and_model_version · calibration_report_hash
+```
 
 ## 6. review queue 是显式状态机
 
@@ -172,10 +242,11 @@ needs_review --human_confirm-->                   confirmed             [reviewe
 needs_review --human_reject-->                    rejected              [reviewer_action, review_decision]
 needs_review --conflict_detected-->               conflicted            [conflict_record]
 needs_review --replaced_during_review-->          superseded            [successor_candidate_id]
-conflicted   --human_resolves_conflict-->         needs_review          [conflict_resolution, reviewer_action]
+conflicted   --human_resolves_conflict-->         needs_review          [conflict_resolution, new_review_decision, reviewer_action]
 conflicted   --human_rejects_conflict-->          rejected              [reviewer_action]
 conflicted   --replaced_while_conflicted-->       superseded            [successor_candidate_id]
-confirmed    --apply_v2_accepted-->               applied               [compiled_patch, policy_verdict, conflict_check, apply_v2_validation]
+confirmed    --authoritative_baseline_changed_before_apply--> conflicted [baseline_recheck, conflict_record]
+confirmed    --apply_v2_accepted-->               applied               [compiled_patch, policy_verdict, baseline_recheck, conflict_check, apply_v2_validation]
 confirmed    --replaced_after_confirmation-->     superseded            [successor_candidate_id]
 rejected     --replaced_after_rejection-->        superseded            [successor_candidate_id]
 applied      --replaced_after_apply-->            superseded            [successor_candidate_id]
@@ -187,6 +258,18 @@ applied      --replaced_after_apply-->            superseded            [success
    契约自检遍历声明的边来验证这一点，新增一条边就会红。
 2. **whitelist 为空时，进入 `confirmed` 的每一条边都必须记录 reviewer action 与 review decision。**
    人工确认必须**记录审阅动作**，而不是只把状态字段改成 `confirmed`。
+3. **乐观并发是机器不变量**（§2.3）：入 `applied` 的边必须带
+   `BASELINE_RECHECK_EVIDENCE`（`baseline_recheck`），且必须存在一条
+   `confirmed --authoritative_baseline_changed_before_apply--> conflicted` 的边；
+   离开 `conflicted` **重新走上确认路径**（去 `needs_review` / `confirmed` / `applied`）必须带
+   `new_review_decision`（直接 `superseded` 不算重新进入确认路径，有意豁免）。
+   合起来就是：
+
+   ```text
+   confirmed finding + baseline changed before apply → conflicted → 禁止进入 applied
+   ```
+
+   即使确实走出了 conflict，也必须经过一次**新的**确认（旧确认不能当新基准的通行证）。
 
 明确禁止（`FORBIDDEN_TRANSITIONS`，写出来是为了让"禁止"可被复查，也让误加回来的边立刻失败）：
 
@@ -273,15 +356,45 @@ source artifact → extraction → candidate → review decision → confirmed f
 
 | | 含义 | 做法 |
 |---|---|---|
-| **undo** | 撤销**已经应用的工程写入** | `UNDO_MECHANISM = reverse_governed_transaction_through_apply_v2`：一次新的、反向的、同样受治的写事务 |
-| **replay** | 用**当时被冻结的输入**再跑一次，验证结果一致 | 冻结 `candidate` + `review_decision` + `patch_compiler_version` + `patch_compiler_rules`，与**已应用事务的操作**逐字节比较 |
+| **undo** | 撤销**已经应用的工程写入** | `UNDO_MECHANISM = compensating_governed_transaction_through_apply_v2`：一次新的、反向的、同样受治的写事务 |
+| **replay** | 用**当时被冻结的输入**再跑一次，验证结果一致 | 冻结 `candidate` + `review_decision` + `patch_compiler_version` + `patch_compiler_rules` + `authoritative_baseline_revision`，验两层 digest（见下） |
 
-两条硬约束：
+### 11.1 replay 验的是语义，不是字节（远端裁定的修改）
 
-- **undo 不是状态回滚**（`UNDO_IS_A_STATE_ROLLBACK = False`）。已确认的事实保持 `confirmed`——
-  事实不会"没发生过"；被撤销的是那次工程写入，而撤销本身是一次独立的、可审计的写。
-- **replay 必须要求结果一致**（`REPLAY_MUST_BE_BIT_IDENTICAL = True`）。不一致的 replay 说明
-  "当时那条决定"不足以复现结果，这正是要发现的东西，不能被当成"环境差异"放过。
+初稿把 replay 写成「已应用事务的操作**逐字节**比较」（`REPLAY_MUST_BE_BIT_IDENTICAL`）。
+远端否决了这一点，并要求改掉——理由与 A5 那次的错是同一个：**把运行时 metadata 混进身份**。
+`transaction_id`、timestamp、审计时间都是合理的 volatile provenance，它们不一致不应让 replay 失败。
+现在改成两层（都要求一致）：
+
+```text
+REPLAY_CANONICAL_PATCH_MUST_MATCH   = True   # 规范化后重新编译的 patch digest
+REPLAY_SEMANTIC_POSTSTATE_MUST_MATCH = True  # 应用在相同 baseline 后的语义状态 digest
+REPLAY_RAW_TRANSACTION_BYTES_MUST_MATCH = False   # 明确不是契约
+REPLAY_VOLATILE_FIELDS_EXCLUDED = transaction_id · timestamps · audit_time
+```
+
+冻结输入（`REPLAY_FROZEN_INPUTS`）：`candidate` 、`review_decision`、`patch_compiler_version`、
+`patch_compiler_rules`、`authoritative_baseline_revision`。
+
+### 11.2 undo 不是状态回滚，但事务层要能表达它
+
+- 已确认的事实保持 `confirmed`——事实不会「没发生过」；撤销是一次独立的、可审计的**补偿事务**
+  （`TRANSACTION_REVERTED_MEANS_COMPENSATED_NOT_ERASED = True`），不篡改历史 review decision。
+- **不新增 candidate 级 `reverted` 状态**（`CANDIDATE_LEVEL_REVERTED_STATE = False`）。
+  但 **transaction 层必须能表达** `TRANSACTION_STATES`：
+
+  ```text
+  applied · reverted · superseded
+  ```
+
+  审阅界面若要显示「这个确认曾应用、后来被撤销」，用**派生展示态**
+  （`REVERTED_IS_A_DERIVED_PRESENTATION_STATE = True`）：
+
+  ```text
+  confirmed + last applied transaction reverted
+  ```
+
+  不把它变成 candidate 状态机里的新权威状态。
 
 **M6 Release Gate 应要求关键 case 可 replay，而不只是能 undo。**
 
@@ -327,11 +440,22 @@ P&ID 上"BALL VALVE"该被读成设备标签还是注释文字，往往两种都
 3. 三个来源都没有 apply 权限、都必须人工审阅、都没有开启自动接收；
 4. 授权决定输入里没有"像置信度"的名字；
 5. 状态机：边不指向未声明状态；声明的禁止边确实不在机器里；**`applied` 唯一入边来自 `confirmed`**；
-   入 `applied` 的边必须带齐四项闸门证据；whitelist 为空时入 `confirmed` 的边必须带 reviewer action；
+   入 `applied` 的边必须带齐闸门证据**且必须带一次 fresh baseline recheck**；whitelist 为空时
+   入 `confirmed` 的边必须带 reviewer action；**基线变动必须能把 `confirmed` 打回 `conflicted`**，
+   而离开 `conflicted` 重新进入确认路径（`needs_review` / `confirmed` / `applied`）必须带
+   `new_review_decision`；
 6. candidate schema 含必需字段、**不含** patch 操作字段；
 7. 破坏性意图必须是 `forbidden`，每行必须写明理由；
 8. 种子材料不算真值、语料路径不在种子材料下；
-9. replay 必须要求一致、undo 必须走同一个受治写路径。
+9. **区域身份**：三类 selector 都必存；source revision 变化必须产生新区域身份；
+10. **review 持久化**：不与图纸对象共生命周期、删除不级联、`review_decision_id` 只能被引用不能被折叠；
+11. **conflict 基准**：必须是 apply-v2 管理的已提交语义状态，原始图纸 / candidate / TypeSafe 输出
+    都不得当权威；比较键含身份 + 语义路径；apply 前必须重读 baseline；
+12. **calibration**：`measured_on_gold_corpus` 必须由 Gate 签，不得存在自动晋升规则，默认类不得是受闸类；
+13. **事务层状态**：`applied` / `reverted` / `superseded` 齐备，`reverted` 语义是补偿而非抹除，
+    且不得出现在 candidate 状态里；
+14. **replay**：canonical patch 与语义后态两者都必须一致，**原始事务字节不是契约**，volatile 字段必须排除；
+    undo 必须走同一个受治写路径。
 
 `backend/tests/test_m6_ingestion_contract.py` 在此之上再钉两件事：
 **本文件的措辞与契约数据一致**（层名、状态名、策略意图、语料维度、candidate 字段逐个核对），
@@ -368,30 +492,40 @@ candidate · ingestion · ingest · semantic-finding · confirmed-finding · rev
 3. 事实 → patch 的确定性 compiler + replay harness；
 4. gold corpus 第一批（七个维度各若干条）+ 基于它的 calibration measurement。
 
-## 15. 未决问题（明确留给 Gate 裁定）
+## 15. 六项裁定（2026-09-22 远端 Gate 正式答复，已并入上面各节）
 
-这些问题**不由本地自行决定**，写在这里是为了让 Gate 一次把口径定完：
+初稿把六个问题留成「未决」，远端裁定如下（**这才是最终口径**，前面各节已按此改写）：
 
-1. **`source_region` 的形式**：是几何裁剪框 + 文本 span，还是元素引用集合？扫描件与矢量图的能力不同。
-2. **review queue 的持久化位置**：与文档同库（沿用同一个原子提交路径），还是独立的 review store？
-   前者让"确认"与"写入"更容易共事务，后者让审阅独立于图纸生命周期。
-3. **conflict 的判定基准**：与"既有权威语义"比较时，"权威"指的是工程语义图里的哪个层
-   （声明的 `engineering_id` / tag / 属性）？
-4. **`calibration_class` 何时允许写 `measured_on_gold_corpus`**：语料规模与测量口径由谁来签。
-5. **replay 的比较粒度**：逐字节比较已应用事务的操作（本任务书的默认），还是逐字段语义比较？
-   前者更严格，后者对合法的重新编号更宽容。
-6. **是否需要独立的 `reverted` 状态**：本任务书选择不加（见 §11），撤销记录在事务层。若 Gate 认为
-   审阅者视角必须看到"已被撤销"，再加。
+1. **`source_region`**：两类引用都存，不能二选一；支持 `geometry_selector` / `element_refs` / `text_spans`
+   三类 selector + frame 字段。`region_id` 的契约是「同一 source revision 下可确定性重定位 / 裁出同一证据
+   区域」，不是「坐标永远不变」；revision 变则**必须**产生新区域身份。→ §2.1
+2. **review queue**：**同一 datastore，独立表 / 聚合**；三个实体各有不可变 ID；
+   **文档或元素删除不得级联删除审阅历史**；「确认并应用」可在同一个数据库事务里，但
+   `review_decision_id` 只能被引用、不能被折叠。→ §2.2
+3. **conflict 基准**：以 **apply-v2 管理的 current committed engineering semantic state** 为唯一权威基准，
+   不用原始图纸 / candidate / TypeSafe 输出；比较键 = 目标工程身份 + 语义路径；review 时记录 baseline，
+   **apply 前必须重读**；`reviewed baseline != current authoritative value` 即 `conflicted`。
+   即为乐观并发控制，并配套机器不变量（见 §6 性质 3）。→ §2.3
+4. **`measured_on_gold_corpus`**：**M6 v1 默认禁止**，必须独立 Calibration Gate（仍由远端 Release Gate 签），
+   并至少附八项证据；**不得写「达到 N 条即自动 calibrated」的规则**。→ §5
+5. **replay**：**改掉「原始 transaction bytes 全字节相同」**（这是远端唯一明确要求改掉的既有选择），
+   改为两层：canonical compiled patch digest 与 resulting semantic state digest 都必须一致，
+   明确排除 transaction id / timestamps 等 volatile provenance。→ §11.1
+6. **candidate 级 `reverted` 状态**：不增加（本地原选择被批准）。但 **transaction 层**必须能表达
+   `applied` / `reverted` / `superseded`；界面需要时用派生展示态
+   `confirmed + last applied transaction reverted`，不得变成新的权威 candidate 状态。→ §11.2
+
+**目前本任务书没有遗留未决项**；若实现阶段出现新的口径分歧，同样先写进本文件再报 Gate。
 
 ## 16. 实现落点（随阶段推进填写）
 
 | 关注点 | 文件 | 状态 |
 |---|---|---|
 | 任务书（本文件） | `docs/m6-governed-semantic-ingestion.md` | 第一阶段 ✓ |
-| 治理契约（层/状态机/策略/来源/语料维度） | `backend/agentcad/m6_ingestion_contract.py` | 第一阶段 ✓ |
+| 治理契约（层 / 状态机 / 策略 / 来源 / 区域身份 / 并发基线 / 校准闸 / replay / 语料维度） | `backend/agentcad/m6_ingestion_contract.py` | 第一阶段 ✓ |
 | 文档 ↔ 契约 一致性与表层边界 | `backend/tests/test_m6_ingestion_contract.py` | 第一阶段 ✓ |
 | candidate schema 实体 | `backend/agentcad/m6_candidate_models.py`（拟定） | 待 Gate 签署 |
-| review queue 与状态机持久化 | 待定（§15-2） | 待 Gate 签署 |
+| review queue 与状态机持久化 | 同库独立聚合（§2.2 已裁定），文件待定 | 待 Gate 签署 |
 | 事实 → patch 的确定性 compiler | 待定 | 待 Gate 签署 |
 | replay harness | 待定 | 待 Gate 签署 |
 | gold corpus | `backend/tests/m6_gold_corpus/` | 待 Gate 签署 |

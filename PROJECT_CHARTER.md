@@ -1340,9 +1340,25 @@ M4 未通过 M4-6 验收前，Charter 中不得写入 M4 accepted SHA。
 
 完成标志：Agent 能依据 validator 局部修复并在 benchmark 达到预设成功率。
 
-## 51. M6 — Existing Drawing Understanding
+## 51. M6 — Governed Semantic Ingestion（原「Existing Drawing Understanding」）
 
-完成标志：至少一种真实外部 P&ID 格式能够可靠重建 semantic graph，并有 human confirmation workflow。
+完成标志：至少一种真实外部 P&ID 格式能够可靠重建 semantic graph，并有 **human confirmation workflow**；
+
+口径（2026-09-22 由远端 Reviewer / Release Gate 在 M6 任务书中固定）：
+
+> M6 的成功标准不是「模型能看懂多少图」，而是「**未经确认的语义永远不能越过治理边界**，而经确认的语义
+> 可以**确定性、可审计、可撤销**地进入工程模型」。
+
+- 任务书：`docs/m6-governed-semantic-ingestion.md`（第一阶段交付）。
+- 机器可检查的治理契约：`backend/agentcad/m6_ingestion_contract.py` +
+  `backend/tests/test_m6_ingestion_contract.py`。
+- 分层固定为 `imported_artifact → source_region → semantic_candidate → review_decision →
+  confirmed_semantic_finding → structured_engineering_patch → apply_v2_transaction → committed_revision`，
+  且**只有 apply-v2 事务层有工程写权限**；
+  `SemanticCandidate` 独立建模，不以后两层的 `SemanticDiff` / `StructuredEngineeringPatch` 为主形状。
+
+**第一阶段（设计与契约）已在本地完成，等远端 Gate 签署**：不写摄取运行时、不新增 HTTP/MCP 表层、
+不落候选持久化、不建真值语料。
 
 ## 52. M7 — Project Engineering Graph
 

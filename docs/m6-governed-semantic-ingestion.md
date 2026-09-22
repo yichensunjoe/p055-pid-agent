@@ -524,11 +524,38 @@ candidate · ingestion · ingest · semantic-finding · confirmed-finding · rev
 | 任务书（本文件） | `docs/m6-governed-semantic-ingestion.md` | 第一阶段 ✓ |
 | 治理契约（层 / 状态机 / 策略 / 来源 / 区域身份 / 并发基线 / 校准闸 / replay / 语料维度） | `backend/agentcad/m6_ingestion_contract.py` | 第一阶段 ✓ |
 | 文档 ↔ 契约 一致性与表层边界 | `backend/tests/test_m6_ingestion_contract.py` | 第一阶段 ✓ |
-| candidate schema 实体 | `backend/agentcad/m6_candidate_models.py`（拟定） | 待 Gate 签署 |
-| review queue 与状态机持久化 | 同库独立聚合（§2.2 已裁定），文件待定 | 待 Gate 签署 |
-| 事实 → patch 的确定性 compiler | 待定 | 待 Gate 签署 |
+| candidate schema 实体 | `backend/agentcad/m6_candidate_models.py` | **Phase-2A ✓** |
+| 治理核心（状态机执行 / 基线重读 / 确定性编译） | `backend/agentcad/m6_candidate_core.py` | **Phase-2A ✓** |
+| review queue 与状态机持久化 | `backend/agentcad/database_recovery.py`（schema v7）+ `store.py` | **Phase-2A ✓** |
+| 事实 → patch 的确定性 compiler | `m6_candidate_core.py`（仅 `creation` / `metadata_enrichment`） | **Phase-2A 子集 ✓** |
 | replay harness | 待定 | 待 Gate 签署 |
 | gold corpus | `backend/tests/m6_gold_corpus/` | 待 Gate 签署 |
+
+## 16b. Phase-2A 已落地（内部 domain/service 层，无表层）
+
+已实现的最小闭环：
+
+```text
+SourceArtifactRef → SourceRegion → SemanticCandidate → ReviewDecision
+→ ConfirmedSemanticFinding → 确定性编译 → StructuredEngineeringPatch
+```
+
+四个设计点比“有哪些文件”重要得多：
+
+1. **状态是算出来的，不是存出来的。** `semantic_candidates` 只存 `review_status_at_creation`；
+   当前状态由 **append-only 的 `review_decisions` 日志回放**得到，而回放的每一步都必须命中契约里
+   声明的边。于是“把 `confirmed` 写进一列”不给任何权限——“确认”只能是一行人类决定。
+2. **`patch_id` 由 digest 派生**（`m6patch_<digest[:16]>`）。同一条 finding 编译两次得到**同一个身份与同一份内容**，
+   不存在“看起来差不多”的两张 patch；而 digest 的输入排除了 `created_at` / `decided_at` / `transaction_id`
+   等 volatile 字段（§11.1 的同一个教训）。
+3. **persistence 是同一库上的三个独立聚合，且故意没有指向 `documents` 的外键**（沿用 `audit_records` 的先例：
+   证据必须活得比它作证的东西久）。三个表都只有 insert 方法：**没有更新路径，是“不可变”的强制手段**。
+4. **编译器的能力边界写成了 refusal 而不是猜测**：Phase-2A 只编译 `creation` 与 `metadata_enrichment`；
+   `overwrite` → `conflict_requires_human_resolution`（拒绝，不是覆盖）；`delete` / `replace_topology` → 禁；
+   `relationship_addition` 与“把已有对象的类别改掉” → 明确拒绝并给出 reason code。
+
+本阶段**未做**（按 Gate 边界）：apply-v2 写入、undo / 补偿事务、HTTP 路由、MCP 工具、UI / review 页、
+TypeSafe 与 LLM 的摄取接入、R8 的 112×2 数据、auto-accept、批量导入、replay harness、gold corpus。
 
 ## 17. 与已有系统的关系
 

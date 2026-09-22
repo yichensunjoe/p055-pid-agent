@@ -292,6 +292,16 @@ SEMANTIC_CANDIDATE_FIELDS: tuple[CandidateField, ...] = (
     CandidateField("created_at", True, "when the proposal was made"),
 )
 
+#: The ``candidate_type`` vocabulary. Declared here so a schema that implements it can be
+#: checked against the contract instead of the two drifting apart.
+CANDIDATE_TYPE_KINDS: tuple[str, ...] = (
+    "symbol_class",
+    "equipment_tag",
+    "annotation_role",
+    "connection_relationship",
+    "unresolved",
+)
+
 #: ``candidate_type`` values that carry no confirmable fact: they may be reviewed, but
 #: there is nothing for a reviewer to confirm, so they cannot leave ``needs_review`` for
 #: ``confirmed``. "No decision" and "insufficient evidence" are therefore recorded
@@ -812,6 +822,9 @@ def validate_contract() -> list[str]:
         problems.append("candidate schema must not carry patch operations")
     if not UNCONFIRMABLE_CANDIDATE_TYPES:
         problems.append("unconfirmable candidate types must be declared, not left implicit")
+    for kind in UNCONFIRMABLE_CANDIDATE_TYPES:
+        if kind not in CANDIDATE_TYPE_KINDS:
+            problems.append(f"unconfirmable type {kind!r} is not a declared candidate type")
 
     # §7: destructive intents are never allowed in v1, and every row states why.
     for row in WRITE_POLICY_V1:
@@ -976,6 +989,7 @@ def contract_document() -> dict[str, object]:
         "conflict_baseline_is_not": list(CONFLICT_BASELINE_IS_NOT),
         "conflict_comparison_key": list(CONFLICT_COMPARISON_KEY),
         "candidate_fields": [asdict(field) for field in SEMANTIC_CANDIDATE_FIELDS],
+        "candidate_type_kinds": list(CANDIDATE_TYPE_KINDS),
         "unconfirmable_candidate_types": list(UNCONFIRMABLE_CANDIDATE_TYPES),
         "producers": [asdict(producer) for producer in JUDGMENT_PRODUCERS],
         "auto_accept_whitelist": list(AUTO_ACCEPT_WHITELIST),

@@ -18,6 +18,11 @@ from .database_recovery import (
     initialize_database,
 )
 from .harness_models import AgentSession, ToolApproval, ToolCallRecord
+from .m6_candidate_models import (
+    ConfirmedSemanticFinding,
+    ReviewDecision,
+    SemanticCandidate,
+)
 from .models import Document, DocumentSummary, HistoryEntry
 from .project_io import ProjectSettings
 
@@ -975,6 +980,156 @@ class SQLiteDocumentStore:
                 (document_id,),
             )
             return cursor.rowcount == 1
+
+    # -- M6 review aggregates ------------------------------------------------------------
+    #
+    # Three insert-only tables with no foreign key to `documents`, deliberately: review
+    # evidence must outlive the drawing it is about, exactly like `audit_records`. The
+    # methods below expose no update path at all, which is how "immutable" is enforced
+    # rather than promised: a second insert with the same id conflicts, and there is no way
+    # to rewrite a recorded decision.
+
+    def insert_semantic_candidate(self, candidate: SemanticCandidate) -> None:
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO semantic_candidates (
+                    candidate_id, source_document_id, source_revision, region_id,
+                    candidate_type, review_status_at_creation, producer_key,
+                    producer_version, contract_version, created_at, payload_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    candidate.candidate_id,
+                    candidate.artifact.source_document_id,
+                    candidate.artifact.source_revision,
+                    candidate.region.region_id,
+                    candidate.candidate_type,
+                    candidate.review_status,
+                    candidate.producer.key,
+                    candidate.producer.version,
+                    candidate.contract,
+                    candidate.created_at.isoformat(),
+                    self._encode(candidate.model_dump(mode="json", by_alias=True)),
+                ),
+            )
+
+    def get_semantic_candidate(self, candidate_id: str) -> SemanticCandidate | None:
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT payload_json FROM semantic_candidates WHERE candidate_id = ?",
+                (candidate_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return SemanticCandidate.model_validate_json(row["payload_json"])
+
+    def list_semantic_candidates(
+        self, *, source_document_id: str | None = None
+    ) -> list[SemanticCandidate]:
+        query = "SELECT payload_json FROM semantic_candidates"
+        params: tuple[Any, ...] = ()
+        if source_document_id is not None:
+            query += " WHERE source_document_id = ?"
+            params = (source_document_id,)
+        query += " ORDER BY created_at ASC, candidate_id ASC"
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(query, params).fetchall()
+        return [SemanticCandidate.model_validate_json(row["payload_json"]) for row in rows]
+
+    def insert_review_decision(self, decision: ReviewDecision) -> None:
+        baseline = decision.baseline
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO review_decisions (
+                    review_decision_id, candidate_id, kind, is_human, from_status, to_status,
+                    reviewer_identity, reviewer_action, baseline_revision, baseline_path,
+                    baseline_digest, decided_at, payload_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    decision.review_decision_id,
+                    decision.candidate_id,
+                    decision.kind,
+                    1 if decision.is_human else 0,
+                    decision.from_status,
+                    decision.to_status,
+                    decision.reviewer_identity,
+                    decision.reviewer_action,
+                    baseline.baseline_revision if baseline is not None else None,
+                    baseline.comparison_path if baseline is not None else "",
+                    baseline.value_digest if baseline is not None else "",
+                    decision.decided_at.isoformat(),
+                    self._encode(decision.model_dump(mode="json", by_alias=True)),
+                ),
+            )
+
+    def list_review_decisions(self, candidate_id: str) -> list[ReviewDecision]:
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                "SELECT payload_json FROM review_decisions WHERE candidate_id = ? "
+                "ORDER BY decided_at ASC, review_decision_id ASC",
+                (candidate_id,),
+            ).fetchall()
+        return [ReviewDecision.model_validate_json(row["payload_json"]) for row in rows]
+
+    def get_review_decision(self, review_decision_id: str) -> ReviewDecision | None:
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT payload_json FROM review_decisions WHERE review_decision_id = ?",
+                (review_decision_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return ReviewDecision.model_validate_json(row["payload_json"])
+
+    def insert_confirmed_finding(self, finding: ConfirmedSemanticFinding) -> None:
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO confirmed_semantic_findings (
+                    finding_id, candidate_id, review_decision_id, source_document_id,
+                    source_revision, region_id, candidate_type, baseline_revision,
+                    confirmed_at, payload_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    finding.finding_id,
+                    finding.candidate_id,
+                    finding.review_decision_id,
+                    finding.artifact.source_document_id,
+                    finding.artifact.source_revision,
+                    finding.region_id,
+                    finding.candidate_type,
+                    finding.baseline.baseline_revision,
+                    finding.confirmed_at.isoformat(),
+                    self._encode(finding.model_dump(mode="json", by_alias=True)),
+                ),
+            )
+
+    def get_confirmed_finding(self, finding_id: str) -> ConfirmedSemanticFinding | None:
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT payload_json FROM confirmed_semantic_findings WHERE finding_id = ?",
+                (finding_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return ConfirmedSemanticFinding.model_validate_json(row["payload_json"])
+
+    def list_confirmed_findings(
+        self, *, source_document_id: str | None = None
+    ) -> list[ConfirmedSemanticFinding]:
+        query = "SELECT payload_json FROM confirmed_semantic_findings"
+        params: tuple[Any, ...] = ()
+        if source_document_id is not None:
+            query += " WHERE source_document_id = ?"
+            params = (source_document_id,)
+        query += " ORDER BY confirmed_at ASC, finding_id ASC"
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(query, params).fetchall()
+        return [ConfirmedSemanticFinding.model_validate_json(row["payload_json"]) for row in rows]
 
     def prune_project_index(self) -> list[str]:
         """Drop index rows whose document no longer exists; return their ids."""

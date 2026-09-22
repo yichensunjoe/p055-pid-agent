@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, BinaryIO
 from urllib.parse import quote
 
-CURRENT_SCHEMA_VERSION = 6
+CURRENT_SCHEMA_VERSION = 7
 BACKUP_FORMAT = "pid-agent.sqlite-backup"
 BACKUP_VERSION = 1
 BACKUP_DATABASE_MEMBER = "database.sqlite3"
@@ -779,6 +779,88 @@ def _migration_6(connection: sqlite3.Connection) -> None:
         )
 
 
+def _migration_7(connection: sqlite3.Connection) -> None:
+    """M6 review aggregates: candidates, review decisions and confirmed findings.
+
+    Three tables, and deliberately **no foreign key to ``documents``**. This follows the
+    existing precedent for ``audit_records``: evidence must outlive the thing it is evidence
+    about. A ``ON DELETE CASCADE`` here would erase the record that a person once confirmed a
+    fact the moment somebody deleted the drawing, which is exactly the history an M6 review
+    needs to keep; an ``ON DELETE RESTRICT``-style reference would instead make a drawing
+    undeletable, because a row about it exists.
+
+    The review decision table is the append-only transition log for a candidate, including the
+    producer's filing. Only rows whose ``kind`` is a human decision carry a reviewer action —
+    ``ReviewDecision`` enforces that at the model level — so ``confirmed`` stays traceable to a
+    person even though the log also holds events.
+    """
+
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS semantic_candidates (
+            candidate_id TEXT PRIMARY KEY,
+            source_document_id TEXT NOT NULL,
+            source_revision INTEGER NOT NULL,
+            region_id TEXT NOT NULL,
+            candidate_type TEXT NOT NULL,
+            review_status_at_creation TEXT NOT NULL,
+            producer_key TEXT NOT NULL,
+            producer_version TEXT NOT NULL DEFAULT '',
+            contract_version TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            payload_json TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_semantic_candidates_document "
+        "ON semantic_candidates(source_document_id, created_at DESC)"
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS review_decisions (
+            review_decision_id TEXT PRIMARY KEY,
+            candidate_id TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            is_human INTEGER NOT NULL,
+            from_status TEXT NOT NULL,
+            to_status TEXT NOT NULL,
+            reviewer_identity TEXT NOT NULL DEFAULT '',
+            reviewer_action TEXT NOT NULL DEFAULT '',
+            baseline_revision INTEGER,
+            baseline_path TEXT NOT NULL DEFAULT '',
+            baseline_digest TEXT NOT NULL DEFAULT '',
+            decided_at TEXT NOT NULL,
+            payload_json TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_review_decisions_candidate "
+        "ON review_decisions(candidate_id, decided_at, review_decision_id)"
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS confirmed_semantic_findings (
+            finding_id TEXT PRIMARY KEY,
+            candidate_id TEXT NOT NULL,
+            review_decision_id TEXT NOT NULL,
+            source_document_id TEXT NOT NULL,
+            source_revision INTEGER NOT NULL,
+            region_id TEXT NOT NULL,
+            candidate_type TEXT NOT NULL,
+            baseline_revision INTEGER NOT NULL,
+            confirmed_at TEXT NOT NULL,
+            payload_json TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_confirmed_findings_document "
+        "ON confirmed_semantic_findings(source_document_id, confirmed_at DESC)"
+    )
+
+
 _MIGRATIONS = {
     1: _migration_1,
     2: _migration_2,
@@ -786,6 +868,7 @@ _MIGRATIONS = {
     4: _migration_4,
     5: _migration_5,
     6: _migration_6,
+    7: _migration_7,
 }
 
 
@@ -814,6 +897,9 @@ def _validate_required_schema(connection: sqlite3.Connection) -> None:
         "agent_tool_calls",
         "audit_records",
         "project_index",
+        "semantic_candidates",
+        "review_decisions",
+        "confirmed_semantic_findings",
         _METADATA_TABLE,
     }
     missing = required_tables - _table_names(connection)
@@ -869,6 +955,21 @@ def _validate_required_schema(connection: sqlite3.Connection) -> None:
             "builder_version", "object_count", "equipment_count", "valve_count",
             "instrument_count", "signal_count", "line_count", "off_page_count",
             "error_count", "warning_count", "graph_json", "built_at", "built_by",
+        },
+        "semantic_candidates": {
+            "candidate_id", "source_document_id", "source_revision", "region_id",
+            "candidate_type", "review_status_at_creation", "producer_key",
+            "producer_version", "contract_version", "created_at", "payload_json",
+        },
+        "review_decisions": {
+            "review_decision_id", "candidate_id", "kind", "is_human", "from_status",
+            "to_status", "reviewer_identity", "reviewer_action", "baseline_revision",
+            "baseline_path", "baseline_digest", "decided_at", "payload_json",
+        },
+        "confirmed_semantic_findings": {
+            "finding_id", "candidate_id", "review_decision_id", "source_document_id",
+            "source_revision", "region_id", "candidate_type", "baseline_revision",
+            "confirmed_at", "payload_json",
         },
         _METADATA_TABLE: {"singleton_id", "instance_id", "created_at"},
     }

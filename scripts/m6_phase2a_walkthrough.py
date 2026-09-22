@@ -146,13 +146,14 @@ def main() -> int:
         baseline = baseline_record(
             document, graph, identity="element:pump_untagged", path="equipment_tag"
         )
-        decision = service.confirm(
+        confirmation = service.confirm(
             candidate.candidate_id,
             reviewer_identity=REVIEWER,
             reviewer_action="saw the label P-201 on the pump",
             baseline=baseline,
         )
-        finding = service.confirm_finding(candidate.candidate_id)
+        decision = confirmation.decision
+        finding = confirmation.finding
         patch = service.compile_finding(finding.finding_id, document=document, registry=registry)
         recompiled = service.compile_finding(
             finding.finding_id, document=document, registry=registry
@@ -170,6 +171,8 @@ def main() -> int:
                     "revision": decision.baseline.baseline_revision if decision.baseline else None,
                     "path": decision.baseline.comparison_path if decision.baseline else None,
                     "value_present": decision.baseline.value_present if decision.baseline else None,
+                    "digest_version": decision.baseline.digest_version if decision.baseline else None,
+                    "value_digest": decision.baseline.value_digest if decision.baseline else None,
                 },
                 "finding_id": finding.finding_id,
                 "provenance_chain": finding.provenance_chain,

@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 from .agent_semantic_models import SemanticOperation, UpdateElementOperation
@@ -150,10 +151,34 @@ def _strip_volatile(value: Any) -> Any:
     return value
 
 
+#: The baseline digest scheme. Named and versioned because Phase-2B's optimistic concurrency
+#: will trust this number: an unversioned summary would be an identity nobody can re-derive
+#: after the scheme changes.
+SEMANTIC_VALUE_DIGEST_VERSION = "semantic-value-v1"
+
+
+def normalize_semantic_value(value: str) -> str:
+    """The canonical form a semantic value is hashed in.
+
+    Tag-like values are case-insensitive in this codebase — ``resolve_object`` folds case when
+    an object is addressed by tag — so ``P-201``, ``p-201`` and a padded ``  P-201  `` are one
+    statement. Normalizing here means two spellings of one fact cannot look like a change, and
+    symmetrically that a real change cannot hide behind whitespace.
+    """
+
+    return " ".join(value.split()).casefold()
+
+
 def value_digest(path: str, value: str) -> str:
     """A digest of one semantic value. ``""`` is a meaningful value (unstated), not a missing one."""
 
-    return canonical_digest({"path": path, "value": value})[:32]
+    return canonical_digest(
+        {
+            "digest": SEMANTIC_VALUE_DIGEST_VERSION,
+            "path": path,
+            "value": normalize_semantic_value(value),
+        }
+    )
 
 
 # --------------------------------------------------------------------------------------
@@ -222,6 +247,7 @@ def baseline_record(
         baseline_revision=document.revision,
         comparison_identity=identity or "unstated",
         comparison_path=path,
+        digest_version=SEMANTIC_VALUE_DIGEST_VERSION,
         value_digest=value_digest(path, value),
         value_present=bool(value),
     )
@@ -232,8 +258,22 @@ def baseline_record(
 # --------------------------------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class Confirmation:
+    """The two durable artifacts of one human decision, written together or not at all."""
+
+    decision: ReviewDecision
+    finding: ConfirmedSemanticFinding
+
+
 class M6CandidateRepository(Protocol):
     def insert_semantic_candidate(self, candidate: SemanticCandidate) -> None: ...
+
+    def record_confirmation(
+        self, decision: ReviewDecision, finding: ConfirmedSemanticFinding
+    ) -> None:
+        """Commit the decision and its finding in one transaction."""
+        ...
 
     def get_semantic_candidate(self, candidate_id: str) -> SemanticCandidate | None: ...
 
@@ -347,6 +387,42 @@ class M6CandidateService:
         conflict_resolution: str = "",
         resolution_choice: ConflictResolutionChoice | None = None,
     ) -> ReviewDecision:
+        decision = self._build_decision(
+            candidate_id,
+            kind,
+            reviewer_identity=reviewer_identity,
+            reviewer_action=reviewer_action,
+            note=note,
+            baseline=baseline,
+            conflict=conflict,
+            successor_candidate_id=successor_candidate_id,
+            conflict_resolution=conflict_resolution,
+            resolution_choice=resolution_choice,
+        )
+        self._repository.insert_review_decision(decision)
+        return decision
+
+    def _build_decision(
+        self,
+        candidate_id: str,
+        kind: DecisionKind,
+        *,
+        reviewer_identity: str = "",
+        reviewer_action: str = "",
+        note: str = "",
+        baseline: ConflictBaselineRecord | None = None,
+        conflict: CandidateConflict | None = None,
+        successor_candidate_id: str = "",
+        conflict_resolution: str = "",
+        resolution_choice: ConflictResolutionChoice | None = None,
+    ) -> ReviewDecision:
+        """Validate a transition and return the row, without writing it.
+
+        Separated from the write so a confirmation can build its decision *and* its finding and
+        then commit both through one repository call: the two durable artifacts of a single
+        human decision must not be able to land half-formed.
+        """
+
         if kind not in _KIND_TARGET_STATUS:
             raise IllegalTransition(f"unknown decision kind {kind!r}", code="unknown_decision_kind")
         to_status = _KIND_TARGET_STATUS[kind]
@@ -394,7 +470,6 @@ class M6CandidateService:
                 "only a recorded human decision can produce a confirmed candidate",
                 code="confirmed_requires_human_decision",
             )
-        self._repository.insert_review_decision(decision)
         return decision
 
     def _missing_evidence(self, required: tuple[str, ...], decision: ReviewDecision) -> list[str]:
@@ -423,8 +498,18 @@ class M6CandidateService:
         reviewer_action: str,
         baseline: ConflictBaselineRecord,
         note: str = "",
-    ) -> ReviewDecision:
-        return self.record_decision(
+    ) -> Confirmation:
+        """Record a person's confirmation and the finding it creates, atomically.
+
+        These are two rows but one decision. Committing them separately would leave a window in
+        which the state machine says ``confirmed`` while no finding can be traced back to a
+        person — exactly the crack Phase-2B must not inherit before it gains write permission.
+        """
+
+        candidate = self._repository.get_semantic_candidate(candidate_id)
+        if candidate is None:
+            raise CandidateNotFound(f"unknown candidate {candidate_id!r}")
+        decision = self._build_decision(
             candidate_id,
             "human_confirm",
             reviewer_identity=reviewer_identity,
@@ -432,6 +517,9 @@ class M6CandidateService:
             baseline=baseline,
             note=note,
         )
+        finding = self._build_finding(candidate, decision)
+        self._repository.record_confirmation(decision, finding)
+        return Confirmation(decision=decision, finding=finding)
 
     def reject(
         self,
@@ -473,6 +561,13 @@ class M6CandidateService:
             raise IllegalTransition(
                 "no review baseline was recorded, so there is nothing to re-check",
                 code="no_reviewed_baseline",
+            )
+        if reviewed.digest_version != current.digest_version:
+            raise IllegalTransition(
+                f"the reviewed baseline was hashed with {reviewed.digest_version!r} and the current "
+                f"value with {current.digest_version!r}: the two digests are not comparable, and "
+                "treating them as equal would read a scheme change as 'unchanged'",
+                code="baseline_digest_version_mismatch",
             )
         if reviewed.value_digest == current.value_digest:
             return None
@@ -534,21 +629,29 @@ class M6CandidateService:
 
     # -- confirmation ------------------------------------------------------------------
 
-    def confirm_finding(self, candidate_id: str) -> ConfirmedSemanticFinding:
-        candidate = self._repository.get_semantic_candidate(candidate_id)
-        if candidate is None:
-            raise CandidateNotFound(f"unknown candidate {candidate_id!r}")
-        if self.current_status(candidate_id) != "confirmed":
-            raise NotConfirmedError(
-                f"candidate {candidate_id} is not confirmed; a finding can only be created from "
-                "a recorded human confirmation",
-                code="finding_requires_confirmation",
-            )
+    def latest_finding(self, candidate_id: str) -> ConfirmedSemanticFinding | None:
+        """The finding a confirmation produced, read back from the store."""
+
         confirming = self._latest_confirming_decision(candidate_id)
-        if confirming is None or confirming.baseline is None:
+        if confirming is None:
+            return None
+        return self._repository.get_confirmed_finding(
+            _finding_id(candidate_id, confirming.review_decision_id)
+        )
+
+    def _build_finding(
+        self, candidate: SemanticCandidate, confirming: ReviewDecision
+    ) -> ConfirmedSemanticFinding:
+        candidate_id = candidate.candidate_id
+        if confirming.baseline is None:
             raise NotConfirmedError(
                 "the confirmation did not record the baseline it was made against",
                 code="confirmation_without_baseline",
+            )
+        if candidate.candidate_type == "unresolved":
+            raise NotConfirmedError(
+                "an unresolved candidate carries no fact, so there is nothing to confirm",
+                code="unresolved_has_no_finding",
             )
         finding = ConfirmedSemanticFinding(
             finding_id=_finding_id(candidate_id, confirming.review_decision_id),
@@ -570,7 +673,6 @@ class M6CandidateService:
                 confirming.review_decision_id,
             ],
         )
-        self._repository.insert_confirmed_finding(finding)
         return finding
 
     def _latest_confirming_decision(self, candidate_id: str) -> ReviewDecision | None:
@@ -628,7 +730,7 @@ class M6CandidateService:
         }
         digest = canonical_digest(payload)
         return StructuredEngineeringPatch(
-            patch_id=f"m6patch_{digest[:16]}",
+            patch_id=f"m6patch_{digest}",
             finding_ids=[finding.finding_id],
             intent=intent,  # type: ignore[arg-type]
             policy_disposition=disposition,
@@ -797,44 +899,41 @@ def _symbol_definition(registry: SymbolRegistry, key: str):
 def _decision_id(candidate_id: str, from_status: str, to_status: str, kind: str) -> str:
     """Decision ids are derived, not random: the log can be rebuilt and compared."""
 
-    return (
-        "m6dec_"
-        + canonical_digest(
-            {"candidate": candidate_id, "from": from_status, "to": to_status, "kind": kind}
-        )[:16]
+    return "m6dec_" + canonical_digest(
+        {"candidate": candidate_id, "from": from_status, "to": to_status, "kind": kind}
     )
 
 
 def _conflict_id(
     candidate_id: str, reviewed: ConflictBaselineRecord, current: ConflictBaselineRecord
 ) -> str:
-    return (
-        "m6cfl_"
-        + canonical_digest(
-            {
-                "candidate": candidate_id,
-                "path": reviewed.comparison_path,
-                "identity": reviewed.comparison_identity,
-                "reviewed": reviewed.value_digest,
-                "current": current.value_digest,
-            }
-        )[:16]
+    return "m6cfl_" + canonical_digest(
+        {
+            "candidate": candidate_id,
+            "path": reviewed.comparison_path,
+            "identity": reviewed.comparison_identity,
+            "reviewed": reviewed.value_digest,
+            "current": current.value_digest,
+        }
     )
 
 
 def _finding_id(candidate_id: str, review_decision_id: str) -> str:
-    return (
-        "m6find_"
-        + canonical_digest({"candidate": candidate_id, "decision": review_decision_id})[:16]
-    )
+    return "m6find_" + canonical_digest({"candidate": candidate_id, "decision": review_decision_id})
+
+
+#: Content-derived identities carry the whole digest. These are long-lived audit objects, and
+#: 64 bits of a hash is not a saving worth a collision in an engineering record.
 
 
 def _created_element_id(finding: ConfirmedSemanticFinding, facts: ProposedSemantics) -> str:
+    """Still derived, still deterministic: a generated element id has to survive a recompile."""
+
     return (
         "el_m6"
         + canonical_digest(
             {"finding": finding.finding_id, "class": facts.symbol_class, "tag": facts.equipment_tag}
-        )[:10]
+        )[:16]
     )
 
 
@@ -846,6 +945,7 @@ __all__ = [
     "CandidateNotFound",
     "CandidateSchemaViolation",
     "CompilationRefused",
+    "Confirmation",
     "GovernedWriteNotAuthorized",
     "IllegalTransition",
     "M6CandidateRepository",
@@ -853,9 +953,11 @@ __all__ = [
     "M6CoreError",
     "NotConfirmedError",
     "TransitionEvidenceMissing",
+    "SEMANTIC_VALUE_DIGEST_VERSION",
     "baseline_record",
     "build_baseline_graph",
     "canonical_digest",
+    "normalize_semantic_value",
     "resolve_identity",
     "semantic_value",
     "value_digest",

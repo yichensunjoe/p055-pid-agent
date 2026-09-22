@@ -548,8 +548,34 @@ SourceArtifactRef → SourceRegion → SemanticCandidate → ReviewDecision
 2. **`patch_id` 由 digest 派生**（`m6patch_<digest[:16]>`）。同一条 finding 编译两次得到**同一个身份与同一份内容**，
    不存在“看起来差不多”的两张 patch；而 digest 的输入排除了 `created_at` / `decided_at` / `transaction_id`
    等 volatile 字段（§11.1 的同一个教训）。
-3. **persistence 是同一库上的三个独立聚合，且故意没有指向 `documents` 的外键**（沿用 `audit_records` 的先例：
-   证据必须活得比它作证的东西久）。三个表都只有 insert 方法：**没有更新路径，是“不可变”的强制手段**。
+3. **persistence 是同一库上的三个独立聚合**，外键布局由两个不同的问题分别回答（混用一个规则会把其中一个答错）：
+
+   - *证据是否活得更久？* 所以指向 `documents` 的外键**故意不存在**（沿用 `audit_records` 的先例：证据必须活得比
+     它作证的东西久；`CASCADE` 会跟着图纸删掉审阅历史，而 `RESTRICT` 又会让图纸删不掉）。
+   - *证据是否允许自相矛盾？* 不允许。**M6 内部的链是真外键**，而且必须存在：
+
+     ```text
+     review_decisions.candidate_id             → semantic_candidates(candidate_id)              ON DELETE RESTRICT
+     confirmed_semantic_findings.candidate_id  → semantic_candidates(candidate_id)              ON DELETE RESTRICT
+     confirmed_semantic_findings.(candidate_id, review_decision_id)
+                                               → review_decisions(candidate_id, review_decision_id)  ON DELETE RESTRICT
+     ```
+
+     最后一条是 **composite FK**（配合 `UNIQUE (candidate_id, review_decision_id)`）：只引用
+     `review_decision_id` 的话，“candidate A 的 finding 引用 candidate B 的 decision”仍然可表示；
+     两者都引用才使其无法表示。
+
+   三个表都只有 insert 方法：**没有更新路径，是“不可变”的强制手段**。
+
+3b. **一次人工确认是不可分割的两行。** `ReviewDecision(kind=human_confirm)` 与
+   `ConfirmedSemanticFinding` 在**同一个数据库事务**里提交（`store.record_confirmation`）。
+   分开写会留下一个窗口：状态机已经说 `confirmed`，却没有任何 finding 能追溯到人——这正是 Phase-2B
+   获得写权限之前不能继承的裂缝。故障注入测试真的让第二行写失败（SQLite trigger）并断言两行都不存在。
+3c. **内容派生的身份取完整 digest。** `patch_id = m6patch_<sha256>`、`m6dec_` / `m6cfl_` / `m6find_`
+   同样带完整 64 hex（这些是要长期审计的对象，省 48 个字符不值得冒一次碰撞）。
+   baseline 语义值用的是**有版本号的规范化摘要**：`semantic-value-v1` + SHA-256，输入是
+   **规范化后的语义值**（`strip` + 折叠空白 + casefold）而不是 UI/原始序列化；摘要版本不匹配时
+   `recheck_baseline` **明确报错**（`baseline_digest_version_mismatch`），不静默比较。
 4. **编译器的能力边界写成了 refusal 而不是猜测**：Phase-2A 只编译 `creation` 与 `metadata_enrichment`；
    `overwrite` → `conflict_requires_human_resolution`（拒绝，不是覆盖）；`delete` / `replace_topology` → 禁；
    `relationship_addition` 与“把已有对象的类别改掉” → 明确拒绝并给出 reason code。

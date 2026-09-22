@@ -567,11 +567,7 @@ class SQLiteDocumentStore:
     def list_history(self, document_id: str, limit: int = 100) -> list[HistoryEntry]:
         return [
             HistoryEntry.model_validate(
-                {
-                    key: value
-                    for key, value in item.items()
-                    if key != "details"
-                }
+                {key: value for key, value in item.items() if key != "details"}
             )
             for item in self.list_history_detailed(document_id, limit)
         ]
@@ -629,7 +625,6 @@ class SQLiteDocumentStore:
             item["details"] = details if isinstance(details, dict) else {}
             result.append(item)
         return result
-
 
     def create_agent_session(self, session: AgentSession) -> None:
         with self._lock, self._connect() as connection:
@@ -711,24 +706,24 @@ class SQLiteDocumentStore:
                 diff_preview_hash, evidence_json
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (
-                approval.id,
-                approval.session_id,
-                approval.tool_name,
-                approval.document_id,
-                approval.intent_hash,
-                approval.status,
-                approval.requested_by,
-                approval.resolved_by,
-                approval.reason,
-                approval.note,
-                approval.created_at.isoformat(),
-                approval.resolved_at.isoformat() if approval.resolved_at else None,
-                approval.consumed_at.isoformat() if approval.consumed_at else None,
-                approval.diff_preview_hash,
-                self._encode(approval.evidence),
-            ),
-        )
+                (
+                    approval.id,
+                    approval.session_id,
+                    approval.tool_name,
+                    approval.document_id,
+                    approval.intent_hash,
+                    approval.status,
+                    approval.requested_by,
+                    approval.resolved_by,
+                    approval.reason,
+                    approval.note,
+                    approval.created_at.isoformat(),
+                    approval.resolved_at.isoformat() if approval.resolved_at else None,
+                    approval.consumed_at.isoformat() if approval.consumed_at else None,
+                    approval.diff_preview_hash,
+                    self._encode(approval.evidence),
+                ),
+            )
 
     def get_tool_approval(self, approval_id: str) -> ToolApproval | None:
         with self._lock, self._connect() as connection:
@@ -968,8 +963,7 @@ class SQLiteDocumentStore:
     def list_project_index(self) -> list[dict[str, Any]]:
         with self._lock, self._connect() as connection:
             rows = connection.execute(
-                f"SELECT {self._PROJECT_INDEX_COLUMNS} FROM project_index "
-                "ORDER BY document_id ASC"
+                f"SELECT {self._PROJECT_INDEX_COLUMNS} FROM project_index ORDER BY document_id ASC"
             ).fetchall()
         return [dict(row) for row in rows]
 
@@ -1038,32 +1032,8 @@ class SQLiteDocumentStore:
         return [SemanticCandidate.model_validate_json(row["payload_json"]) for row in rows]
 
     def insert_review_decision(self, decision: ReviewDecision) -> None:
-        baseline = decision.baseline
         with self._lock, self._connect() as connection:
-            connection.execute(
-                """
-                INSERT INTO review_decisions (
-                    review_decision_id, candidate_id, kind, is_human, from_status, to_status,
-                    reviewer_identity, reviewer_action, baseline_revision, baseline_path,
-                    baseline_digest, decided_at, payload_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    decision.review_decision_id,
-                    decision.candidate_id,
-                    decision.kind,
-                    1 if decision.is_human else 0,
-                    decision.from_status,
-                    decision.to_status,
-                    decision.reviewer_identity,
-                    decision.reviewer_action,
-                    baseline.baseline_revision if baseline is not None else None,
-                    baseline.comparison_path if baseline is not None else "",
-                    baseline.value_digest if baseline is not None else "",
-                    decision.decided_at.isoformat(),
-                    self._encode(decision.model_dump(mode="json", by_alias=True)),
-                ),
-            )
+            self._insert_review_decision(connection, decision)
 
     def list_review_decisions(self, candidate_id: str) -> list[ReviewDecision]:
         with self._lock, self._connect() as connection:
@@ -1084,29 +1054,87 @@ class SQLiteDocumentStore:
             return None
         return ReviewDecision.model_validate_json(row["payload_json"])
 
+    def record_confirmation(
+        self, decision: ReviewDecision, finding: ConfirmedSemanticFinding
+    ) -> None:
+        """Write a confirmation and the finding it creates in one transaction.
+
+        A confirmation is one decision that produces two durable rows. Writing them separately
+        leaves a window where the state machine says ``confirmed`` and no finding can be traced
+        to the person who decided — so both rows commit together, or neither does. The exception
+        path rolls the transaction back through the connection's own context manager.
+        """
+
+        if decision.kind != "human_confirm" or decision.to_status != "confirmed":
+            raise ValueError(
+                "record_confirmation writes a human confirmation; "
+                f"got kind={decision.kind!r} to_status={decision.to_status!r}"
+            )
+        if finding.candidate_id != decision.candidate_id:
+            raise ValueError("the finding and the decision must belong to the same candidate")
+        if finding.review_decision_id != decision.review_decision_id:
+            raise ValueError("the finding must cite the decision that produced it")
+        with self._lock, self._connect() as connection:
+            self._insert_review_decision(connection, decision)
+            self._insert_confirmed_finding(connection, finding)
+
+    def _insert_review_decision(
+        self, connection: sqlite3.Connection, decision: ReviewDecision
+    ) -> None:
+        baseline = decision.baseline
+        connection.execute(
+            """
+            INSERT INTO review_decisions (
+                review_decision_id, candidate_id, kind, is_human, from_status, to_status,
+                reviewer_identity, reviewer_action, baseline_revision, baseline_path,
+                baseline_digest, decided_at, payload_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                decision.review_decision_id,
+                decision.candidate_id,
+                decision.kind,
+                1 if decision.is_human else 0,
+                decision.from_status,
+                decision.to_status,
+                decision.reviewer_identity,
+                decision.reviewer_action,
+                baseline.baseline_revision if baseline is not None else None,
+                baseline.comparison_path if baseline is not None else "",
+                baseline.value_digest if baseline is not None else "",
+                decision.decided_at.isoformat(),
+                self._encode(decision.model_dump(mode="json", by_alias=True)),
+            ),
+        )
+
+    def _insert_confirmed_finding(
+        self, connection: sqlite3.Connection, finding: ConfirmedSemanticFinding
+    ) -> None:
+        connection.execute(
+            """
+            INSERT INTO confirmed_semantic_findings (
+                finding_id, candidate_id, review_decision_id, source_document_id,
+                source_revision, region_id, candidate_type, baseline_revision,
+                confirmed_at, payload_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                finding.finding_id,
+                finding.candidate_id,
+                finding.review_decision_id,
+                finding.artifact.source_document_id,
+                finding.artifact.source_revision,
+                finding.region_id,
+                finding.candidate_type,
+                finding.baseline.baseline_revision,
+                finding.confirmed_at.isoformat(),
+                self._encode(finding.model_dump(mode="json", by_alias=True)),
+            ),
+        )
+
     def insert_confirmed_finding(self, finding: ConfirmedSemanticFinding) -> None:
         with self._lock, self._connect() as connection:
-            connection.execute(
-                """
-                INSERT INTO confirmed_semantic_findings (
-                    finding_id, candidate_id, review_decision_id, source_document_id,
-                    source_revision, region_id, candidate_type, baseline_revision,
-                    confirmed_at, payload_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    finding.finding_id,
-                    finding.candidate_id,
-                    finding.review_decision_id,
-                    finding.artifact.source_document_id,
-                    finding.artifact.source_revision,
-                    finding.region_id,
-                    finding.candidate_type,
-                    finding.baseline.baseline_revision,
-                    finding.confirmed_at.isoformat(),
-                    self._encode(finding.model_dump(mode="json", by_alias=True)),
-                ),
-            )
+            self._insert_confirmed_finding(connection, finding)
 
     def get_confirmed_finding(self, finding_id: str) -> ConfirmedSemanticFinding | None:
         with self._lock, self._connect() as connection:
@@ -1143,7 +1171,6 @@ class SQLiteDocumentStore:
             orphans = [str(row["document_id"]) for row in rows]
             if orphans:
                 connection.execute(
-                    "DELETE FROM project_index WHERE document_id NOT IN "
-                    "(SELECT id FROM documents)"
+                    "DELETE FROM project_index WHERE document_id NOT IN (SELECT id FROM documents)"
                 )
         return orphans

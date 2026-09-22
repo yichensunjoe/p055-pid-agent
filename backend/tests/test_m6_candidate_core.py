@@ -279,8 +279,7 @@ def test_a_status_column_edited_behind_the_service_grants_nothing(
         connection.commit()
 
     assert service.current_status(candidate.candidate_id) == "needs_review"
-    with pytest.raises(NotConfirmedError):
-        service.confirm_finding(candidate.candidate_id)
+    assert service.latest_finding(candidate.candidate_id) is None
 
 
 def test_a_finding_without_a_review_decision_is_unrepresentable() -> None:
@@ -324,27 +323,40 @@ def test_the_apply_boundary_refuses_and_no_decision_can_name_applied(
 # --------------------------------------------------------------------------------------
 
 
-def _confirmed_finding_for(
+def _confirmation_for(
     service: M6CandidateService,
     document: Document,
     registry: SymbolRegistry,
     candidate: SemanticCandidate,
-) -> ConfirmedSemanticFinding:
+    *,
+    path: str = "equipment_tag",
+) -> object:
     service.file_candidate(candidate)
     graph = build_engineering_graph(document, registry)
     baseline = baseline_record(
         document,
         graph,
         identity=candidate.proposed_semantics.target_identity,
-        path="equipment_tag",
+        path=path,
     )
-    service.confirm(
+    return service.confirm(
         candidate.candidate_id,
         reviewer_identity=REVIEWER,
         reviewer_action="confirmed the symbol is P-201",
         baseline=baseline,
     )
-    return service.confirm_finding(candidate.candidate_id)
+
+
+def _confirmed_finding_for(
+    service: M6CandidateService,
+    document: Document,
+    registry: SymbolRegistry,
+    candidate: SemanticCandidate,
+    *,
+    path: str = "equipment_tag",
+) -> ConfirmedSemanticFinding:
+    confirmation = _confirmation_for(service, document, registry, candidate, path=path)
+    return confirmation.finding  # type: ignore[attr-defined]
 
 
 def test_overwriting_an_authoritative_value_is_refused_not_compiled(
@@ -451,7 +463,7 @@ def test_an_old_confirmation_cannot_resolve_a_conflict(
         graph,
         identity="element:pump_untagged",
         path="equipment_tag",
-    ).model_copy(update={"value_digest": "f" * 32})
+    ).model_copy(update={"value_digest": "f" * 64})
     service.recheck_baseline(candidate.candidate_id, current=current)
     assert service.current_status(candidate.candidate_id) == "conflicted"
 
@@ -508,13 +520,103 @@ def test_deleting_the_source_drawing_leaves_the_review_history(
     assert store.list_confirmed_findings(source_document_id=DOCUMENT_ID)
 
 
-def test_the_review_tables_have_no_foreign_key_to_documents(store: SQLiteDocumentStore) -> None:
+def _foreign_keys(store: SQLiteDocumentStore, table: str) -> list[tuple]:
+    with sqlite3.connect(store.database_path) as connection:
+        return [tuple(row) for row in connection.execute(f"PRAGMA foreign_key_list({table})")]
+
+
+def test_no_m6_table_references_the_drawing_lifecycle(store: SQLiteDocumentStore) -> None:
     """The absence is the enforcement: a cascade would delete the evidence with the drawing."""
 
-    with sqlite3.connect(store.database_path) as connection:
-        for table in ("semantic_candidates", "review_decisions", "confirmed_semantic_findings"):
-            keys = connection.execute(f"PRAGMA foreign_key_list({table})").fetchall()
-            assert keys == [], f"{table} must not reference documents: {keys}"
+    for table in ("semantic_candidates", "review_decisions", "confirmed_semantic_findings"):
+        for key in _foreign_keys(store, table):
+            assert key[2] not in {"documents", "document_history"}, (
+                f"{table} must not reference the drawing lifecycle: {key}"
+            )
+
+
+def test_the_m6_provenance_links_exist_and_restrict(store: SQLiteDocumentStore) -> None:
+    """Inside M6 the links are real keys: a decision cannot be an orphan or cite a stranger.
+
+    Two different questions, two different answers: evidence outlives the drawing (no key), and
+    evidence may not contradict itself (keys, RESTRICT).
+    """
+
+    # (referenced table, local column, referenced column) -> on_delete
+    # PRAGMA foreign_key_list rows are: id, seq, table, from, to, on_update, on_delete, match.
+    decisions = {(key[2], key[3], key[4]): key[6] for key in _foreign_keys(store, "review_decisions")}
+    assert (
+        "semantic_candidates",
+        "candidate_id",
+        "candidate_id",
+    ) in decisions, "a decision must belong to a candidate"
+    assert decisions[("semantic_candidates", "candidate_id", "candidate_id")] == "RESTRICT"
+
+    findings = {(key[2], key[3], key[4]): key[6] for key in _foreign_keys(store, "confirmed_semantic_findings")}
+    assert (
+        "semantic_candidates",
+        "candidate_id",
+        "candidate_id",
+    ) in findings, "a finding must belong to a candidate"
+    assert findings[("semantic_candidates", "candidate_id", "candidate_id")] == "RESTRICT"
+
+    # A plain reference to the decision id would still allow candidate A to cite B's decision,
+    # so the link is composite: both columns, both restricted.
+    assert (
+        "review_decisions",
+        "candidate_id",
+        "candidate_id",
+    ) in findings, "a finding must cite a decision of its own candidate"
+    assert (
+        "review_decisions",
+        "review_decision_id",
+        "review_decision_id",
+    ) in findings, "a finding must cite a decision of its own candidate"
+    assert findings[("review_decisions", "candidate_id", "candidate_id")] == "RESTRICT"
+    assert findings[("review_decisions", "review_decision_id", "review_decision_id")] == "RESTRICT"
+
+
+def test_a_decision_for_an_unknown_candidate_is_rejected_by_the_database(
+    service: M6CandidateService, store: SQLiteDocumentStore
+) -> None:
+    orphan = ReviewDecision(
+        review_decision_id="m6dec_orphan",
+        candidate_id="cand_never_filed",
+        kind="filed",
+        from_status="proposed",
+        to_status="needs_review",
+    )
+    with pytest.raises(sqlite3.IntegrityError):
+        store.insert_review_decision(orphan)
+
+
+def test_a_finding_citing_another_candidates_decision_is_rejected(
+    service: M6CandidateService, store: SQLiteDocumentStore, registry: SymbolRegistry
+) -> None:
+    """The composite key is the point: a finding cannot pair candidate A with B's decision."""
+
+    document = _drawing([_untagged_pump(), _tagged_pump()])
+    first = _confirmed_finding_for(service, document, registry, _tag_candidate("cand_a"))
+    second = _confirmed_finding_for(
+        service, document, registry, _tag_candidate("cand_b", tag="P-202")
+    )
+    store.insert_semantic_candidate(_tag_candidate("cand_c"))
+
+    mismatched = second.model_copy(
+        update={
+            "finding_id": "m6find_mismatched",
+            "candidate_id": "cand_a",
+            "review_decision_id": first.review_decision_id,
+        }
+    )
+    assert mismatched.candidate_id != second.candidate_id
+    with pytest.raises(sqlite3.IntegrityError):
+        # cand_a does not own second's decision, and second's decision is not cand_a's
+        store.insert_confirmed_finding(
+            mismatched.model_copy(
+                update={"candidate_id": "cand_c", "review_decision_id": first.review_decision_id}
+            )
+        )
 
 
 # --------------------------------------------------------------------------------------
@@ -534,7 +636,7 @@ def test_the_same_finding_compiles_into_the_same_patch_twice(
     assert isinstance(first, StructuredEngineeringPatch)
     assert first.canonical_digest == second.canonical_digest
     assert first.patch_id == second.patch_id
-    assert first.patch_id == f"m6patch_{first.canonical_digest[:16]}"
+    assert first.patch_id == f"m6patch_{first.canonical_digest}"
     assert first.write_authority == "none"
 
 
@@ -596,17 +698,19 @@ def test_the_positive_fixture_reaches_a_patch_and_stops_there(
         document, graph, identity="element:pump_untagged", path="equipment_tag"
     )
     assert baseline.value_present is False
-    decision = service.confirm(
+    confirmation = service.confirm(
         candidate.candidate_id,
         reviewer_identity=REVIEWER,
         reviewer_action="saw the label P-201 on the pump",
         baseline=baseline,
     )
+    decision = confirmation.decision
     assert decision.is_human and decision.reviewer_identity == REVIEWER
 
-    # 3. confirmed finding
-    finding = service.confirm_finding(candidate.candidate_id)
+    # 3. confirmed finding, written in the same transaction as the decision
+    finding = confirmation.finding
     assert finding.review_decision_id == decision.review_decision_id
+    assert service.latest_finding(candidate.candidate_id) == finding
     assert finding.provenance_chain[:4] == [
         candidate.artifact.artifact_id,
         candidate.region.region_id,
@@ -649,13 +753,13 @@ def test_creation_compiles_from_the_region_and_the_catalogue(
     )
     service.file_candidate(candidate)
     graph = build_engineering_graph(document, registry)
-    service.confirm(
+    confirmation = service.confirm(
         candidate.candidate_id,
         reviewer_identity=REVIEWER,
         reviewer_action="new pump P-201",
         baseline=baseline_record(document, graph, identity="", path="existence"),
     )
-    finding = service.confirm_finding(candidate.candidate_id)
+    finding = confirmation.finding
     patch = service.compile_finding(finding.finding_id, document=document, registry=registry)
     assert patch.intent == "creation"
     operation = patch.operations[0]
@@ -685,13 +789,13 @@ def test_creation_outside_the_catalogue_is_refused(
     )
     service.file_candidate(candidate)
     graph = build_engineering_graph(document, registry)
-    service.confirm(
+    confirmation = service.confirm(
         candidate.candidate_id,
         reviewer_identity=REVIEWER,
         reviewer_action="a pump",
         baseline=baseline_record(document, graph, identity="", path="existence"),
     )
-    finding = service.confirm_finding(candidate.candidate_id)
+    finding = confirmation.finding
     with pytest.raises(CompilationRefused) as refusal:
         service.compile_finding(finding.finding_id, document=document, registry=registry)
     assert refusal.value.code == "out_of_catalogue"
@@ -786,6 +890,178 @@ def test_the_repository_exposes_no_update_path(
 ) -> None:
     for name in ("update_semantic_candidate", "update_review_decision", "delete_review_decision"):
         assert not hasattr(store, name), f"{name} would break the append-only guarantee"
+
+
+# --------------------------------------------------------------------------------------
+# Confirmation atomicity: no half-written confirmation, in either direction
+# --------------------------------------------------------------------------------------
+
+
+def test_an_aborted_confirmation_leaves_neither_row(
+    service: M6CandidateService, store: SQLiteDocumentStore, registry: SymbolRegistry
+) -> None:
+    """Fault injection: the finding insert fails, so the decision must not survive either.
+
+    A trigger on the findings table makes the second write of the pair fail for real, inside
+    the transaction the store opened. Nothing is mocked, so this exercises the rollback that
+    Phase-2B will depend on rather than a hand-written imitation of it.
+    """
+
+    document = _drawing([_untagged_pump(), _tagged_pump()])
+    candidate = _tag_candidate()
+    service.file_candidate(candidate)
+    before = len(service.decisions(candidate.candidate_id))
+
+    with sqlite3.connect(store.database_path) as connection:
+        connection.execute(
+            """
+            CREATE TRIGGER m6_inject_finding_failure
+            BEFORE INSERT ON confirmed_semantic_findings
+            BEGIN SELECT RAISE(ABORT, 'injected finding failure'); END
+            """
+        )
+        connection.commit()
+
+    graph = build_engineering_graph(document, registry)
+    with pytest.raises(sqlite3.IntegrityError):
+        service.confirm(
+            candidate.candidate_id,
+            reviewer_identity=REVIEWER,
+            reviewer_action="saw the label P-201",
+            baseline=baseline_record(
+                document, graph, identity="element:pump_untagged", path="equipment_tag"
+            ),
+        )
+
+    # Neither durable artifact of this confirmation exists, and the candidate never moved.
+    assert len(service.decisions(candidate.candidate_id)) == before
+    assert store.list_confirmed_findings(source_document_id=DOCUMENT_ID) == []
+    assert service.current_status(candidate.candidate_id) == "needs_review"
+
+    with sqlite3.connect(store.database_path) as connection:
+        connection.execute("DROP TRIGGER m6_inject_finding_failure")
+        connection.commit()
+
+    # and once the fault is gone, the same confirmation goes through cleanly
+    confirmation = service.confirm(
+        candidate.candidate_id,
+        reviewer_identity=REVIEWER,
+        reviewer_action="saw the label P-201",
+        baseline=baseline_record(
+            document, graph, identity="element:pump_untagged", path="equipment_tag"
+        ),
+    )
+    assert service.current_status(candidate.candidate_id) == "confirmed"
+    assert store.get_confirmed_finding(confirmation.finding.finding_id) is not None
+    assert store.get_review_decision(confirmation.decision.review_decision_id) is not None
+
+
+def test_a_confirmation_is_refused_when_its_finding_cannot_be_built(
+    service: M6CandidateService, store: SQLiteDocumentStore, registry: SymbolRegistry
+) -> None:
+    """The other direction: no durable decision may exist without its finding."""
+
+    document = _drawing([_untagged_pump(), _tagged_pump()])
+    unresolved = SemanticCandidate(
+        candidate_id="cand_unresolved_confirm",
+        artifact=_artifact(),
+        region=_region(),
+        candidate_type="unresolved",
+        proposed_semantics=ProposedSemantics(unresolved_reason="ambiguous"),
+        confidence=Confidence(value=0.3, source="model"),
+        evidence=[CandidateEvidence(kind="rule", detail="two catalogue matches")],
+        producer=ProducerRef(key="deterministic_rule_engine", version="1"),
+    )
+    service.file_candidate(unresolved)
+    graph = build_engineering_graph(document, registry)
+    before = len(service.decisions(unresolved.candidate_id))
+    with pytest.raises(NotConfirmedError):
+        service.confirm(
+            unresolved.candidate_id,
+            reviewer_identity=REVIEWER,
+            reviewer_action="looks like a valve",
+            baseline=baseline_record(document, graph, identity="", path="existence"),
+        )
+    assert len(service.decisions(unresolved.candidate_id)) == before
+    assert service.current_status(unresolved.candidate_id) == "needs_review"
+    assert store.list_confirmed_findings(source_document_id=DOCUMENT_ID) == []
+
+
+def test_a_confirmation_without_a_baseline_leaves_no_trace(
+    service: M6CandidateService,
+) -> None:
+    candidate = _tag_candidate()
+    service.file_candidate(candidate)
+    with pytest.raises(ValidationError):
+        service.confirm(
+            candidate.candidate_id,
+            reviewer_identity=REVIEWER,
+            reviewer_action="no baseline recorded",
+            baseline={"baseline_revision": 7},  # type: ignore[arg-type]
+        )
+    assert service.current_status(candidate.candidate_id) == "needs_review"
+
+
+# --------------------------------------------------------------------------------------
+# Identity strength: versioned, normalized, full-length
+# --------------------------------------------------------------------------------------
+
+
+def test_semantic_equality_and_serialization_form_hash_the_same() -> None:
+    assert core.value_digest("equipment_tag", "P-201") == core.value_digest(
+        "equipment_tag", "  p-201 "
+    )
+    assert core.value_digest("equipment_tag", "P-201") != core.value_digest(
+        "equipment_tag", "P-202"
+    )
+    # the unstated value is a value, not a missing one
+    assert core.value_digest("equipment_tag", "") != core.value_digest("equipment_tag", "P-201")
+    # a different path is a different statement about the same object
+    assert core.value_digest("equipment_tag", "P-201") != core.value_digest(
+        "annotation_role", "P-201"
+    )
+
+
+def test_the_baseline_digest_is_versioned_and_full_length(store: SQLiteDocumentStore) -> None:
+    document = _drawing([_untagged_pump(), _tagged_pump()])
+    graph = build_engineering_graph(document, SymbolRegistry())
+    record = baseline_record(
+        document, graph, identity="element:pump_untagged", path="equipment_tag"
+    )
+    assert record.digest_version == core.SEMANTIC_VALUE_DIGEST_VERSION == "semantic-value-v1"
+    assert len(record.value_digest) == 64
+
+
+def test_a_digest_version_change_is_identified_not_silently_compared(
+    service: M6CandidateService, registry: SymbolRegistry
+) -> None:
+    document = _drawing([_untagged_pump(), _tagged_pump()])
+    candidate = _tag_candidate()
+    _confirmed_finding_for(service, document, registry, candidate)
+    graph = build_engineering_graph(document, registry)
+    current = baseline_record(
+        document, graph, identity="element:pump_untagged", path="equipment_tag"
+    ).model_copy(update={"digest_version": "semantic-value-v2"})
+
+    with pytest.raises(IllegalTransition) as refusal:
+        service.recheck_baseline(candidate.candidate_id, current=current)
+    assert refusal.value.code == "baseline_digest_version_mismatch"
+    # the mismatch is refused, not recorded as a conflict or as "unchanged"
+    assert service.current_status(candidate.candidate_id) == "confirmed"
+
+
+def test_content_derived_ids_carry_the_whole_digest(
+    service: M6CandidateService, registry: SymbolRegistry
+) -> None:
+    document = _drawing([_untagged_pump(), _tagged_pump()])
+    confirmation = _confirmation_for(service, document, registry, _tag_candidate())
+    finding = confirmation.finding
+    patch = service.compile_finding(finding.finding_id, document=document, registry=registry)
+
+    assert patch.patch_id == f"m6patch_{patch.canonical_digest}"
+    assert len(patch.canonical_digest) == 64
+    assert len(finding.finding_id.removeprefix("m6find_")) == 64
+    assert len(confirmation.decision.review_decision_id.removeprefix("m6dec_")) == 64
 
 
 def test_the_evidence_walkthrough_still_runs() -> None:

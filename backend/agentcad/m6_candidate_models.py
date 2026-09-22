@@ -259,7 +259,11 @@ class ConflictBaselineRecord(StrictModel):
     baseline_revision: int = Field(ge=0)
     comparison_identity: str = Field(min_length=1)
     comparison_path: SemanticPath
-    value_digest: str = Field(min_length=1)
+    #: The digest scheme this value was hashed with. It is recorded so a scheme change is
+    #: *identified* rather than silently compared: two digests from different versions are not
+    #: comparable, and pretending otherwise is how a real drift gets read as "unchanged".
+    digest_version: Literal["semantic-value-v1"] = "semantic-value-v1"
+    value_digest: str = Field(min_length=64, max_length=64)
     value_present: bool = False
 
 

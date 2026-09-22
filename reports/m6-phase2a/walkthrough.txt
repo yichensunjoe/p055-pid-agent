@@ -2,13 +2,15 @@
 === positive record: artifact -> region -> candidate -> decision -> finding -> patch ===
 {
   "baseline": {
+    "digest_version": "semantic-value-v1",
     "path": "equipment_tag",
     "revision": 7,
+    "value_digest": "9b283df5ee7b083d2b44692e4cfda7a34355eda8e61060af034f0587039f2225",
     "value_present": false
   },
   "candidate_id": "cand_tag_walkthrough",
   "canonical_digest": "321c0bd26d8a14f8c44ffd418372206672a3884c5c0e67517adac3e8ccecaae3",
-  "finding_id": "m6find_9f4a38a314e615a5",
+  "finding_id": "m6find_b6d4c00135b83013ef3e135438a81ae53dcb0b6e0317c21ddb27d91155fd9294",
   "intent": "metadata_enrichment",
   "operations": [
     {
@@ -19,15 +21,15 @@
       }
     }
   ],
-  "patch_id": "m6patch_321c0bd26d8a14f8",
+  "patch_id": "m6patch_321c0bd26d8a14f8c44ffd418372206672a3884c5c0e67517adac3e8ccecaae3",
   "policy_disposition": "allowed_after_confirmation",
   "provenance_chain": [
     "artifact_1",
     "region_1",
     "cand_tag_walkthrough",
-    "m6dec_58a4699b5363a375"
+    "m6dec_58a4699b5363a3750e0c70b3f10e6b23b5c10230fea2176098fdedf234e50ead"
   ],
-  "review_decision_id": "m6dec_58a4699b5363a375",
+  "review_decision_id": "m6dec_58a4699b5363a3750e0c70b3f10e6b23b5c10230fea2176098fdedf234e50ead",
   "reviewer": "engineer.joe",
   "reviewer_action": "saw the label P-201 on the pump",
   "status_after_filing": "needs_review",
@@ -39,8 +41,8 @@
   "digest_first": "321c0bd26d8a14f8c44ffd418372206672a3884c5c0e67517adac3e8ccecaae3",
   "digest_second": "321c0bd26d8a14f8c44ffd418372206672a3884c5c0e67517adac3e8ccecaae3",
   "identical": true,
-  "patch_id_first": "m6patch_321c0bd26d8a14f8",
-  "patch_id_second": "m6patch_321c0bd26d8a14f8"
+  "patch_id_first": "m6patch_321c0bd26d8a14f8c44ffd418372206672a3884c5c0e67517adac3e8ccecaae3",
+  "patch_id_second": "m6patch_321c0bd26d8a14f8c44ffd418372206672a3884c5c0e67517adac3e8ccecaae3"
 }
 
 === negative record: apply is refused in Phase-2A ===
@@ -58,8 +60,8 @@
     "refused": "CompilationRefused"
   },
   "conflict_recorded": true,
-  "current_value_digest": "74c063e016986a27022b6b853ac1e2b6",
-  "reviewed_value_digest": "a792615553166a0af4fea77f5046107c",
+  "current_value_digest": "7c7b81c280a07c732f1809d3d773e878821be788b1c88937b4160bd15a7b43c7",
+  "reviewed_value_digest": "9b283df5ee7b083d2b44692e4cfda7a34355eda8e61060af034f0587039f2225",
   "status_after_reecheck": "conflicted"
 }
 

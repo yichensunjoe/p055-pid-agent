@@ -782,12 +782,23 @@ def _migration_6(connection: sqlite3.Connection) -> None:
 def _migration_7(connection: sqlite3.Connection) -> None:
     """M6 review aggregates: candidates, review decisions and confirmed findings.
 
-    Three tables, and deliberately **no foreign key to ``documents``**. This follows the
-    existing precedent for ``audit_records``: evidence must outlive the thing it is evidence
-    about. A ``ON DELETE CASCADE`` here would erase the record that a person once confirmed a
-    fact the moment somebody deleted the drawing, which is exactly the history an M6 review
-    needs to keep; an ``ON DELETE RESTRICT``-style reference would instead make a drawing
-    undeletable, because a row about it exists.
+    Three tables. Two different questions decide where the foreign keys go, and answering them
+    with one rule would get one of them wrong:
+
+    * **Does the evidence outlive the thing it is about?** The link to ``documents`` is therefore
+      *absent*, deliberately. This follows the existing precedent for ``audit_records``: an
+      ``ON DELETE CASCADE`` here would erase the record that a person once confirmed a fact the
+      moment somebody deleted the drawing, and a restricting reference would instead make a
+      drawing undeletable because a row about it exists. Neither is acceptable, so there is no
+      reference at all.
+    * **May the evidence contradict itself?** No. The links *inside* M6 are real foreign keys:
+      a decision belongs to exactly one candidate, a finding belongs to one candidate and cites
+      one of that candidate's decisions. ``ON DELETE RESTRICT`` plus a composite foreign key
+      onto ``(candidate_id, review_decision_id)`` is what makes "a finding that cites another
+      candidate's decision" unrepresentable rather than merely unlikely.
+
+    So: no M6 table may reference the drawing lifecycle, and every M6 provenance link must
+    exist. ``tests/test_m6_candidate_core.py`` asserts both halves separately.
 
     The review decision table is the append-only transition log for a candidate, including the
     producer's filing. Only rows whose ``kind`` is a human decision carry a reviewer action —
@@ -831,7 +842,10 @@ def _migration_7(connection: sqlite3.Connection) -> None:
             baseline_path TEXT NOT NULL DEFAULT '',
             baseline_digest TEXT NOT NULL DEFAULT '',
             decided_at TEXT NOT NULL,
-            payload_json TEXT NOT NULL
+            payload_json TEXT NOT NULL,
+            UNIQUE (candidate_id, review_decision_id),
+            FOREIGN KEY (candidate_id) REFERENCES semantic_candidates(candidate_id)
+                ON DELETE RESTRICT
         )
         """
     )
@@ -851,7 +865,12 @@ def _migration_7(connection: sqlite3.Connection) -> None:
             candidate_type TEXT NOT NULL,
             baseline_revision INTEGER NOT NULL,
             confirmed_at TEXT NOT NULL,
-            payload_json TEXT NOT NULL
+            payload_json TEXT NOT NULL,
+            FOREIGN KEY (candidate_id) REFERENCES semantic_candidates(candidate_id)
+                ON DELETE RESTRICT,
+            FOREIGN KEY (candidate_id, review_decision_id)
+                REFERENCES review_decisions(candidate_id, review_decision_id)
+                ON DELETE RESTRICT
         )
         """
     )

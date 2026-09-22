@@ -277,14 +277,38 @@ acceptance case**（`promotion_cases()`：同 family、同 candidate SHA、同�
   - `core_corpus_digest()` = **跨解释器恒定**的语料身份。输入是 `core_corpus_projection()` —— 布局、
     case 派生规则、**完整 operator 目录**与**两个 suite 的每一条 case**，而不是它们的计数（`case_count`、
     `operator_count` 这类摘要看得见“有多少”，看不见“哪一条由谁画、以什么声明画”）。
-    v3 golden `115fe509…`。`core_corpus_digest_manifest()` 就是这份 projection 本身，供人复算。
+    **加上 safety-negative suite 本体**（`safety_case_universe`：13 条 case_id + title + builder 定义身份；
+    source 字段就写 `declarative table in agentcad/repair_safety.py`）——§D 是 100% 要求，而原先只有
+    `safety_case_count` 这个计数，计数看不见一条 case 被增删/改题/换实现。v3 golden `96b999fa…`。
+    `core_corpus_digest_manifest()` 就是这份 projection 本身，供人复算。
+  - **一个数字上的不一致必须拆开、不能混成一个字段**：spec 里 `safety_cases = 12`，而
+    `repair_safety.SAFETY_CASES` 实际有 **13** 条（`d8b_stale_validation_hash` 是后加的；acceptance 门槛一直
+    按真 suite 跑 13/13）。那个数在冻结 spec body 里，改了会动 `spec_fingerprint`，所以投影里
+    **不再有裸名的 `safety_case_count`**，改成五个字段：
+    ```
+    status                          : "projected" | "unavailable_archived"
+    spec_declared_safety_case_count : 12          # 冻结 spec 发布的历史值
+    actual_safety_case_count        : 13          # == len(cases)，恒等，不能手写
+    cases                           : [13 行] | null
+    count_disposition               : {declared: 12, actual: 13,
+                                       status: "frozen_spec_metadata_mismatch"}
+    ```
+    `actual` 必须等于 `cases` 的长度（测试里是硬断言），所以“改了 suite 却留着旧计数”直接 fail；
+    两个数不同时由 `count_disposition` **点名**而不是静默；下一次真正切 spec 版本时必须消掉这个 mismatch。
+  - 归档语料投不出这 13 条（v2 spec body 只记了 declared count），所以它给的是 `status = unavailable_archived`、
+    `cases = null`、`actual = null`——**null 而不是 `[]`**，因为空列表会被读成“v2 没有 safety case”。
   - **identity 的敏感性与稳定性是一对**：`tests/test_core_corpus_identity.py` 里 8 个反向 mutation
     必须移动 digest（改 operator_id / 交换两个 id / 改 defect code / 改 base_variant / 改写策略 /
     换 producer 实现 / 增删一条 case / 增删一个 operator / 改 seed 派生规则），3 个正向稳定性必须不动
     （`generator_fingerprint` 变、`spec_fingerprint` 变、解释器变）。两组合起来才定义了身份的边界。
-  - `core_corpus_digest("2")` = 归档语料的同一身份，`a91461eb…`（从冻结的 v2 spec body 重放：19 operator /
-    72 case；实现那半边记为 `ARCHIVED_DEFINITION_IDENTITY`）。它是 **A5 之后派生出来的 archival 身份**，
-    v2 从未发布过这个字段，也不声称能证明当年的 Python 实现字节。
+  - `core_corpus_digest("2")` = 归档语料的同一身份，`edb1c5d3…`（从冻结的 v2 spec body 重放：19 operator /
+    72 case；实现那半边记为 `ARCHIVED_DEFINITION_IDENTITY`，safety 本体记为 unavailable）。它是 **A5 之后派生出来的
+    archival 身份**，v2 从未发布过这个字段，也不声称能证明当年的 Python 实现字节。
+  - **定义身份的“名字”必须从源码读，不能从编译器读**：第一版用 `inspect.getclosurevars` 决定哪些名字是全局，
+    于是同一个函数在 3.11 把 `__name__` 算成已解析的全局、在 3.12 不算（3.12 把推导式内联了，`co_names` 变了），
+    identity 仍然会随解释器变——而它只会在**第二个解释器**上暴露（本机 3.12 全绿、3.11 挂 5 条）。
+    现在名字来自 AST（`_referenced_names`），分类来自 `co_freevars`/`__closure__`，值来自模块命名空间：
+    同一份源码在两台机器上得到同一组候选名。
   - **producer 的声明式那一半不够时改指纹什么**：目录行额外发布
     `producer_definition_identity` / `base_builder_definition_identity`——源码 AST 的**规范化投影**
     （`agentcad/source_identity.py`）。不能用 `ast.dump`：同一份 `_patch` 在 3.11 是 `930398d67e9220f4`、
@@ -298,9 +322,11 @@ acceptance case**（`promotion_cases()`：同 family、同 candidate SHA、同�
   - **跨解释器不是断言，是实测**（两处）：
     ① identity 的输入以纯 JSON 发布（`corpus-identity-inputs.json`），
     `scripts/m5_closeout_identity_311_check.py` 只用标准库 + `agentcad.source_identity`（该模块刻意
-    零依赖，就是为了能在第二个解释器上跑）复算 digest 与全部 32 条定义身份，在 CPython 3.11.15 与 3.12.12
-    上都等于记录值；② 钉住 golden 的那条测试本身在 3.11 与 3.12 上各跑一次都要绿，CI 的 M5 job 是 3.11，
-    所以“两个解释器给出同一个数”由 CI 每天重跑。
+    零依赖，就是为了能在第二个解释器上跑）复算 digest 与 **两个源码文件里全部 101 条**定义身份
+    （`repair_benchmark` + `repair_safety`，键是 `module:qualname`——safety builder 的帮助函数在它自己那个文件里），
+    在 CPython 3.11.15 与 3.12.12 上都等于记录值；② 钉住 golden 的那 27 条身份测试本身在 3.11 与 3.12 上各跑一次
+    都要绿（本轮就是这么发现上面那个 `getclosurevars` 坑的），CI 的 M5 job 是 3.11，所以“两个解释器给出同一个数”
+    由 CI 每天重跑而不是只在本地成立。
   - v2 的 manifest 里**没有** `generator_fingerprint`：v2 operator 的字节码随代码一起消失了，
     该字段无法重算，所以它被“缺席”而不是被伪造（这也正是身份要独立于指纹的原因）。
 - `BENCHMARK_SPEC_VERSION` 从 2 切到 **3**，`spec_fingerprint` 从 `c8520c5e…` 变为 `8f522c75…`。

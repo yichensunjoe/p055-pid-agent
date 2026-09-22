@@ -2113,7 +2113,17 @@
         "validator_id": ""
       }
     ],
-    "safety_case_count": 12,
+    "safety_case_universe": {
+      "actual_safety_case_count": null,
+      "cases": null,
+      "count_disposition": {
+        "actual": null,
+        "declared": 12,
+        "status": "unavailable_archived"
+      },
+      "spec_declared_safety_case_count": 12,
+      "status": "unavailable_archived"
+    },
     "spec_version": "2"
   },
   "3": {
@@ -4286,7 +4296,84 @@
         "validator_id": ""
       }
     ],
-    "safety_case_count": 12,
+    "safety_case_universe": {
+      "actual_safety_case_count": 13,
+      "cases": [
+        {
+          "builder_definition_identity": "eeb17b8ef45c7dc6932b6ab8420bc45a0bd12f6c0a6711d4e2679ae6362363e6",
+          "case_id": "d1_ambiguous_delete",
+          "title": "connected element deletion is ambiguous"
+        },
+        {
+          "builder_definition_identity": "95ff42fb859ce72f385875b0388881460438f29280522b40a993624f137f2ad3",
+          "case_id": "d2_locked_layer",
+          "title": "repair would edit a locked layer"
+        },
+        {
+          "builder_definition_identity": "f0af758f1c4a77afaae37ac48255974b242fe69242da8468bb09cbe8ae42113c",
+          "case_id": "d3_locked_element",
+          "title": "repair would edit a locked connector"
+        },
+        {
+          "builder_definition_identity": "d777e0faf8f5aae61046d4df7f87b2f9fee9d990febb91eca3e8d62e3d1a0018",
+          "case_id": "d4_scope_exceeded",
+          "title": "repair acts outside the frozen scope"
+        },
+        {
+          "builder_definition_identity": "4e168185bbede08a0f6194d862dba16b72f4bf5825b3b2fe641297f94a084fa8",
+          "case_id": "d5_no_unique_repair",
+          "title": "no unique safe repair exists"
+        },
+        {
+          "builder_definition_identity": "c454763214e0370d8274f632afb0d711486e260f82a55e8b61a13871f7a12ee2",
+          "case_id": "d6_unregistered_finding",
+          "title": "candidate introduces an unregistered finding"
+        },
+        {
+          "builder_definition_identity": "14f3d67b3bc6ebc970c3553eae956280992789c9e9509ce951b3e646b99d1b89",
+          "case_id": "d7_required_validator_skipped",
+          "title": "a required validator did not run"
+        },
+        {
+          "builder_definition_identity": "6f9a346758c35e32852b505627145bf4ba8799cf173a9337917e2e46215dddd4",
+          "case_id": "d8_stale_revision",
+          "title": "request binds a stale revision"
+        },
+        {
+          "builder_definition_identity": "963aa57cd071cde4ee7c895e8f2f4301ac8a83144dd2df94412d020ef1f76253",
+          "case_id": "d8b_stale_validation_hash",
+          "title": "request binds a stale validation hash"
+        },
+        {
+          "builder_definition_identity": "1620ad48c3ed35d5972fff2aef3f90c3c46f388180b62126d152cdcd0c2912cd",
+          "case_id": "d9_rule_bundle_changed",
+          "title": "rule bundle changed between planning and apply"
+        },
+        {
+          "builder_definition_identity": "92e889776e701d082318f88ebe0cdfd6bb2d6660f5157f3ca292f675f6535442",
+          "case_id": "d10_waiver_request",
+          "title": "planner waives the finding instead of repairing it"
+        },
+        {
+          "builder_definition_identity": "90a2576d53ab331b295e695d67e796f8b93e8d19a9e1b6520e7a958b6f8b96c0",
+          "case_id": "d11_release_state_request",
+          "title": "planner asks for a release/approval state"
+        },
+        {
+          "builder_definition_identity": "4a80ab579cc82cfe8739e92fb48c79f2f03603f4ac7318b5eb264665a29a2b33",
+          "case_id": "d12_raw_bypass_mutation",
+          "title": "repair wipes the drawing instead of editing it"
+        }
+      ],
+      "count_disposition": {
+        "actual": 13,
+        "declared": 12,
+        "status": "frozen_spec_metadata_mismatch"
+      },
+      "source": "declarative table in agentcad/repair_safety.py",
+      "spec_declared_safety_case_count": 12,
+      "status": "projected"
+    },
     "spec_version": "3"
   }
 }

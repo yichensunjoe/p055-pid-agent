@@ -126,6 +126,10 @@ def identity_report() -> tuple[str, dict[str, Any]]:
             "supported_code_count": len([row for row in catalogue if row["target_code"]]),
             "case_row_keys": sorted(digest_input["case_universe"][0]),
             "operator_row_keys": sorted(catalogue[0]),
+            "safety_case_rows": digest_input["safety_case_universe"]["actual_safety_case_count"],
+            "safety_case_source": digest_input["safety_case_universe"].get("source"),
+            "safety_case_status": digest_input["safety_case_universe"]["status"],
+            "safety_count_disposition": digest_input["safety_case_universe"]["count_disposition"],
             "environment_keys_in_identity": sorted(
                 set(digest_input) & set(CORPUS_IDENTITY_EXCLUDED_KEYS)
             ),
@@ -149,6 +153,13 @@ def identity_report() -> tuple[str, dict[str, Any]]:
         )
         lines.append(f"per-case row keys                    : {', '.join(fields['case_row_keys'])}")
         lines.append(f"per-operator row keys                : {', '.join(fields['operator_row_keys'])}")
+        disposition = fields["safety_count_disposition"]
+        lines.append(
+            f"safety cases projected               : {fields['safety_case_rows']} "
+            f"({fields['safety_case_status']}; spec declares {disposition['declared']}, "
+            f"actual {disposition['actual']} -> {disposition['status']})"
+        )
+        lines.append(f"safety universe source               : {fields['safety_case_source']}")
         lines.append(
             f"environment keys inside the identity : {fields['environment_keys_in_identity'] or 'none'}"
         )

@@ -1,10 +1,10 @@
 interpreter: 3.12.12 (CPython)
-corpus 3: computed 115fe509e54d04a71654c6972a40b4c37e6ad33cc4ca097f5dc9c481e0563dc5
-corpus 3: recorded 115fe509e54d04a71654c6972a40b4c37e6ad33cc4ca097f5dc9c481e0563dc5   identical: True
-corpus 2: computed a91461eb32c6a71b89e81f006563cdb916b0ac19de9b123e3c0d7a41071df4a3
-corpus 2: recorded a91461eb32c6a71b89e81f006563cdb916b0ac19de9b123e3c0d7a41071df4a3   identical: True
-definition identities recorded    : 32
-definition identities recomputed  : 60 in source
+corpus 3: computed 96b999fa90403c82b58018ef82b06bb190932d97a66f179ebde2c0e2ef41c10f
+corpus 3: recorded 96b999fa90403c82b58018ef82b06bb190932d97a66f179ebde2c0e2ef41c10f   identical: True
+corpus 2: computed edb1c5d385bfd4f13a195119444dcb157f3bf0d893afd35e595ddc28c4b1c36c
+corpus 2: recorded edb1c5d385bfd4f13a195119444dcb157f3bf0d893afd35e595ddc28c4b1c36c   identical: True
+definition identities recorded    : 57
+definition identities recomputed  : 103 in 2 source files
 missing from the source file      : none
 mismatched on this interpreter    : none
 all identities reproduced on this interpreter: True

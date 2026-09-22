@@ -29,7 +29,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CLOSEOUT = ROOT / "reports" / "m5-closeout"
-DEFINITIONS = ROOT / "backend" / "agentcad" / "repair_benchmark.py"
+DEFINITION_SOURCES = (
+    ROOT / "backend" / "agentcad" / "repair_benchmark.py",
+    ROOT / "backend" / "agentcad" / "repair_safety.py",
+)
 
 sys.path.insert(0, str(ROOT / "backend"))
 
@@ -42,9 +45,17 @@ def digest(payload: object) -> str:
 
 
 def definition_identities() -> dict[str, str]:
-    """``qualname -> identity``, read straight off the source file."""
+    """``module:qualname -> identity``, read straight off the source files.
 
-    return module_definition_identities(DEFINITIONS.read_text(encoding="utf-8"))
+    Module-qualified because a producer folds in the definitions it *calls*, and those are not always
+    in the same file: the safety builders live in ``repair_safety`` beside the helpers they use.
+    """
+
+    computed: dict[str, str] = {}
+    for path in DEFINITION_SOURCES:
+        rows = module_definition_identities(path.read_text(encoding="utf-8"))
+        computed.update({f"{path.stem}:{qualname}": value for qualname, value in rows.items()})
+    return computed
 
 
 def main() -> int:
@@ -69,7 +80,10 @@ def main() -> int:
         if computed_definitions.get(qualname) != value
     )
     print(f"definition identities recorded    : {len(published_definitions)}")
-    print(f"definition identities recomputed  : {len(computed_definitions)} in source")
+    print(
+        "definition identities recomputed  : "
+        f"{len(computed_definitions)} in {len(DEFINITION_SOURCES)} source files"
+    )
     print(f"missing from the source file      : {missing or 'none'}")
     print(f"mismatched on this interpreter    : {mismatched or 'none'}")
     identities_same = not missing and not mismatched

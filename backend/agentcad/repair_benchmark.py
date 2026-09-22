@@ -21,6 +21,7 @@ nothing in this module tells the planner what to do, which is what keeps S@5 a m
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import inspect
 import json
@@ -1440,11 +1441,40 @@ CASE_DERIVATION: dict[str, str] = {
 #: the historical implementation the archived identity can vouch for, which is none of it.
 ARCHIVED_DEFINITION_IDENTITY = "unavailable: archived declarative definition only"
 
+#: Where the safety-negative suite's cases come from, published beside them.
+#:
+#: The suite is a *code* table (``agentcad/repair_safety.py``), not part of the spec payload, which
+#: is why its cases were missing from the first projection: the corpus published a count of a thing
+#: whose contents lived somewhere else. A count cannot notice a case being added, removed, retitled
+#: or rebuilt, and §D is a 100% requirement -- so the suite is projected the same way the acceptance
+#: cases are, with each builder's definition identity.
+SAFETY_UNIVERSE_SOURCE = "declarative table in agentcad/repair_safety.py"
+
+#: Why an archived corpus can only *declare* its safety universe: the v2 spec body recorded the
+#: suite's declared count and nothing else, and the v2 case builders went with the commit that ran
+#: them. ``cases`` is ``None`` here, never ``[]``: an empty list would read as "v2 had no safety
+#: cases", and the point of the field is to say what is *known*, not to look complete.
+SAFETY_UNIVERSE_ARCHIVED = "unavailable_archived"
+
+#: The projected suite is present, with the cases themselves.
+SAFETY_UNIVERSE_PROJECTED = "projected"
+
+#: The frozen v3 spec publishes a safety count of 12 while the suite it is judged by has 13 cases
+#: (``d8b_stale_validation_hash`` joined the table after the spec was cut). The number lives in the
+#: frozen spec body, so editing it would move ``spec_fingerprint``; the projection therefore carries
+#: both numbers and *names the disagreement* instead of letting one field stand for two facts.
+SAFETY_COUNT_MISMATCH = "frozen_spec_metadata_mismatch"
+SAFETY_COUNT_CONSISTENT = "consistent"
+
 #: The candidate the projection derives case *identities* with. The seed value is a run input and
 #: never enters the identity, and a case's coordinates (family, index, rotation) do not depend on
 #: the candidate at all -- so one documented placeholder lets the real generator stay the only
 #: implementation of the rotation instead of the projection re-deriving it beside it.
 CORPUS_IDENTITY_CANDIDATE = "0" * 40
+
+
+#: A sentinel for "this name is not in the function's globals", so a value of ``None`` stays real.
+_MISSING = object()
 
 
 def _opaque(value: Any) -> str:
@@ -1491,48 +1521,153 @@ def _definition_identity(
             "the corpus identity hashes producer definitions, which needs the source that defined "
             f"{getattr(function, '__qualname__', function)!r}"
         ) from error
+    module = getattr(function, "__module__", None)
     ast_text = source_ast_identity(source)
     if trace is not None:
-        trace[getattr(function, "__qualname__", repr(function))] = ast_text
+        stem = (module or "").rsplit(".", 1)[-1]
+        trace[f"{stem}:{getattr(function, '__qualname__', repr(function))}"] = ast_text
     material: dict[str, Any] = {
         "ast": ast_text,
-        "captured": {},
+        "captured": _captured_configuration(function),
         "constants": {},
         "callees": {},
     }
-    try:
-        closure = inspect.getclosurevars(function)
-    except TypeError:  # pragma: no cover - a callable without a Python closure
-        closure = None
-    if closure is not None:
-        for name, value in sorted(closure.nonlocals.items()):
-            material["captured"][name] = json.dumps(value, sort_keys=True, default=_opaque)
-        for name, value in sorted(closure.globals.items()):
-            if isinstance(value, (str, int, float, bool, type(None))):
-                material["constants"][name] = repr(value)
-            elif (
-                inspect.isfunction(value)
-                and getattr(value, "__module__", None) == __name__
-                and id(value) not in seen
-            ):
-                material["callees"][name] = _definition_identity(value, seen=seen, trace=trace)
+    # The *names* come from the source, never from ``inspect.getclosurevars``: that helper reports
+    # whatever the running compiler decided was a global, and 3.12's inlined comprehensions moved a
+    # plain module-level ``__name__`` in and out of that set. Reading names off the AST makes the
+    # candidate set identical on both interpreters, which is the whole point of the exercise.
+    namespace = getattr(function, "__globals__", {}) or {}
+    for name in _referenced_names(source):
+        value = namespace.get(name, _MISSING)
+        if value is _MISSING:
+            continue
+        if isinstance(value, (str, int, float, bool, type(None))):
+            material["constants"][name] = repr(value)
+        elif (
+            inspect.isfunction(value)
+            # Its own module, not this one: the safety builders live beside ``_add_layer`` and
+            # ``_lock_element`` in ``repair_safety``, and a helper that changes underneath an
+            # unchanged builder is exactly the change the identity exists to see.
+            and getattr(value, "__module__", None) == module
+            and id(value) not in seen
+        ):
+            material["callees"][name] = _definition_identity(value, seen=seen, trace=trace)
     text = json.dumps(material, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def _referenced_names(source: str) -> list[str]:
+    """Every name the definition loads, in source order, nested scopes included.
+
+    Nested scopes make this slightly generous -- a comprehension's own loop variable shows up too --
+    and generous is the safe direction: an extra name can only make the identity more sensitive.
+    """
+
+    tree = ast.parse(textwrap.dedent(source))
+    return sorted(
+        {
+            node.id
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)
+        }
+    )
+
+
+def _captured_configuration(function: Callable[..., Any]) -> dict[str, str]:
+    """What a factory-built definition was bound with, e.g. ``_build_f6``'s ``failures`` count.
+
+    Read through ``co_freevars`` and the cells rather than through ``getclosurevars``, for the same
+    reason the names are read off the source: the classification must not be a compiler detail.
+    """
+
+    code = getattr(function, "__code__", None)
+    cells = getattr(function, "__closure__", None) or ()
+    captured: dict[str, str] = {}
+    for name, cell in zip(getattr(code, "co_freevars", ()), cells, strict=False):
+        try:
+            value = cell.cell_contents
+        except ValueError:  # pragma: no cover - an empty cell
+            captured[name] = "<empty cell>"
+            continue
+        captured[name] = json.dumps(value, sort_keys=True, default=_opaque)
+    return dict(sorted(captured.items()))
+
+
 def corpus_definition_ast_projection() -> dict[str, str]:
-    """``qualname -> AST identity`` for every definition the corpus identity folds in.
+    """``module:qualname -> AST identity`` for every definition the corpus identity folds in.
 
     The interpreter-independent half of the producer identities, published on its own so a second
     interpreter can re-derive it straight from the source file -- no import, no pydantic, no
-    bytecode. ``scripts/m5_closeout_identity_311_check.py`` is that reader.
+    bytecode. ``scripts/m5_closeout_identity_311_check.py`` is that reader, and the module prefix is
+    what lets it look a definition up in the file it actually lives in (a producer in
+    ``repair_benchmark`` folded into a builder in ``repair_safety``).
     """
 
     trace: dict[str, str] = {}
     for _, operator in sorted(MUTATIONS.items()):
         _definition_identity(operator.apply, trace=trace)
         _definition_identity(operator.document_builder, trace=trace)
+    for case in _safety_cases()[0]:
+        _definition_identity(case.build, trace=trace)
     return trace
+
+
+def _safety_cases() -> tuple[tuple[Any, ...], str]:
+    """The safety-negative suite as ``(cases, source)``, imported lazily.
+
+    Lazy for the same reason :mod:`agentcad.repair_benchmark_runner` imports it inside the function
+    that needs it: the suite pulls in the repair orchestrator, and nothing here should pay that at
+    module import time. Archived corpora get no rows and a source that says so.
+    """
+
+    from .repair_safety import SAFETY_CASES
+
+    return SAFETY_CASES, SAFETY_UNIVERSE_SOURCE
+
+
+def _safety_case_universe(version: str | None) -> dict[str, Any]:
+    """The safety cases the corpus is judged by, with the count it was *declared* to have.
+
+    Five fields, because one field cannot honestly hold both numbers: ``spec_declared_...`` is what
+    the frozen spec publishes, ``actual_safety_case_count`` is ``len(cases)``, and
+    ``count_disposition`` states the difference rather than leaving a reader to notice it.
+    """
+
+    resolved = version or CORE_CORPUS_VERSION
+    declared = spec_payload(resolved)["safety_cases"]
+    if resolved != CORE_CORPUS_VERSION:
+        return {
+            "status": SAFETY_UNIVERSE_ARCHIVED,
+            "spec_declared_safety_case_count": declared,
+            "actual_safety_case_count": None,
+            "cases": None,
+            "count_disposition": {
+                "declared": declared,
+                "actual": None,
+                "status": SAFETY_UNIVERSE_ARCHIVED,
+            },
+        }
+    cases, source = _safety_cases()
+    actual = len(cases)
+    return {
+        "status": SAFETY_UNIVERSE_PROJECTED,
+        "source": source,
+        "spec_declared_safety_case_count": declared,
+        "actual_safety_case_count": actual,
+        "cases": [
+            {
+                "case_id": case.case_id,
+                "title": case.title,
+                "builder_definition_identity": _definition_identity(case.build),
+            }
+            for case in cases
+        ],
+        "count_disposition": {
+            "declared": declared,
+            "actual": actual,
+            "status": SAFETY_COUNT_CONSISTENT if declared == actual else SAFETY_COUNT_MISMATCH,
+        },
+    }
 
 
 def _declaration_of(entry: Any) -> dict[str, Any]:
@@ -1620,7 +1755,7 @@ def core_corpus_projection(version: str | None = None) -> dict[str, Any]:
         "families": list(FAMILIES),
         "acceptance_cases_per_family": ACCEPTANCE_CASES_PER_FAMILY,
         "dev_cases_per_family": DEV_CASES_PER_FAMILY,
-        "safety_case_count": SAFETY_CASES,
+        "safety_case_universe": _safety_case_universe(None),
         "case_derivation": dict(CASE_DERIVATION),
         "operator_catalogue": [
             _projected_operator_row(operator, archived=False)
@@ -1664,7 +1799,7 @@ def _archived_corpus_projection(version: str) -> dict[str, Any] | None:
         "families": list(payload["families"]),
         "acceptance_cases_per_family": payload["acceptance_cases_per_family"],
         "dev_cases_per_family": payload["dev_cases_per_family"],
-        "safety_case_count": payload["safety_cases"],
+        "safety_case_universe": _safety_case_universe(version),
         "case_derivation": dict(CASE_DERIVATION),
         "operator_catalogue": [
             _projected_operator_row(row, archived=True)
@@ -1870,6 +2005,11 @@ __all__ = [
     "FAMILY_TITLES",
     "MUTATIONS",
     "SAFETY_CASES",
+    "SAFETY_COUNT_CONSISTENT",
+    "SAFETY_COUNT_MISMATCH",
+    "SAFETY_UNIVERSE_ARCHIVED",
+    "SAFETY_UNIVERSE_PROJECTED",
+    "SAFETY_UNIVERSE_SOURCE",
     "SPEC_FINGERPRINT_V2",
     "SUCCESS_ORACLE_VERSION",
     "THRESHOLDS",

@@ -41,7 +41,12 @@ from agentcad.repair_benchmark import (
     CORE_CORPUS_VERSION,
     CORPUS_IDENTITY_EXCLUDED_KEYS,
     MUTATIONS,
+    SAFETY_COUNT_MISMATCH,
+    SAFETY_UNIVERSE_ARCHIVED,
+    SAFETY_UNIVERSE_PROJECTED,
+    SAFETY_UNIVERSE_SOURCE,
     SPEC_FINGERPRINT_V2,
+    _referenced_names,
     core_corpus_digest,
     core_corpus_digest_manifest,
     core_corpus_fingerprint,
@@ -62,11 +67,11 @@ from agentcad.repair_models import (
 from agentcad.source_identity import ast_identity, module_definition_identities
 
 #: The corpus identity of the frozen v3 corpus: pure data, identical on CPython 3.11 and 3.12.
-V3_DIGEST = "115fe509e54d04a71654c6972a40b4c37e6ad33cc4ca097f5dc9c481e0563dc5"
+V3_DIGEST = "96b999fa90403c82b58018ef82b06bb190932d97a66f179ebde2c0e2ef41c10f"
 
 #: The archived v2 corpus's digest. Derived under A5, so it is an *archival* identity: v2 never
 #: published this number, and saying otherwise would be inventing a field history.
-V2_DIGEST = "a91461eb32c6a71b89e81f006563cdb916b0ac19de9b123e3c0d7a41071df4a3"
+V2_DIGEST = "edb1c5d385bfd4f13a195119444dcb157f3bf0d893afd35e595ddc28c4b1c36c"
 
 #: The frozen v3 evidence, kept exactly as it was published. Recomputing it is the point.
 V3_EVIDENCE = (
@@ -268,7 +273,7 @@ def test_projection_carries_the_case_universe_and_the_catalogue() -> None:
         "dev_cases_per_family",
         "families",
         "operator_catalogue",
-        "safety_case_count",
+        "safety_case_universe",
         "spec_version",
     ]
     assert len(projection["operator_catalogue"]) == len(MUTATIONS) == 23
@@ -303,6 +308,86 @@ def test_projection_case_universe_is_the_suite_the_runner_builds() -> None:
     assert [(row["case_id"], row["operator_id"]) for row in rows] == [
         (case.case_id, case.operator_id) for case in built
     ]
+
+
+def test_the_safety_suite_is_projected_as_cases_not_as_a_count() -> None:
+    """§D is a 100% requirement, so its cases belong in the identity like any other case set.
+
+    The corpus published ``safety_case_count`` and nothing else, which is a number that cannot notice
+    a case being added, removed, retitled or rebuilt. The rows below are the suite itself.
+    """
+
+    universe = core_corpus_projection()["safety_case_universe"]
+    cases = universe["cases"]
+    assert universe["status"] == SAFETY_UNIVERSE_PROJECTED
+    assert universe["source"] == SAFETY_UNIVERSE_SOURCE
+    assert len(cases) == 13
+    assert sorted(cases[0]) == ["builder_definition_identity", "case_id", "title"]
+    assert {row["case_id"] for row in cases} >= {
+        "d1_ambiguous_delete",
+        "d2_locked_layer",
+        "d8b_stale_validation_hash",
+        "d12_raw_bypass_mutation",
+    }
+    assert all(row["title"] and row["builder_definition_identity"] for row in cases)
+
+
+def test_the_declared_and_actual_safety_counts_are_separate_fields() -> None:
+    """One field must not mean two things: the spec's 12 is not quietly the suite's size.
+
+    The declared number lives in the frozen spec body, so correcting it there would move
+    ``spec_fingerprint``; the suite has 13 cases because ``d8b_stale_validation_hash`` joined the
+    code table afterwards. What the identity owes a reader is both numbers and a name for the
+    disagreement -- not a single field that silently stands for whichever one it happens to hold.
+    """
+
+    universe = core_corpus_projection()["safety_case_universe"]
+    assert universe["spec_declared_safety_case_count"] == 12
+    assert universe["actual_safety_case_count"] == 13
+    # The invariant the remote asked to be a hard failure: the actual number is the universe's size,
+    # always, so a corpus whose suite changed cannot keep publishing the old count.
+    assert universe["actual_safety_case_count"] == len(universe["cases"])
+    assert universe["count_disposition"] == {
+        "declared": 12,
+        "actual": 13,
+        "status": SAFETY_COUNT_MISMATCH,
+    }
+    assert "safety_case_count" not in core_corpus_projection()
+
+
+def test_an_archived_corpus_declares_its_missing_safety_universe() -> None:
+    """``None`` is a documented absence, never "v2 had no safety cases" (which ``[]`` would say)."""
+
+    universe = core_corpus_projection("2")["safety_case_universe"]
+    assert universe["status"] == SAFETY_UNIVERSE_ARCHIVED
+    assert universe["cases"] is None
+    assert universe["actual_safety_case_count"] is None
+    assert universe["spec_declared_safety_case_count"] == 12
+    assert universe["count_disposition"]["status"] == SAFETY_UNIVERSE_ARCHIVED
+
+
+def test_retitling_a_safety_case_moves_the_identity(monkeypatch) -> None:
+    from agentcad import repair_safety
+
+    cases = list(repair_safety.SAFETY_CASES)
+    cases[0] = replace(cases[0], title="a different title")
+    monkeypatch.setattr(repair_safety, "SAFETY_CASES", tuple(cases))
+    assert core_corpus_digest() != V3_DIGEST
+
+
+def test_rebuilding_a_safety_case_moves_the_identity(monkeypatch) -> None:
+    """Same declarations, different code: the suite the corpus is judged by has changed."""
+
+    from agentcad import repair_safety
+
+    cases = list(repair_safety.SAFETY_CASES)
+
+    def probe_builder(service, context):  # pragma: no cover - identity only, never run
+        raise AssertionError("the identity must not depend on running the case")
+
+    cases.append(repair_safety.SafetyCase("d13_probe", "probe", probe_builder))
+    monkeypatch.setattr(repair_safety, "SAFETY_CASES", tuple(cases))
+    assert core_corpus_digest() != V3_DIGEST
 
 
 def test_archived_projection_declares_what_it_cannot_identify() -> None:
@@ -422,14 +507,39 @@ def test_interpreter_provenance_does_not_move_the_identity(monkeypatch) -> None:
 
 
 def test_definition_identities_are_recomputable_from_the_source_file() -> None:
-    """The half that used to be bytecode can be checked by anyone, from the file alone."""
+    """The half that used to be bytecode can be checked by anyone, from the files alone."""
 
-    module = Path(__file__).resolve().parents[1] / "agentcad" / "repair_benchmark.py"
-    recomputed = module_definition_identities(module.read_text(encoding="utf-8"))
+    package = Path(__file__).resolve().parents[1] / "agentcad"
+    recomputed: dict[str, str] = {}
+    for name in ("repair_benchmark.py", "repair_safety.py"):
+        rows = module_definition_identities((package / name).read_text(encoding="utf-8"))
+        recomputed.update({f"{name[:-3]}:{qualname}": value for qualname, value in rows.items()})
     trace = corpus_definition_ast_projection()
     assert len(trace) > 20
     assert set(trace) <= set(recomputed)
     assert all(recomputed[qualname] == value for qualname, value in trace.items())
+    # Both modules are represented, which is the crossing that used to be invisible: a safety
+    # builder's helpers live beside it, not in the benchmark module.
+    assert {key.split(":", 1)[0] for key in trace} == {"repair_benchmark", "repair_safety"}
+
+
+def test_the_identity_reads_names_off_the_source_not_off_the_compiler() -> None:
+    """The bug this rule exists for: 3.12 inlined comprehensions and moved a name's classification.
+
+    ``inspect.getclosurevars`` reported ``__name__`` as a resolved global on 3.11 and not on 3.12 for
+    the same function, so a definition identity built from it was interpreter-dependent after all --
+    invisible to the AST check, and visible only because a second interpreter ran the pinned digest.
+    Names now come from the AST, where both interpreters read the same thing.
+    """
+
+    names = _referenced_names(
+        "def f(items):\n"
+        "    table = [row for row in items if row]\n"
+        "    return __name__, table, LIMIT\n"
+    )
+    assert {"__name__", "items", "row", "table", "LIMIT"} <= set(names)
+    # Sorted and deduplicated, so the material cannot depend on dict ordering either.
+    assert names == sorted(set(names))
 
 
 def test_canonical_form_ignores_a_field_that_carries_nothing() -> None:

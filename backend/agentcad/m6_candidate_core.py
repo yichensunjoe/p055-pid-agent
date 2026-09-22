@@ -132,7 +132,13 @@ def _strip_volatile(value: Any) -> Any:
     from the contract, which is the same list the replay contract excludes.
     """
 
-    volatile = {*REPLAY_VOLATILE_FIELDS_EXCLUDED, "created_at", "decided_at", "confirmed_at", "imported_at"}
+    volatile = {
+        *REPLAY_VOLATILE_FIELDS_EXCLUDED,
+        "created_at",
+        "decided_at",
+        "confirmed_at",
+        "imported_at",
+    }
     if isinstance(value, dict):
         return {
             key: _strip_volatile(item)
@@ -175,7 +181,9 @@ def resolve_identity(graph: EngineeringGraph, identity: str):
     return graph.object(needle) or graph.object(needle.split(":", 1)[1])
 
 
-def semantic_value(document: Document, graph: EngineeringGraph, identity: str, path: SemanticPath) -> str:
+def semantic_value(
+    document: Document, graph: EngineeringGraph, identity: str, path: SemanticPath
+) -> str:
     """The committed value at ``identity`` / ``path``. Read-only, derived, deterministic."""
 
     record = resolve_identity(graph, identity)
@@ -229,7 +237,9 @@ class M6CandidateRepository(Protocol):
 
     def get_semantic_candidate(self, candidate_id: str) -> SemanticCandidate | None: ...
 
-    def list_semantic_candidates(self, *, source_document_id: str | None = None) -> list[SemanticCandidate]: ...
+    def list_semantic_candidates(
+        self, *, source_document_id: str | None = None
+    ) -> list[SemanticCandidate]: ...
 
     def insert_review_decision(self, decision: ReviewDecision) -> None: ...
 
@@ -506,7 +516,9 @@ class M6CandidateService:
             note=note,
         )
 
-    def supersede(self, candidate_id: str, *, successor_candidate_id: str, note: str = "") -> ReviewDecision:
+    def supersede(
+        self, candidate_id: str, *, successor_candidate_id: str, note: str = ""
+    ) -> ReviewDecision:
         return self.record_decision(
             candidate_id,
             "superseded",
@@ -759,7 +771,9 @@ def _disposition_for(intent: str) -> str:
     for row in WRITE_POLICY_V1:
         if row.intent == intent:
             return row.disposition
-    raise CompilationRefused(f"intent {intent!r} has no row in the v1 write policy", code="unknown_intent")
+    raise CompilationRefused(
+        f"intent {intent!r} has no row in the v1 write policy", code="unknown_intent"
+    )
 
 
 def _facts_payload(facts: ProposedSemantics) -> dict[str, Any]:
@@ -783,33 +797,45 @@ def _symbol_definition(registry: SymbolRegistry, key: str):
 def _decision_id(candidate_id: str, from_status: str, to_status: str, kind: str) -> str:
     """Decision ids are derived, not random: the log can be rebuilt and compared."""
 
-    return "m6dec_" + canonical_digest(
-        {"candidate": candidate_id, "from": from_status, "to": to_status, "kind": kind}
-    )[:16]
+    return (
+        "m6dec_"
+        + canonical_digest(
+            {"candidate": candidate_id, "from": from_status, "to": to_status, "kind": kind}
+        )[:16]
+    )
 
 
 def _conflict_id(
     candidate_id: str, reviewed: ConflictBaselineRecord, current: ConflictBaselineRecord
 ) -> str:
-    return "m6cfl_" + canonical_digest(
-        {
-            "candidate": candidate_id,
-            "path": reviewed.comparison_path,
-            "identity": reviewed.comparison_identity,
-            "reviewed": reviewed.value_digest,
-            "current": current.value_digest,
-        }
-    )[:16]
+    return (
+        "m6cfl_"
+        + canonical_digest(
+            {
+                "candidate": candidate_id,
+                "path": reviewed.comparison_path,
+                "identity": reviewed.comparison_identity,
+                "reviewed": reviewed.value_digest,
+                "current": current.value_digest,
+            }
+        )[:16]
+    )
 
 
 def _finding_id(candidate_id: str, review_decision_id: str) -> str:
-    return "m6find_" + canonical_digest({"candidate": candidate_id, "decision": review_decision_id})[:16]
+    return (
+        "m6find_"
+        + canonical_digest({"candidate": candidate_id, "decision": review_decision_id})[:16]
+    )
 
 
 def _created_element_id(finding: ConfirmedSemanticFinding, facts: ProposedSemantics) -> str:
-    return "el_m6" + canonical_digest(
-        {"finding": finding.finding_id, "class": facts.symbol_class, "tag": facts.equipment_tag}
-    )[:10]
+    return (
+        "el_m6"
+        + canonical_digest(
+            {"finding": finding.finding_id, "class": facts.symbol_class, "tag": facts.equipment_tag}
+        )[:10]
+    )
 
 
 __all__ = [

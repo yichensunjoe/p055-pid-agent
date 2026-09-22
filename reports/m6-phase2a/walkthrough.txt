@@ -1,0 +1,72 @@
+
+=== positive record: artifact -> region -> candidate -> decision -> finding -> patch ===
+{
+  "baseline": {
+    "path": "equipment_tag",
+    "revision": 7,
+    "value_present": false
+  },
+  "candidate_id": "cand_tag_walkthrough",
+  "canonical_digest": "321c0bd26d8a14f8c44ffd418372206672a3884c5c0e67517adac3e8ccecaae3",
+  "finding_id": "m6find_9f4a38a314e615a5",
+  "intent": "metadata_enrichment",
+  "operations": [
+    {
+      "element_id": "pump_untagged",
+      "op": "update_element",
+      "patch": {
+        "label": "P-201"
+      }
+    }
+  ],
+  "patch_id": "m6patch_321c0bd26d8a14f8",
+  "policy_disposition": "allowed_after_confirmation",
+  "provenance_chain": [
+    "artifact_1",
+    "region_1",
+    "cand_tag_walkthrough",
+    "m6dec_58a4699b5363a375"
+  ],
+  "review_decision_id": "m6dec_58a4699b5363a375",
+  "reviewer": "engineer.joe",
+  "reviewer_action": "saw the label P-201 on the pump",
+  "status_after_filing": "needs_review",
+  "write_authority": "none"
+}
+
+=== determinism record: the same finding compiled twice ===
+{
+  "digest_first": "321c0bd26d8a14f8c44ffd418372206672a3884c5c0e67517adac3e8ccecaae3",
+  "digest_second": "321c0bd26d8a14f8c44ffd418372206672a3884c5c0e67517adac3e8ccecaae3",
+  "identical": true,
+  "patch_id_first": "m6patch_321c0bd26d8a14f8",
+  "patch_id_second": "m6patch_321c0bd26d8a14f8"
+}
+
+=== negative record: apply is refused in Phase-2A ===
+{
+  "code": "apply_not_authorized_in_phase_2a",
+  "reason": "Phase-2A has no governed write: the apply-v2 gate, locality check and conflict re-check arrive in Phase-2B, and a patch compiles without them",
+  "refused": "GovernedWriteNotAuthorized"
+}
+
+=== negative record: a moved baseline forces a conflict ===
+{
+  "compile_after_conflict": {
+    "code": "overwrite_requires_human_resolution",
+    "reason": "equipment_tag at eq_9b25220d8480 already states 'P-777'; overwriting an authoritative value is a conflict for a human to resolve",
+    "refused": "CompilationRefused"
+  },
+  "conflict_recorded": true,
+  "current_value_digest": "74c063e016986a27022b6b853ac1e2b6",
+  "reviewed_value_digest": "a792615553166a0af4fea77f5046107c",
+  "status_after_reecheck": "conflicted"
+}
+
+=== cascade record: the drawing is gone, the review history is not ===
+{
+  "candidate_still_readable": true,
+  "decisions_still_readable": 3,
+  "document_deleted": true,
+  "finding_still_readable": true
+}

@@ -324,7 +324,9 @@ class SemanticCandidate(StrictModel):
                 "connection_relationship": facts.relationship_source,
             }[self.candidate_type]
             if not required:
-                raise ValueError(f"candidate_type {self.candidate_type!r} needs its corresponding fact")
+                raise ValueError(
+                    f"candidate_type {self.candidate_type!r} needs its corresponding fact"
+                )
             if self.candidate_type == "symbol_class" and facts.symbol_class == facts.equipment_tag:
                 raise ValueError("symbol_class must name a catalogue class, not repeat the tag")
         return self
@@ -418,7 +420,12 @@ class ConfirmedSemanticFinding(StrictModel):
 
     @model_validator(mode="after")
     def validate_chain(self) -> ConfirmedSemanticFinding:
-        expected = [self.artifact.artifact_id, self.region_id, self.candidate_id, self.review_decision_id]
+        expected = [
+            self.artifact.artifact_id,
+            self.region_id,
+            self.candidate_id,
+            self.review_decision_id,
+        ]
         if self.provenance_chain[:4] != expected:
             raise ValueError(
                 "the provenance chain must read artifact -> region -> candidate -> review decision, "

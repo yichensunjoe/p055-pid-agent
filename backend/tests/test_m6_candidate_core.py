@@ -23,7 +23,10 @@ the point of putting them there.
 from __future__ import annotations
 
 import sqlite3
+import subprocess
+import sys
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import get_args
 
 import pytest
@@ -144,7 +147,9 @@ def _drawing(elements: list) -> Document:
     )
 
 
-def _region(*, element_refs: list[str] | None = None, x: float = 100.0, y: float = 100.0) -> SourceRegion:
+def _region(
+    *, element_refs: list[str] | None = None, x: float = 100.0, y: float = 100.0
+) -> SourceRegion:
     return SourceRegion(
         region_id="region_m6_1",
         artifact_id="artifact_m6_1",
@@ -241,7 +246,9 @@ def test_compiling_without_a_finding_is_refused(
     service: M6CandidateService, registry: SymbolRegistry
 ) -> None:
     with pytest.raises(NotConfirmedError):
-        service.compile_finding("m6find_nonexistent", document=_drawing([_untagged_pump()]), registry=registry)
+        service.compile_finding(
+            "m6find_nonexistent", document=_drawing([_untagged_pump()]), registry=registry
+        )
 
 
 def test_a_candidate_cannot_be_filed_as_already_confirmed(service: M6CandidateService) -> None:
@@ -404,9 +411,7 @@ def test_a_moved_baseline_forces_a_conflict(
         }
     )
     graph = build_engineering_graph(moved, registry)
-    current = baseline_record(
-        moved, graph, identity="element:pump_untagged", path="equipment_tag"
-    )
+    current = baseline_record(moved, graph, identity="element:pump_untagged", path="equipment_tag")
     decision = service.recheck_baseline(candidate.candidate_id, current=current)
     assert decision is not None and decision.kind == "conflict_detected"
     assert service.current_status(candidate.candidate_id) == "conflicted"
@@ -426,7 +431,9 @@ def test_an_unchanged_baseline_is_not_a_conflict(
     candidate = _tag_candidate()
     _confirmed_finding_for(service, document, registry, candidate)
     graph = build_engineering_graph(document, registry)
-    current = baseline_record(document, graph, identity="element:pump_untagged", path="equipment_tag")
+    current = baseline_record(
+        document, graph, identity="element:pump_untagged", path="equipment_tag"
+    )
     assert service.recheck_baseline(candidate.candidate_id, current=current) is None
     assert service.current_status(candidate.candidate_id) == "confirmed"
 
@@ -633,7 +640,9 @@ def test_creation_compiles_from_the_region_and_the_catalogue(
         artifact=_artifact(),
         region=_region(x=500, y=500),
         candidate_type="symbol_class",
-        proposed_semantics=ProposedSemantics(symbol_class="centrifugal_pump", equipment_tag="P-201"),
+        proposed_semantics=ProposedSemantics(
+            symbol_class="centrifugal_pump", equipment_tag="P-201"
+        ),
         confidence=Confidence(value=0.8, source="model"),
         evidence=[CandidateEvidence(kind="geometry", detail="pump outline at 500,500")],
         producer=ProducerRef(key="typesafe", version="jev-1.13.0"),
@@ -779,6 +788,24 @@ def test_the_repository_exposes_no_update_path(
         assert not hasattr(store, name), f"{name} would break the append-only guarantee"
 
 
+def test_the_evidence_walkthrough_still_runs() -> None:
+    """The walkthrough is evidence, so it is executed rather than quoted.
+
+    A recorded transcript rots the moment the code moves; running the script in the suite means
+    the positive and negative records the gate reads are regenerated from the current commit.
+    """
+
+    script = Path(__file__).resolve().parents[2] / "scripts" / "m6_phase2a_walkthrough.py"
+    result = subprocess.run(
+        [sys.executable, str(script)], capture_output=True, text=True, check=False
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "status_after_filing" in result.stdout
+    assert '"identical": true' in result.stdout
+    assert "overwrite_requires_human_resolution" in result.stdout
+    assert '"finding_still_readable": true' in result.stdout
+
+
 # --------------------------------------------------------------------------------------
 # helpers
 # --------------------------------------------------------------------------------------
@@ -790,5 +817,7 @@ def _stored(document: Document):
     return StoredDocument(document=document, undo_stack=[], redo_stack=[])
 
 
-def _stored_finding(service: M6CandidateService, finding_id: str) -> ConfirmedSemanticFinding | None:
+def _stored_finding(
+    service: M6CandidateService, finding_id: str
+) -> ConfirmedSemanticFinding | None:
     return service._repository.get_confirmed_finding(finding_id)  # noqa: SLF001

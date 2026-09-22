@@ -455,7 +455,12 @@ P&ID 上"BALL VALVE"该被读成设备标签还是注释文字，往往两种都
 13. **事务层状态**：`applied` / `reverted` / `superseded` 齐备，`reverted` 语义是补偿而非抹除，
     且不得出现在 candidate 状态里；
 14. **replay**：canonical patch 与语义后态两者都必须一致，**原始事务字节不是契约**，volatile 字段必须排除；
-    undo 必须走同一个受治写路径。
+    undo 必须走同一个受治写路径；
+15. **持久身份格式**：每条内容派生身份的前缀与 digest 宽度都由 `PERSISTENT_IDENTITIES` 声明，
+    前缀两两不同，且**任何身份都不得被截断**（`IDENTITY_FULL_DIGEST_HEX = 64`）。
+    核心代码通过 `identity_prefix(field)` 取用，不再在实现里写字面前缀；
+    测试再从**本文件**把所有 ``前缀<宽度>`` 写法抽出来，与声明逐条对拍——于是“文档说 16 hex、代码写 64 hex”
+    这种同文不同节的自相矛盾会被测试直接判红，而不是等 Gate 肉眼核对。
 
 `backend/tests/test_m6_ingestion_contract.py` 在此之上再钉两件事：
 **本文件的措辞与契约数据一致**（层名、状态名、策略意图、语料维度、candidate 字段逐个核对），
@@ -545,7 +550,7 @@ SourceArtifactRef → SourceRegion → SemanticCandidate → ReviewDecision
 1. **状态是算出来的，不是存出来的。** `semantic_candidates` 只存 `review_status_at_creation`；
    当前状态由 **append-only 的 `review_decisions` 日志回放**得到，而回放的每一步都必须命中契约里
    声明的边。于是“把 `confirmed` 写进一列”不给任何权限——“确认”只能是一行人类决定。
-2. **`patch_id` 由 digest 派生**（`m6patch_<digest[:16]>`）。同一条 finding 编译两次得到**同一个身份与同一份内容**，
+2. **`patch_id` 由 digest 派生**（`m6patch_<64 hex>`）。同一条 finding 编译两次得到**同一个身份与同一份内容**，
    不存在“看起来差不多”的两张 patch；而 digest 的输入排除了 `created_at` / `decided_at` / `transaction_id`
    等 volatile 字段（§11.1 的同一个教训）。
 3. **persistence 是同一库上的三个独立聚合**，外键布局由两个不同的问题分别回答（混用一个规则会把其中一个答错）：
@@ -571,9 +576,21 @@ SourceArtifactRef → SourceRegion → SemanticCandidate → ReviewDecision
    `ConfirmedSemanticFinding` 在**同一个数据库事务**里提交（`store.record_confirmation`）。
    分开写会留下一个窗口：状态机已经说 `confirmed`，却没有任何 finding 能追溯到人——这正是 Phase-2B
    获得写权限之前不能继承的裂缝。故障注入测试真的让第二行写失败（SQLite trigger）并断言两行都不存在。
-3c. **内容派生的身份取完整 digest。** `patch_id = m6patch_<sha256>`、`m6dec_` / `m6cfl_` / `m6find_`
-   带完整 64 hex；**编译生成的新元素 id（`el_m6_<sha256>`）也是完整长度**——它会成为真正工程对象的身份，
-   比 patch id 更不能依赖截断。
+3c. **内容派生的身份取完整 digest，且格式只声明一次。** 五条持久身份的写法如下，出自
+   `PERSISTENT_IDENTITIES`（不是本节措辞），并且**核心代码从同一份声明取前缀**：
+
+   ```text
+   patch_id             = m6patch_<64 hex>
+   review_decision_id   = m6dec_<64 hex>
+   conflict_id          = m6cfl_<64 hex>
+   finding_id           = m6find_<64 hex>
+   generated_element_id = el_m6<64 hex>
+   ```
+
+   最后一条的前缀是 `el_m6` —— **没有下划线**（它与其他四条不是同一命名族），而它恰恰是最不能截断的一条：
+   编译生成的新元素 id 会成为真正工程对象的身份，在那里一次哈希截断是图纸里的碰撞，不是报告里的碰撞。
+   本节此前把两条身份的宽度写成不同值（一处 `digest[:16]`、一处 `<sha256>`）——同文自相矛盾正是
+   “格式写在多处”的必然产物，所以现在由契约声明、由代码取用、由测试对拍本文件。
 3d. **决策身份是 `review-decision-v1`，由决策的不可变内容派生**，而不是“谁在什么时候把哪一行插进去”：
 
    ```text

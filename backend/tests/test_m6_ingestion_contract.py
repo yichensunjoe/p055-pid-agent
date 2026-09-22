@@ -199,6 +199,80 @@ def test_the_task_book_says_seed_material_is_not_truth(task_book: str) -> None:
     assert contract.SEED_MATERIAL_COUNTS_AS_EXPECTED_TRUTH is False
 
 
+#: Any ``prefix<...>`` token in the book whose prefix looks like an identity prefix. The book
+#: is allowed to describe an identity only through the rendered form the contract declares, so
+#: the *inside* of the angle brackets is compared, not just the prefix: ``m6patch_<sha256>``
+#: and ``m6patch_<digest[:16]>`` both name a real declared prefix and are both wrong.
+_IDENTITY_FORMAT_TOKEN = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)<([^>]*)>")
+
+
+def _declared_prefixes() -> set[str]:
+    return {item.prefix for item in contract.PERSISTENT_IDENTITIES}
+
+
+def _looks_like_an_identity_prefix(prefix: str) -> bool:
+    return prefix.startswith("m6") or prefix.startswith("el_m6")
+
+
+def _documented_identity_formats(task_book: str) -> list[tuple[str, str]]:
+    return [
+        (prefix, inside)
+        for prefix, inside in _IDENTITY_FORMAT_TOKEN.findall(task_book)
+        if _looks_like_an_identity_prefix(prefix)
+    ]
+
+
+def test_the_task_book_quotes_every_declared_identity_format(task_book: str) -> None:
+    """The book describes provenance ids; the code decides what they look like.
+
+    This is the check that was missing when the same document said ``m6patch_<digest[:16]>`` in
+    one section and ``m6patch_<sha256>`` in another. Both readings are plausible prose; only the
+    code can settle it, so the test asks the code.
+    """
+
+    documented = _documented_identity_formats(task_book)
+    assert documented, "the task book must state the identity formats it relies on"
+
+    declared = {item.prefix: item for item in contract.PERSISTENT_IDENTITIES}
+    for prefix, inside in documented:
+        assert prefix in declared, (
+            f"the task book documents an identity prefix {prefix!r} that no contract data declares"
+        )
+        expected = declared[prefix].rendered_format
+        assert f"{prefix}<{inside}>" == expected, (
+            f"the task book says {prefix}<{inside}> but the contract declares {expected}: a stored "
+            "identity's width is a contract, and prose may not pick a different one"
+        )
+
+    quoted = {prefix for prefix, _ in documented}
+    for prefix, item in declared.items():
+        assert prefix in quoted, (
+            f"the contract declares the identity {item.field!r} as {item.rendered_format} but the "
+            "task book never states it"
+        )
+
+
+def test_every_declared_identity_is_used_by_the_core_through_the_declaration() -> None:
+    """A declaration nobody reads is documentation; the point is that the core reads it.
+
+    The implementation may not spell an identity prefix as a literal: if it does, the contract
+    can be edited without changing behaviour, and the doc binding above becomes theatre.
+    """
+
+    core_source = (Path(__file__).resolve().parents[1] / "agentcad" / "m6_candidate_core.py").read_text(
+        encoding="utf-8"
+    )
+    for item in contract.PERSISTENT_IDENTITIES:
+        # Bare substring, not a quoted-string match: the tempting literal is an f-string such as
+        # ``f"m6patch_{digest}"``, where the prefix is followed by ``{`` rather than by a closing
+        # quote. Asserting on the quoted form would pass on exactly the code this is meant to
+        # catch -- a guard that cannot fail is worse than no guard, because it reads as covered.
+        assert item.prefix not in core_source, (
+            f"the core mentions the identity prefix {item.prefix!r}; it must get it from "
+            "identity_prefix() so the declaration is the only place the format lives"
+        )
+
+
 # --------------------------------------------------------------------------------------
 # Phase 1 added no surface
 # --------------------------------------------------------------------------------------
@@ -520,3 +594,51 @@ def test_the_contract_document_is_serializable() -> None:
     assert document["contract"] == contract.M6_CONTRACT_VERSION
     assert document["sole_write_layer"] == contract.SOLE_WRITE_LAYER
     assert len(document["layers"]) == len(contract.INGESTION_LAYERS)
+    identities = document["persistent_identities"]
+    assert isinstance(identities, list)
+    assert len(identities) == len(contract.PERSISTENT_IDENTITIES)
+    for entry in identities:
+        assert entry["rendered_format"] == f"{entry['prefix']}<{entry['digest_hex']} hex>"
+
+
+def test_the_validator_reports_a_truncated_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The tempting relaxation: shave a hash to keep the column narrow."""
+
+    monkeypatch.setattr(
+        contract,
+        "PERSISTENT_IDENTITIES",
+        (
+            contract.PersistentIdentity(
+                field="patch_id",
+                prefix="m6patch_",
+                digest_hex=16,
+                meaning="a short patch id, for readability",
+            ),
+            *contract.PERSISTENT_IDENTITIES[1:],
+        ),
+    )
+    problems = contract.validate_contract()
+    assert any("is truncated to 16 hex" in problem for problem in problems)
+
+
+def test_the_validator_reports_two_identities_sharing_a_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With one prefix for two kinds of id, 'what is this id?' stops being answerable."""
+
+    monkeypatch.setattr(
+        contract,
+        "PERSISTENT_IDENTITIES",
+        (
+            contract.PERSISTENT_IDENTITIES[0],
+            contract.PersistentIdentity(
+                field="shadow_patch_id",
+                prefix="m6patch_",
+                digest_hex=contract.IDENTITY_FULL_DIGEST_HEX,
+                meaning="looks like the same thing and is indistinguishable in a log",
+            ),
+            *contract.PERSISTENT_IDENTITIES[1:],
+        ),
+    )
+    problems = contract.validate_contract()
+    assert any("prefixes must be distinct" in problem for problem in problems)

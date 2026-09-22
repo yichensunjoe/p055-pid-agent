@@ -560,6 +560,89 @@ REVIEWER_ACTION_EVIDENCE = "reviewer_action"
 UNDO_IS_A_STATE_ROLLBACK = False
 
 # --------------------------------------------------------------------------------------
+# §6c Persistent identity formats: declared once, consumed by code, quoted by the book
+# --------------------------------------------------------------------------------------
+#
+# Every id below is *derived* from content, so its format is a contract, not a formatting
+# choice: two runs that agree on the semantics must produce the same string, and a document
+# that describes the string has to agree with the code or one of them is lying.
+#
+# Writing the format as prose in more than one place is exactly how this milestone produced
+# ``m6patch_<digest[:16]>`` in one section of the task book and ``m6patch_<sha256>`` in
+# another. The code cannot settle a disagreement it never states, so the prefixes and digest
+# lengths live here as data, the core imports them instead of spelling literals, and a test
+# reads the task book and fails when the prose disagrees.
+
+#: Hex characters in a full SHA-256 digest. A persistent identity may not use fewer: these ids
+#: are stored, compared across runs, and (for generated element ids) become the identity of a
+#: real engineering object, where a truncated hash is a collision in the drawing rather than in
+#: a report.
+IDENTITY_FULL_DIGEST_HEX = 64
+
+
+@dataclass(frozen=True)
+class PersistentIdentity:
+    """One content-derived identity: what it names, its literal prefix, its digest width."""
+
+    field: str
+    prefix: str
+    digest_hex: int
+    meaning: str
+
+    @property
+    def rendered_format(self) -> str:
+        """The one spelling a document is allowed to use for this identity."""
+
+        return f"{self.prefix}<{self.digest_hex} hex>"
+
+
+PERSISTENT_IDENTITIES: tuple[PersistentIdentity, ...] = (
+    PersistentIdentity(
+        field="patch_id",
+        prefix="m6patch_",
+        digest_hex=IDENTITY_FULL_DIGEST_HEX,
+        meaning="the identity of a compiled patch, derived from the finding and the compiler",
+    ),
+    PersistentIdentity(
+        field="review_decision_id",
+        prefix="m6dec_",
+        digest_hex=IDENTITY_FULL_DIGEST_HEX,
+        meaning="the identity of one review decision, derived from the decision's own content",
+    ),
+    PersistentIdentity(
+        field="conflict_id",
+        prefix="m6cfl_",
+        digest_hex=IDENTITY_FULL_DIGEST_HEX,
+        meaning="the identity of one conflict, derived from the reviewed and current baselines",
+    ),
+    PersistentIdentity(
+        field="finding_id",
+        prefix="m6find_",
+        digest_hex=IDENTITY_FULL_DIGEST_HEX,
+        meaning="the identity of a confirmed finding, derived from the candidate and its decision",
+    ),
+    PersistentIdentity(
+        field="generated_element_id",
+        prefix="el_m6",
+        digest_hex=IDENTITY_FULL_DIGEST_HEX,
+        meaning="the identity of an element compiled into being, which becomes a live object id",
+    ),
+)
+
+#: Prefix lookup for the core, so the implementation spelling and the declaration cannot differ.
+IDENTITY_PREFIXES: dict[str, str] = {item.field: item.prefix for item in PERSISTENT_IDENTITIES}
+
+
+def identity_prefix(field: str) -> str:
+    """Return the declared prefix for ``field``, refusing to invent one for an unknown field."""
+
+    try:
+        return IDENTITY_PREFIXES[field]
+    except KeyError:  # pragma: no cover - a test pins every caller to a declared field
+        raise ValueError(f"no declared persistent identity for field {field!r}") from None
+
+
+# --------------------------------------------------------------------------------------
 # §7 v1 write policy: default deny for destructive intents
 # --------------------------------------------------------------------------------------
 
@@ -968,6 +1051,32 @@ def validate_contract() -> list[str]:
     if UNDO_MECHANISM != "compensating_governed_transaction_through_apply_v2":
         problems.append("undo must run through the same governed write path as everything else")
 
+    # §6c: a persistent identity is declared once, and it is never truncated.
+    if not PERSISTENT_IDENTITIES:
+        problems.append("the persistent identities must be declared, not implied by the code")
+    fields = [item.field for item in PERSISTENT_IDENTITIES]
+    if len(set(fields)) != len(fields):
+        problems.append(f"each persistent identity must have a distinct field, got {fields}")
+    prefixes = [item.prefix for item in PERSISTENT_IDENTITIES]
+    if len(set(prefixes)) != len(prefixes):
+        problems.append(
+            "persistent identity prefixes must be distinct: two ids sharing a prefix make "
+            f"'which kind of id is this' undecidable, got {prefixes}"
+        )
+    for item in PERSISTENT_IDENTITIES:
+        if not item.prefix or item.prefix != item.prefix.strip() or "<" in item.prefix:
+            problems.append(f"identity prefix {item.prefix!r} must be a literal, trim prefix")
+        if item.digest_hex != IDENTITY_FULL_DIGEST_HEX:
+            problems.append(
+                f"persistent identity {item.field!r} is truncated to {item.digest_hex} hex: a stored "
+                "or compared identity must carry the full digest"
+            )
+        if not IDENTITY_PREFIXES.get(item.field) == item.prefix:
+            problems.append(f"identity_prefix({item.field!r}) disagrees with its declaration")
+    for field, prefix in IDENTITY_PREFIXES.items():
+        if identity_prefix(field) != prefix:
+            problems.append(f"identity_prefix({field!r}) does not round-trip through the table")
+
     return problems
 
 
@@ -998,6 +1107,11 @@ def contract_document() -> dict[str, object]:
         "calibration_gate_required_for": list(CALIBRATION_GATE_REQUIRED_FOR),
         "calibration_gate_signer": CALIBRATION_GATE_SIGNER,
         "candidate_states": list(CANDIDATE_STATES),
+        "persistent_identities": [
+            {**asdict(item), "rendered_format": item.rendered_format}
+            for item in PERSISTENT_IDENTITIES
+        ],
+        "full_digest_hex": IDENTITY_FULL_DIGEST_HEX,
         "transaction_states": list(TRANSACTION_STATES),
         "candidate_transitions": [asdict(edge) for edge in CANDIDATE_TRANSITIONS],
         "forbidden_transitions": [list(pair) for pair in FORBIDDEN_TRANSITIONS],

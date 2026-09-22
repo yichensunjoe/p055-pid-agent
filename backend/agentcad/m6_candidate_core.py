@@ -55,6 +55,7 @@ from .m6_ingestion_contract import (
     FORBIDDEN_TRANSITIONS,
     REPLAY_VOLATILE_FIELDS_EXCLUDED,
     WRITE_POLICY_V1,
+    identity_prefix,
 )
 from .models import (
     AddElementOperation,
@@ -769,7 +770,7 @@ class M6CandidateService:
         }
         digest = canonical_digest(payload)
         return StructuredEngineeringPatch(
-            patch_id=f"m6patch_{digest}",
+            patch_id=f"{identity_prefix('patch_id')}{digest}",
             finding_ids=[finding.finding_id],
             intent=intent,  # type: ignore[arg-type]
             policy_disposition=disposition,
@@ -998,13 +999,13 @@ def review_decision_payload(
 
 
 def review_decision_id(**payload: Any) -> str:
-    return "m6dec_" + canonical_digest(review_decision_payload(**payload))
+    return identity_prefix("review_decision_id") + canonical_digest(review_decision_payload(**payload))
 
 
 def _conflict_id(
     candidate_id: str, reviewed: ConflictBaselineRecord, current: ConflictBaselineRecord
 ) -> str:
-    return "m6cfl_" + canonical_digest(
+    return identity_prefix("conflict_id") + canonical_digest(
         {
             "candidate": candidate_id,
             "path": reviewed.comparison_path,
@@ -1016,11 +1017,9 @@ def _conflict_id(
 
 
 def _finding_id(candidate_id: str, review_decision_id: str) -> str:
-    return "m6find_" + canonical_digest({"candidate": candidate_id, "decision": review_decision_id})
-
-
-#: Content-derived identities carry the whole digest. These are long-lived audit objects, and
-#: 64 bits of a hash is not a saving worth a collision in an engineering record.
+    return identity_prefix("finding_id") + canonical_digest(
+        {"candidate": candidate_id, "decision": review_decision_id}
+    )
 
 
 def _created_element_id(finding: ConfirmedSemanticFinding, facts: ProposedSemantics) -> str:
@@ -1031,7 +1030,7 @@ def _created_element_id(finding: ConfirmedSemanticFinding, facts: ProposedSemant
     collision in the drawing, not in a report.
     """
 
-    return "el_m6" + canonical_digest(
+    return identity_prefix("generated_element_id") + canonical_digest(
         {"finding": finding.finding_id, "class": facts.symbol_class, "tag": facts.equipment_tag}
     )
 

@@ -96,7 +96,23 @@ cd frontend && BASE_URL=http://127.0.0.1:8123 node scripts/typesafe-panel-check.
 | 面板 | 显示“服务端环境变量已提供 Key”、输入框提示“留空即用服务端环境变量的 Key” |
 | 面板点「测试 TypeSafe Key」 | `Key 有效 · jev-1.13.0`（服务端日志 `POST .../typesafe/verify 200`） |
 
-## 5. 边界
+## 5. 凭据卫生（CI 与提交证据的硬检查）
+
+真实调用是**手动验收**（CI 没有凭据，也不应该去花钱调外网）。既然凭据只能存在于开发者的 shell 里，
+“它没有泄到仓库里”就不能靠自觉，而要靠一条会红的检查：`backend/tests/test_typesafe_credential_hygiene.py`
+扫描仓库里全部文本文件（报告、日志、提交的 evidence、workflow），只找**形状**不找值（所以换 key 后仍有效）：
+
+- `api` + `key_` 开头的字面 key；
+- `Bearer` 后接 24 位以上 token；
+- `TYPESAFE_API_KEY=<16 位以上字面值>` 赋值；
+- JSON body 里 24 位以上的 `api_key` 字面值。
+
+被允许保留的是“无材料的形式”：`apikey_…`（前缀+省略号）、`Authorization: Bearer <token>`（占位符）、
+单独的变量名。同时该检查还断言：CI workflow **一个字都不提** TypeSafe 凭据；`reports/typesafe/live-acceptance.txt`
+只记录 `api_key_source=environment` / `api_key_present=True`；扫描器本身必须能对合成样本报红
+（否则它就是一条永远绿的假检查）。
+
+## 6. 边界
 
 - 目前支持两类子句：**新增设备**（从符号目录选型）与**连接两台已有设备**（选空闲端口）。其它子句进
   `unknown` 并在说明里列出，不静默丢弃。

@@ -24,7 +24,7 @@ import { HistoryPanel } from "./editor/HistoryPanel";
 import { LayerSystemPanel } from "./editor/LayerSystemPanel";
 import { PropertyInspector } from "./editor/PropertyInspector";
 import { SymbolPalette } from "./editor/SymbolPalette";
-import { api, ApiError, clearServiceAccessToken, downloadApiResource, getServiceAccessToken, setServiceAccessToken, type ProviderConfig, type ProviderTestResult } from "./api";
+import { api, ApiError, clearServiceAccessToken, downloadApiResource, getServiceAccessToken, getTypesafeApiKey, readTypesafePreference, setServiceAccessToken, setTypesafeApiKey, writeTypesafePreferences, type ProviderConfig, type ProviderTestResult } from "./api";
 import { CAD_ACCEPT, cadReportLines, dwgConverterHint, isCadFileName, type CadCapabilities } from "./cadImport";
 import { documentDeletionConfirmation } from "./documentDeletion";
 import {
@@ -164,6 +164,13 @@ export default function App() {
   const [model, setModel] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [showApiKey, setShowApiKey] = useState(false);
+  const [typesafeKey, setTypesafeKey] = useState(() => getTypesafeApiKey());
+  const [showTypesafeKey, setShowTypesafeKey] = useState(false);
+  const [typesafeBaseUrl, setTypesafeBaseUrl] = useState(() => readTypesafePreference("baseUrl", "https://api.typesafe.ai"));
+  const [typesafeModel, setTypesafeModel] = useState(() => readTypesafePreference("model", "jev-latest"));
+  const [typesafeEnabled, setTypesafeEnabled] = useState(() => readTypesafePreference("enabled", "false") === "true");
+  const [typesafeTest, setTypesafeTest] = useState<{ ok: boolean; message: string } | null>(null);
+  const [testingTypesafe, setTestingTypesafe] = useState(false);
   const [serviceToken, setServiceToken] = useState(() => getServiceAccessToken());
   const [showServiceToken, setShowServiceToken] = useState(false);
   const [thinkingEnabled, setThinkingEnabled] = useState(true);
@@ -416,6 +423,23 @@ export default function App() {
     ].filter(Boolean).join("\n");
   };
 
+  const verifyTypesafe = async () => {
+    setTestingTypesafe(true);
+    setTypesafeTest(null);
+    try {
+      const result = await api.verifyTypesafe({
+        base_url: typesafeBaseUrl.trim() || undefined,
+        model: typesafeModel.trim() || undefined,
+        api_key: typesafeKey.trim() || undefined,
+      });
+      setTypesafeTest({ ok: true, message: `Key 有效 · ${result.model} · ${Math.round(result.latency_ms)} ms` });
+    } catch (error) {
+      setTypesafeTest({ ok: false, message: error instanceof ApiError ? error.message : String(error) });
+    } finally {
+      setTestingTypesafe(false);
+    }
+  };
+
   const planAgent = async () => {
     if (!prompt.trim() || !state.document) return;
     if (planningAbortControllerRef.current) planningAbortControllerRef.current.abort();
@@ -427,6 +451,32 @@ export default function App() {
     setStreamingThinking("");
     setStreamingContent("");
     try {
+      if (typesafeEnabled) {
+        // TypeSafe plans by judgment instead of by streaming text: code builds the candidates, the
+        // model answers narrow choices, and anything below the confidence floor is skipped rather
+        // than drawn. Same result envelope, so the preview and apply path below is unchanged.
+        writeTypesafePreferences({ baseUrl: typesafeBaseUrl, model: typesafeModel, enabled: typesafeEnabled });
+        setTypesafeApiKey(typesafeKey);
+        const response = await api.planSemanticAgentWithTypesafe(
+          state.document.id,
+          state.document.revision,
+          prompt.trim(),
+          scopedContext(),
+          {
+            base_url: typesafeBaseUrl.trim() || undefined,
+            model: typesafeModel.trim() || undefined,
+            api_key: typesafeKey.trim() || undefined,
+          },
+          undefined,
+          shouldRequireVisibleOutput(prompt, state.document.elements.length),
+          controller.signal,
+        );
+        setPendingPlan(response);
+        if (response.plan.explanation.startsWith("TypeSafe")) {
+          setStreamingContent(response.plan.explanation);
+        }
+        return;
+      }
       const response = await api.planSemanticAgentStream(
         state.document.id,
         state.document.revision,
@@ -1083,6 +1133,17 @@ export default function App() {
               <label>Model name（可手工覆盖）<input value={model} onChange={(event: ChangeEvent<HTMLInputElement>) => setModel(event.target.value)} placeholder="从列表选择，或直接输入模型名称" /></label>
               <label className="provider-thinking-toggle"><span>思考模式</span><input type="checkbox" checked={thinkingEnabled} onChange={(event: ChangeEvent<HTMLInputElement>) => setThinkingEnabled(event.target.checked)} /></label>
               <label>思考等级<select value={thinkingLevel ?? "high"} disabled={!thinkingEnabled} onChange={(event: ChangeEvent<HTMLSelectElement>) => setThinkingLevel(event.target.value as ProviderConfig["thinking_level"])}><option value="low">低</option><option value="high">高</option><option value="max">最大</option></select></label>
+              <div className="typesafe-settings">
+                <label className="provider-thinking-toggle"><span>用 TypeSafe 判读并画图</span><input type="checkbox" checked={typesafeEnabled} onChange={(event: ChangeEvent<HTMLInputElement>) => { setTypesafeEnabled(event.target.checked); writeTypesafePreferences({ baseUrl: typesafeBaseUrl, model: typesafeModel, enabled: event.target.checked }); }} /></label>
+                <div className="typesafe-hint">开启后，本面板的生成请求改由 TypeSafe System One 判读：代码先按图纸与符号目录列出候选，模型只回答“指的是哪一个”，置信度低于阈值的子句会被跳过而不是猜着画。</div>
+                <label>TypeSafe API Key<div className="secret-input-row"><input type={showTypesafeKey ? "text" : "password"} value={typesafeKey} onChange={(event: ChangeEvent<HTMLInputElement>) => { setTypesafeKey(event.target.value); setTypesafeApiKey(event.target.value); }} placeholder="在 typesafe.ai 控制台申请的 Key；也可由服务端环境变量提供" autoComplete="off" spellCheck={false} /><button type="button" onClick={() => setShowTypesafeKey(!showTypesafeKey)}>{showTypesafeKey ? "隐藏" : "显示"}</button></div></label>
+                <label>TypeSafe Base URL<input value={typesafeBaseUrl} onChange={(event: ChangeEvent<HTMLInputElement>) => setTypesafeBaseUrl(event.target.value)} placeholder="https://api.typesafe.ai" /></label>
+                <label>TypeSafe 模型<input value={typesafeModel} onChange={(event: ChangeEvent<HTMLInputElement>) => setTypesafeModel(event.target.value)} placeholder="jev-latest" /></label>
+                <div className="provider-actions">
+                  <button type="button" onClick={() => void verifyTypesafe()} disabled={testingTypesafe}>{testingTypesafe ? "正在核对…" : "测试 TypeSafe Key"}</button>
+                </div>
+                {typesafeTest ? <div className={typesafeTest.ok ? "provider-model-status" : "provider-model-status error"}>{typesafeTest.message}</div> : null}
+              </div>
               <div className="provider-actions">
                 <button type="button" onClick={() => void discoverProviderModels()} disabled={loadingModels || !baseUrl.trim()}>{loadingModels ? "读取中…" : "刷新模型列表"}</button>
                 {loadingModels ? <button type="button" className="danger-inline" onClick={stopProviderDiscovery}>停止发现</button> : null}

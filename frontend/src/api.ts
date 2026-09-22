@@ -50,6 +50,73 @@ export function getServiceAccessToken(): string {
   return serviceAccessToken;
 }
 
+// TypeSafe's key lives in sessionStorage for the same reason the service token does: it survives a
+// reload without outliving the browser session, and it never becomes a file on disk to grep for.
+const TYPESAFE_KEY_SESSION_KEY = "pid-agent.typesafe-key";
+
+export function getTypesafeApiKey(): string {
+  try {
+    return window.sessionStorage.getItem(TYPESAFE_KEY_SESSION_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+export function setTypesafeApiKey(key: string): void {
+  try {
+    if (key.trim()) {
+      window.sessionStorage.setItem(TYPESAFE_KEY_SESSION_KEY, key.trim());
+    } else {
+      window.sessionStorage.removeItem(TYPESAFE_KEY_SESSION_KEY);
+    }
+  } catch {
+    // A browser that refuses sessionStorage still gets the key for this page's lifetime.
+  }
+}
+
+// Everything that is not a secret is a preference, and preferences may outlive the session.
+const TYPESAFE_PREFERENCE_KEY = "pid-agent.typesafe";
+
+export function readTypesafePreference(field: "baseUrl" | "model" | "enabled", fallback: string): string {
+  try {
+    const raw = window.localStorage.getItem(TYPESAFE_PREFERENCE_KEY);
+    if (!raw) return fallback;
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const value = parsed?.[field];
+    return typeof value === "string" ? value : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+export function writeTypesafePreferences(values: { baseUrl: string; model: string; enabled: boolean }): void {
+  try {
+    window.localStorage.setItem(
+      TYPESAFE_PREFERENCE_KEY,
+      JSON.stringify({ baseUrl: values.baseUrl, model: values.model, enabled: String(values.enabled) }),
+    );
+  } catch {
+    // A browser without localStorage simply forgets the preference; nothing here is a secret.
+  }
+}
+
+export type TypesafeProviderStatus = {
+  configured: boolean;
+  api_key_present: boolean;
+  api_key_source?: string;
+  base_url: string;
+  model: string;
+  error_code?: string | null;
+};
+
+export type TypesafeVerifyResult = {
+  ok: boolean;
+  model: string;
+  latency_ms: number;
+  usage?: Record<string, number>;
+  answer?: Record<string, unknown>;
+};
+
 export function setServiceAccessToken(token: string, persistForSession = true): void {
   serviceAccessToken = token.trim();
   try {
@@ -567,6 +634,40 @@ export const api = {
       provider: providerPayload(provider),
       images,
       require_visible_output: requireVisibleOutput,
+    }),
+    signal,
+  }),
+  typesafeStatus: (signal?: AbortSignal) =>
+    request<TypesafeProviderStatus>("/provider/typesafe/status", { signal }),
+  verifyTypesafe: (
+    provider: { base_url?: string; model?: string; api_key?: string },
+    signal?: AbortSignal,
+  ) =>
+    request<TypesafeVerifyResult>("/provider/typesafe/verify", {
+      method: "POST",
+      body: JSON.stringify(provider),
+      signal,
+    }),
+  planSemanticAgentWithTypesafe: (
+    id: string,
+    revision: number,
+    prompt: string,
+    context: string,
+    provider: { base_url?: string; model?: string; api_key?: string },
+    confidenceFloor?: number,
+    requireVisibleOutput = true,
+    signal?: AbortSignal,
+  ) => request<SemanticAgentPlanResult>(`/documents/${id}/agent/typesafe-plan`, {
+    method: "POST",
+    body: JSON.stringify({
+      prompt,
+      context,
+      expected_revision: revision,
+      require_visible_output: requireVisibleOutput,
+      confidence_floor: confidenceFloor,
+      base_url: provider.base_url,
+      model: provider.model,
+      api_key: provider.api_key,
     }),
     signal,
   }),

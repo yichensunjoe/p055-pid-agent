@@ -387,6 +387,31 @@ button:focus-visible, a:focus-visible { outline: none; box-shadow: var(--focus-r
   color: #64748b;
 }
 
+/* TypeSafe sits inside the provider settings, but it is a second credential and a second way of
+   choosing what to draw, so it gets its own bordered block instead of blending into the list. */
+.typesafe-settings {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+}
+
+.typesafe-hint {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.app-shell[data-theme="dark"] .typesafe-settings {
+  border-color: #334155;
+}
+
+.app-shell[data-theme="dark"] .typesafe-hint {
+  color: #94a3b8;
+}
+
 .app-shell[data-theme="dark"] .workspace-control-buttons button,
 .app-shell[data-theme="dark"] .group-row button,
 .app-shell[data-theme="dark"] .history-list button,

@@ -3,11 +3,13 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+from dataclasses import dataclass
 from time import perf_counter
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
+from pydantic import Field
 
 from .agent_semantic import analyze_transaction
 from .agent_semantic_models import (
@@ -23,7 +25,7 @@ from .flow_topology import build_agent_harness_context
 from .harness import AgentHarnessService
 from .harness_models import AgentSessionCreateRequest
 from .llm import PlannerError
-from .models import AgentPlan, TransactionRequest, TransactionResult
+from .models import AgentPlan, StrictModel, TransactionRequest, TransactionResult
 from .permissive_semantic_compiler import PermissiveSemanticTransactionCompiler
 from .revision_diagnostics import emit_revision_diagnostics
 from .semantic_planner import SemanticAgentPlanner
@@ -34,12 +36,50 @@ from .service import (
     RevisionConflictError,
 )
 from .tool_registry import get_default_tool_registry
+from .typesafe import (
+    DEFAULT_CONFIDENCE_FLOOR,
+    TypesafeClient,
+    TypesafeError,
+    resolve_typesafe_config,
+    typesafe_status,
+)
+from .typesafe_planner import TypesafeSemanticPlanner
 from .vision_request_models import (
     VisionAgentGenerateRequest,
     VisionSemanticAgentReplanRequest,
 )
 
 VisionPlanningRequest = VisionAgentGenerateRequest | VisionSemanticAgentReplanRequest
+
+
+class TypesafePlanRequest(StrictModel):
+    """A drawing request TypeSafe plans. The key may travel with the request or live in the server."""
+
+    prompt: str = Field(min_length=1, max_length=100_000)
+    context: str = Field(default="", max_length=200_000)
+    expected_revision: int | None = Field(default=None, ge=0)
+    require_visible_output: bool = True
+    confidence_floor: float = Field(default=DEFAULT_CONFIDENCE_FLOOR, ge=0, le=1)
+    base_url: str | None = None
+    model: str | None = None
+    api_key: str | None = Field(default=None, repr=False)
+    timeout_seconds: float | None = Field(default=None, gt=0)
+
+
+class TypesafeVerifyRequest(StrictModel):
+    base_url: str | None = None
+    model: str | None = None
+    api_key: str | None = Field(default=None, repr=False)
+    timeout_seconds: float | None = Field(default=None, gt=0)
+
+
+@dataclass(frozen=True)
+class _TypesafePlanInput:
+    """What the planner reads, so its ``plan`` signature stays the one the model planner has."""
+
+    prompt: str
+    typesafe_config: Any
+    expected_revision: int | None = None
 
 
 def _provider_fields(request: VisionPlanningRequest) -> dict[str, Any]:
@@ -269,6 +309,91 @@ def create_semantic_agent_router(
                 compiled_operation_count=compiled.assessment.compiled_operation_count,
                 issue_codes=[item.code for item in compiled.assessment.issues],
                 affected_element_ids=compiled.assessment.affected_element_ids,
+                **_operation_types(plan, compiled),
+            )
+        return _result(session.id, plan, compiled, attempt=0)
+
+    # -- TypeSafe: configure the key, prove it works, then draw with judgments ------------------ #
+
+    @router.get("/provider/typesafe/status")
+    def typesafe_provider_status(api_key: str | None = None, base_url: str | None = None,
+                                 model: str | None = None):
+        """Whether a call would be possible -- reported without making one and without the key."""
+
+        return typesafe_status(api_key=api_key, base_url=base_url, model=model)
+
+    @router.post("/provider/typesafe/verify")
+    def verify_typesafe_provider(request: TypesafeVerifyRequest):
+        """Ask TypeSafe one real judgment, because "a key is configured" is not "the key works"."""
+
+        try:
+            config = resolve_typesafe_config(
+                api_key=request.api_key,
+                base_url=request.base_url,
+                model=request.model,
+                timeout_seconds=request.timeout_seconds,
+            )
+            return {"ok": True, **config.describe(), **TypesafeClient(config).verify()}
+        except TypesafeError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail()) from exc
+
+    @router.post(
+        "/documents/{document_id}/agent/typesafe-plan",
+        response_model=SemanticAgentPlanResult,
+    )
+    def plan_with_typesafe(document_id: str, request: TypesafePlanRequest):
+        """Draw by judgment: the same plan envelope, chosen by System One instead of generated."""
+
+        started = perf_counter()
+        try:
+            typesafe_config = resolve_typesafe_config(
+                api_key=request.api_key,
+                base_url=request.base_url,
+                model=request.model,
+                timeout_seconds=request.timeout_seconds,
+            )
+            session = harness.create_session(
+                AgentSessionCreateRequest(
+                    document_id=document_id,
+                    actor="web-user",
+                    provider=typesafe_config.base_url,
+                    model=typesafe_config.model,
+                    metadata={"surface": "rest", "workflow": "typesafe-drawing"},
+                )
+            )
+            planner = TypesafeSemanticPlanner(
+                service, service.symbols, confidence_floor=request.confidence_floor
+            )
+            plan = planner.plan(
+                document_id,
+                _TypesafePlanInput(
+                    prompt=request.prompt,
+                    typesafe_config=typesafe_config,
+                    expected_revision=request.expected_revision,
+                ),
+            )
+            compiled = compiler.compile(document_id, plan.transaction)
+            compiled = _enforce_visible_output_requirement(
+                service, document_id, request.require_visible_output, compiled
+            )
+        except TypesafeError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail()) from exc
+        except PlannerError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail()) from exc
+        except DocumentNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=f"document not found: {exc.args[0]}") from exc
+        if diagnostics is not None:
+            diagnostics.emit(
+                "llm.semantic_plan.completed",
+                document_id=document_id,
+                plan_id=plan.plan_id,
+                backend="typesafe",
+                duration_ms=round((perf_counter() - started) * 1000, 2),
+                valid=compiled.assessment.valid,
+                stage=compiled.assessment.stage,
+                semantic_operation_count=len(plan.transaction.operations),
+                compiled_operation_count=compiled.assessment.compiled_operation_count,
+                issue_codes=[item.code for item in compiled.assessment.issues],
                 **_operation_types(plan, compiled),
             )
         return _result(session.id, plan, compiled, attempt=0)

@@ -310,6 +310,23 @@ HTTP_SURFACE_BINDINGS: tuple[SurfaceBinding, ...] = (
     ),
     _http("POST", "/api/v2/agent/provider/models", "runtime", notes="Provider catalog read."),
     _http("POST", "/api/v2/agent/provider/test", "runtime", notes="Provider connectivity probe."),
+    # --- TypeSafe: a second credential, and a plan that is judged rather than generated ---------
+    _http(
+        "POST",
+        "/api/v2/provider/typesafe/verify",
+        "runtime",
+        notes="TypeSafe credential probe: one judgment, nothing written to any document.",
+    ),
+    _http(
+        "POST",
+        "/api/v2/documents/{document_id}/agent/typesafe-plan",
+        "agent_runtime",
+        notes=(
+            "Planning only, and judged rather than generated: candidates come from the document "
+            "and the symbol catalogue, System One chooses among them, and the result goes through "
+            "the same compiler assessment and apply-v2 harness gate as plan-v2."
+        ),
+    ),
     # --- harness lifecycle ------------------------------------------------------
     _http("POST", "/api/v2/agent/sessions", "harness_lifecycle", audited=True),
     _http(

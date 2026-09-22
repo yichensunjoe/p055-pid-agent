@@ -17,6 +17,7 @@ import pytest
 
 from agentcad.drafting_geometry import drafting_content_hash
 from agentcad.repair_benchmark import (
+    F6_CONTROL_FLOW,
     MUTATIONS,
     build_base_drawing,
     generate_suite,
@@ -558,6 +559,38 @@ def test_a_case_without_a_retry_contract_makes_no_attempt_claim():
     assert result.s_at["S@1"] == 0.0
 
 
+def _first_try_shortfalls(cases) -> list[str]:
+    """Cases that declare no retry and still did not land on their first attempt.
+
+    The gate above only checks the declaring direction. This is the converse claim, and it is what
+    keeps "S@1 is an observation" from meaning "S@1 may decay": a regression in a family whose
+    cases never declared a retry has to be visible as a shortfall rather than as a smaller number.
+    """
+
+    return [
+        f"{case.case_id} took {case.attempts}"
+        for case in cases
+        if case.classification == "success" and case.required_attempts == 1 and case.attempts != 1
+    ]
+
+
+def test_the_converse_contract_flags_a_first_attempt_a_case_never_declared():
+    """The check the acceptance suite adds has to bite on a case that slipped, or it proves nothing."""
+
+    clean = _synthetic_result(
+        [_synthetic_success(case_id="dev:F1:00", family="F1", attempts=1, required_attempts=1)]
+    )
+    assert _first_try_shortfalls(clean.cases) == []
+
+    slipped = _synthetic_result(
+        [_synthetic_success(case_id="dev:F1:00", family="F1", attempts=2, required_attempts=1)]
+    )
+    # The gate is green -- the case declared nothing, so it broke no promise -- and the shortfall is
+    # still visible. That is exactly the blind spot the real suite now closes.
+    assert slipped.gates["attempt_contract"] is True
+    assert _first_try_shortfalls(slipped.cases) == ["dev:F1:00 took 2"]
+
+
 def test_the_global_s1_is_published_and_never_rejects():
     """The remote's ruling: S@1 measures a suite that contains retry cases, so it observes only."""
 
@@ -774,6 +807,27 @@ def test_the_acceptance_suite_meets_every_frozen_threshold(tmp_path: Path):
     assert result.gates["f6_s5_overall"] is True
     assert result.family_s_at_5["F6"] >= result.thresholds["f6_s5_overall"]
     assert all(result.gates.values()), result.gate_failures
+
+    # The other half of the attempt contract, which nothing checked while S@1 was "an observation".
+    # A case that declares *no* retry has to land on its first attempt: without that, S@1 could rot
+    # one regression at a time and every number in the block above would still be true. The gap is
+    # supposed to be exactly the declared injection, and only that.
+    first_try_shortfalls = _first_try_shortfalls(result.cases)
+    assert not first_try_shortfalls, first_try_shortfalls
+    retrying = [case for case in result.cases if case.required_attempts > 1]
+    assert {case.family for case in retrying} == {"F6"}, "only F6 is allowed to declare a retry"
+    for case in retrying:
+        # Declared, not merely observed: the frozen spec names the attempt this operator converges
+        # on, so "F6 got easier" would show up as a spec change here rather than as a better score.
+        assert case.required_attempts == F6_CONTROL_FLOW[case.operator_id], case.case_id
+        # ...and it converges on exactly that attempt: failing later is a planner regression rather
+        # than a variation of the fixture.
+        assert case.attempts == case.required_attempts, case.case_id
+    # S@1 is then a *derived* number: the share of cases with no retry contract at all.
+    without_contract = sum(1 for case in result.cases if case.required_attempts == 1)
+    assert result.s_at["S@1"] == pytest.approx(
+        without_contract / result.counts.total, abs=1e-4
+    )
 
 
 def test_the_benchmark_cli_publishes_verifiable_evidence(tmp_path: Path, capsys):

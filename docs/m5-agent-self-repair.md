@@ -333,6 +333,18 @@ acceptance case**（`promotion_cases()`：同 family、同 candidate SHA、同�
   变的只有“语料能制造哪些缺陷”：阈值、oracle 版本、family 列表、case 布局（12×6）与 safety suite
   全部未动。因此 v3 的重跑仍是 **72/72、S@5 = 1.0、六 family 各 1.0、八项 gate 全绿**，
   S@1 仍是 0.8333（缺口依旧 100% 来自 F6 的注入契约，不是新 case 带来的）。
+- **S@1 的缺口是一个被检查的断言，不只是一个观察值**（B 项第一步）。把 72 条 case 逐条摊开：
+  S@1 = 0.8333 的缺口**恰好是 12 条 F6 case**，`required_attempts` 分别为 2/3/5（`F6_CONTROL_FLOW` 的三个
+  operator 各 4 条），F1–F5 全部首轮通过；也就是说缺口 **100% 由声明产生**（已核实与文档记录一致）。
+  之前的 `attempt_contract` 门只检查**声明方向**（声明了 N 次就必须首次成功在第 N 次），
+  而“没声明重试的 case 一定首轮成功”这半个断言**从没被检查过**——它一旦逐条退化，上面的每个数字都仍然为真。
+  现在 acceptance 回归测试同时钉：① 不带重试契约的 case 首轮必须成功；② 带重试契约的 case 只能是 F6，
+  且其 `required_attempts` 必须等于冻结 spec 里该 operator 声明的值（所以“F6 变容易了”会表现为 spec 变更而
+  不是分数变好）；③ `S@1` 必须等于“无重试契约 case 数 / 总数”。反向断言的“会响”由 synthetic case 单独证明
+  （`test_the_converse_contract_flags_a_first_attempt_a_case_never_declared`）。
+
+  结论：**B 项的 S@1 缺口没有可“修”的 planner 缺陷**——它是 F6 控制流夹具本身；可做且应该做的是
+  把它从“一个数”变成“一条会红的契约”。
 - **v2 的 spec body 被归档**（`_SPEC_V2_OPERATORS` + `_archived_spec_payload()`），所以
   `spec_fingerprint("2")` 仍能算出发布过的 `c8520c5e…`，`archived_operator_catalogue("2")` 还能把
   v2 的**轮转顺序**也重现出来：旧用例集是推导出来的，不是从存档 JSON 里猜出来的。

@@ -544,7 +544,9 @@ def test_the_m6_provenance_links_exist_and_restrict(store: SQLiteDocumentStore) 
 
     # (referenced table, local column, referenced column) -> on_delete
     # PRAGMA foreign_key_list rows are: id, seq, table, from, to, on_update, on_delete, match.
-    decisions = {(key[2], key[3], key[4]): key[6] for key in _foreign_keys(store, "review_decisions")}
+    decisions = {
+        (key[2], key[3], key[4]): key[6] for key in _foreign_keys(store, "review_decisions")
+    }
     assert (
         "semantic_candidates",
         "candidate_id",
@@ -552,7 +554,10 @@ def test_the_m6_provenance_links_exist_and_restrict(store: SQLiteDocumentStore) 
     ) in decisions, "a decision must belong to a candidate"
     assert decisions[("semantic_candidates", "candidate_id", "candidate_id")] == "RESTRICT"
 
-    findings = {(key[2], key[3], key[4]): key[6] for key in _foreign_keys(store, "confirmed_semantic_findings")}
+    findings = {
+        (key[2], key[3], key[4]): key[6]
+        for key in _foreign_keys(store, "confirmed_semantic_findings")
+    }
     assert (
         "semantic_candidates",
         "candidate_id",
@@ -1022,6 +1027,36 @@ def test_semantic_equality_and_serialization_form_hash_the_same() -> None:
     )
 
 
+def test_normalization_is_path_aware_not_global() -> None:
+    """A tag folds case; a value whose case carries meaning must not.
+
+    Global casefolding would let a real edit read as "unchanged" — the one failure optimistic
+    concurrency cannot afford. So the rule belongs to the path, not to the module.
+    """
+
+    # identifier paths: two spellings of one fact
+    assert core.value_digest("equipment_tag", "ABC") == core.value_digest("equipment_tag", "abc")
+    assert core.value_digest("equipment_class", " centrifugal_pump ") == core.value_digest(
+        "equipment_class", "Centrifugal_Pump"
+    )
+    # exact paths: the value is hashed as written
+    assert core.value_digest("annotation_role", "ABC") != core.value_digest(
+        "annotation_role", "abc"
+    )
+    assert core.value_digest("existence", " Present ") != core.value_digest("existence", "present")
+
+
+def test_an_unregistered_semantic_path_is_a_hard_failure() -> None:
+    """No silent fallback to tag normalization: adding a path means choosing a canonicalizer."""
+
+    with pytest.raises(IllegalTransition) as refusal:
+        core.canonicalize_semantic_value("vendor_description", "ABC")
+    assert refusal.value.code == "unregistered_semantic_path"
+    assert set(get_args(schemas.SemanticPath)) <= set(core.SEMANTIC_VALUE_CANONICALIZERS), (
+        "every declared semantic path needs a canonicalizer"
+    )
+
+
 def test_the_baseline_digest_is_versioned_and_full_length(store: SQLiteDocumentStore) -> None:
     document = _drawing([_untagged_pump(), _tagged_pump()])
     graph = build_engineering_graph(document, SymbolRegistry())
@@ -1062,6 +1097,153 @@ def test_content_derived_ids_carry_the_whole_digest(
     assert len(patch.canonical_digest) == 64
     assert len(finding.finding_id.removeprefix("m6find_")) == 64
     assert len(confirmation.decision.review_decision_id.removeprefix("m6dec_")) == 64
+
+
+def test_a_generated_element_id_is_full_length(
+    service: M6CandidateService, registry: SymbolRegistry
+) -> None:
+    """A generated element id becomes a real engineering object's identity.
+
+    That is more consequential than a patch id: a truncated hash here would be a collision in
+    the drawing, not in a report.
+    """
+
+    document = _drawing([_untagged_pump(), _tagged_pump()])
+    candidate = SemanticCandidate(
+        candidate_id="cand_class_length",
+        artifact=_artifact(),
+        region=_region(x=500, y=500),
+        candidate_type="symbol_class",
+        proposed_semantics=ProposedSemantics(
+            symbol_class="centrifugal_pump", equipment_tag="P-201"
+        ),
+        confidence=Confidence(value=0.8, source="model"),
+        evidence=[CandidateEvidence(kind="geometry", detail="pump outline at 500,500")],
+        producer=ProducerRef(key="typesafe", version="jev-1.13.0"),
+    )
+    service.file_candidate(candidate)
+    graph = build_engineering_graph(document, registry)
+    confirmation = service.confirm(
+        candidate.candidate_id,
+        reviewer_identity=REVIEWER,
+        reviewer_action="new pump P-201",
+        baseline=baseline_record(document, graph, identity="", path="existence"),
+    )
+    patch = service.compile_finding(
+        confirmation.finding.finding_id, document=document, registry=registry
+    )
+    element_id = patch.operations[0].element.id
+    assert element_id.startswith("el_m6")
+    assert len(element_id) == len("el_m6") + 64
+
+
+# --------------------------------------------------------------------------------------
+# A decision id identifies the decision, not the moment it was recorded
+# --------------------------------------------------------------------------------------
+
+
+def _decision_payload(**overrides):
+    base = {
+        "candidate_id": "cand_x",
+        "kind": "human_confirm",
+        "from_status": "needs_review",
+        "to_status": "confirmed",
+        "reviewer_identity": REVIEWER,
+        "reviewer_action": "saw the label P-201",
+        "note": "",
+        "baseline": schemas.ConflictBaselineRecord(
+            baseline_revision=7,
+            comparison_identity="element:pump_untagged",
+            comparison_path="equipment_tag",
+            value_digest="a" * 64,
+        ),
+        "conflict_resolution": "",
+        "resolution_choice": None,
+        "successor_candidate_id": "",
+    }
+    return {**base, **overrides}
+
+
+def test_two_different_decisions_do_not_share_an_id() -> None:
+    """Same candidate, same statuses, same kind — different reasoning, different audit event."""
+
+    first = core.review_decision_id(**_decision_payload(reviewer_action="saw the label P-201"))
+    second = core.review_decision_id(
+        **_decision_payload(reviewer_action="cross-checked the equipment register")
+    )
+    assert first != second
+    assert first.startswith("m6dec_") and len(first.removeprefix("m6dec_")) == 64
+
+    third = core.review_decision_id(**_decision_payload(reviewer_identity="engineer.other"))
+    assert third not in {first, second}
+
+
+def test_a_different_baseline_is_a_different_decision() -> None:
+    """Confirming against revision 7 and against revision 8 are not the same event."""
+
+    revision_seven = core.review_decision_id(**_decision_payload())
+    revision_eight = core.review_decision_id(
+        **_decision_payload(
+            baseline=schemas.ConflictBaselineRecord(
+                baseline_revision=8,
+                comparison_identity="element:pump_untagged",
+                comparison_path="equipment_tag",
+                value_digest="a" * 64,
+            )
+        )
+    )
+    digest_changed = core.review_decision_id(
+        **_decision_payload(
+            baseline=schemas.ConflictBaselineRecord(
+                baseline_revision=7,
+                comparison_identity="element:pump_untagged",
+                comparison_path="equipment_tag",
+                value_digest="b" * 64,
+            )
+        )
+    )
+    assert len({revision_seven, revision_eight, digest_changed}) == 3
+
+
+def test_the_recording_time_never_changes_a_decision_id(
+    service: M6CandidateService, registry: SymbolRegistry
+) -> None:
+    """``decided_at`` is bookkeeping: the stored id is recomputable from the payload alone."""
+
+    payload = _decision_payload()
+    assert "decided_at" not in core.review_decision_payload(**payload)
+    assert core.review_decision_id(**payload) == core.review_decision_id(**payload)
+
+    document = _drawing([_untagged_pump(), _tagged_pump()])
+    graph = build_engineering_graph(document, registry)
+    candidate = _tag_candidate("cand_time")
+    service.file_candidate(candidate)
+    baseline = baseline_record(
+        document, graph, identity="element:pump_untagged", path="equipment_tag"
+    )
+    confirmation = service.confirm(
+        candidate.candidate_id,
+        reviewer_identity=REVIEWER,
+        reviewer_action="saw the label P-201",
+        baseline=baseline,
+    )
+    # The decision really is timestamped...
+    assert confirmation.decision.decided_at is not None
+    # ...and the id a reader derives from the payload alone is exactly what was stored, so the
+    # timestamp cannot have entered the identity.
+    assert confirmation.decision.review_decision_id == core.review_decision_id(
+        candidate_id=candidate.candidate_id,
+        kind="human_confirm",
+        from_status="needs_review",
+        to_status="confirmed",
+        reviewer_identity=REVIEWER,
+        reviewer_action="saw the label P-201",
+        note="",
+        baseline=baseline,
+        conflict_resolution="",
+        resolution_choice=None,
+        successor_candidate_id="",
+    )
 
 
 def test_the_evidence_walkthrough_still_runs() -> None:

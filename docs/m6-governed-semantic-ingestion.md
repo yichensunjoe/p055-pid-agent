@@ -572,10 +572,36 @@ SourceArtifactRef → SourceRegion → SemanticCandidate → ReviewDecision
    分开写会留下一个窗口：状态机已经说 `confirmed`，却没有任何 finding 能追溯到人——这正是 Phase-2B
    获得写权限之前不能继承的裂缝。故障注入测试真的让第二行写失败（SQLite trigger）并断言两行都不存在。
 3c. **内容派生的身份取完整 digest。** `patch_id = m6patch_<sha256>`、`m6dec_` / `m6cfl_` / `m6find_`
-   同样带完整 64 hex（这些是要长期审计的对象，省 48 个字符不值得冒一次碰撞）。
-   baseline 语义值用的是**有版本号的规范化摘要**：`semantic-value-v1` + SHA-256，输入是
-   **规范化后的语义值**（`strip` + 折叠空白 + casefold）而不是 UI/原始序列化；摘要版本不匹配时
-   `recheck_baseline` **明确报错**（`baseline_digest_version_mismatch`），不静默比较。
+   带完整 64 hex；**编译生成的新元素 id（`el_m6_<sha256>`）也是完整长度**——它会成为真正工程对象的身份，
+   比 patch id 更不能依赖截断。
+3d. **决策身份是 `review-decision-v1`，由决策的不可变内容派生**，而不是“谁在什么时候把哪一行插进去”：
+
+   ```text
+   review-decision-v1 + SHA-256 over canonical payload:
+     candidate_id · kind · from_status · to_status
+     reviewer_identity · reviewer_action · note
+     baseline_revision · comparison_identity · comparison_path
+     baseline digest_version · baseline digest · value_present
+     conflict_resolution · resolution_choice · successor_candidate_id
+   （decided_at 明确排除：记账时间不得能改变身份）
+   ```
+
+   只哈希 `(candidate, from, to, kind)` 会把**两个不同的人工决策塌成同一个 id**：同一位工程师分别基于
+   revision 7 与 revision 8、理由不同地确认同一件事，会变成一个审计事件——而 `(candidate_id,
+   review_decision_id)` 正是 finding 的外键基础，那等于把数据库完整性建在一个分不清两件事的身份上。
+3e. **语义值的规范化是 path-aware 的，不是全局的。** 规则属于语义路径：
+
+   ```text
+   equipment_tag    → trim + 折叠空白 + casefold（本仓库按 tag 寻址本来就 casefold）
+   equipment_class  → 同上（枚举键）
+   annotation_role  → exact（不擅自 casefold）
+   existence        → exact
+   未登记的 path     → hard fail，绝不回退到 tag 规范化
+   ```
+
+   全局 casefold 会让“真的改了”读成“没变”，而那正是乐观并发不能有的失效模式。新增一个语义路径因此意味着
+   **必须选一个 canonicalizer**（这是应该被看见的决定）。摘要版本不匹配时 `recheck_baseline` **明确报错**
+   （`baseline_digest_version_mismatch`），不静默比较。
 4. **编译器的能力边界写成了 refusal 而不是猜测**：Phase-2A 只编译 `creation` 与 `metadata_enrichment`；
    `overwrite` → `conflict_requires_human_resolution`（拒绝，不是覆盖）；`delete` / `replace_topology` → 禁；
    `relationship_addition` 与“把已有对象的类别改掉” → 明确拒绝并给出 reason code。

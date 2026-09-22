@@ -5,12 +5,12 @@
     "digest_version": "semantic-value-v1",
     "path": "equipment_tag",
     "revision": 7,
-    "value_digest": "9b283df5ee7b083d2b44692e4cfda7a34355eda8e61060af034f0587039f2225",
+    "value_digest": "38ad2b1c3c9e0a9cee8045f364592f21db0df0e6aa89ae59fa67664bae8815b0",
     "value_present": false
   },
   "candidate_id": "cand_tag_walkthrough",
   "canonical_digest": "321c0bd26d8a14f8c44ffd418372206672a3884c5c0e67517adac3e8ccecaae3",
-  "finding_id": "m6find_b6d4c00135b83013ef3e135438a81ae53dcb0b6e0317c21ddb27d91155fd9294",
+  "finding_id": "m6find_12ca9bbe9bfbfe2b643bc68b197935d4f34c8df7ec4cceabe903974a49879c87",
   "intent": "metadata_enrichment",
   "operations": [
     {
@@ -27,9 +27,9 @@
     "artifact_1",
     "region_1",
     "cand_tag_walkthrough",
-    "m6dec_58a4699b5363a3750e0c70b3f10e6b23b5c10230fea2176098fdedf234e50ead"
+    "m6dec_4252be5e2cd41647897ffc59b252ad7865226c371f10e8bcb452c9bc70d2ab39"
   ],
-  "review_decision_id": "m6dec_58a4699b5363a3750e0c70b3f10e6b23b5c10230fea2176098fdedf234e50ead",
+  "review_decision_id": "m6dec_4252be5e2cd41647897ffc59b252ad7865226c371f10e8bcb452c9bc70d2ab39",
   "reviewer": "engineer.joe",
   "reviewer_action": "saw the label P-201 on the pump",
   "status_after_filing": "needs_review",
@@ -60,8 +60,8 @@
     "refused": "CompilationRefused"
   },
   "conflict_recorded": true,
-  "current_value_digest": "7c7b81c280a07c732f1809d3d773e878821be788b1c88937b4160bd15a7b43c7",
-  "reviewed_value_digest": "9b283df5ee7b083d2b44692e4cfda7a34355eda8e61060af034f0587039f2225",
+  "current_value_digest": "efbf95cbfc13fe439877faa95eb401e47325fea1652becbc45783843499c7e61",
+  "reviewed_value_digest": "38ad2b1c3c9e0a9cee8045f364592f21db0df0e6aa89ae59fa67664bae8815b0",
   "status_after_reecheck": "conflicted"
 }
 

@@ -157,16 +157,42 @@ def _strip_volatile(value: Any) -> Any:
 SEMANTIC_VALUE_DIGEST_VERSION = "semantic-value-v1"
 
 
-def normalize_semantic_value(value: str) -> str:
-    """The canonical form a semantic value is hashed in.
+#: How each semantic path's value is canonicalized before hashing. Path-aware on purpose:
+#: an equipment tag is an identifier this codebase already treats case-insensitively
+#: (``resolve_object`` folds case when addressing an object by tag), but a semantic value is not
+#: inherently case-insensitive — a future description, vendor string or free-text attribute may
+#: carry meaning in its case. Applying tag normalization everywhere would let a real change read
+#: as "unchanged", which is precisely the failure optimistic concurrency must not have.
+#:
+#: ``identifier`` = trim, collapse internal whitespace, casefold.
+#: ``exact`` = no transformation at all. If a value means exactly what it says, the digest must
+#: hash exactly what it says.
+SEMANTIC_VALUE_CANONICALIZERS: dict[str, str] = {
+    "equipment_tag": "identifier",
+    "equipment_class": "identifier",
+    "annotation_role": "exact",
+    "existence": "exact",
+}
 
-    Tag-like values are case-insensitive in this codebase — ``resolve_object`` folds case when
-    an object is addressed by tag — so ``P-201``, ``p-201`` and a padded ``  P-201  `` are one
-    statement. Normalizing here means two spellings of one fact cannot look like a change, and
-    symmetrically that a real change cannot hide behind whitespace.
+
+def canonicalize_semantic_value(path: str, value: str) -> str:
+    """Canonicalize a semantic value for hashing, by path.
+
+    An unregistered path is a hard failure rather than a default: silently falling back to tag
+    normalization is how a path that *does* care about case gets hashed as if it did not. Adding
+    a path therefore means choosing a canonicalizer, which is the decision worth making visible.
     """
 
-    return " ".join(value.split()).casefold()
+    rule = SEMANTIC_VALUE_CANONICALIZERS.get(path)
+    if rule is None:
+        raise IllegalTransition(
+            f"no canonicalizer is declared for semantic path {path!r}; add one to "
+            "SEMANTIC_VALUE_CANONICALIZERS instead of guessing how its value should be hashed",
+            code="unregistered_semantic_path",
+        )
+    if rule == "identifier":
+        return " ".join(value.split()).casefold()
+    return value
 
 
 def value_digest(path: str, value: str) -> str:
@@ -176,7 +202,8 @@ def value_digest(path: str, value: str) -> str:
         {
             "digest": SEMANTIC_VALUE_DIGEST_VERSION,
             "path": path,
-            "value": normalize_semantic_value(value),
+            "canonicalizer": SEMANTIC_VALUE_CANONICALIZERS[path],
+            "value": canonicalize_semantic_value(path, value),
         }
     )
 
@@ -445,7 +472,19 @@ class M6CandidateService:
                 code="undeclared_transition",
             )
         decision = ReviewDecision(
-            review_decision_id=_decision_id(candidate_id, from_status, to_status, kind),
+            review_decision_id=review_decision_id(
+                candidate_id=candidate_id,
+                kind=kind,
+                from_status=from_status,
+                to_status=to_status,
+                reviewer_identity=reviewer_identity,
+                reviewer_action=reviewer_action,
+                note=note,
+                baseline=baseline,
+                conflict_resolution=conflict_resolution,
+                resolution_choice=resolution_choice,
+                successor_candidate_id=successor_candidate_id,
+            ),
             candidate_id=candidate_id,
             kind=kind,
             from_status=from_status,  # type: ignore[arg-type]
@@ -896,12 +935,70 @@ def _symbol_definition(registry: SymbolRegistry, key: str):
         return None
 
 
-def _decision_id(candidate_id: str, from_status: str, to_status: str, kind: str) -> str:
-    """Decision ids are derived, not random: the log can be rebuilt and compared."""
+#: The review-decision identity scheme, versioned for the same reason as the value digest: a
+#: reader in Phase-2B must be able to re-derive this id from the decision alone.
+REVIEW_DECISION_ID_VERSION = "review-decision-v1"
 
-    return "m6dec_" + canonical_digest(
-        {"candidate": candidate_id, "from": from_status, "to": to_status, "kind": kind}
-    )
+
+def review_decision_payload(
+    *,
+    candidate_id: str,
+    kind: str,
+    from_status: str,
+    to_status: str,
+    reviewer_identity: str,
+    reviewer_action: str,
+    note: str,
+    baseline: ConflictBaselineRecord | None,
+    conflict_resolution: str,
+    resolution_choice: str | None,
+    successor_candidate_id: str,
+) -> dict[str, Any]:
+    """The immutable content of a decision, canonicalized for hashing.
+
+    A decision id must identify the *decision*, not the moment it was recorded. Hashing only
+    (candidate, from, to, kind) would collapse two genuinely different human decisions into one
+    id — the same person confirming against revision 7 and revision 8, by different reasoning,
+    would be one audit event — and the provenance foreign key would then rest on an identity that
+    cannot tell them apart.
+
+    ``decided_at`` is excluded: it is bookkeeping, and a timestamp must never be able to change
+    an identity.
+
+    The baseline is validated here rather than trusted, because this function runs *before* the
+    decision model exists and would otherwise turn a malformed baseline into an ``AttributeError``
+    instead of the ``ValidationError`` the caller deserves.
+    """
+
+    if baseline is not None and not isinstance(baseline, ConflictBaselineRecord):
+        baseline = ConflictBaselineRecord.model_validate(baseline)
+    return {
+        "id": REVIEW_DECISION_ID_VERSION,
+        "candidate": candidate_id,
+        "kind": kind,
+        "from": from_status,
+        "to": to_status,
+        "reviewer_identity": reviewer_identity,
+        "reviewer_action": reviewer_action,
+        "note": note,
+        "baseline": None
+        if baseline is None
+        else {
+            "revision": baseline.baseline_revision,
+            "identity": baseline.comparison_identity,
+            "path": baseline.comparison_path,
+            "digest_version": baseline.digest_version,
+            "digest": baseline.value_digest,
+            "value_present": baseline.value_present,
+        },
+        "conflict_resolution": conflict_resolution,
+        "resolution_choice": resolution_choice,
+        "successor_candidate_id": successor_candidate_id,
+    }
+
+
+def review_decision_id(**payload: Any) -> str:
+    return "m6dec_" + canonical_digest(review_decision_payload(**payload))
 
 
 def _conflict_id(
@@ -927,13 +1024,15 @@ def _finding_id(candidate_id: str, review_decision_id: str) -> str:
 
 
 def _created_element_id(finding: ConfirmedSemanticFinding, facts: ProposedSemantics) -> str:
-    """Still derived, still deterministic: a generated element id has to survive a recompile."""
+    """Still derived, still deterministic — and full length.
 
-    return (
-        "el_m6"
-        + canonical_digest(
-            {"finding": finding.finding_id, "class": facts.symbol_class, "tag": facts.equipment_tag}
-        )[:16]
+    A generated element id becomes a real engineering object's identity, which is the one thing
+    in this module that is *more* consequential than a patch id: a truncated hash there is a
+    collision in the drawing, not in a report.
+    """
+
+    return "el_m6" + canonical_digest(
+        {"finding": finding.finding_id, "class": facts.symbol_class, "tag": facts.equipment_tag}
     )
 
 
@@ -953,12 +1052,16 @@ __all__ = [
     "M6CoreError",
     "NotConfirmedError",
     "TransitionEvidenceMissing",
+    "REVIEW_DECISION_ID_VERSION",
+    "SEMANTIC_VALUE_CANONICALIZERS",
     "SEMANTIC_VALUE_DIGEST_VERSION",
     "baseline_record",
     "build_baseline_graph",
     "canonical_digest",
-    "normalize_semantic_value",
+    "canonicalize_semantic_value",
     "resolve_identity",
+    "review_decision_id",
+    "review_decision_payload",
     "semantic_value",
     "value_digest",
 ]

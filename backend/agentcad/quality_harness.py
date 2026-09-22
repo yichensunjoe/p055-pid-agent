@@ -81,6 +81,18 @@ def _require(condition: bool, code: str, message: str) -> None:
         raise _HarnessFailure(code, message)
 
 
+def _keys_at_any_depth(payload: Any) -> set[str]:
+    """Every mapping key anywhere in a payload, so "not in the identity" can be checked at depth."""
+
+    if isinstance(payload, dict):
+        return set(payload) | {
+            key for value in payload.values() for key in _keys_at_any_depth(value)
+        }
+    if isinstance(payload, (list, tuple)):
+        return {key for item in payload for key in _keys_at_any_depth(item)}
+    return set()
+
+
 def _is_number(value: Any) -> bool:
     return (
         isinstance(value, (int, float))
@@ -2360,19 +2372,20 @@ def _agent_self_repair_case(symbols: SymbolRegistry) -> QualityHarnessCaseResult
 
     from .drafting_geometry import drafting_content_hash
     from .repair_benchmark import (
-        BENCHMARK_SPEC_VERSION,
-        CORE_CORPUS_VERSION,
-        CORPUS_IDENTITY_EXCLUDED_KEYS,
-        MUTATIONS,
-        SUCCESS_ORACLE_VERSION,
-        build_base_drawing,
-        core_corpus_digest,
-        core_corpus_digest_manifest,
-        generate_suite,
-        generator_fingerprint,
-        spec_fingerprint,
-        spec_payload,
-    )
+            ACCEPTANCE_CASES_PER_FAMILY,
+            BENCHMARK_SPEC_VERSION,
+            CORE_CORPUS_VERSION,
+            CORPUS_IDENTITY_EXCLUDED_KEYS,
+            MUTATIONS,
+            SUCCESS_ORACLE_VERSION,
+            build_base_drawing,
+            core_corpus_digest,
+            core_corpus_digest_manifest,
+            generate_suite,
+            generator_fingerprint,
+            spec_fingerprint,
+            spec_payload,
+        )
     from .repair_benchmark_runner import BenchmarkContext, run_benchmark
     from .repair_evidence import verify_benchmark_result
     from .repair_orchestrator import RepairOrchestrator, build_repair_request
@@ -2413,10 +2426,31 @@ def _agent_self_repair_case(symbols: SymbolRegistry) -> QualityHarnessCaseResult
             "the corpus identity must be stable within a build",
         )
         _require(
-            not set(digest_input) & set(CORPUS_IDENTITY_EXCLUDED_KEYS),
+            all(
+                not _keys_at_any_depth(value) & set(CORPUS_IDENTITY_EXCLUDED_KEYS)
+                for value in digest_input.values()
+            )
+            and not set(digest_input) & set(CORPUS_IDENTITY_EXCLUDED_KEYS),
             "repair_corpus_digest_environment_bound",
             "the corpus identity must not hash the spec fingerprint or the generator bytecode "
             "digest, or the same corpus would identify differently on two interpreters",
+        )
+        # The projection has to be the corpus, not a description of it: a count cannot see a
+        # rotation change, so the identity carries every case and every operator declaration.
+        catalogue_by_id = {row["operator_id"]: row for row in digest_input["operator_catalogue"]}
+        _require(
+            len(digest_input["case_universe"]) == ACCEPTANCE_CASES_PER_FAMILY * 6
+            and len(catalogue_by_id) == len(MUTATIONS)
+            and all(
+                catalogue_by_id.get(row["operator_id"], {}).get(
+                    "producer_definition_identity"
+                )
+                and row.get("operator_declaration")
+                for row in digest_input["case_universe"]
+            ),
+            "repair_corpus_identity_too_weak",
+            "the corpus identity must project the case universe and the operator catalogue, not "
+            "counts of them",
         )
         first = generate_suite(candidate_sha="a" * 40, suite="acceptance")
         second = generate_suite(candidate_sha="b" * 40, suite="acceptance")

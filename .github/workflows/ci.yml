@@ -129,6 +129,16 @@ jobs:
 
       # §A4: a missing credential must be reported as such, never as a pass and never as a
       # failed candidate. The step therefore asserts exit code 3 specifically.
+      # The corpus identity's whole claim is that a *second* interpreter computes the same number,
+      # and this job is that second interpreter: it re-derives the digest from the published
+      # projection and every producer identity from the source file, with the standard library plus
+      # one stdlib-only project module. The step exists because "3.11 and 3.12 agree" is the
+      # property that failed under the old bytecode fingerprint, and a claim about two interpreters
+      # needs two interpreters to run it.
+      - name: Corpus identity · recomputed on this interpreter
+        shell: bash
+        run: python scripts/m5_closeout_identity_311_check.py
+
       - name: Real-model qualification · awaiting credential
         shell: bash
         run: |

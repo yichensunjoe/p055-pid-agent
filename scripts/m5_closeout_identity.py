@@ -46,6 +46,7 @@ from agentcad.repair_benchmark import (  # noqa: E402
     core_corpus_digest_manifest,
     core_corpus_fingerprint,
     core_corpus_manifest,
+    corpus_definition_ast_projection,
     generator_fingerprint,
     spec_fingerprint,
 )
@@ -115,12 +116,16 @@ def identity_report() -> tuple[str, dict[str, Any]]:
         digest = core_corpus_digest(version)
         digest_input = core_corpus_digest_manifest(version)
         manifest = core_corpus_manifest(version)
+        catalogue = digest_input["operator_catalogue"]
         fields: dict[str, Any] = {
             "digest": digest,
             "digest_manifest_keys": sorted(digest_input),
-            "case_count": digest_input["case_count"],
-            "operator_count": digest_input["operator_count"],
-            "supported_code_count": len(digest_input["supported_codes"]),
+            "case_count": len(digest_input["case_universe"]),
+            "dev_case_count": len(digest_input["dev_case_universe"]),
+            "operator_count": len(catalogue),
+            "supported_code_count": len([row for row in catalogue if row["target_code"]]),
+            "case_row_keys": sorted(digest_input["case_universe"][0]),
+            "operator_row_keys": sorted(catalogue[0]),
             "environment_keys_in_identity": sorted(
                 set(digest_input) & set(CORPUS_IDENTITY_EXCLUDED_KEYS)
             ),
@@ -134,8 +139,16 @@ def identity_report() -> tuple[str, dict[str, Any]]:
             f"corpus_version / spec_version        : {digest_input['corpus_version']} / {digest_input['spec_version']}"
         )
         lines.append(
-            f"cases / operators / supported codes  : {fields['case_count']} / {fields['operator_count']} / {fields['supported_code_count']}"
+            f"acceptance / dev cases               : {fields['case_count']} / {fields['dev_case_count']}"
         )
+        lines.append(
+            f"operators / codes with a producer    : {fields['operator_count']} / {fields['supported_code_count']}"
+        )
+        lines.append(
+            f"projection top-level keys            : {', '.join(sorted(digest_input))}"
+        )
+        lines.append(f"per-case row keys                    : {', '.join(fields['case_row_keys'])}")
+        lines.append(f"per-operator row keys                : {', '.join(fields['operator_row_keys'])}")
         lines.append(
             f"environment keys inside the identity : {fields['environment_keys_in_identity'] or 'none'}"
         )
@@ -245,14 +258,34 @@ def extension_pin_report() -> tuple[str, dict[str, Any]]:
     return "\n".join(lines), data
 
 
+def definition_identity_report() -> tuple[str, dict[str, Any]]:
+    """The interpreter-independent half of the producer identities, per definition.
+
+    Published separately from the digests because it is the part a second interpreter can re-derive
+    from the *source file* alone: parse, dump the AST, hash. No import, no pydantic, no bytecode.
+    """
+
+    trace = corpus_definition_ast_projection()
+    lines = [f"== definition identities ({len(trace)} definitions folded into the producers) =="]
+    for qualname, value in sorted(trace.items()):
+        lines.append(f"{qualname:40s}: {value}")
+    return "\n".join(lines), {"definition_ast_identities": trace}
+
+
 def main() -> int:
     OUT.mkdir(parents=True, exist_ok=True)
-    sections = [identity_report(), hash_compatibility_report(), extension_pin_report()]
+    sections = [
+        identity_report(),
+        definition_identity_report(),
+        hash_compatibility_report(),
+        extension_pin_report(),
+    ]
     text = "\n\n".join(section[0] for section in sections) + "\n"
     payload = {
         "corpus_identity": sections[0][1],
-        "hash_compatibility": sections[1][1],
-        "retired_extension": sections[2][1],
+        "definition_identity": sections[1][1],
+        "hash_compatibility": sections[2][1],
+        "retired_extension": sections[3][1],
     }
     (OUT / "corpus-identity.txt").write_text(text, encoding="utf-8")
     (OUT / "corpus-identity.json").write_text(

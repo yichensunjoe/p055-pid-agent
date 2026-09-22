@@ -274,18 +274,33 @@ acceptance case**（`promotion_cases()`：同 family、同 candidate SHA、同�
   `operator_count = 23`、`supported_codes`（`core_corpus_manifest()`）。
   **两者分开指纹**：增加覆盖不该让「M5 当时到底验收了什么」变得无法回答。
 - **语料身份现在是两层（A5）**：
-  - `core_corpus_digest()` = **跨解释器恒定**的语料身份，输入是 manifest 去掉
-    `CORPUS_IDENTITY_EXCLUDED_KEYS = (spec_fingerprint, generator_fingerprint)` 的那一半；
-    v3 golden `a60e07f1…`。去掉 `spec_fingerprint` 的理由与 ledger 同源：它标识的是**它是按哪版 spec 判的**，
-    而 spec 已有自己的稳定身份；把两件事混起来会让一次 spec 修订看起来像一次语料变化。
-  - `core_corpus_digest("2")` = 归档语料的同一身份，`acb4a3bd…`（从冻结的 v2 spec body 重放：19 operator /
-    16 个带 code / 72 case）。它是 **A5 之后派生出来的 archival 身份**，v2 从未发布过这个字段。
+  - `core_corpus_digest()` = **跨解释器恒定**的语料身份。输入是 `core_corpus_projection()` —— 布局、
+    case 派生规则、**完整 operator 目录**与**两个 suite 的每一条 case**，而不是它们的计数（`case_count`、
+    `operator_count` 这类摘要看得见“有多少”，看不见“哪一条由谁画、以什么声明画”）。
+    v3 golden `115fe509…`。`core_corpus_digest_manifest()` 就是这份 projection 本身，供人复算。
+  - **identity 的敏感性与稳定性是一对**：`tests/test_core_corpus_identity.py` 里 8 个反向 mutation
+    必须移动 digest（改 operator_id / 交换两个 id / 改 defect code / 改 base_variant / 改写策略 /
+    换 producer 实现 / 增删一条 case / 增删一个 operator / 改 seed 派生规则），3 个正向稳定性必须不动
+    （`generator_fingerprint` 变、`spec_fingerprint` 变、解释器变）。两组合起来才定义了身份的边界。
+  - `core_corpus_digest("2")` = 归档语料的同一身份，`a91461eb…`（从冻结的 v2 spec body 重放：19 operator /
+    72 case；实现那半边记为 `ARCHIVED_DEFINITION_IDENTITY`）。它是 **A5 之后派生出来的 archival 身份**，
+    v2 从未发布过这个字段，也不声称能证明当年的 Python 实现字节。
+  - **producer 的声明式那一半不够时改指纹什么**：目录行额外发布
+    `producer_definition_identity` / `base_builder_definition_identity`——源码 AST 的**规范化投影**
+    （`agentcad/source_identity.py`）。不能用 `ast.dump`：同一份 `_patch` 在 3.11 是 `930398d67e9220f4`、
+    3.12 是 `a182c517faab2e95`，因为 3.12 给 `FunctionDef` 加了 `type_params` 字段。
+    规范化投影丢掉 `None` 与空字段，因此新解释器新增的字段只要还是空的就不参与身份。
+  - 被调用到的同模块函数会一并折入（producer 不能在调用方没变的情况下在下面改变），工厂产出的
+    operator 的绑定参数也计入（`_build_f6` 的 `failures` / `base_operator_id`）。
   - `core_corpus_fingerprint()` = **未重定义**、未删除，仍是“这份定义 + 这份代码 + 这台机器”的 provenance：
     本机 3.12 `c85995d2…`、3.11 `82b37b04…`，两者不同是预期行为。
-  - 三个 golden 钉在 `tests/test_core_corpus_identity.py`；`reports/m5-closeout/corpus-identity.*` 是证据。
-  - **跨解释器不是断言，是实测**：identity 的输入以纯 JSON 发布（`corpus-identity-inputs.json`），
-    `scripts/m5_closeout_identity_311_check.py` 不 import 任何 `agentcad` 代码，只用标准库在
-    CPython 3.11.15 与 3.12.13 上各跑一次（输出 `corpus-identity-3.11.txt` / `-3.12.txt`），两次都要等于记录值。
+  - 两个 golden 钉在 `tests/test_core_corpus_identity.py`；`reports/m5-closeout/corpus-identity.*` 是证据。
+  - **跨解释器不是断言，是实测**（两处）：
+    ① identity 的输入以纯 JSON 发布（`corpus-identity-inputs.json`），
+    `scripts/m5_closeout_identity_311_check.py` 只用标准库 + `agentcad.source_identity`（该模块刻意
+    零依赖，就是为了能在第二个解释器上跑）复算 digest 与全部 32 条定义身份，在 CPython 3.11.15 与 3.12.12
+    上都等于记录值；② 钉住 golden 的那条测试本身在 3.11 与 3.12 上各跑一次都要绿，CI 的 M5 job 是 3.11，
+    所以“两个解释器给出同一个数”由 CI 每天重跑。
   - v2 的 manifest 里**没有** `generator_fingerprint`：v2 operator 的字节码随代码一起消失了，
     该字段无法重算，所以它被“缺席”而不是被伪造（这也正是身份要独立于指纹的原因）。
 - `BENCHMARK_SPEC_VERSION` 从 2 切到 **3**，`spec_fingerprint` 从 `c8520c5e…` 变为 `8f522c75…`。

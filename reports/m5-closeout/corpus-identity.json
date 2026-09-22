@@ -2,41 +2,75 @@
   "corpus_identity": {
     "2": {
       "case_count": 72,
-      "digest": "acb4a3bde4ed0b313588d344f717c2c2fad68ffbc782b3b1d3e710b363102900",
+      "case_row_keys": [
+        "case_id",
+        "family",
+        "index",
+        "operator_declaration",
+        "operator_id",
+        "suite"
+      ],
+      "dev_case_count": 24,
+      "digest": "a91461eb32c6a71b89e81f006563cdb916b0ac19de9b123e3c0d7a41071df4a3",
       "digest_manifest_keys": [
-        "case_count",
-        "cases_per_family",
+        "acceptance_cases_per_family",
+        "case_derivation",
+        "case_universe",
         "corpus_id",
         "corpus_version",
+        "dev_case_universe",
         "dev_cases_per_family",
         "families",
-        "operator_count",
+        "operator_catalogue",
         "safety_case_count",
-        "spec_version",
-        "supported_codes"
+        "spec_version"
       ],
       "environment_keys_in_identity": [],
       "environment_keys_in_manifest": [
         "spec_fingerprint"
       ],
       "operator_count": 19,
+      "operator_row_keys": [
+        "base_builder_definition_identity",
+        "base_variant",
+        "family",
+        "max_created_ids",
+        "max_deleted_ids",
+        "operator_id",
+        "permits_creation",
+        "permits_deletion",
+        "producer_definition_identity",
+        "target_code",
+        "touched_budget_class",
+        "validator_id"
+      ],
       "spec_fingerprint_v2": "c8520c5e7b0b1d7e77e3752080393b4965aee60538ad71a6bf95d5fc4ab5ede1",
       "supported_code_count": 16
     },
     "3": {
       "case_count": 72,
-      "digest": "a60e07f11d55769e235f05da7f975f7a1b4617fc73b5f49bc7d4e12b16a1bd49",
+      "case_row_keys": [
+        "case_id",
+        "family",
+        "index",
+        "operator_declaration",
+        "operator_id",
+        "suite"
+      ],
+      "dev_case_count": 24,
+      "digest": "115fe509e54d04a71654c6972a40b4c37e6ad33cc4ca097f5dc9c481e0563dc5",
       "digest_manifest_keys": [
-        "case_count",
-        "cases_per_family",
+        "acceptance_cases_per_family",
+        "case_derivation",
+        "case_universe",
         "corpus_id",
         "corpus_version",
+        "dev_case_universe",
         "dev_cases_per_family",
         "families",
-        "operator_count",
+        "operator_catalogue",
         "safety_case_count",
-        "spec_version",
-        "supported_codes"
+        "spec_version"
       ],
       "environment_keys_in_identity": [],
       "environment_keys_in_manifest": [
@@ -47,6 +81,20 @@
       "fingerprint_local": "c85995d29d71b7d8ec81e7e152bab7daf880ccd44267ec00d7e1ee2da6b834ca",
       "fingerprint_with_3_11_generator": "82b37b0428a62ea259c4fa89aa06542790566df74dc22919d1ad21c9a56b6fc5",
       "operator_count": 23,
+      "operator_row_keys": [
+        "base_builder_definition_identity",
+        "base_variant",
+        "family",
+        "max_created_ids",
+        "max_deleted_ids",
+        "operator_id",
+        "permits_creation",
+        "permits_deletion",
+        "producer_definition_identity",
+        "target_code",
+        "touched_budget_class",
+        "validator_id"
+      ],
       "supported_code_count": 20
     },
     "corpus_id": "m5-core-corpus",
@@ -59,6 +107,42 @@
     "ledger_fingerprint": "0b3e5e53d83b0cd4f10f98b08cd2e9ef64ed5ed01c1c896d53143296d5372da3",
     "spec_fingerprint": "8f522c758b67fc71e53d7d382f1c09fc3d922663ea500a7fc09106ece054c810",
     "spec_version": "3"
+  },
+  "definition_identity": {
+    "definition_ast_identities": {
+      "_apply_semantic": "7d2198edac106b0e02c74362f54497302e82456c56cae63d6e2e13ad05142175",
+      "_build_f6.<locals>.apply": "1cf72082b095051664e1ee596bb690b7a5d9a6f7182f6ae21bc2ba6843a31e3f",
+      "_connector_element": "0675ca6578cdcd47b74cac97574a4d81b8c9ba6bb57b430689ea6adf167bd511",
+      "_crossing_base": "d46c8688453e8c9facb29140250e98f82261f57e4f95dc41499a6293f37e795b",
+      "_f1_duplicate_label": "4a13e5bf86eb1574c9843e01713ddd017048001627d3a0734d26b562b36a1e1c",
+      "_f1_line_diameter": "13e6ef22b97a8fb7b5de7808271af8ece515943352506da691f925c688d3f686",
+      "_f1_line_medium": "765b2c882c245b735a1b7862d7a42992ee4a316f74b7f1d396e5e2c3774d0e49",
+      "_f1_line_name": "c0fec28908e4a53f4b4ff7e7fb44b3bdbc5bde6c929e2f1fba1ff7ae006e8d84",
+      "_f1_line_tag": "2ffcd6e348f2a2d1788f5b6e2061dc631387d430bf16aa89c27e5f3b50c22e76",
+      "_f1_symbol_tag_duplicate": "8f7e63366d4a4ab5e7461b6ac5068faaca0707f431ba7385135149ace7794251",
+      "_f1_symbol_tag_missing": "8ebcc8c16666b7aded210066d5771683186c5dd1eb914e6093b705121c28676f",
+      "_f2_dangling": "837b9dd1323417542aef9d282bbf27cae97ecaa48eecbbcd330beaf69307b609",
+      "_f2_dangling_from_both_ends": "4c80f40dfb23283ac77c9f8355b2d061c37907aa191ae8c3b078df44dd0c3a51",
+      "_f2_port_direction_mismatch": "a64d7135aa4dceaa63e2d7ef5323c4b794276d1b1d40e6ac40de08c89a57ab6e",
+      "_f2_required_port": "71728835e26ca0f51c75b9009ce92a146da96b4d95425360751b2aacfc39d33b",
+      "_f3_delete_detach": "31271c20930062ec179892d226d867a53d07a6399bc51ec0bf92a6ef8c8e4341",
+      "_f4_micro_segment": "359cb21868393793cee440f4749a8a9e704ba24971ac16689ebfbebebb4753b1",
+      "_f4_port_exit": "6c5cc21966b621d39a46670d76922a93554adb049d139cb28a315c96cc618598",
+      "_f4_unbridged_crossing": "d84b4cf7dc0582e23eb65f42695c589f1ca823a804a4178145437ce143d4022b",
+      "_f4_unnecessary_bend": "f52f687e9ac85dc5f88947b69562ab4000f80450a64464df563b5e79d5967811",
+      "_f5_annotation_overlap": "2604af5858f1bc469e286d1976bb6cfe62ca497985e33ed3b0252ca393cf5ee2",
+      "_f5_node_overlap": "5f7f3061ec3b7ee225bf115f9ca7deaac9d1e45550c35f72f5825c263df074b1",
+      "_f5_pipe_through_equipment": "77aa3c977351485d0115efaa1a1b05ff3e05a861f09c5ef896c978ea5a83c8b5",
+      "_f5_symbol_out_of_bounds": "562e88905ab9c1f22f488e8b8b2bd3f4c62d3c54c12239063f2d6a163c78d39e",
+      "_manual_points": "ad1c555fce50a0d4d56985b4cfb482aaad1d28b91f3f36ee75adecf3b1b3a2d4",
+      "_mutate": "c527e81e700072911c46a1ad1182db032eb99644b379a38edf77306d821b29c2",
+      "_mutation_audit": "89f8a101cf37751af8d6c370c0825ebc489cd78ca7a911bf90e2f00a6beb1f7d",
+      "_patch": "b14cfd5e24754067b6c24b6c15adfe04ddc43bfe7c3c14aaae2c2436da93c20e",
+      "_symbol": "acd19ee72ab4ab12a207910f8573f3d41adf069741c0115ef85f2fc15c4f63d9",
+      "_symbol_label_annotations": "cea96a6e15d2e8921ae17e291b72e9ab31780fc9eb783411b2dfa120eb8d09b3",
+      "_three_valves_base": "c4a56c57793c3d74f4873c51c5768d8060798f20ae5af02fc49024dacb47cdf0",
+      "build_base_drawing": "69fc72c87029024bcbce2f32ca9e887700243d17792ca2d1704585068d6c32d2"
+    }
   },
   "hash_compatibility": {
     "benchmark_result_hash": "17be0e458ac3621946b06878c86e6902e7d8c0736d532f78c9d595689e22cc04",

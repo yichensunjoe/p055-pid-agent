@@ -1,9 +1,1841 @@
 {
   "2": {
-    "case_count": 72,
-    "cases_per_family": 12,
+    "acceptance_cases_per_family": 12,
+    "case_derivation": {
+      "rotation": "operators_for_family(family) -- sorted by operator_id -- cycled by case index",
+      "seed_digest": "sha256(material).hexdigest()[:12], read as a base-16 integer",
+      "seed_material": "spec_fingerprint(spec_version) : candidate_sha : family : index"
+    },
+    "case_universe": [
+      {
+        "case_id": "acceptance:F1:00:f1_line_diameter_missing",
+        "family": "F1",
+        "index": 0,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F1",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f1_line_diameter_missing",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "LINE_DIAMETER_MISSING",
+          "touched_budget_class": "simple_metadata",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f1_line_diameter_missing",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F1:01:f1_line_medium_missing",
+        "family": "F1",
+        "index": 1,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F1",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f1_line_medium_missing",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "LINE_MEDIUM_MISSING",
+          "touched_budget_class": "simple_metadata",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f1_line_medium_missing",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F1:02:f1_line_name_missing",
+        "family": "F1",
+        "index": 2,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F1",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f1_line_name_missing",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "LINE_TAG_MISSING",
+          "touched_budget_class": "simple_metadata",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f1_line_name_missing",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F1:03:f1_line_tag_missing",
+        "family": "F1",
+        "index": 3,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F1",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f1_line_tag_missing",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "LINE_TAG_MISSING",
+          "touched_budget_class": "simple_metadata",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f1_line_tag_missing",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F1:04:f1_symbol_tag_duplicate",
+        "family": "F1",
+        "index": 4,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F1",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f1_symbol_tag_duplicate",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "TAG_DUPLICATE",
+          "touched_budget_class": "simple_metadata",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f1_symbol_tag_duplicate",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F1:05:f1_symbol_tag_missing",
+        "family": "F1",
+        "index": 5,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F1",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f1_symbol_tag_missing",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "TAG_MISSING",
+          "touched_budget_class": "simple_metadata",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f1_symbol_tag_missing",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F1:06:f1_line_diameter_missing",
+        "family": "F1",
+        "index": 6,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F1",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f1_line_diameter_missing",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "LINE_DIAMETER_MISSING",
+          "touched_budget_class": "simple_metadata",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f1_line_diameter_missing",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F1:07:f1_line_medium_missing",
+        "family": "F1",
+        "index": 7,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F1",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f1_line_medium_missing",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "LINE_MEDIUM_MISSING",
+          "touched_budget_class": "simple_metadata",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f1_line_medium_missing",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F1:08:f1_line_name_missing",
+        "family": "F1",
+        "index": 8,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F1",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f1_line_name_missing",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "LINE_TAG_MISSING",
+          "touched_budget_class": "simple_metadata",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f1_line_name_missing",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F1:09:f1_line_tag_missing",
+        "family": "F1",
+        "index": 9,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F1",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f1_line_tag_missing",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "LINE_TAG_MISSING",
+          "touched_budget_class": "simple_metadata",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f1_line_tag_missing",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F1:10:f1_symbol_tag_duplicate",
+        "family": "F1",
+        "index": 10,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F1",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f1_symbol_tag_duplicate",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "TAG_DUPLICATE",
+          "touched_budget_class": "simple_metadata",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f1_symbol_tag_duplicate",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F1:11:f1_symbol_tag_missing",
+        "family": "F1",
+        "index": 11,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F1",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f1_symbol_tag_missing",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "TAG_MISSING",
+          "touched_budget_class": "simple_metadata",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f1_symbol_tag_missing",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F2:00:f2_endpoint_dangling",
+        "family": "F2",
+        "index": 0,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F2",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f2_endpoint_dangling",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+          "touched_budget_class": "simple_endpoint",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f2_endpoint_dangling",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F2:01:f2_endpoint_dangling_both",
+        "family": "F2",
+        "index": 1,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F2",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f2_endpoint_dangling_both",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+          "touched_budget_class": "simple_endpoint",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f2_endpoint_dangling_both",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F2:02:f2_required_port_unconnected",
+        "family": "F2",
+        "index": 2,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F2",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f2_required_port_unconnected",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "SYMBOL_REQUIRED_PORT_UNCONNECTED",
+          "touched_budget_class": "simple_endpoint",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f2_required_port_unconnected",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F2:03:f2_endpoint_dangling",
+        "family": "F2",
+        "index": 3,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F2",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f2_endpoint_dangling",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+          "touched_budget_class": "simple_endpoint",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f2_endpoint_dangling",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F2:04:f2_endpoint_dangling_both",
+        "family": "F2",
+        "index": 4,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F2",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f2_endpoint_dangling_both",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+          "touched_budget_class": "simple_endpoint",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f2_endpoint_dangling_both",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F2:05:f2_required_port_unconnected",
+        "family": "F2",
+        "index": 5,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F2",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f2_required_port_unconnected",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "SYMBOL_REQUIRED_PORT_UNCONNECTED",
+          "touched_budget_class": "simple_endpoint",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f2_required_port_unconnected",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F2:06:f2_endpoint_dangling",
+        "family": "F2",
+        "index": 6,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F2",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f2_endpoint_dangling",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+          "touched_budget_class": "simple_endpoint",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f2_endpoint_dangling",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F2:07:f2_endpoint_dangling_both",
+        "family": "F2",
+        "index": 7,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F2",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f2_endpoint_dangling_both",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+          "touched_budget_class": "simple_endpoint",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f2_endpoint_dangling_both",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F2:08:f2_required_port_unconnected",
+        "family": "F2",
+        "index": 8,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F2",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f2_required_port_unconnected",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "SYMBOL_REQUIRED_PORT_UNCONNECTED",
+          "touched_budget_class": "simple_endpoint",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f2_required_port_unconnected",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F2:09:f2_endpoint_dangling",
+        "family": "F2",
+        "index": 9,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F2",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f2_endpoint_dangling",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+          "touched_budget_class": "simple_endpoint",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f2_endpoint_dangling",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F2:10:f2_endpoint_dangling_both",
+        "family": "F2",
+        "index": 10,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F2",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f2_endpoint_dangling_both",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+          "touched_budget_class": "simple_endpoint",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f2_endpoint_dangling_both",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F2:11:f2_required_port_unconnected",
+        "family": "F2",
+        "index": 11,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F2",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f2_required_port_unconnected",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "SYMBOL_REQUIRED_PORT_UNCONNECTED",
+          "touched_budget_class": "simple_endpoint",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f2_required_port_unconnected",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F3:00:f3_delete_middle_detach",
+        "family": "F3",
+        "index": 0,
+        "operator_declaration": {
+          "base_variant": "three_valves",
+          "family": "F3",
+          "max_created_ids": 1,
+          "max_deleted_ids": 1,
+          "operator_id": "f3_delete_middle_detach",
+          "permits_creation": true,
+          "permits_deletion": true,
+          "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+          "touched_budget_class": "multi_connector",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f3_delete_middle_detach",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F3:01:f3_delete_middle_detach",
+        "family": "F3",
+        "index": 1,
+        "operator_declaration": {
+          "base_variant": "three_valves",
+          "family": "F3",
+          "max_created_ids": 1,
+          "max_deleted_ids": 1,
+          "operator_id": "f3_delete_middle_detach",
+          "permits_creation": true,
+          "permits_deletion": true,
+          "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+          "touched_budget_class": "multi_connector",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f3_delete_middle_detach",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F3:02:f3_delete_middle_detach",
+        "family": "F3",
+        "index": 2,
+        "operator_declaration": {
+          "base_variant": "three_valves",
+          "family": "F3",
+          "max_created_ids": 1,
+          "max_deleted_ids": 1,
+          "operator_id": "f3_delete_middle_detach",
+          "permits_creation": true,
+          "permits_deletion": true,
+          "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+          "touched_budget_class": "multi_connector",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f3_delete_middle_detach",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F3:03:f3_delete_middle_detach",
+        "family": "F3",
+        "index": 3,
+        "operator_declaration": {
+          "base_variant": "three_valves",
+          "family": "F3",
+          "max_created_ids": 1,
+          "max_deleted_ids": 1,
+          "operator_id": "f3_delete_middle_detach",
+          "permits_creation": true,
+          "permits_deletion": true,
+          "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+          "touched_budget_class": "multi_connector",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f3_delete_middle_detach",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F3:04:f3_delete_middle_detach",
+        "family": "F3",
+        "index": 4,
+        "operator_declaration": {
+          "base_variant": "three_valves",
+          "family": "F3",
+          "max_created_ids": 1,
+          "max_deleted_ids": 1,
+          "operator_id": "f3_delete_middle_detach",
+          "permits_creation": true,
+          "permits_deletion": true,
+          "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+          "touched_budget_class": "multi_connector",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f3_delete_middle_detach",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F3:05:f3_delete_middle_detach",
+        "family": "F3",
+        "index": 5,
+        "operator_declaration": {
+          "base_variant": "three_valves",
+          "family": "F3",
+          "max_created_ids": 1,
+          "max_deleted_ids": 1,
+          "operator_id": "f3_delete_middle_detach",
+          "permits_creation": true,
+          "permits_deletion": true,
+          "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+          "touched_budget_class": "multi_connector",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f3_delete_middle_detach",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F3:06:f3_delete_middle_detach",
+        "family": "F3",
+        "index": 6,
+        "operator_declaration": {
+          "base_variant": "three_valves",
+          "family": "F3",
+          "max_created_ids": 1,
+          "max_deleted_ids": 1,
+          "operator_id": "f3_delete_middle_detach",
+          "permits_creation": true,
+          "permits_deletion": true,
+          "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+          "touched_budget_class": "multi_connector",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f3_delete_middle_detach",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F3:07:f3_delete_middle_detach",
+        "family": "F3",
+        "index": 7,
+        "operator_declaration": {
+          "base_variant": "three_valves",
+          "family": "F3",
+          "max_created_ids": 1,
+          "max_deleted_ids": 1,
+          "operator_id": "f3_delete_middle_detach",
+          "permits_creation": true,
+          "permits_deletion": true,
+          "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+          "touched_budget_class": "multi_connector",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f3_delete_middle_detach",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F3:08:f3_delete_middle_detach",
+        "family": "F3",
+        "index": 8,
+        "operator_declaration": {
+          "base_variant": "three_valves",
+          "family": "F3",
+          "max_created_ids": 1,
+          "max_deleted_ids": 1,
+          "operator_id": "f3_delete_middle_detach",
+          "permits_creation": true,
+          "permits_deletion": true,
+          "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+          "touched_budget_class": "multi_connector",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f3_delete_middle_detach",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F3:09:f3_delete_middle_detach",
+        "family": "F3",
+        "index": 9,
+        "operator_declaration": {
+          "base_variant": "three_valves",
+          "family": "F3",
+          "max_created_ids": 1,
+          "max_deleted_ids": 1,
+          "operator_id": "f3_delete_middle_detach",
+          "permits_creation": true,
+          "permits_deletion": true,
+          "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+          "touched_budget_class": "multi_connector",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f3_delete_middle_detach",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F3:10:f3_delete_middle_detach",
+        "family": "F3",
+        "index": 10,
+        "operator_declaration": {
+          "base_variant": "three_valves",
+          "family": "F3",
+          "max_created_ids": 1,
+          "max_deleted_ids": 1,
+          "operator_id": "f3_delete_middle_detach",
+          "permits_creation": true,
+          "permits_deletion": true,
+          "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+          "touched_budget_class": "multi_connector",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f3_delete_middle_detach",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F3:11:f3_delete_middle_detach",
+        "family": "F3",
+        "index": 11,
+        "operator_declaration": {
+          "base_variant": "three_valves",
+          "family": "F3",
+          "max_created_ids": 1,
+          "max_deleted_ids": 1,
+          "operator_id": "f3_delete_middle_detach",
+          "permits_creation": true,
+          "permits_deletion": true,
+          "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+          "touched_budget_class": "multi_connector",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f3_delete_middle_detach",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F4:00:f4_micro_segment",
+        "family": "F4",
+        "index": 0,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F4",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f4_micro_segment",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "MICRO_SEGMENT",
+          "touched_budget_class": "local_geometry",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f4_micro_segment",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F4:01:f4_port_exit_mismatch",
+        "family": "F4",
+        "index": 1,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F4",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f4_port_exit_mismatch",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "PORT_EXIT_MISMATCH",
+          "touched_budget_class": "local_geometry",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f4_port_exit_mismatch",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F4:02:f4_unnecessary_bend",
+        "family": "F4",
+        "index": 2,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F4",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f4_unnecessary_bend",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "UNNECESSARY_BEND",
+          "touched_budget_class": "local_geometry",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f4_unnecessary_bend",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F4:03:f4_micro_segment",
+        "family": "F4",
+        "index": 3,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F4",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f4_micro_segment",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "MICRO_SEGMENT",
+          "touched_budget_class": "local_geometry",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f4_micro_segment",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F4:04:f4_port_exit_mismatch",
+        "family": "F4",
+        "index": 4,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F4",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f4_port_exit_mismatch",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "PORT_EXIT_MISMATCH",
+          "touched_budget_class": "local_geometry",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f4_port_exit_mismatch",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F4:05:f4_unnecessary_bend",
+        "family": "F4",
+        "index": 5,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F4",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f4_unnecessary_bend",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "UNNECESSARY_BEND",
+          "touched_budget_class": "local_geometry",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f4_unnecessary_bend",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F4:06:f4_micro_segment",
+        "family": "F4",
+        "index": 6,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F4",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f4_micro_segment",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "MICRO_SEGMENT",
+          "touched_budget_class": "local_geometry",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f4_micro_segment",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F4:07:f4_port_exit_mismatch",
+        "family": "F4",
+        "index": 7,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F4",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f4_port_exit_mismatch",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "PORT_EXIT_MISMATCH",
+          "touched_budget_class": "local_geometry",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f4_port_exit_mismatch",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F4:08:f4_unnecessary_bend",
+        "family": "F4",
+        "index": 8,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F4",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f4_unnecessary_bend",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "UNNECESSARY_BEND",
+          "touched_budget_class": "local_geometry",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f4_unnecessary_bend",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F4:09:f4_micro_segment",
+        "family": "F4",
+        "index": 9,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F4",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f4_micro_segment",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "MICRO_SEGMENT",
+          "touched_budget_class": "local_geometry",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f4_micro_segment",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F4:10:f4_port_exit_mismatch",
+        "family": "F4",
+        "index": 10,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F4",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f4_port_exit_mismatch",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "PORT_EXIT_MISMATCH",
+          "touched_budget_class": "local_geometry",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f4_port_exit_mismatch",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F4:11:f4_unnecessary_bend",
+        "family": "F4",
+        "index": 11,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F4",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f4_unnecessary_bend",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "UNNECESSARY_BEND",
+          "touched_budget_class": "local_geometry",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f4_unnecessary_bend",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F5:00:f5_node_overlap",
+        "family": "F5",
+        "index": 0,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F5",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f5_node_overlap",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "NODE_OVERLAP",
+          "touched_budget_class": "complex_collision",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f5_node_overlap",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F5:01:f5_pipe_through_equipment",
+        "family": "F5",
+        "index": 1,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F5",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f5_pipe_through_equipment",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "PIPE_THROUGH_EQUIPMENT",
+          "touched_budget_class": "complex_collision",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f5_pipe_through_equipment",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F5:02:f5_symbol_out_of_bounds",
+        "family": "F5",
+        "index": 2,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F5",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f5_symbol_out_of_bounds",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "SYMBOL_OUT_OF_BOUNDS",
+          "touched_budget_class": "complex_collision",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f5_symbol_out_of_bounds",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F5:03:f5_node_overlap",
+        "family": "F5",
+        "index": 3,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F5",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f5_node_overlap",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "NODE_OVERLAP",
+          "touched_budget_class": "complex_collision",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f5_node_overlap",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F5:04:f5_pipe_through_equipment",
+        "family": "F5",
+        "index": 4,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F5",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f5_pipe_through_equipment",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "PIPE_THROUGH_EQUIPMENT",
+          "touched_budget_class": "complex_collision",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f5_pipe_through_equipment",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F5:05:f5_symbol_out_of_bounds",
+        "family": "F5",
+        "index": 5,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F5",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f5_symbol_out_of_bounds",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "SYMBOL_OUT_OF_BOUNDS",
+          "touched_budget_class": "complex_collision",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f5_symbol_out_of_bounds",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F5:06:f5_node_overlap",
+        "family": "F5",
+        "index": 6,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F5",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f5_node_overlap",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "NODE_OVERLAP",
+          "touched_budget_class": "complex_collision",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f5_node_overlap",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F5:07:f5_pipe_through_equipment",
+        "family": "F5",
+        "index": 7,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F5",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f5_pipe_through_equipment",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "PIPE_THROUGH_EQUIPMENT",
+          "touched_budget_class": "complex_collision",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f5_pipe_through_equipment",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F5:08:f5_symbol_out_of_bounds",
+        "family": "F5",
+        "index": 8,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F5",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f5_symbol_out_of_bounds",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "SYMBOL_OUT_OF_BOUNDS",
+          "touched_budget_class": "complex_collision",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f5_symbol_out_of_bounds",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F5:09:f5_node_overlap",
+        "family": "F5",
+        "index": 9,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F5",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f5_node_overlap",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "NODE_OVERLAP",
+          "touched_budget_class": "complex_collision",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f5_node_overlap",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F5:10:f5_pipe_through_equipment",
+        "family": "F5",
+        "index": 10,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F5",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f5_pipe_through_equipment",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "PIPE_THROUGH_EQUIPMENT",
+          "touched_budget_class": "complex_collision",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f5_pipe_through_equipment",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F5:11:f5_symbol_out_of_bounds",
+        "family": "F5",
+        "index": 11,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F5",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f5_symbol_out_of_bounds",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "SYMBOL_OUT_OF_BOUNDS",
+          "touched_budget_class": "complex_collision",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f5_symbol_out_of_bounds",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F6:00:f6_replan_four_times",
+        "family": "F6",
+        "index": 0,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F6",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f6_replan_four_times",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "",
+          "touched_budget_class": "simple_metadata",
+          "validator_id": ""
+        },
+        "operator_id": "f6_replan_four_times",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F6:01:f6_replan_once",
+        "family": "F6",
+        "index": 1,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F6",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f6_replan_once",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "",
+          "touched_budget_class": "simple_endpoint",
+          "validator_id": ""
+        },
+        "operator_id": "f6_replan_once",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F6:02:f6_replan_twice",
+        "family": "F6",
+        "index": 2,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F6",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f6_replan_twice",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "",
+          "touched_budget_class": "simple_endpoint",
+          "validator_id": ""
+        },
+        "operator_id": "f6_replan_twice",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F6:03:f6_replan_four_times",
+        "family": "F6",
+        "index": 3,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F6",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f6_replan_four_times",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "",
+          "touched_budget_class": "simple_metadata",
+          "validator_id": ""
+        },
+        "operator_id": "f6_replan_four_times",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F6:04:f6_replan_once",
+        "family": "F6",
+        "index": 4,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F6",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f6_replan_once",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "",
+          "touched_budget_class": "simple_endpoint",
+          "validator_id": ""
+        },
+        "operator_id": "f6_replan_once",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F6:05:f6_replan_twice",
+        "family": "F6",
+        "index": 5,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F6",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f6_replan_twice",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "",
+          "touched_budget_class": "simple_endpoint",
+          "validator_id": ""
+        },
+        "operator_id": "f6_replan_twice",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F6:06:f6_replan_four_times",
+        "family": "F6",
+        "index": 6,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F6",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f6_replan_four_times",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "",
+          "touched_budget_class": "simple_metadata",
+          "validator_id": ""
+        },
+        "operator_id": "f6_replan_four_times",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F6:07:f6_replan_once",
+        "family": "F6",
+        "index": 7,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F6",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f6_replan_once",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "",
+          "touched_budget_class": "simple_endpoint",
+          "validator_id": ""
+        },
+        "operator_id": "f6_replan_once",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F6:08:f6_replan_twice",
+        "family": "F6",
+        "index": 8,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F6",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f6_replan_twice",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "",
+          "touched_budget_class": "simple_endpoint",
+          "validator_id": ""
+        },
+        "operator_id": "f6_replan_twice",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F6:09:f6_replan_four_times",
+        "family": "F6",
+        "index": 9,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F6",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f6_replan_four_times",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "",
+          "touched_budget_class": "simple_metadata",
+          "validator_id": ""
+        },
+        "operator_id": "f6_replan_four_times",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F6:10:f6_replan_once",
+        "family": "F6",
+        "index": 10,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F6",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f6_replan_once",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "",
+          "touched_budget_class": "simple_endpoint",
+          "validator_id": ""
+        },
+        "operator_id": "f6_replan_once",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F6:11:f6_replan_twice",
+        "family": "F6",
+        "index": 11,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F6",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f6_replan_twice",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "",
+          "touched_budget_class": "simple_endpoint",
+          "validator_id": ""
+        },
+        "operator_id": "f6_replan_twice",
+        "suite": "acceptance"
+      }
+    ],
     "corpus_id": "m5-core-corpus",
     "corpus_version": "2",
+    "dev_case_universe": [
+      {
+        "case_id": "dev:F1:00:f1_line_diameter_missing",
+        "family": "F1",
+        "index": 0,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F1",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f1_line_diameter_missing",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "LINE_DIAMETER_MISSING",
+          "touched_budget_class": "simple_metadata",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f1_line_diameter_missing",
+        "suite": "dev"
+      },
+      {
+        "case_id": "dev:F1:01:f1_line_medium_missing",
+        "family": "F1",
+        "index": 1,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F1",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f1_line_medium_missing",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "LINE_MEDIUM_MISSING",
+          "touched_budget_class": "simple_metadata",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f1_line_medium_missing",
+        "suite": "dev"
+      },
+      {
+        "case_id": "dev:F1:02:f1_line_name_missing",
+        "family": "F1",
+        "index": 2,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F1",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f1_line_name_missing",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "LINE_TAG_MISSING",
+          "touched_budget_class": "simple_metadata",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f1_line_name_missing",
+        "suite": "dev"
+      },
+      {
+        "case_id": "dev:F1:03:f1_line_tag_missing",
+        "family": "F1",
+        "index": 3,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F1",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f1_line_tag_missing",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "LINE_TAG_MISSING",
+          "touched_budget_class": "simple_metadata",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f1_line_tag_missing",
+        "suite": "dev"
+      },
+      {
+        "case_id": "dev:F2:00:f2_endpoint_dangling",
+        "family": "F2",
+        "index": 0,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F2",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f2_endpoint_dangling",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+          "touched_budget_class": "simple_endpoint",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f2_endpoint_dangling",
+        "suite": "dev"
+      },
+      {
+        "case_id": "dev:F2:01:f2_endpoint_dangling_both",
+        "family": "F2",
+        "index": 1,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F2",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f2_endpoint_dangling_both",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+          "touched_budget_class": "simple_endpoint",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f2_endpoint_dangling_both",
+        "suite": "dev"
+      },
+      {
+        "case_id": "dev:F2:02:f2_required_port_unconnected",
+        "family": "F2",
+        "index": 2,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F2",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f2_required_port_unconnected",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "SYMBOL_REQUIRED_PORT_UNCONNECTED",
+          "touched_budget_class": "simple_endpoint",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f2_required_port_unconnected",
+        "suite": "dev"
+      },
+      {
+        "case_id": "dev:F2:03:f2_endpoint_dangling",
+        "family": "F2",
+        "index": 3,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F2",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f2_endpoint_dangling",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+          "touched_budget_class": "simple_endpoint",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f2_endpoint_dangling",
+        "suite": "dev"
+      },
+      {
+        "case_id": "dev:F3:00:f3_delete_middle_detach",
+        "family": "F3",
+        "index": 0,
+        "operator_declaration": {
+          "base_variant": "three_valves",
+          "family": "F3",
+          "max_created_ids": 1,
+          "max_deleted_ids": 1,
+          "operator_id": "f3_delete_middle_detach",
+          "permits_creation": true,
+          "permits_deletion": true,
+          "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+          "touched_budget_class": "multi_connector",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f3_delete_middle_detach",
+        "suite": "dev"
+      },
+      {
+        "case_id": "dev:F3:01:f3_delete_middle_detach",
+        "family": "F3",
+        "index": 1,
+        "operator_declaration": {
+          "base_variant": "three_valves",
+          "family": "F3",
+          "max_created_ids": 1,
+          "max_deleted_ids": 1,
+          "operator_id": "f3_delete_middle_detach",
+          "permits_creation": true,
+          "permits_deletion": true,
+          "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+          "touched_budget_class": "multi_connector",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f3_delete_middle_detach",
+        "suite": "dev"
+      },
+      {
+        "case_id": "dev:F3:02:f3_delete_middle_detach",
+        "family": "F3",
+        "index": 2,
+        "operator_declaration": {
+          "base_variant": "three_valves",
+          "family": "F3",
+          "max_created_ids": 1,
+          "max_deleted_ids": 1,
+          "operator_id": "f3_delete_middle_detach",
+          "permits_creation": true,
+          "permits_deletion": true,
+          "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+          "touched_budget_class": "multi_connector",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f3_delete_middle_detach",
+        "suite": "dev"
+      },
+      {
+        "case_id": "dev:F3:03:f3_delete_middle_detach",
+        "family": "F3",
+        "index": 3,
+        "operator_declaration": {
+          "base_variant": "three_valves",
+          "family": "F3",
+          "max_created_ids": 1,
+          "max_deleted_ids": 1,
+          "operator_id": "f3_delete_middle_detach",
+          "permits_creation": true,
+          "permits_deletion": true,
+          "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+          "touched_budget_class": "multi_connector",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f3_delete_middle_detach",
+        "suite": "dev"
+      },
+      {
+        "case_id": "dev:F4:00:f4_micro_segment",
+        "family": "F4",
+        "index": 0,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F4",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f4_micro_segment",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "MICRO_SEGMENT",
+          "touched_budget_class": "local_geometry",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f4_micro_segment",
+        "suite": "dev"
+      },
+      {
+        "case_id": "dev:F4:01:f4_port_exit_mismatch",
+        "family": "F4",
+        "index": 1,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F4",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f4_port_exit_mismatch",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "PORT_EXIT_MISMATCH",
+          "touched_budget_class": "local_geometry",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f4_port_exit_mismatch",
+        "suite": "dev"
+      },
+      {
+        "case_id": "dev:F4:02:f4_unnecessary_bend",
+        "family": "F4",
+        "index": 2,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F4",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f4_unnecessary_bend",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "UNNECESSARY_BEND",
+          "touched_budget_class": "local_geometry",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f4_unnecessary_bend",
+        "suite": "dev"
+      },
+      {
+        "case_id": "dev:F4:03:f4_micro_segment",
+        "family": "F4",
+        "index": 3,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F4",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f4_micro_segment",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "MICRO_SEGMENT",
+          "touched_budget_class": "local_geometry",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f4_micro_segment",
+        "suite": "dev"
+      },
+      {
+        "case_id": "dev:F5:00:f5_node_overlap",
+        "family": "F5",
+        "index": 0,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F5",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f5_node_overlap",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "NODE_OVERLAP",
+          "touched_budget_class": "complex_collision",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f5_node_overlap",
+        "suite": "dev"
+      },
+      {
+        "case_id": "dev:F5:01:f5_pipe_through_equipment",
+        "family": "F5",
+        "index": 1,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F5",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f5_pipe_through_equipment",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "PIPE_THROUGH_EQUIPMENT",
+          "touched_budget_class": "complex_collision",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f5_pipe_through_equipment",
+        "suite": "dev"
+      },
+      {
+        "case_id": "dev:F5:02:f5_symbol_out_of_bounds",
+        "family": "F5",
+        "index": 2,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F5",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f5_symbol_out_of_bounds",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "SYMBOL_OUT_OF_BOUNDS",
+          "touched_budget_class": "complex_collision",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f5_symbol_out_of_bounds",
+        "suite": "dev"
+      },
+      {
+        "case_id": "dev:F5:03:f5_node_overlap",
+        "family": "F5",
+        "index": 3,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F5",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f5_node_overlap",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "NODE_OVERLAP",
+          "touched_budget_class": "complex_collision",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f5_node_overlap",
+        "suite": "dev"
+      },
+      {
+        "case_id": "dev:F6:00:f6_replan_four_times",
+        "family": "F6",
+        "index": 0,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F6",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f6_replan_four_times",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "",
+          "touched_budget_class": "simple_metadata",
+          "validator_id": ""
+        },
+        "operator_id": "f6_replan_four_times",
+        "suite": "dev"
+      },
+      {
+        "case_id": "dev:F6:01:f6_replan_once",
+        "family": "F6",
+        "index": 1,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F6",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f6_replan_once",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "",
+          "touched_budget_class": "simple_endpoint",
+          "validator_id": ""
+        },
+        "operator_id": "f6_replan_once",
+        "suite": "dev"
+      },
+      {
+        "case_id": "dev:F6:02:f6_replan_twice",
+        "family": "F6",
+        "index": 2,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F6",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f6_replan_twice",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "",
+          "touched_budget_class": "simple_endpoint",
+          "validator_id": ""
+        },
+        "operator_id": "f6_replan_twice",
+        "suite": "dev"
+      },
+      {
+        "case_id": "dev:F6:03:f6_replan_four_times",
+        "family": "F6",
+        "index": 3,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F6",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f6_replan_four_times",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "",
+          "touched_budget_class": "simple_metadata",
+          "validator_id": ""
+        },
+        "operator_id": "f6_replan_four_times",
+        "suite": "dev"
+      }
+    ],
     "dev_cases_per_family": 4,
     "families": [
       "F1",
@@ -13,113 +1845,2114 @@
       "F5",
       "F6"
     ],
-    "operator_count": 19,
-    "safety_case_count": 12,
-    "spec_version": "2",
-    "supported_codes": [
+    "operator_catalogue": [
       {
+        "base_builder_definition_identity": "unavailable: archived declarative definition only",
+        "base_variant": "standard",
         "family": "F1",
+        "max_created_ids": 0,
+        "max_deleted_ids": 0,
         "operator_id": "f1_line_diameter_missing",
+        "permits_creation": false,
+        "permits_deletion": false,
+        "producer_definition_identity": "unavailable: archived declarative definition only",
         "target_code": "LINE_DIAMETER_MISSING",
+        "touched_budget_class": "simple_metadata",
         "validator_id": "engineering-report"
       },
       {
+        "base_builder_definition_identity": "unavailable: archived declarative definition only",
+        "base_variant": "standard",
         "family": "F1",
+        "max_created_ids": 0,
+        "max_deleted_ids": 0,
         "operator_id": "f1_line_medium_missing",
+        "permits_creation": false,
+        "permits_deletion": false,
+        "producer_definition_identity": "unavailable: archived declarative definition only",
         "target_code": "LINE_MEDIUM_MISSING",
+        "touched_budget_class": "simple_metadata",
         "validator_id": "engineering-report"
       },
       {
+        "base_builder_definition_identity": "unavailable: archived declarative definition only",
+        "base_variant": "standard",
         "family": "F1",
+        "max_created_ids": 0,
+        "max_deleted_ids": 0,
         "operator_id": "f1_line_name_missing",
+        "permits_creation": false,
+        "permits_deletion": false,
+        "producer_definition_identity": "unavailable: archived declarative definition only",
         "target_code": "LINE_TAG_MISSING",
+        "touched_budget_class": "simple_metadata",
         "validator_id": "engineering-report"
       },
       {
+        "base_builder_definition_identity": "unavailable: archived declarative definition only",
+        "base_variant": "standard",
         "family": "F1",
+        "max_created_ids": 0,
+        "max_deleted_ids": 0,
         "operator_id": "f1_line_tag_missing",
+        "permits_creation": false,
+        "permits_deletion": false,
+        "producer_definition_identity": "unavailable: archived declarative definition only",
         "target_code": "LINE_TAG_MISSING",
+        "touched_budget_class": "simple_metadata",
         "validator_id": "engineering-report"
       },
       {
+        "base_builder_definition_identity": "unavailable: archived declarative definition only",
+        "base_variant": "standard",
         "family": "F1",
+        "max_created_ids": 0,
+        "max_deleted_ids": 0,
         "operator_id": "f1_symbol_tag_duplicate",
+        "permits_creation": false,
+        "permits_deletion": false,
+        "producer_definition_identity": "unavailable: archived declarative definition only",
         "target_code": "TAG_DUPLICATE",
+        "touched_budget_class": "simple_metadata",
         "validator_id": "engineering-report"
       },
       {
+        "base_builder_definition_identity": "unavailable: archived declarative definition only",
+        "base_variant": "standard",
         "family": "F1",
+        "max_created_ids": 0,
+        "max_deleted_ids": 0,
         "operator_id": "f1_symbol_tag_missing",
+        "permits_creation": false,
+        "permits_deletion": false,
+        "producer_definition_identity": "unavailable: archived declarative definition only",
         "target_code": "TAG_MISSING",
+        "touched_budget_class": "simple_metadata",
         "validator_id": "engineering-report"
       },
       {
+        "base_builder_definition_identity": "unavailable: archived declarative definition only",
+        "base_variant": "standard",
         "family": "F2",
+        "max_created_ids": 0,
+        "max_deleted_ids": 0,
         "operator_id": "f2_endpoint_dangling",
+        "permits_creation": false,
+        "permits_deletion": false,
+        "producer_definition_identity": "unavailable: archived declarative definition only",
         "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+        "touched_budget_class": "simple_endpoint",
         "validator_id": "engineering-report"
       },
       {
+        "base_builder_definition_identity": "unavailable: archived declarative definition only",
+        "base_variant": "standard",
         "family": "F2",
+        "max_created_ids": 0,
+        "max_deleted_ids": 0,
         "operator_id": "f2_endpoint_dangling_both",
+        "permits_creation": false,
+        "permits_deletion": false,
+        "producer_definition_identity": "unavailable: archived declarative definition only",
         "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+        "touched_budget_class": "simple_endpoint",
         "validator_id": "engineering-report"
       },
       {
+        "base_builder_definition_identity": "unavailable: archived declarative definition only",
+        "base_variant": "standard",
         "family": "F2",
+        "max_created_ids": 0,
+        "max_deleted_ids": 0,
         "operator_id": "f2_required_port_unconnected",
+        "permits_creation": false,
+        "permits_deletion": false,
+        "producer_definition_identity": "unavailable: archived declarative definition only",
         "target_code": "SYMBOL_REQUIRED_PORT_UNCONNECTED",
+        "touched_budget_class": "simple_endpoint",
         "validator_id": "engineering-report"
       },
       {
+        "base_builder_definition_identity": "unavailable: archived declarative definition only",
+        "base_variant": "three_valves",
         "family": "F3",
+        "max_created_ids": 1,
+        "max_deleted_ids": 1,
         "operator_id": "f3_delete_middle_detach",
+        "permits_creation": true,
+        "permits_deletion": true,
+        "producer_definition_identity": "unavailable: archived declarative definition only",
         "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+        "touched_budget_class": "multi_connector",
         "validator_id": "engineering-report"
       },
       {
+        "base_builder_definition_identity": "unavailable: archived declarative definition only",
+        "base_variant": "standard",
         "family": "F4",
+        "max_created_ids": 0,
+        "max_deleted_ids": 0,
         "operator_id": "f4_micro_segment",
+        "permits_creation": false,
+        "permits_deletion": false,
+        "producer_definition_identity": "unavailable: archived declarative definition only",
         "target_code": "MICRO_SEGMENT",
+        "touched_budget_class": "local_geometry",
         "validator_id": "diagram-quality"
       },
       {
+        "base_builder_definition_identity": "unavailable: archived declarative definition only",
+        "base_variant": "standard",
         "family": "F4",
+        "max_created_ids": 0,
+        "max_deleted_ids": 0,
         "operator_id": "f4_port_exit_mismatch",
+        "permits_creation": false,
+        "permits_deletion": false,
+        "producer_definition_identity": "unavailable: archived declarative definition only",
         "target_code": "PORT_EXIT_MISMATCH",
+        "touched_budget_class": "local_geometry",
         "validator_id": "diagram-quality"
       },
       {
+        "base_builder_definition_identity": "unavailable: archived declarative definition only",
+        "base_variant": "standard",
         "family": "F4",
+        "max_created_ids": 0,
+        "max_deleted_ids": 0,
         "operator_id": "f4_unnecessary_bend",
+        "permits_creation": false,
+        "permits_deletion": false,
+        "producer_definition_identity": "unavailable: archived declarative definition only",
         "target_code": "UNNECESSARY_BEND",
+        "touched_budget_class": "local_geometry",
         "validator_id": "diagram-quality"
       },
       {
+        "base_builder_definition_identity": "unavailable: archived declarative definition only",
+        "base_variant": "standard",
         "family": "F5",
+        "max_created_ids": 0,
+        "max_deleted_ids": 0,
         "operator_id": "f5_node_overlap",
+        "permits_creation": false,
+        "permits_deletion": false,
+        "producer_definition_identity": "unavailable: archived declarative definition only",
         "target_code": "NODE_OVERLAP",
+        "touched_budget_class": "complex_collision",
         "validator_id": "diagram-quality"
       },
       {
+        "base_builder_definition_identity": "unavailable: archived declarative definition only",
+        "base_variant": "standard",
         "family": "F5",
+        "max_created_ids": 0,
+        "max_deleted_ids": 0,
         "operator_id": "f5_pipe_through_equipment",
+        "permits_creation": false,
+        "permits_deletion": false,
+        "producer_definition_identity": "unavailable: archived declarative definition only",
         "target_code": "PIPE_THROUGH_EQUIPMENT",
+        "touched_budget_class": "complex_collision",
         "validator_id": "diagram-quality"
       },
       {
+        "base_builder_definition_identity": "unavailable: archived declarative definition only",
+        "base_variant": "standard",
         "family": "F5",
+        "max_created_ids": 0,
+        "max_deleted_ids": 0,
         "operator_id": "f5_symbol_out_of_bounds",
+        "permits_creation": false,
+        "permits_deletion": false,
+        "producer_definition_identity": "unavailable: archived declarative definition only",
         "target_code": "SYMBOL_OUT_OF_BOUNDS",
+        "touched_budget_class": "complex_collision",
         "validator_id": "diagram-quality"
+      },
+      {
+        "base_builder_definition_identity": "unavailable: archived declarative definition only",
+        "base_variant": "standard",
+        "family": "F6",
+        "max_created_ids": 0,
+        "max_deleted_ids": 0,
+        "operator_id": "f6_replan_four_times",
+        "permits_creation": false,
+        "permits_deletion": false,
+        "producer_definition_identity": "unavailable: archived declarative definition only",
+        "target_code": "",
+        "touched_budget_class": "simple_metadata",
+        "validator_id": ""
+      },
+      {
+        "base_builder_definition_identity": "unavailable: archived declarative definition only",
+        "base_variant": "standard",
+        "family": "F6",
+        "max_created_ids": 0,
+        "max_deleted_ids": 0,
+        "operator_id": "f6_replan_once",
+        "permits_creation": false,
+        "permits_deletion": false,
+        "producer_definition_identity": "unavailable: archived declarative definition only",
+        "target_code": "",
+        "touched_budget_class": "simple_endpoint",
+        "validator_id": ""
+      },
+      {
+        "base_builder_definition_identity": "unavailable: archived declarative definition only",
+        "base_variant": "standard",
+        "family": "F6",
+        "max_created_ids": 0,
+        "max_deleted_ids": 0,
+        "operator_id": "f6_replan_twice",
+        "permits_creation": false,
+        "permits_deletion": false,
+        "producer_definition_identity": "unavailable: archived declarative definition only",
+        "target_code": "",
+        "touched_budget_class": "simple_endpoint",
+        "validator_id": ""
       }
-    ]
+    ],
+    "safety_case_count": 12,
+    "spec_version": "2"
   },
   "3": {
-    "case_count": 72,
-    "cases_per_family": 12,
+    "acceptance_cases_per_family": 12,
+    "case_derivation": {
+      "rotation": "operators_for_family(family) -- sorted by operator_id -- cycled by case index",
+      "seed_digest": "sha256(material).hexdigest()[:12], read as a base-16 integer",
+      "seed_material": "spec_fingerprint(spec_version) : candidate_sha : family : index"
+    },
+    "case_universe": [
+      {
+        "case_id": "acceptance:F1:00:f1_duplicate_label",
+        "family": "F1",
+        "index": 0,
+        "operator_declaration": {
+          "base_variant": "three_valves",
+          "family": "F1",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f1_duplicate_label",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "DUPLICATE_LABEL",
+          "touched_budget_class": "simple_metadata",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f1_duplicate_label",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F1:01:f1_line_diameter_missing",
+        "family": "F1",
+        "index": 1,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F1",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f1_line_diameter_missing",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "LINE_DIAMETER_MISSING",
+          "touched_budget_class": "simple_metadata",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f1_line_diameter_missing",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F1:02:f1_line_medium_missing",
+        "family": "F1",
+        "index": 2,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F1",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f1_line_medium_missing",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "LINE_MEDIUM_MISSING",
+          "touched_budget_class": "simple_metadata",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f1_line_medium_missing",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F1:03:f1_line_name_missing",
+        "family": "F1",
+        "index": 3,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F1",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f1_line_name_missing",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "LINE_TAG_MISSING",
+          "touched_budget_class": "simple_metadata",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f1_line_name_missing",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F1:04:f1_line_tag_missing",
+        "family": "F1",
+        "index": 4,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F1",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f1_line_tag_missing",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "LINE_TAG_MISSING",
+          "touched_budget_class": "simple_metadata",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f1_line_tag_missing",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F1:05:f1_symbol_tag_duplicate",
+        "family": "F1",
+        "index": 5,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F1",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f1_symbol_tag_duplicate",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "TAG_DUPLICATE",
+          "touched_budget_class": "simple_metadata",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f1_symbol_tag_duplicate",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F1:06:f1_symbol_tag_missing",
+        "family": "F1",
+        "index": 6,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F1",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f1_symbol_tag_missing",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "TAG_MISSING",
+          "touched_budget_class": "simple_metadata",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f1_symbol_tag_missing",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F1:07:f1_duplicate_label",
+        "family": "F1",
+        "index": 7,
+        "operator_declaration": {
+          "base_variant": "three_valves",
+          "family": "F1",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f1_duplicate_label",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "DUPLICATE_LABEL",
+          "touched_budget_class": "simple_metadata",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f1_duplicate_label",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F1:08:f1_line_diameter_missing",
+        "family": "F1",
+        "index": 8,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F1",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f1_line_diameter_missing",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "LINE_DIAMETER_MISSING",
+          "touched_budget_class": "simple_metadata",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f1_line_diameter_missing",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F1:09:f1_line_medium_missing",
+        "family": "F1",
+        "index": 9,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F1",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f1_line_medium_missing",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "LINE_MEDIUM_MISSING",
+          "touched_budget_class": "simple_metadata",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f1_line_medium_missing",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F1:10:f1_line_name_missing",
+        "family": "F1",
+        "index": 10,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F1",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f1_line_name_missing",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "LINE_TAG_MISSING",
+          "touched_budget_class": "simple_metadata",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f1_line_name_missing",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F1:11:f1_line_tag_missing",
+        "family": "F1",
+        "index": 11,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F1",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f1_line_tag_missing",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "LINE_TAG_MISSING",
+          "touched_budget_class": "simple_metadata",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f1_line_tag_missing",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F2:00:f2_endpoint_dangling",
+        "family": "F2",
+        "index": 0,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F2",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f2_endpoint_dangling",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+          "touched_budget_class": "simple_endpoint",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f2_endpoint_dangling",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F2:01:f2_endpoint_dangling_both",
+        "family": "F2",
+        "index": 1,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F2",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f2_endpoint_dangling_both",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+          "touched_budget_class": "simple_endpoint",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f2_endpoint_dangling_both",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F2:02:f2_port_direction_mismatch",
+        "family": "F2",
+        "index": 2,
+        "operator_declaration": {
+          "base_variant": "three_valves",
+          "family": "F2",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f2_port_direction_mismatch",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "PORT_DIRECTION_MISMATCH",
+          "touched_budget_class": "simple_endpoint",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f2_port_direction_mismatch",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F2:03:f2_required_port_unconnected",
+        "family": "F2",
+        "index": 3,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F2",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f2_required_port_unconnected",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "SYMBOL_REQUIRED_PORT_UNCONNECTED",
+          "touched_budget_class": "simple_endpoint",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f2_required_port_unconnected",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F2:04:f2_endpoint_dangling",
+        "family": "F2",
+        "index": 4,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F2",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f2_endpoint_dangling",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+          "touched_budget_class": "simple_endpoint",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f2_endpoint_dangling",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F2:05:f2_endpoint_dangling_both",
+        "family": "F2",
+        "index": 5,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F2",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f2_endpoint_dangling_both",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+          "touched_budget_class": "simple_endpoint",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f2_endpoint_dangling_both",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F2:06:f2_port_direction_mismatch",
+        "family": "F2",
+        "index": 6,
+        "operator_declaration": {
+          "base_variant": "three_valves",
+          "family": "F2",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f2_port_direction_mismatch",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "PORT_DIRECTION_MISMATCH",
+          "touched_budget_class": "simple_endpoint",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f2_port_direction_mismatch",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F2:07:f2_required_port_unconnected",
+        "family": "F2",
+        "index": 7,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F2",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f2_required_port_unconnected",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "SYMBOL_REQUIRED_PORT_UNCONNECTED",
+          "touched_budget_class": "simple_endpoint",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f2_required_port_unconnected",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F2:08:f2_endpoint_dangling",
+        "family": "F2",
+        "index": 8,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F2",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f2_endpoint_dangling",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+          "touched_budget_class": "simple_endpoint",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f2_endpoint_dangling",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F2:09:f2_endpoint_dangling_both",
+        "family": "F2",
+        "index": 9,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F2",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f2_endpoint_dangling_both",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+          "touched_budget_class": "simple_endpoint",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f2_endpoint_dangling_both",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F2:10:f2_port_direction_mismatch",
+        "family": "F2",
+        "index": 10,
+        "operator_declaration": {
+          "base_variant": "three_valves",
+          "family": "F2",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f2_port_direction_mismatch",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "PORT_DIRECTION_MISMATCH",
+          "touched_budget_class": "simple_endpoint",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f2_port_direction_mismatch",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F2:11:f2_required_port_unconnected",
+        "family": "F2",
+        "index": 11,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F2",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f2_required_port_unconnected",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "SYMBOL_REQUIRED_PORT_UNCONNECTED",
+          "touched_budget_class": "simple_endpoint",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f2_required_port_unconnected",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F3:00:f3_delete_middle_detach",
+        "family": "F3",
+        "index": 0,
+        "operator_declaration": {
+          "base_variant": "three_valves",
+          "family": "F3",
+          "max_created_ids": 1,
+          "max_deleted_ids": 1,
+          "operator_id": "f3_delete_middle_detach",
+          "permits_creation": true,
+          "permits_deletion": true,
+          "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+          "touched_budget_class": "multi_connector",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f3_delete_middle_detach",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F3:01:f3_delete_middle_detach",
+        "family": "F3",
+        "index": 1,
+        "operator_declaration": {
+          "base_variant": "three_valves",
+          "family": "F3",
+          "max_created_ids": 1,
+          "max_deleted_ids": 1,
+          "operator_id": "f3_delete_middle_detach",
+          "permits_creation": true,
+          "permits_deletion": true,
+          "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+          "touched_budget_class": "multi_connector",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f3_delete_middle_detach",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F3:02:f3_delete_middle_detach",
+        "family": "F3",
+        "index": 2,
+        "operator_declaration": {
+          "base_variant": "three_valves",
+          "family": "F3",
+          "max_created_ids": 1,
+          "max_deleted_ids": 1,
+          "operator_id": "f3_delete_middle_detach",
+          "permits_creation": true,
+          "permits_deletion": true,
+          "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+          "touched_budget_class": "multi_connector",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f3_delete_middle_detach",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F3:03:f3_delete_middle_detach",
+        "family": "F3",
+        "index": 3,
+        "operator_declaration": {
+          "base_variant": "three_valves",
+          "family": "F3",
+          "max_created_ids": 1,
+          "max_deleted_ids": 1,
+          "operator_id": "f3_delete_middle_detach",
+          "permits_creation": true,
+          "permits_deletion": true,
+          "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+          "touched_budget_class": "multi_connector",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f3_delete_middle_detach",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F3:04:f3_delete_middle_detach",
+        "family": "F3",
+        "index": 4,
+        "operator_declaration": {
+          "base_variant": "three_valves",
+          "family": "F3",
+          "max_created_ids": 1,
+          "max_deleted_ids": 1,
+          "operator_id": "f3_delete_middle_detach",
+          "permits_creation": true,
+          "permits_deletion": true,
+          "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+          "touched_budget_class": "multi_connector",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f3_delete_middle_detach",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F3:05:f3_delete_middle_detach",
+        "family": "F3",
+        "index": 5,
+        "operator_declaration": {
+          "base_variant": "three_valves",
+          "family": "F3",
+          "max_created_ids": 1,
+          "max_deleted_ids": 1,
+          "operator_id": "f3_delete_middle_detach",
+          "permits_creation": true,
+          "permits_deletion": true,
+          "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+          "touched_budget_class": "multi_connector",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f3_delete_middle_detach",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F3:06:f3_delete_middle_detach",
+        "family": "F3",
+        "index": 6,
+        "operator_declaration": {
+          "base_variant": "three_valves",
+          "family": "F3",
+          "max_created_ids": 1,
+          "max_deleted_ids": 1,
+          "operator_id": "f3_delete_middle_detach",
+          "permits_creation": true,
+          "permits_deletion": true,
+          "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+          "touched_budget_class": "multi_connector",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f3_delete_middle_detach",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F3:07:f3_delete_middle_detach",
+        "family": "F3",
+        "index": 7,
+        "operator_declaration": {
+          "base_variant": "three_valves",
+          "family": "F3",
+          "max_created_ids": 1,
+          "max_deleted_ids": 1,
+          "operator_id": "f3_delete_middle_detach",
+          "permits_creation": true,
+          "permits_deletion": true,
+          "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+          "touched_budget_class": "multi_connector",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f3_delete_middle_detach",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F3:08:f3_delete_middle_detach",
+        "family": "F3",
+        "index": 8,
+        "operator_declaration": {
+          "base_variant": "three_valves",
+          "family": "F3",
+          "max_created_ids": 1,
+          "max_deleted_ids": 1,
+          "operator_id": "f3_delete_middle_detach",
+          "permits_creation": true,
+          "permits_deletion": true,
+          "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+          "touched_budget_class": "multi_connector",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f3_delete_middle_detach",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F3:09:f3_delete_middle_detach",
+        "family": "F3",
+        "index": 9,
+        "operator_declaration": {
+          "base_variant": "three_valves",
+          "family": "F3",
+          "max_created_ids": 1,
+          "max_deleted_ids": 1,
+          "operator_id": "f3_delete_middle_detach",
+          "permits_creation": true,
+          "permits_deletion": true,
+          "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+          "touched_budget_class": "multi_connector",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f3_delete_middle_detach",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F3:10:f3_delete_middle_detach",
+        "family": "F3",
+        "index": 10,
+        "operator_declaration": {
+          "base_variant": "three_valves",
+          "family": "F3",
+          "max_created_ids": 1,
+          "max_deleted_ids": 1,
+          "operator_id": "f3_delete_middle_detach",
+          "permits_creation": true,
+          "permits_deletion": true,
+          "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+          "touched_budget_class": "multi_connector",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f3_delete_middle_detach",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F3:11:f3_delete_middle_detach",
+        "family": "F3",
+        "index": 11,
+        "operator_declaration": {
+          "base_variant": "three_valves",
+          "family": "F3",
+          "max_created_ids": 1,
+          "max_deleted_ids": 1,
+          "operator_id": "f3_delete_middle_detach",
+          "permits_creation": true,
+          "permits_deletion": true,
+          "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+          "touched_budget_class": "multi_connector",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f3_delete_middle_detach",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F4:00:f4_micro_segment",
+        "family": "F4",
+        "index": 0,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F4",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f4_micro_segment",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "MICRO_SEGMENT",
+          "touched_budget_class": "local_geometry",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f4_micro_segment",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F4:01:f4_port_exit_mismatch",
+        "family": "F4",
+        "index": 1,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F4",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f4_port_exit_mismatch",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "PORT_EXIT_MISMATCH",
+          "touched_budget_class": "local_geometry",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f4_port_exit_mismatch",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F4:02:f4_unbridged_crossing",
+        "family": "F4",
+        "index": 2,
+        "operator_declaration": {
+          "base_variant": "three_valves+crossing",
+          "family": "F4",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f4_unbridged_crossing",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "UNBRIDGED_CROSSING",
+          "touched_budget_class": "local_geometry",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f4_unbridged_crossing",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F4:03:f4_unnecessary_bend",
+        "family": "F4",
+        "index": 3,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F4",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f4_unnecessary_bend",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "UNNECESSARY_BEND",
+          "touched_budget_class": "local_geometry",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f4_unnecessary_bend",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F4:04:f4_micro_segment",
+        "family": "F4",
+        "index": 4,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F4",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f4_micro_segment",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "MICRO_SEGMENT",
+          "touched_budget_class": "local_geometry",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f4_micro_segment",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F4:05:f4_port_exit_mismatch",
+        "family": "F4",
+        "index": 5,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F4",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f4_port_exit_mismatch",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "PORT_EXIT_MISMATCH",
+          "touched_budget_class": "local_geometry",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f4_port_exit_mismatch",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F4:06:f4_unbridged_crossing",
+        "family": "F4",
+        "index": 6,
+        "operator_declaration": {
+          "base_variant": "three_valves+crossing",
+          "family": "F4",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f4_unbridged_crossing",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "UNBRIDGED_CROSSING",
+          "touched_budget_class": "local_geometry",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f4_unbridged_crossing",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F4:07:f4_unnecessary_bend",
+        "family": "F4",
+        "index": 7,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F4",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f4_unnecessary_bend",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "UNNECESSARY_BEND",
+          "touched_budget_class": "local_geometry",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f4_unnecessary_bend",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F4:08:f4_micro_segment",
+        "family": "F4",
+        "index": 8,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F4",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f4_micro_segment",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "MICRO_SEGMENT",
+          "touched_budget_class": "local_geometry",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f4_micro_segment",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F4:09:f4_port_exit_mismatch",
+        "family": "F4",
+        "index": 9,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F4",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f4_port_exit_mismatch",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "PORT_EXIT_MISMATCH",
+          "touched_budget_class": "local_geometry",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f4_port_exit_mismatch",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F4:10:f4_unbridged_crossing",
+        "family": "F4",
+        "index": 10,
+        "operator_declaration": {
+          "base_variant": "three_valves+crossing",
+          "family": "F4",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f4_unbridged_crossing",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "UNBRIDGED_CROSSING",
+          "touched_budget_class": "local_geometry",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f4_unbridged_crossing",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F4:11:f4_unnecessary_bend",
+        "family": "F4",
+        "index": 11,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F4",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f4_unnecessary_bend",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "UNNECESSARY_BEND",
+          "touched_budget_class": "local_geometry",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f4_unnecessary_bend",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F5:00:f5_annotation_overlap",
+        "family": "F5",
+        "index": 0,
+        "operator_declaration": {
+          "base_variant": "three_valves",
+          "family": "F5",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f5_annotation_overlap",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "ANNOTATION_OVERLAP",
+          "touched_budget_class": "local_geometry",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f5_annotation_overlap",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F5:01:f5_node_overlap",
+        "family": "F5",
+        "index": 1,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F5",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f5_node_overlap",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "NODE_OVERLAP",
+          "touched_budget_class": "complex_collision",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f5_node_overlap",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F5:02:f5_pipe_through_equipment",
+        "family": "F5",
+        "index": 2,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F5",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f5_pipe_through_equipment",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "PIPE_THROUGH_EQUIPMENT",
+          "touched_budget_class": "complex_collision",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f5_pipe_through_equipment",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F5:03:f5_symbol_out_of_bounds",
+        "family": "F5",
+        "index": 3,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F5",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f5_symbol_out_of_bounds",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "SYMBOL_OUT_OF_BOUNDS",
+          "touched_budget_class": "complex_collision",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f5_symbol_out_of_bounds",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F5:04:f5_annotation_overlap",
+        "family": "F5",
+        "index": 4,
+        "operator_declaration": {
+          "base_variant": "three_valves",
+          "family": "F5",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f5_annotation_overlap",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "ANNOTATION_OVERLAP",
+          "touched_budget_class": "local_geometry",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f5_annotation_overlap",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F5:05:f5_node_overlap",
+        "family": "F5",
+        "index": 5,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F5",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f5_node_overlap",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "NODE_OVERLAP",
+          "touched_budget_class": "complex_collision",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f5_node_overlap",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F5:06:f5_pipe_through_equipment",
+        "family": "F5",
+        "index": 6,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F5",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f5_pipe_through_equipment",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "PIPE_THROUGH_EQUIPMENT",
+          "touched_budget_class": "complex_collision",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f5_pipe_through_equipment",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F5:07:f5_symbol_out_of_bounds",
+        "family": "F5",
+        "index": 7,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F5",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f5_symbol_out_of_bounds",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "SYMBOL_OUT_OF_BOUNDS",
+          "touched_budget_class": "complex_collision",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f5_symbol_out_of_bounds",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F5:08:f5_annotation_overlap",
+        "family": "F5",
+        "index": 8,
+        "operator_declaration": {
+          "base_variant": "three_valves",
+          "family": "F5",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f5_annotation_overlap",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "ANNOTATION_OVERLAP",
+          "touched_budget_class": "local_geometry",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f5_annotation_overlap",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F5:09:f5_node_overlap",
+        "family": "F5",
+        "index": 9,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F5",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f5_node_overlap",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "NODE_OVERLAP",
+          "touched_budget_class": "complex_collision",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f5_node_overlap",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F5:10:f5_pipe_through_equipment",
+        "family": "F5",
+        "index": 10,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F5",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f5_pipe_through_equipment",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "PIPE_THROUGH_EQUIPMENT",
+          "touched_budget_class": "complex_collision",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f5_pipe_through_equipment",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F5:11:f5_symbol_out_of_bounds",
+        "family": "F5",
+        "index": 11,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F5",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f5_symbol_out_of_bounds",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "SYMBOL_OUT_OF_BOUNDS",
+          "touched_budget_class": "complex_collision",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f5_symbol_out_of_bounds",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F6:00:f6_replan_four_times",
+        "family": "F6",
+        "index": 0,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F6",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f6_replan_four_times",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "",
+          "touched_budget_class": "simple_metadata",
+          "validator_id": ""
+        },
+        "operator_id": "f6_replan_four_times",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F6:01:f6_replan_once",
+        "family": "F6",
+        "index": 1,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F6",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f6_replan_once",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "",
+          "touched_budget_class": "simple_endpoint",
+          "validator_id": ""
+        },
+        "operator_id": "f6_replan_once",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F6:02:f6_replan_twice",
+        "family": "F6",
+        "index": 2,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F6",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f6_replan_twice",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "",
+          "touched_budget_class": "simple_endpoint",
+          "validator_id": ""
+        },
+        "operator_id": "f6_replan_twice",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F6:03:f6_replan_four_times",
+        "family": "F6",
+        "index": 3,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F6",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f6_replan_four_times",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "",
+          "touched_budget_class": "simple_metadata",
+          "validator_id": ""
+        },
+        "operator_id": "f6_replan_four_times",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F6:04:f6_replan_once",
+        "family": "F6",
+        "index": 4,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F6",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f6_replan_once",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "",
+          "touched_budget_class": "simple_endpoint",
+          "validator_id": ""
+        },
+        "operator_id": "f6_replan_once",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F6:05:f6_replan_twice",
+        "family": "F6",
+        "index": 5,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F6",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f6_replan_twice",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "",
+          "touched_budget_class": "simple_endpoint",
+          "validator_id": ""
+        },
+        "operator_id": "f6_replan_twice",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F6:06:f6_replan_four_times",
+        "family": "F6",
+        "index": 6,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F6",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f6_replan_four_times",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "",
+          "touched_budget_class": "simple_metadata",
+          "validator_id": ""
+        },
+        "operator_id": "f6_replan_four_times",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F6:07:f6_replan_once",
+        "family": "F6",
+        "index": 7,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F6",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f6_replan_once",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "",
+          "touched_budget_class": "simple_endpoint",
+          "validator_id": ""
+        },
+        "operator_id": "f6_replan_once",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F6:08:f6_replan_twice",
+        "family": "F6",
+        "index": 8,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F6",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f6_replan_twice",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "",
+          "touched_budget_class": "simple_endpoint",
+          "validator_id": ""
+        },
+        "operator_id": "f6_replan_twice",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F6:09:f6_replan_four_times",
+        "family": "F6",
+        "index": 9,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F6",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f6_replan_four_times",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "",
+          "touched_budget_class": "simple_metadata",
+          "validator_id": ""
+        },
+        "operator_id": "f6_replan_four_times",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F6:10:f6_replan_once",
+        "family": "F6",
+        "index": 10,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F6",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f6_replan_once",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "",
+          "touched_budget_class": "simple_endpoint",
+          "validator_id": ""
+        },
+        "operator_id": "f6_replan_once",
+        "suite": "acceptance"
+      },
+      {
+        "case_id": "acceptance:F6:11:f6_replan_twice",
+        "family": "F6",
+        "index": 11,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F6",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f6_replan_twice",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "",
+          "touched_budget_class": "simple_endpoint",
+          "validator_id": ""
+        },
+        "operator_id": "f6_replan_twice",
+        "suite": "acceptance"
+      }
+    ],
     "corpus_id": "m5-core-corpus",
     "corpus_version": "3",
+    "dev_case_universe": [
+      {
+        "case_id": "dev:F1:00:f1_duplicate_label",
+        "family": "F1",
+        "index": 0,
+        "operator_declaration": {
+          "base_variant": "three_valves",
+          "family": "F1",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f1_duplicate_label",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "DUPLICATE_LABEL",
+          "touched_budget_class": "simple_metadata",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f1_duplicate_label",
+        "suite": "dev"
+      },
+      {
+        "case_id": "dev:F1:01:f1_line_diameter_missing",
+        "family": "F1",
+        "index": 1,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F1",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f1_line_diameter_missing",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "LINE_DIAMETER_MISSING",
+          "touched_budget_class": "simple_metadata",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f1_line_diameter_missing",
+        "suite": "dev"
+      },
+      {
+        "case_id": "dev:F1:02:f1_line_medium_missing",
+        "family": "F1",
+        "index": 2,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F1",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f1_line_medium_missing",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "LINE_MEDIUM_MISSING",
+          "touched_budget_class": "simple_metadata",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f1_line_medium_missing",
+        "suite": "dev"
+      },
+      {
+        "case_id": "dev:F1:03:f1_line_name_missing",
+        "family": "F1",
+        "index": 3,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F1",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f1_line_name_missing",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "LINE_TAG_MISSING",
+          "touched_budget_class": "simple_metadata",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f1_line_name_missing",
+        "suite": "dev"
+      },
+      {
+        "case_id": "dev:F2:00:f2_endpoint_dangling",
+        "family": "F2",
+        "index": 0,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F2",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f2_endpoint_dangling",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+          "touched_budget_class": "simple_endpoint",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f2_endpoint_dangling",
+        "suite": "dev"
+      },
+      {
+        "case_id": "dev:F2:01:f2_endpoint_dangling_both",
+        "family": "F2",
+        "index": 1,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F2",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f2_endpoint_dangling_both",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+          "touched_budget_class": "simple_endpoint",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f2_endpoint_dangling_both",
+        "suite": "dev"
+      },
+      {
+        "case_id": "dev:F2:02:f2_port_direction_mismatch",
+        "family": "F2",
+        "index": 2,
+        "operator_declaration": {
+          "base_variant": "three_valves",
+          "family": "F2",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f2_port_direction_mismatch",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "PORT_DIRECTION_MISMATCH",
+          "touched_budget_class": "simple_endpoint",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f2_port_direction_mismatch",
+        "suite": "dev"
+      },
+      {
+        "case_id": "dev:F2:03:f2_required_port_unconnected",
+        "family": "F2",
+        "index": 3,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F2",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f2_required_port_unconnected",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "SYMBOL_REQUIRED_PORT_UNCONNECTED",
+          "touched_budget_class": "simple_endpoint",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f2_required_port_unconnected",
+        "suite": "dev"
+      },
+      {
+        "case_id": "dev:F3:00:f3_delete_middle_detach",
+        "family": "F3",
+        "index": 0,
+        "operator_declaration": {
+          "base_variant": "three_valves",
+          "family": "F3",
+          "max_created_ids": 1,
+          "max_deleted_ids": 1,
+          "operator_id": "f3_delete_middle_detach",
+          "permits_creation": true,
+          "permits_deletion": true,
+          "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+          "touched_budget_class": "multi_connector",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f3_delete_middle_detach",
+        "suite": "dev"
+      },
+      {
+        "case_id": "dev:F3:01:f3_delete_middle_detach",
+        "family": "F3",
+        "index": 1,
+        "operator_declaration": {
+          "base_variant": "three_valves",
+          "family": "F3",
+          "max_created_ids": 1,
+          "max_deleted_ids": 1,
+          "operator_id": "f3_delete_middle_detach",
+          "permits_creation": true,
+          "permits_deletion": true,
+          "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+          "touched_budget_class": "multi_connector",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f3_delete_middle_detach",
+        "suite": "dev"
+      },
+      {
+        "case_id": "dev:F3:02:f3_delete_middle_detach",
+        "family": "F3",
+        "index": 2,
+        "operator_declaration": {
+          "base_variant": "three_valves",
+          "family": "F3",
+          "max_created_ids": 1,
+          "max_deleted_ids": 1,
+          "operator_id": "f3_delete_middle_detach",
+          "permits_creation": true,
+          "permits_deletion": true,
+          "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+          "touched_budget_class": "multi_connector",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f3_delete_middle_detach",
+        "suite": "dev"
+      },
+      {
+        "case_id": "dev:F3:03:f3_delete_middle_detach",
+        "family": "F3",
+        "index": 3,
+        "operator_declaration": {
+          "base_variant": "three_valves",
+          "family": "F3",
+          "max_created_ids": 1,
+          "max_deleted_ids": 1,
+          "operator_id": "f3_delete_middle_detach",
+          "permits_creation": true,
+          "permits_deletion": true,
+          "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+          "touched_budget_class": "multi_connector",
+          "validator_id": "engineering-report"
+        },
+        "operator_id": "f3_delete_middle_detach",
+        "suite": "dev"
+      },
+      {
+        "case_id": "dev:F4:00:f4_micro_segment",
+        "family": "F4",
+        "index": 0,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F4",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f4_micro_segment",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "MICRO_SEGMENT",
+          "touched_budget_class": "local_geometry",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f4_micro_segment",
+        "suite": "dev"
+      },
+      {
+        "case_id": "dev:F4:01:f4_port_exit_mismatch",
+        "family": "F4",
+        "index": 1,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F4",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f4_port_exit_mismatch",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "PORT_EXIT_MISMATCH",
+          "touched_budget_class": "local_geometry",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f4_port_exit_mismatch",
+        "suite": "dev"
+      },
+      {
+        "case_id": "dev:F4:02:f4_unbridged_crossing",
+        "family": "F4",
+        "index": 2,
+        "operator_declaration": {
+          "base_variant": "three_valves+crossing",
+          "family": "F4",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f4_unbridged_crossing",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "UNBRIDGED_CROSSING",
+          "touched_budget_class": "local_geometry",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f4_unbridged_crossing",
+        "suite": "dev"
+      },
+      {
+        "case_id": "dev:F4:03:f4_unnecessary_bend",
+        "family": "F4",
+        "index": 3,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F4",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f4_unnecessary_bend",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "UNNECESSARY_BEND",
+          "touched_budget_class": "local_geometry",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f4_unnecessary_bend",
+        "suite": "dev"
+      },
+      {
+        "case_id": "dev:F5:00:f5_annotation_overlap",
+        "family": "F5",
+        "index": 0,
+        "operator_declaration": {
+          "base_variant": "three_valves",
+          "family": "F5",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f5_annotation_overlap",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "ANNOTATION_OVERLAP",
+          "touched_budget_class": "local_geometry",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f5_annotation_overlap",
+        "suite": "dev"
+      },
+      {
+        "case_id": "dev:F5:01:f5_node_overlap",
+        "family": "F5",
+        "index": 1,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F5",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f5_node_overlap",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "NODE_OVERLAP",
+          "touched_budget_class": "complex_collision",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f5_node_overlap",
+        "suite": "dev"
+      },
+      {
+        "case_id": "dev:F5:02:f5_pipe_through_equipment",
+        "family": "F5",
+        "index": 2,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F5",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f5_pipe_through_equipment",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "PIPE_THROUGH_EQUIPMENT",
+          "touched_budget_class": "complex_collision",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f5_pipe_through_equipment",
+        "suite": "dev"
+      },
+      {
+        "case_id": "dev:F5:03:f5_symbol_out_of_bounds",
+        "family": "F5",
+        "index": 3,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F5",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f5_symbol_out_of_bounds",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "SYMBOL_OUT_OF_BOUNDS",
+          "touched_budget_class": "complex_collision",
+          "validator_id": "diagram-quality"
+        },
+        "operator_id": "f5_symbol_out_of_bounds",
+        "suite": "dev"
+      },
+      {
+        "case_id": "dev:F6:00:f6_replan_four_times",
+        "family": "F6",
+        "index": 0,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F6",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f6_replan_four_times",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "",
+          "touched_budget_class": "simple_metadata",
+          "validator_id": ""
+        },
+        "operator_id": "f6_replan_four_times",
+        "suite": "dev"
+      },
+      {
+        "case_id": "dev:F6:01:f6_replan_once",
+        "family": "F6",
+        "index": 1,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F6",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f6_replan_once",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "",
+          "touched_budget_class": "simple_endpoint",
+          "validator_id": ""
+        },
+        "operator_id": "f6_replan_once",
+        "suite": "dev"
+      },
+      {
+        "case_id": "dev:F6:02:f6_replan_twice",
+        "family": "F6",
+        "index": 2,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F6",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f6_replan_twice",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "",
+          "touched_budget_class": "simple_endpoint",
+          "validator_id": ""
+        },
+        "operator_id": "f6_replan_twice",
+        "suite": "dev"
+      },
+      {
+        "case_id": "dev:F6:03:f6_replan_four_times",
+        "family": "F6",
+        "index": 3,
+        "operator_declaration": {
+          "base_variant": "standard",
+          "family": "F6",
+          "max_created_ids": 0,
+          "max_deleted_ids": 0,
+          "operator_id": "f6_replan_four_times",
+          "permits_creation": false,
+          "permits_deletion": false,
+          "target_code": "",
+          "touched_budget_class": "simple_metadata",
+          "validator_id": ""
+        },
+        "operator_id": "f6_replan_four_times",
+        "suite": "dev"
+      }
+    ],
     "dev_cases_per_family": 4,
     "families": [
       "F1",
@@ -129,130 +3962,331 @@
       "F5",
       "F6"
     ],
-    "operator_count": 23,
-    "safety_case_count": 12,
-    "spec_version": "3",
-    "supported_codes": [
+    "operator_catalogue": [
       {
+        "base_builder_definition_identity": "0f67303af32d0c71d43fce8c04dd8d014dd3d0d2dcdbff4ef38bc61ab1d1f521",
+        "base_variant": "three_valves",
         "family": "F1",
+        "max_created_ids": 0,
+        "max_deleted_ids": 0,
         "operator_id": "f1_duplicate_label",
+        "permits_creation": false,
+        "permits_deletion": false,
+        "producer_definition_identity": "f926171ab42747cb7896da524f080649118a9679632f230a07dcd84751ac2c8d",
         "target_code": "DUPLICATE_LABEL",
+        "touched_budget_class": "simple_metadata",
         "validator_id": "diagram-quality"
       },
       {
+        "base_builder_definition_identity": "",
+        "base_variant": "standard",
         "family": "F1",
+        "max_created_ids": 0,
+        "max_deleted_ids": 0,
         "operator_id": "f1_line_diameter_missing",
+        "permits_creation": false,
+        "permits_deletion": false,
+        "producer_definition_identity": "3b49046690b221d75875489490f8d5841cca2baaf530fd714d4e2c7a2c261277",
         "target_code": "LINE_DIAMETER_MISSING",
+        "touched_budget_class": "simple_metadata",
         "validator_id": "engineering-report"
       },
       {
+        "base_builder_definition_identity": "",
+        "base_variant": "standard",
         "family": "F1",
+        "max_created_ids": 0,
+        "max_deleted_ids": 0,
         "operator_id": "f1_line_medium_missing",
+        "permits_creation": false,
+        "permits_deletion": false,
+        "producer_definition_identity": "f73fae3c850599b0ce861d2732a42131beb2edaa6d7cdad6211cf31e0bd3831d",
         "target_code": "LINE_MEDIUM_MISSING",
+        "touched_budget_class": "simple_metadata",
         "validator_id": "engineering-report"
       },
       {
+        "base_builder_definition_identity": "",
+        "base_variant": "standard",
         "family": "F1",
+        "max_created_ids": 0,
+        "max_deleted_ids": 0,
         "operator_id": "f1_line_name_missing",
+        "permits_creation": false,
+        "permits_deletion": false,
+        "producer_definition_identity": "bb6c5e92cafbc3408dd2679d9df2ceeb039c4207c6007e69e2dc3b043696d80c",
         "target_code": "LINE_TAG_MISSING",
+        "touched_budget_class": "simple_metadata",
         "validator_id": "engineering-report"
       },
       {
+        "base_builder_definition_identity": "",
+        "base_variant": "standard",
         "family": "F1",
+        "max_created_ids": 0,
+        "max_deleted_ids": 0,
         "operator_id": "f1_line_tag_missing",
+        "permits_creation": false,
+        "permits_deletion": false,
+        "producer_definition_identity": "ddf5ee843a67e1f823d8fa64de08b9e39f09828e536805488780f05cc242a1c5",
         "target_code": "LINE_TAG_MISSING",
+        "touched_budget_class": "simple_metadata",
         "validator_id": "engineering-report"
       },
       {
+        "base_builder_definition_identity": "",
+        "base_variant": "standard",
         "family": "F1",
+        "max_created_ids": 0,
+        "max_deleted_ids": 0,
         "operator_id": "f1_symbol_tag_duplicate",
+        "permits_creation": false,
+        "permits_deletion": false,
+        "producer_definition_identity": "55959be476cb0f340143ad7e38d289e1b783bb3dbe8840bfcc25ffe03fc46a90",
         "target_code": "TAG_DUPLICATE",
+        "touched_budget_class": "simple_metadata",
         "validator_id": "engineering-report"
       },
       {
+        "base_builder_definition_identity": "",
+        "base_variant": "standard",
         "family": "F1",
+        "max_created_ids": 0,
+        "max_deleted_ids": 0,
         "operator_id": "f1_symbol_tag_missing",
+        "permits_creation": false,
+        "permits_deletion": false,
+        "producer_definition_identity": "c1b5d63f2216944759c228a2850a42b79f6ff727994f13773da46b1c9958e7eb",
         "target_code": "TAG_MISSING",
+        "touched_budget_class": "simple_metadata",
         "validator_id": "engineering-report"
       },
       {
+        "base_builder_definition_identity": "",
+        "base_variant": "standard",
         "family": "F2",
+        "max_created_ids": 0,
+        "max_deleted_ids": 0,
         "operator_id": "f2_endpoint_dangling",
+        "permits_creation": false,
+        "permits_deletion": false,
+        "producer_definition_identity": "d7e6a880d018c77a525f4ba443cdf5dbb03022d63d459700d24acb5072ff235e",
         "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+        "touched_budget_class": "simple_endpoint",
         "validator_id": "engineering-report"
       },
       {
+        "base_builder_definition_identity": "",
+        "base_variant": "standard",
         "family": "F2",
+        "max_created_ids": 0,
+        "max_deleted_ids": 0,
         "operator_id": "f2_endpoint_dangling_both",
+        "permits_creation": false,
+        "permits_deletion": false,
+        "producer_definition_identity": "8fa7dbae0c794a93075cbbcffa5a3f8b916d5552b36bcd6760d52f9072948bdb",
         "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+        "touched_budget_class": "simple_endpoint",
         "validator_id": "engineering-report"
       },
       {
+        "base_builder_definition_identity": "0f67303af32d0c71d43fce8c04dd8d014dd3d0d2dcdbff4ef38bc61ab1d1f521",
+        "base_variant": "three_valves",
         "family": "F2",
+        "max_created_ids": 0,
+        "max_deleted_ids": 0,
         "operator_id": "f2_port_direction_mismatch",
+        "permits_creation": false,
+        "permits_deletion": false,
+        "producer_definition_identity": "aa82b940b5b53d1e7b0aa2e683090dc88b43f26b7781ca1fdebdceb1c5a79b18",
         "target_code": "PORT_DIRECTION_MISMATCH",
+        "touched_budget_class": "simple_endpoint",
         "validator_id": "diagram-quality"
       },
       {
+        "base_builder_definition_identity": "",
+        "base_variant": "standard",
         "family": "F2",
+        "max_created_ids": 0,
+        "max_deleted_ids": 0,
         "operator_id": "f2_required_port_unconnected",
+        "permits_creation": false,
+        "permits_deletion": false,
+        "producer_definition_identity": "e98186b9acc037ed8f161574ecd63cb4c580177b4eaa48cc7ea4b465af40e8f4",
         "target_code": "SYMBOL_REQUIRED_PORT_UNCONNECTED",
+        "touched_budget_class": "simple_endpoint",
         "validator_id": "engineering-report"
       },
       {
+        "base_builder_definition_identity": "0f67303af32d0c71d43fce8c04dd8d014dd3d0d2dcdbff4ef38bc61ab1d1f521",
+        "base_variant": "three_valves",
         "family": "F3",
+        "max_created_ids": 1,
+        "max_deleted_ids": 1,
         "operator_id": "f3_delete_middle_detach",
+        "permits_creation": true,
+        "permits_deletion": true,
+        "producer_definition_identity": "adae91cbed998ec6365481bbda8e216083bf35a49ce29e4c4735dbaa336a1d1d",
         "target_code": "CONNECTOR_ENDPOINT_DANGLING",
+        "touched_budget_class": "multi_connector",
         "validator_id": "engineering-report"
       },
       {
+        "base_builder_definition_identity": "",
+        "base_variant": "standard",
         "family": "F4",
+        "max_created_ids": 0,
+        "max_deleted_ids": 0,
         "operator_id": "f4_micro_segment",
+        "permits_creation": false,
+        "permits_deletion": false,
+        "producer_definition_identity": "22163549177f7a92c6b9a82ea0bba60b5e5f18e11236ee24b5b29d7cb5ed002f",
         "target_code": "MICRO_SEGMENT",
+        "touched_budget_class": "local_geometry",
         "validator_id": "diagram-quality"
       },
       {
+        "base_builder_definition_identity": "",
+        "base_variant": "standard",
         "family": "F4",
+        "max_created_ids": 0,
+        "max_deleted_ids": 0,
         "operator_id": "f4_port_exit_mismatch",
+        "permits_creation": false,
+        "permits_deletion": false,
+        "producer_definition_identity": "f64818d94fab4f9c018f92ac05dbcff8ddb25db0d1083dc378cd75c2b08e8809",
         "target_code": "PORT_EXIT_MISMATCH",
+        "touched_budget_class": "local_geometry",
         "validator_id": "diagram-quality"
       },
       {
+        "base_builder_definition_identity": "3d60000a2974be6d188e0f951c57a7d7fb8431d18e844d855bfd65eeae4af50c",
+        "base_variant": "three_valves+crossing",
         "family": "F4",
+        "max_created_ids": 0,
+        "max_deleted_ids": 0,
         "operator_id": "f4_unbridged_crossing",
+        "permits_creation": false,
+        "permits_deletion": false,
+        "producer_definition_identity": "3d08e74f6c8884b42b10acc21bd2c9207ecdfae50c9acccb387b467fdc76991e",
         "target_code": "UNBRIDGED_CROSSING",
+        "touched_budget_class": "local_geometry",
         "validator_id": "diagram-quality"
       },
       {
+        "base_builder_definition_identity": "",
+        "base_variant": "standard",
         "family": "F4",
+        "max_created_ids": 0,
+        "max_deleted_ids": 0,
         "operator_id": "f4_unnecessary_bend",
+        "permits_creation": false,
+        "permits_deletion": false,
+        "producer_definition_identity": "9d585f6fc47c78106bac143aa1700460732f640c218a023a43658500a333bce2",
         "target_code": "UNNECESSARY_BEND",
+        "touched_budget_class": "local_geometry",
         "validator_id": "diagram-quality"
       },
       {
+        "base_builder_definition_identity": "0f67303af32d0c71d43fce8c04dd8d014dd3d0d2dcdbff4ef38bc61ab1d1f521",
+        "base_variant": "three_valves",
         "family": "F5",
+        "max_created_ids": 0,
+        "max_deleted_ids": 0,
         "operator_id": "f5_annotation_overlap",
+        "permits_creation": false,
+        "permits_deletion": false,
+        "producer_definition_identity": "9736ac80d816ab0d9717badb42807ff41625c5f67b7141386aba208f2af974a1",
         "target_code": "ANNOTATION_OVERLAP",
+        "touched_budget_class": "local_geometry",
         "validator_id": "diagram-quality"
       },
       {
+        "base_builder_definition_identity": "",
+        "base_variant": "standard",
         "family": "F5",
+        "max_created_ids": 0,
+        "max_deleted_ids": 0,
         "operator_id": "f5_node_overlap",
+        "permits_creation": false,
+        "permits_deletion": false,
+        "producer_definition_identity": "060bf0b6ead5dfac7516fef78b82516196cf7076e1172d291bdfd351fa85c288",
         "target_code": "NODE_OVERLAP",
+        "touched_budget_class": "complex_collision",
         "validator_id": "diagram-quality"
       },
       {
+        "base_builder_definition_identity": "",
+        "base_variant": "standard",
         "family": "F5",
+        "max_created_ids": 0,
+        "max_deleted_ids": 0,
         "operator_id": "f5_pipe_through_equipment",
+        "permits_creation": false,
+        "permits_deletion": false,
+        "producer_definition_identity": "83cb8eacd399241b876c3285b314b41f0fad2934f44f90f4c51eab1fd9149036",
         "target_code": "PIPE_THROUGH_EQUIPMENT",
+        "touched_budget_class": "complex_collision",
         "validator_id": "diagram-quality"
       },
       {
+        "base_builder_definition_identity": "",
+        "base_variant": "standard",
         "family": "F5",
+        "max_created_ids": 0,
+        "max_deleted_ids": 0,
         "operator_id": "f5_symbol_out_of_bounds",
+        "permits_creation": false,
+        "permits_deletion": false,
+        "producer_definition_identity": "fa3854940babeeed3d2232c366b121aed56b572f2a7d17d57b114b8f1feb9455",
         "target_code": "SYMBOL_OUT_OF_BOUNDS",
+        "touched_budget_class": "complex_collision",
         "validator_id": "diagram-quality"
+      },
+      {
+        "base_builder_definition_identity": "",
+        "base_variant": "standard",
+        "family": "F6",
+        "max_created_ids": 0,
+        "max_deleted_ids": 0,
+        "operator_id": "f6_replan_four_times",
+        "permits_creation": false,
+        "permits_deletion": false,
+        "producer_definition_identity": "38c875e176292dd07ce7511cd264306b61b8ef8a2d063f8e279382d39f193fe2",
+        "target_code": "",
+        "touched_budget_class": "simple_metadata",
+        "validator_id": ""
+      },
+      {
+        "base_builder_definition_identity": "",
+        "base_variant": "standard",
+        "family": "F6",
+        "max_created_ids": 0,
+        "max_deleted_ids": 0,
+        "operator_id": "f6_replan_once",
+        "permits_creation": false,
+        "permits_deletion": false,
+        "producer_definition_identity": "b05c4a832bba3c90a9f057f9ed323ee871a8c27ccd72d467a1dcd0809768c85a",
+        "target_code": "",
+        "touched_budget_class": "simple_endpoint",
+        "validator_id": ""
+      },
+      {
+        "base_builder_definition_identity": "",
+        "base_variant": "standard",
+        "family": "F6",
+        "max_created_ids": 0,
+        "max_deleted_ids": 0,
+        "operator_id": "f6_replan_twice",
+        "permits_creation": false,
+        "permits_deletion": false,
+        "producer_definition_identity": "58ba149b6e18af7067f47b3923555fd3f0af2bb4294333b870436e233a4c59cc",
+        "target_code": "",
+        "touched_budget_class": "simple_endpoint",
+        "validator_id": ""
       }
-    ]
+    ],
+    "safety_case_count": 12,
+    "spec_version": "3"
   }
 }

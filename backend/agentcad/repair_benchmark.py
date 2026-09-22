@@ -22,9 +22,11 @@ nothing in this module tells the planner what to do, which is what keeps S@5 a m
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import random
-from collections.abc import Callable, Mapping
+import textwrap
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -41,6 +43,7 @@ from .models import (
     UpdateElementOperation,
 )
 from .service import DocumentService
+from .source_identity import source_ast_identity
 from .symbols import SymbolRegistry
 
 #: Bumped only with a documented `benchmark reset` (baseline §B4).
@@ -1095,9 +1098,7 @@ MUTATIONS: dict[str, MutationOperator] = {
     "f3_delete_middle_detach": MutationOperator(
         "f3_delete_middle_detach", "F3", "CONNECTOR_ENDPOINT_DANGLING", "engineering-report",
         _f3_delete_detach,
-        document_builder=lambda service, registry: build_base_drawing(
-            service, registry, name="M5 benchmark base (three valves)", variant="three_valves"
-        ),
+        document_builder=_three_valves_base,
         touched_budget_class="multi_connector",
         base_variant="three_valves",
         # Putting the removed device back is a create. Deleting it left a generated label behind,
@@ -1394,16 +1395,296 @@ def _archived_core_corpus_manifest(version: str) -> dict[str, Any] | None:
     }
 
 
-#: Manifest keys that name the world the corpus ran in rather than the corpus itself, so they stay
-#: out of the corpus *identity*.
+# -- the corpus identity ---------------------------------------------------- #
+#
+# The corpus needs two different numbers, because two different questions are asked of it.
+#
+# ``core_corpus_fingerprint`` answers "this definition, this code, this machine": it hashes the
+# manifest whole, ``generator_fingerprint`` included, and that one digests CPython bytecode. It is
+# provenance, and it is allowed to move between interpreters.
+#
+# ``core_corpus_digest`` answers "this definition": the number two machines have to agree on. It
+# hashes a *projection* of the corpus -- the catalogue and the actual case universe, in
+# declarative, interpreter-independent terms -- so that anything which would change which cases
+# exist, or which producer draws which one, moves the identity, while the interpreter, the
+# bytecode digest and the spec fingerprint do not.
+#
+# The projection is deliberately not a summary. "12 x 6 cases, 23 operators" is the same number
+# after a rotation change, a base change or a policy change, and an identity that cannot see those
+# is a summary wearing an identity's name (remote review of f60693d).
+
+#: Names the provenance manifest carries that the identity will not fold in, kept as a named rule
+#: so the check that no projection path picks them up has something to check against.
 #:
 #: ``generator_fingerprint`` digests CPython bytecode, so the identical corpus publishes a different
 #: number on every interpreter. ``spec_fingerprint`` is not interpreter-derived, but it identifies
 #: the *spec* -- the thresholds and the judgement -- and the spec already has its own stable
-#: identity, so folding it in would make a spec revision look like a corpus change. What the corpus
-#: identity answers is narrower and more useful: "is this the same frozen set of cases and codes",
-#: which is precisely the question two machines must be able to agree on.
+#: identity, so folding it in would make a spec revision look like a corpus change.
 CORPUS_IDENTITY_EXCLUDED_KEYS: tuple[str, ...] = ("spec_fingerprint", "generator_fingerprint")
+
+#: How a case is derived, published as a *rule* rather than as a value.
+#:
+#: The seed's value also depends on the candidate commit, and a corpus identity that moved with the
+#: candidate would be identifying the run instead of the corpus. ``spec_version`` stands in for the
+#: fingerprint the derivation actually hashes -- deliberately, because a spec revision that does not
+#: bump its version is the one drift this project forbids everywhere else, and the identity would
+#: otherwise report it as a corpus change.
+CASE_DERIVATION: dict[str, str] = {
+    "rotation": "operators_for_family(family) -- sorted by operator_id -- cycled by case index",
+    "seed_material": "spec_fingerprint(spec_version) : candidate_sha : family : index",
+    "seed_digest": "sha256(material).hexdigest()[:12], read as a base-16 integer",
+}
+
+#: Recorded where a definition cannot be hashed any more: a superseded corpus whose producer code
+#: went with the commit that ran it. A declaration, not a fallback -- it says exactly how much of
+#: the historical implementation the archived identity can vouch for, which is none of it.
+ARCHIVED_DEFINITION_IDENTITY = "unavailable: archived declarative definition only"
+
+#: The candidate the projection derives case *identities* with. The seed value is a run input and
+#: never enters the identity, and a case's coordinates (family, index, rotation) do not depend on
+#: the candidate at all -- so one documented placeholder lets the real generator stay the only
+#: implementation of the rotation instead of the projection re-deriving it beside it.
+CORPUS_IDENTITY_CANDIDATE = "0" * 40
+
+
+def _opaque(value: Any) -> str:
+    """What a captured value that is not JSON contributes to an identity: its type, never its id."""
+
+    return f"<{type(value).__name__}>"
+
+
+def _definition_identity(
+    function: Callable[..., Any] | None,
+    *,
+    seen: set[int] | None = None,
+    trace: dict[str, str] | None = None,
+) -> str:
+    """Identity of a producer's *definition*, in a form every interpreter computes the same.
+
+    The source is parsed into the canonical projection of :mod:`agentcad.source_identity`, so
+    comments, blank lines and reformatting do not count and behaviour does. ``generator_fingerprint``
+    answers the neighbouring question with bytecode, which is exactly what cannot be compared across
+    3.11 and 3.12 -- and ``ast.dump`` cannot either, because its format moved between those two
+    releases (``source_identity`` records the measurement).
+
+    A producer's identity is not only its own body: captured configuration (a factory-built
+    operator's bound parameters) and every same-module function it calls are folded in, so a
+    producer cannot change underneath an unchanged caller. Cycles are cut by object identity.
+
+    ``trace`` collects ``qualname -> AST identity`` for every definition folded in, which is how
+    :func:`corpus_definition_ast_projection` lets another interpreter re-derive this half from the
+    source file alone.
+
+    Raises :class:`BenchmarkSetupError` when the source is not readable. Degrading to a sentinel
+    would be worse than failing: two machines would then agree on a number that identifies nothing.
+    """
+
+    if function is None:
+        return ""
+    if seen is None:
+        seen = set()
+    seen.add(id(function))
+    try:
+        source = textwrap.dedent(inspect.getsource(function))
+    except (OSError, TypeError) as error:  # pragma: no cover - only on a source-less install
+        raise BenchmarkSetupError(
+            "the corpus identity hashes producer definitions, which needs the source that defined "
+            f"{getattr(function, '__qualname__', function)!r}"
+        ) from error
+    ast_text = source_ast_identity(source)
+    if trace is not None:
+        trace[getattr(function, "__qualname__", repr(function))] = ast_text
+    material: dict[str, Any] = {
+        "ast": ast_text,
+        "captured": {},
+        "constants": {},
+        "callees": {},
+    }
+    try:
+        closure = inspect.getclosurevars(function)
+    except TypeError:  # pragma: no cover - a callable without a Python closure
+        closure = None
+    if closure is not None:
+        for name, value in sorted(closure.nonlocals.items()):
+            material["captured"][name] = json.dumps(value, sort_keys=True, default=_opaque)
+        for name, value in sorted(closure.globals.items()):
+            if isinstance(value, (str, int, float, bool, type(None))):
+                material["constants"][name] = repr(value)
+            elif (
+                inspect.isfunction(value)
+                and getattr(value, "__module__", None) == __name__
+                and id(value) not in seen
+            ):
+                material["callees"][name] = _definition_identity(value, seen=seen, trace=trace)
+    text = json.dumps(material, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def corpus_definition_ast_projection() -> dict[str, str]:
+    """``qualname -> AST identity`` for every definition the corpus identity folds in.
+
+    The interpreter-independent half of the producer identities, published on its own so a second
+    interpreter can re-derive it straight from the source file -- no import, no pydantic, no
+    bytecode. ``scripts/m5_closeout_identity_311_check.py`` is that reader.
+    """
+
+    trace: dict[str, str] = {}
+    for _, operator in sorted(MUTATIONS.items()):
+        _definition_identity(operator.apply, trace=trace)
+        _definition_identity(operator.document_builder, trace=trace)
+    return trace
+
+
+def _declaration_of(entry: Any) -> dict[str, Any]:
+    """The declarative part of an operator: a live one, or a row an archived spec published."""
+
+    if isinstance(entry, Mapping):
+        return {name: entry.get(name) for name in _SPEC_OPERATOR_FIELDS}
+    return _operator_row(entry)
+
+
+def _projected_operator_row(entry: Any, *, archived: bool) -> dict[str, Any]:
+    """One catalogue row plus the identity of the code that draws this operator's defect."""
+
+    row = _declaration_of(entry)
+    if archived:
+        row["producer_definition_identity"] = ARCHIVED_DEFINITION_IDENTITY
+        row["base_builder_definition_identity"] = ARCHIVED_DEFINITION_IDENTITY
+        return row
+    row["producer_definition_identity"] = _definition_identity(entry.apply)
+    row["base_builder_definition_identity"] = _definition_identity(entry.document_builder)
+    return row
+
+
+def _case_universe_projection(
+    *,
+    families: Sequence[str],
+    per_family: int,
+    suite: str,
+    catalogue: Mapping[str, Any],
+    spec: str,
+) -> list[dict[str, Any]]:
+    """Every case in a suite, as the coordinates a reader would need to regenerate it.
+
+    Derived through :func:`generate_cases` rather than by re-implementing the round-robin here: the
+    projection has to be the case set the runner actually builds, which is a claim only the real
+    derivation can keep true. The seed itself is left out on purpose (it moves with the candidate);
+    the rotation that assigns producers to cases is what has to be visible.
+    """
+
+    # Resolved by the operator's *declared* id, which is what the rotation selects on: a catalogue
+    # whose keys and ids disagree (a hypothetical this projection has to survive, and the shape a
+    # mutation test writes) must still project what it would really run.
+    by_id = {_entry_identity(entry)[0]: entry for entry in catalogue.values()}
+    rows: list[dict[str, Any]] = []
+    for family in families:
+        for case in generate_cases(
+            candidate_sha=CORPUS_IDENTITY_CANDIDATE,
+            family=family,
+            count=per_family,
+            suite=suite,
+            spec=spec,
+            catalogue=catalogue,
+        ):
+            rows.append(
+                {
+                    "case_id": case.case_id,
+                    "suite": suite,
+                    "family": case.family,
+                    "index": case.index,
+                    "operator_id": case.operator_id,
+                    "operator_declaration": _declaration_of(by_id[case.operator_id]),
+                }
+            )
+    return rows
+
+
+def core_corpus_projection(version: str | None = None) -> dict[str, Any]:
+    """The corpus, projected into interpreter-independent terms -- the identity's real input.
+
+    It carries the layout, the case derivation rule, the whole operator catalogue and every case in
+    both suites. Nothing here is a count of something else: a reviewer recomputes
+    :func:`core_corpus_digest` from *this*, and can see which producer draws which case.
+    """
+
+    resolved = version or CORE_CORPUS_VERSION
+    if resolved != CORE_CORPUS_VERSION:
+        archived = _archived_corpus_projection(resolved)
+        if archived is None:
+            raise ValueError(f"no corpus projection is archived for version {resolved!r}")
+        return archived
+    return {
+        "corpus_id": CORE_CORPUS_ID,
+        "corpus_version": CORE_CORPUS_VERSION,
+        "spec_version": BENCHMARK_SPEC_VERSION,
+        "families": list(FAMILIES),
+        "acceptance_cases_per_family": ACCEPTANCE_CASES_PER_FAMILY,
+        "dev_cases_per_family": DEV_CASES_PER_FAMILY,
+        "safety_case_count": SAFETY_CASES,
+        "case_derivation": dict(CASE_DERIVATION),
+        "operator_catalogue": [
+            _projected_operator_row(operator, archived=False)
+            for _, operator in sorted(MUTATIONS.items())
+        ],
+        "case_universe": _case_universe_projection(
+            families=FAMILIES,
+            per_family=ACCEPTANCE_CASES_PER_FAMILY,
+            suite="acceptance",
+            catalogue=MUTATIONS,
+            spec=spec_fingerprint(),
+        ),
+        "dev_case_universe": _case_universe_projection(
+            families=FAMILIES,
+            per_family=DEV_CASES_PER_FAMILY,
+            suite="dev",
+            catalogue=MUTATIONS,
+            spec=spec_fingerprint(),
+        ),
+    }
+
+
+def _archived_corpus_projection(version: str) -> dict[str, Any] | None:
+    """A superseded corpus, projected from its archived declarative definition.
+
+    The durable half of the projection survives -- the catalogue's declarations and the case
+    universe it rotates into -- while the half that named the implementation is recorded as
+    unavailable rather than reconstructed. Saying "here is the archived declarative identity" is a
+    claim a reader can check; claiming the v2 producer bytes would not have been.
+    """
+
+    try:
+        payload = spec_payload(version)
+    except ValueError:
+        return None
+    catalogue = {row["operator_id"]: row for row in payload["operators"]}
+    return {
+        "corpus_id": CORE_CORPUS_ID,
+        "corpus_version": version,
+        "spec_version": payload["spec_version"],
+        "families": list(payload["families"]),
+        "acceptance_cases_per_family": payload["acceptance_cases_per_family"],
+        "dev_cases_per_family": payload["dev_cases_per_family"],
+        "safety_case_count": payload["safety_cases"],
+        "case_derivation": dict(CASE_DERIVATION),
+        "operator_catalogue": [
+            _projected_operator_row(row, archived=True)
+            for row in sorted(payload["operators"], key=lambda item: str(item["operator_id"]))
+        ],
+        "case_universe": _case_universe_projection(
+            families=payload["families"],
+            per_family=payload["acceptance_cases_per_family"],
+            suite="acceptance",
+            catalogue=catalogue,
+            spec=spec_fingerprint(version),
+        ),
+        "dev_case_universe": _case_universe_projection(
+            families=payload["families"],
+            per_family=payload["dev_cases_per_family"],
+            suite="dev",
+            catalogue=catalogue,
+            spec=spec_fingerprint(version),
+        ),
+    }
 
 
 def core_corpus_digest(version: str | None = None) -> str:
@@ -1426,11 +1707,7 @@ def core_corpus_digest(version: str | None = None) -> str:
 def core_corpus_digest_manifest(version: str | None = None) -> dict[str, Any]:
     """The digest's input, published so a reviewer can recompute it instead of trusting it."""
 
-    return {
-        key: value
-        for key, value in core_corpus_manifest(version).items()
-        if key not in CORPUS_IDENTITY_EXCLUDED_KEYS
-    }
+    return core_corpus_projection(version)
 
 
 def core_corpus_fingerprint() -> str:
@@ -1585,6 +1862,8 @@ __all__ = [
     "BENCHMARK_SPEC_VERSION",
     "CORE_CORPUS_ID",
     "CORE_CORPUS_VERSION",
+    "ARCHIVED_DEFINITION_IDENTITY",
+    "CASE_DERIVATION",
     "CORPUS_IDENTITY_EXCLUDED_KEYS",
     "DEV_CASES_PER_FAMILY",
     "FAMILIES",
@@ -1602,6 +1881,8 @@ __all__ = [
     "build_base_drawing",
     "core_corpus_digest",
     "core_corpus_digest_manifest",
+    "core_corpus_projection",
+    "corpus_definition_ast_projection",
     "core_corpus_fingerprint",
     "core_corpus_manifest",
     "derive_seed",

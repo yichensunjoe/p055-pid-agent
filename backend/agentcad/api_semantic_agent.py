@@ -25,8 +25,12 @@ from .flow_topology import build_agent_harness_context
 from .harness import AgentHarnessService
 from .harness_models import AgentSessionCreateRequest
 from .llm import PlannerError
+from .m7_synthesis_models import build_proposal_evidence
 from .models import AgentPlan, StrictModel, TransactionRequest, TransactionResult
-from .permissive_semantic_compiler import PermissiveSemanticTransactionCompiler
+from .permissive_semantic_compiler import (
+    COMPILER_VERSION,
+    PermissiveSemanticTransactionCompiler,
+)
 from .revision_diagnostics import emit_revision_diagnostics
 from .semantic_planner import SemanticAgentPlanner
 from .service import (
@@ -189,6 +193,51 @@ def _raise_service_error(exc: Exception):
     raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
+PLANNER_IDENTITY = "semantic-agent/plan-v2"
+
+
+def _record_proposal_evidence(
+    harness: AgentHarnessService,
+    *,
+    session_id: str,
+    document_id: str,
+    plan,
+    compiled,
+    request: VisionPlanningRequest,
+) -> None:
+    """Persist what was proposed, before anyone can replan on top of it.
+
+    Recorded whenever the compiler performed per-operation accounting, which is exactly the
+    case that used to leave no trace. The row keeps the *submitted* operations, not the
+    accepted ones, because the difference between them is the finding.
+    """
+
+    assessment = compiled.assessment
+    if not (assessment.accepted_operation_count or assessment.rejected_operation_count):
+        return
+    previous = harness.latest_synthesis_proposal_evidence(session_id)
+    attempt = previous.proposal_attempt_index + 1 if previous is not None else 0
+    provider = request.provider
+    evidence = build_proposal_evidence(
+        session_id=session_id,
+        document_id=document_id,
+        proposal_attempt_index=attempt,
+        raw_proposed_operations=[
+            operation.model_dump(mode="json") for operation in plan.transaction.operations
+        ],
+        accepted_operation_count=assessment.accepted_operation_count,
+        compiled_operation_count=assessment.compiled_operation_count,
+        rejected_operations=list(assessment.rejected_operations),
+        validity="valid" if assessment.valid else "invalid",
+        provider_class="llm" if provider is not None and provider.base_url else "unknown",
+        model=(provider.model if provider is not None and provider.model else ""),
+        planner_identity=PLANNER_IDENTITY,
+        compiler_version=COMPILER_VERSION,
+        assessment=assessment.model_dump(mode="json"),
+    )
+    harness.record_synthesis_proposal_evidence(evidence)
+
+
 def _with_harness_context(
     service: DocumentService,
     document_id: str,
@@ -282,6 +331,14 @@ def create_semantic_agent_router(
             compiled = compiler.compile(document_id, plan.transaction)
             compiled = _enforce_visible_output_requirement(
                 service, document_id, request.require_visible_output, compiled
+            )
+            _record_proposal_evidence(
+                harness,
+                session_id=session.id,
+                document_id=document_id,
+                plan=plan,
+                compiled=compiled,
+                request=request,
             )
         except PlannerError as exc:
             if diagnostics is not None:
@@ -443,6 +500,14 @@ def create_semantic_agent_router(
                 compiled = _enforce_visible_output_requirement(
                     service, document_id, request.require_visible_output, compiled
                 )
+                _record_proposal_evidence(
+                    harness,
+                    session_id=session.id,
+                    document_id=document_id,
+                    plan=plan,
+                    compiled=compiled,
+                    request=request,
+                )
                 res = _result(session.id, plan, compiled, attempt=0)
                 yield f"event: complete\ndata: {json.dumps(res.model_dump(mode='json'), ensure_ascii=False)}\n\n"
             else:
@@ -451,6 +516,14 @@ def create_semantic_agent_router(
                     compiled = compiler.compile(document_id, plan.transaction)
                     compiled = _enforce_visible_output_requirement(
                         service, document_id, request.require_visible_output, compiled
+                    )
+                    _record_proposal_evidence(
+                        harness,
+                        session_id=session.id,
+                        document_id=document_id,
+                        plan=plan,
+                        compiled=compiled,
+                        request=request,
                     )
                     res = _result(session.id, plan, compiled, attempt=0)
                     yield f"event: complete\ndata: {json.dumps(res.model_dump(mode='json'), ensure_ascii=False)}\n\n"
@@ -510,6 +583,14 @@ def create_semantic_agent_router(
             compiled = compiler.compile(document_id, plan.transaction)
             compiled = _enforce_visible_output_requirement(
                 service, document_id, request.require_visible_output, compiled
+            )
+            _record_proposal_evidence(
+                harness,
+                session_id=session.id,
+                document_id=document_id,
+                plan=plan,
+                compiled=compiled,
+                request=request,
             )
         except PlannerError as exc:
             if diagnostics is not None:

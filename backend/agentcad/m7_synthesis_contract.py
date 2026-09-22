@@ -573,6 +573,67 @@ FORBIDDEN_FIDELITY_METRIC_REASON: str = (
     "A ratio between them measures the representation, not the drawing."
 )
 
+# --------------------------------------------------------------------------------------
+# §11 Phase-2A runtime obligations. The part of the contract that now exists as code.
+# --------------------------------------------------------------------------------------
+
+PROPOSAL_EVIDENCE_TABLE = "synthesis_proposal_evidence"
+PROPOSAL_EVIDENCE_CARRIER: str = "dedicated_append_only_table"
+PROPOSAL_EVIDENCE_MAY_LIVE_IN_TOOL_CALL_METADATA = False
+#: Proposals and tool calls are not one-to-one, so a tool call cannot be the container:
+#: doing that would again show only the last attempt and hide the rejected plans.
+PROPOSAL_EVIDENCE_IS_APPEND_ONLY = True
+PROPOSAL_EVIDENCE_OVERWRITE_ALLOWED = False
+
+PROPOSAL_EVIDENCE_REQUIRED_FIELDS_PHASE_2A: tuple[str, ...] = (
+    "proposal_evidence_id",
+    "session_id",
+    "document_id",
+    "proposal_attempt_index",
+    "provider_class",
+    "model",
+    "planner_identity",
+    "raw_proposed_operations",
+    "proposed_operation_count",
+    "accepted_operation_count",
+    "compiled_operation_count",
+    "rejected_operation_count",
+    "rejected_operations",
+    "validity",
+    "completeness",
+    "compiler_version",
+    "proposal_payload_digest",
+    "assessment_digest",
+    "related_tool_call_id",
+    "created_at",
+)
+
+#: The counts a proposal record must satisfy. ``accepted`` is the count of retained semantic
+#: operations; ``compiled`` keeps its existing meaning of produced low-level operations.
+PROPOSAL_COUNT_INVARIANTS: tuple[str, ...] = (
+    "proposed_operation_count == accepted_operation_count + rejected_operation_count",
+    "rejected_operation_count == len(rejected_operations)",
+    "completeness follows from the counts and is never supplied",
+    "a partial proposal has at least one rejection",
+    "a complete proposal has none",
+)
+
+#: Session completion is gated in the backend, not only in the interface. A partial plan must
+#: not be recordable as completed by any caller, including one that never draws a dialog.
+COMPLETED_SESSION_REQUIRES: tuple[str, ...] = ("valid", "complete")
+COMPLETED_SESSION_IS_REFUSED_IN_BACKEND = True
+COMPLETED_SESSION_REFUSAL_IS_UI_ONLY = False
+
+#: The verdicts the read-only catalogue audit may return, in classification order.
+CATALOGUE_AUDIT_VERDICTS: tuple[str, ...] = (
+    "visible",
+    "hidden",
+    "missing",
+    "compiler_unsupported",
+    "renderer_unsupported",
+)
+CATALOGUE_AUDIT_CLASSIFIES_EXISTENCE_BEFORE_VISIBILITY = True
+
 BENCHMARK_ACCEPTANCE_ITEMS: tuple[str, ...] = (
     "required_equipment",
     "required_instruments",
@@ -770,6 +831,43 @@ def validate_contract() -> list[str]:
         problems.append("CAD's declared role is an offline benchmark reference")
     if "semantic_element_count_divided_by_cad_primitive_count" not in FORBIDDEN_FIDELITY_METRICS:
         problems.append("the representation-mismatched fidelity ratio must stay forbidden")
+
+    # §11: phase-2A runtime obligations.
+    if PROPOSAL_EVIDENCE_MAY_LIVE_IN_TOOL_CALL_METADATA:
+        problems.append(
+            "proposal evidence must not live in tool-call metadata; proposals and tool "
+            "calls are not one-to-one"
+        )
+    if not PROPOSAL_EVIDENCE_IS_APPEND_ONLY or PROPOSAL_EVIDENCE_OVERWRITE_ALLOWED:
+        problems.append("proposal evidence must be append-only")
+    if PROPOSAL_EVIDENCE_CARRIER != "dedicated_append_only_table":
+        problems.append(
+            f"proposal evidence carrier must be a dedicated append-only table, found "
+            f"{PROPOSAL_EVIDENCE_CARRIER!r}"
+        )
+    for field in (
+        "raw_proposed_operations",
+        "accepted_operation_count",
+        "rejected_operations",
+        "completeness",
+        "related_tool_call_id",
+    ):
+        if field not in PROPOSAL_EVIDENCE_REQUIRED_FIELDS_PHASE_2A:
+            problems.append(f"a proposal record must carry {field!r}")
+    if not any(
+        "accepted_operation_count" in invariant for invariant in PROPOSAL_COUNT_INVARIANTS
+    ):
+        problems.append("the count invariants must relate proposed, accepted and rejected")
+    if COMPLETED_SESSION_REQUIRES != ("valid", "complete"):
+        problems.append("a completed session requires a valid and complete proposal")
+    if COMPLETED_SESSION_REFUSAL_IS_UI_ONLY or not COMPLETED_SESSION_IS_REFUSED_IN_BACKEND:
+        problems.append("session completion must be refused in the backend, not only in the UI")
+    if CATALOGUE_AUDIT_VERDICTS[:3] != ("visible", "hidden", "missing"):
+        problems.append(
+            "the catalogue audit must classify visible, hidden and missing before support"
+        )
+    if not CATALOGUE_AUDIT_CLASSIFIES_EXISTENCE_BEFORE_VISIBILITY:
+        problems.append("the catalogue audit must ask existence before visibility")
 
     return problems
 

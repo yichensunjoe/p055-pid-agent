@@ -371,3 +371,79 @@ required_systems · reference_zones · reference_layout_characteristics
 
 CAD 可以作为视觉参考图保存，但不进入 M7 运行时输入路径。这不妨碍 M6 独立实现 CAD 语义摄取——
 **两条产品能力不能混成一条。**
+
+---
+
+## 13. Phase-2A：把可诊断变成落库的运行时义务
+
+Phase-1 只声明。Phase-2A（`Partial Synthesis Accountability`）把其中最紧要的一条变成代码，
+本节是它对应的契约数据。
+
+### 13.1 提案证据的载体是独立表，不是 tool call 的元数据
+
+```
+PROPOSAL_EVIDENCE_TABLE = "synthesis_proposal_evidence"
+PROPOSAL_EVIDENCE_CARRIER = "dedicated_append_only_table"
+PROPOSAL_EVIDENCE_MAY_LIVE_IN_TOOL_CALL_METADATA = False
+PROPOSAL_EVIDENCE_IS_APPEND_ONLY = True
+PROPOSAL_EVIDENCE_OVERWRITE_ALLOWED = False
+```
+
+理由是 proposal 与 tool call **不是一对一**：会话可能 propose → partial → replan →
+propose → partial → replan → propose → complete → apply，只有最后一次尝试才可能对应一个
+apply tool call。把证据塞进 tool-call 元数据，就会**再次**造成"只看得到最终那次调用、
+看不到被拒的计划"——正是本次事故的结构。
+
+`related_tool_call_id` 只是可选关联，
+因此它既不是容器、也不承担生命周期与授权；没有 tool call 时证据同样成立。
+
+### 13.2 提案记录的字段 `PROPOSAL_EVIDENCE_REQUIRED_FIELDS_PHASE_2A`
+
+```
+proposal_evidence_id · session_id · document_id · proposal_attempt_index
+provider_class · model · planner_identity
+raw_proposed_operations · proposed_operation_count
+accepted_operation_count · compiled_operation_count · rejected_operation_count
+rejected_operations · validity · completeness
+compiler_version · proposal_payload_digest · assessment_digest
+related_tool_call_id · created_at
+```
+
+字段命名有一处刻意的区分：**`accepted_operation_count`** 是**被保留的语义操作**数（事故里是 120），
+而 **`compiled_operation_count`** 保持它既有的含义——**产出的底层操作**数（事故里是 354，
+因为一个被接受的语义操作会展开成符号、标签和引线）。因此远端写的
+"proposed = compiled + rejected" 在这里落实为 **`proposed == accepted + rejected`**；
+若把保留数也叫 compiled，就等于**默默改变了一个既有字段的含义**。
+
+### 13.3 计数不变式 `PROPOSAL_COUNT_INVARIANTS`
+
+```
+proposed_operation_count == accepted_operation_count + rejected_operation_count
+rejected_operation_count == len(rejected_operations)
+completeness follows from the counts and is never supplied
+a partial proposal has at least one rejection
+a complete proposal has none
+```
+
+`completeness` 必须是**推导出来的**：一个同时提供操作清单和完整性结论的调用方，
+可以把丢掉的长尾描述成 complete。
+
+### 13.4 会话完成由后台拒绝 partial，而不只是界面显示
+
+```
+COMPLETED_SESSION_REQUIRES = ("valid", "complete")
+COMPLETED_SESSION_IS_REFUSED_IN_BACKEND = True
+COMPLETED_SESSION_REFUSAL_IS_UI_ONLY = False
+```
+
+一个从未画过任何对话框的调用方，也**不得**把部分计划记成 completed。
+
+### 13.5 只读目录审计的判定值 `CATALOGUE_AUDIT_VERDICTS`
+
+```
+visible · hidden · missing · compiler_unsupported · renderer_unsupported
+```
+
+`CATALOGUE_AUDIT_CLASSIFIES_EXISTENCE_BEFORE_VISIBILITY = True`——
+**先问存在性，再问可见性**，因为 hidden 说的是"存在但被压制"，missing 说的是"不存在"；
+问反了就是二者被混为一谈的原因。审计只读：不新增符号、不改可见性。

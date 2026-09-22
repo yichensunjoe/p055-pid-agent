@@ -5,9 +5,17 @@ from .agent_semantic_models import (
     SemanticOperation,
     SemanticTransaction,
 )
+from .m7_synthesis_models import (
+    RejectedOperationReceipt,
+    derive_completeness,
+    rejected_operation_id,
+)
 from .semantic_compiler_engine import (
     SemanticTransactionCompiler as StrictSemanticTransactionCompiler,
 )
+
+#: Recorded on every proposal record so a later reader can tell which compiler judged it.
+COMPILER_VERSION = "permissive-semantic-compiler/1"
 
 
 class PermissiveSemanticTransactionCompiler(StrictSemanticTransactionCompiler):
@@ -18,6 +26,13 @@ class PermissiveSemanticTransactionCompiler(StrictSemanticTransactionCompiler):
     operation that is retained; invalid operations are skipped individually.
     Revision conflicts are never bypassed, and no low-level transaction is
     returned unless it passes the normal document validation.
+
+    Dropping an operation is where this compiler used to become a liability. It kept the
+    surviving operations and discarded the rest silently, so a plan that lost 39% of its own
+    operations came back marked valid and was recorded as a completed session. Every skip now
+    produces a receipt carrying the diagnostic the strict compiler had already computed
+    (reason code, field path, available values, suggestions), and the assessment reports the
+    proposed / accepted / rejected counts plus the completeness axis derived from them.
     """
 
     def compile(
@@ -25,15 +40,25 @@ class PermissiveSemanticTransactionCompiler(StrictSemanticTransactionCompiler):
         document_id: str,
         transaction: SemanticTransaction,
     ) -> CompiledSemanticTransaction:
+        proposed = len(transaction.operations)
         strict_result = super().compile(document_id, transaction)
         if strict_result.assessment.valid and strict_result.transaction is not None:
-            return strict_result
+            # Nothing was skipped, so the plan is whole by construction.
+            return self._with_accounting(
+                strict_result,
+                proposed=proposed,
+                accepted=len(transaction.operations),
+                receipts=[],
+            )
         if any(issue.code == "revision_conflict" for issue in strict_result.assessment.issues):
+            # The plan was never evaluated operation by operation, so there is no per-operation
+            # accounting to report and none is invented. The existing recovery path handles it.
             return strict_result
 
         current = self.service.get_document(document_id)
         accepted: list[SemanticOperation] = []
-        for operation in transaction.operations:
+        receipts: list[RejectedOperationReceipt] = []
+        for index, operation in enumerate(transaction.operations):
             candidate = transaction.model_copy(
                 update={
                     "expected_revision": current.revision,
@@ -44,11 +69,13 @@ class PermissiveSemanticTransactionCompiler(StrictSemanticTransactionCompiler):
             result = super().compile(document_id, candidate)
             if result.assessment.valid and result.transaction is not None:
                 accepted.append(operation)
+                continue
+            receipts.append(self._rejection_receipt(index, operation, result.assessment))
 
         if not accepted:
             return strict_result
 
-        skipped = len(transaction.operations) - len(accepted)
+        skipped = proposed - len(accepted)
         label = transaction.label or "Agent semantic transaction"
         if skipped:
             label = f"{label} · applied {len(accepted)}/{len(transaction.operations)} operations"
@@ -60,4 +87,52 @@ class PermissiveSemanticTransactionCompiler(StrictSemanticTransactionCompiler):
             },
             deep=True,
         )
-        return super().compile(document_id, recovered)
+        return self._with_accounting(
+            super().compile(document_id, recovered),
+            proposed=proposed,
+            accepted=len(accepted),
+            receipts=receipts,
+        )
+
+    @staticmethod
+    def _rejection_receipt(
+        index: int,
+        operation: SemanticOperation,
+        assessment,
+    ) -> RejectedOperationReceipt:
+        """Turn the strict compiler's refusal into something the agent can act on."""
+
+        kind = getattr(operation, "op", "") or type(operation).__name__
+        issue = assessment.issues[0] if assessment.issues else None
+        return RejectedOperationReceipt(
+            original_index=index,
+            operation_id=rejected_operation_id(index, kind),
+            operation_kind=kind,
+            reason_code=(issue.code if issue is not None else "operation_rejected"),
+            message=(issue.message if issue is not None else "operation was not accepted"),
+            field_path=(issue.field_path if issue is not None else ""),
+            available_values=(issue.available_values if issue is not None else {}),
+            suggestions=(issue.suggestions if issue is not None else []),
+        )
+
+    @staticmethod
+    def _with_accounting(
+        compiled: CompiledSemanticTransaction,
+        *,
+        proposed: int,
+        accepted: int,
+        receipts: list[RejectedOperationReceipt],
+    ) -> CompiledSemanticTransaction:
+        completeness = derive_completeness(
+            proposed=proposed, accepted=accepted, rejected=len(receipts)
+        )
+        assessment = compiled.assessment.model_copy(
+            update={
+                "semantic_operation_count": proposed,
+                "accepted_operation_count": accepted,
+                "rejected_operation_count": len(receipts),
+                "completeness": completeness,
+                "rejected_operations": receipts,
+            }
+        )
+        return compiled.model_copy(update={"assessment": assessment})

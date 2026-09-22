@@ -174,6 +174,22 @@ class SymbolRegistry:
             key=lambda item: (item.category, item.name),
         )
 
+    def exists(self, key: str) -> bool:
+        """Whether the catalogue defines this key at all, hidden or not."""
+
+        return key in self._symbols
+
+    def is_hidden(self, key: str) -> bool:
+        """Whether the key is defined but withheld from the model's catalogue listing.
+
+        ``list()`` excludes these, so ``as_prompt_catalog`` never shows them and a model can
+        only use one by already knowing the key. Distinguishing this from "not defined" is
+        the whole point of the audit: a suppressed-but-renderable symbol is a visibility bug
+        with a one-line fix, while a key that does not exist is a catalogue gap.
+        """
+
+        return key in self._hidden_keys
+
     def get(self, key: str) -> SymbolDefinition:
         try:
             return self._symbols[key]

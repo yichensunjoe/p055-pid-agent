@@ -333,6 +333,89 @@ def test_the_task_book_names_the_fixtures_the_phases_and_the_deferrals(task_book
     assert not missing, missing
 
 
+def test_the_task_book_names_the_phase_2a_obligations(task_book: str) -> None:
+    missing = _names_in_task_book(
+        task_book,
+        (
+            *contract.PROPOSAL_EVIDENCE_REQUIRED_FIELDS_PHASE_2A,
+            *contract.PROPOSAL_COUNT_INVARIANTS,
+            *contract.COMPLETED_SESSION_REQUIRES,
+            *contract.CATALOGUE_AUDIT_VERDICTS,
+            contract.PROPOSAL_EVIDENCE_TABLE,
+            contract.PROPOSAL_EVIDENCE_CARRIER,
+            "COMPLETED_SESSION_IS_REFUSED_IN_BACKEND",
+            "COMPLETED_SESSION_REFUSAL_IS_UI_ONLY",
+            "PROPOSAL_EVIDENCE_IS_APPEND_ONLY",
+            "PROPOSAL_EVIDENCE_OVERWRITE_ALLOWED",
+            "PROPOSAL_EVIDENCE_MAY_LIVE_IN_TOOL_CALL_METADATA",
+            "CATALOGUE_AUDIT_CLASSIFIES_EXISTENCE_BEFORE_VISIBILITY",
+        ),
+    )
+    assert not missing, missing
+
+
+def test_the_declared_evidence_contract_is_the_runtime_one() -> None:
+    """The declaration and the running code must not drift apart.
+
+    Two of these would rot silently: the table name lives in a migration and the field list
+    lives in a model, so a rename in either place would leave the contract describing a
+    table that does not exist.
+    """
+
+    from agentcad import m7_synthesis_models as models
+    from agentcad.database_recovery import CURRENT_SCHEMA_VERSION
+
+    assert contract.PROPOSAL_EVIDENCE_TABLE == models.PROPOSAL_EVIDENCE_TABLE
+    missing = [
+        field
+        for field in contract.PROPOSAL_EVIDENCE_REQUIRED_FIELDS_PHASE_2A
+        if field not in models.SynthesisProposalEvidence.model_fields
+    ]
+    assert not missing, missing
+
+    # The schema version the evidence carrier was introduced in.
+    assert CURRENT_SCHEMA_VERSION == 8
+    assert contract.COMPLETED_SESSION_REQUIRES == ("valid", "complete")
+
+
+def test_the_declared_count_invariants_are_enforced_by_the_runtime() -> None:
+    """The invariant is prose in the task book and code in the models; both must bite."""
+
+    import pytest as _pytest
+
+    from agentcad import m7_synthesis_models as models
+
+    declared = " ".join(contract.PROPOSAL_COUNT_INVARIANTS)
+    for name in (
+        "proposed_operation_count",
+        "accepted_operation_count",
+        "rejected_operation_count",
+    ):
+        assert name in declared
+
+    # A contradiction is refused where the axis is derived, not noticed later.
+    with _pytest.raises(ValueError, match="must equal"):
+        models.derive_completeness(proposed=3, accepted=1, rejected=0)
+
+    # And a record that says "complete" while carrying rejections is incoherent.
+    incoherent = models.SynthesisProposalEvidence(
+        session_id="s",
+        document_id="d",
+        proposal_attempt_index=0,
+        raw_proposed_operations=[{"op": "a"}, {"op": "b"}],
+        proposed_operation_count=2,
+        accepted_operation_count=1,
+        compiled_operation_count=1,
+        rejected_operation_count=1,
+        rejected_operations=[],  # count says 1, list says 0
+        validity="valid",
+        completeness="complete",  # the counts say partial
+    )
+    problems = incoherent.problems()
+    assert any("must equal len(rejected_operations)" in problem for problem in problems)
+    assert any("does not follow from the counts" in problem for problem in problems)
+
+
 def test_the_task_book_names_the_incremental_and_benchmark_contract(task_book: str) -> None:
     missing = _names_in_task_book(
         task_book,

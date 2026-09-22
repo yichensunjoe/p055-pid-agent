@@ -23,6 +23,7 @@ from .m6_candidate_models import (
     ReviewDecision,
     SemanticCandidate,
 )
+from .m7_synthesis_models import PROPOSAL_EVIDENCE_TABLE, SynthesisProposalEvidence
 from .models import Document, DocumentSummary, HistoryEntry
 from .project_io import ProjectSettings
 
@@ -1158,6 +1159,97 @@ class SQLiteDocumentStore:
         with self._lock, self._connect() as connection:
             rows = connection.execute(query, params).fetchall()
         return [ConfirmedSemanticFinding.model_validate_json(row["payload_json"]) for row in rows]
+
+    # ----------------------------------------------------------------------------------
+    # M7 phase 2A: proposal evidence. Append-only on purpose -- a replan must add a row,
+    # never rewrite the record of what was proposed before it.
+    # ----------------------------------------------------------------------------------
+
+    def append_synthesis_proposal_evidence(self, evidence: SynthesisProposalEvidence) -> None:
+        problems = evidence.problems()
+        if problems:
+            raise ValueError(
+                "refusing to persist an incoherent proposal record: " + "; ".join(problems)
+            )
+        with self._lock, self._connect() as connection:
+            existing = connection.execute(
+                f"SELECT 1 FROM {PROPOSAL_EVIDENCE_TABLE} WHERE proposal_evidence_id = ?",
+                (evidence.proposal_evidence_id,),
+            ).fetchone()
+            if existing is not None:
+                raise ValueError(
+                    f"proposal evidence {evidence.proposal_evidence_id} already exists; "
+                    "the table is append-only"
+                )
+            connection.execute(
+                f"""
+                INSERT INTO {PROPOSAL_EVIDENCE_TABLE} (
+                    proposal_evidence_id, session_id, document_id, proposal_attempt_index,
+                    validity, completeness, proposed_operation_count, accepted_operation_count,
+                    rejected_operation_count, proposal_payload_digest, assessment_digest,
+                    related_tool_call_id, created_at, payload_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    evidence.proposal_evidence_id,
+                    evidence.session_id,
+                    evidence.document_id,
+                    evidence.proposal_attempt_index,
+                    evidence.validity,
+                    evidence.completeness,
+                    evidence.proposed_operation_count,
+                    evidence.accepted_operation_count,
+                    evidence.rejected_operation_count,
+                    evidence.proposal_payload_digest,
+                    evidence.assessment_digest,
+                    evidence.related_tool_call_id,
+                    evidence.created_at.isoformat(),
+                    self._encode(evidence.model_dump(mode="json")),
+                ),
+            )
+            connection.commit()
+
+    def get_synthesis_proposal_evidence(
+        self, proposal_evidence_id: str
+    ) -> SynthesisProposalEvidence | None:
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                f"SELECT payload_json FROM {PROPOSAL_EVIDENCE_TABLE} "
+                "WHERE proposal_evidence_id = ?",
+                (proposal_evidence_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return SynthesisProposalEvidence.model_validate_json(row["payload_json"])
+
+    def list_synthesis_proposal_evidence(
+        self, *, session_id: str | None = None
+    ) -> list[SynthesisProposalEvidence]:
+        query = f"SELECT payload_json FROM {PROPOSAL_EVIDENCE_TABLE}"
+        params: tuple[Any, ...] = ()
+        if session_id is not None:
+            query += " WHERE session_id = ?"
+            params = (session_id,)
+        query += " ORDER BY proposal_attempt_index ASC, created_at ASC, proposal_evidence_id ASC"
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(query, params).fetchall()
+        return [SynthesisProposalEvidence.model_validate_json(row["payload_json"]) for row in rows]
+
+    def latest_synthesis_proposal_evidence(
+        self, session_id: str
+    ) -> SynthesisProposalEvidence | None:
+        """The most recent attempt for a session, which is the one session completion answers to."""
+
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                f"SELECT payload_json FROM {PROPOSAL_EVIDENCE_TABLE} WHERE session_id = ? "
+                "ORDER BY proposal_attempt_index DESC, created_at DESC, "
+                "proposal_evidence_id DESC LIMIT 1",
+                (session_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return SynthesisProposalEvidence.model_validate_json(row["payload_json"])
 
     def prune_project_index(self) -> list[str]:
         """Drop index rows whose document no longer exists; return their ids."""

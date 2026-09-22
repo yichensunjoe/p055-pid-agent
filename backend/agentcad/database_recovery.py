@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, BinaryIO
 from urllib.parse import quote
 
-CURRENT_SCHEMA_VERSION = 7
+CURRENT_SCHEMA_VERSION = 8
 BACKUP_FORMAT = "pid-agent.sqlite-backup"
 BACKUP_VERSION = 1
 BACKUP_DATABASE_MEMBER = "database.sqlite3"
@@ -880,6 +880,47 @@ def _migration_7(connection: sqlite3.Connection) -> None:
     )
 
 
+def _migration_8(connection: sqlite3.Connection) -> None:
+    """M7 phase 2A: the append-only carrier for what an agent actually proposed.
+
+    Deliberately its own table rather than a column on ``agent_tool_calls``. Proposals and
+    tool calls are not one-to-one: a session may propose, be rejected, replan and propose
+    again, and only the last attempt may ever become a tool call. Storing evidence inside a
+    tool call would therefore preserve exactly the defect that made a 39%-dropped plan
+    unrecoverable -- you would see the final attempt and not the rejected plans.
+
+    ``related_tool_call_id`` is a nullable reference for correlation only. There is no
+    foreign key to ``agent_tool_calls`` and none to ``documents``: the same reasoning as the
+    M6 evidence tables applies, because this record is evidence *about* a session's proposal
+    and must not be removed by anything that removes the drawing.
+    """
+
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS synthesis_proposal_evidence (
+            proposal_evidence_id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            document_id TEXT NOT NULL,
+            proposal_attempt_index INTEGER NOT NULL,
+            validity TEXT NOT NULL,
+            completeness TEXT NOT NULL,
+            proposed_operation_count INTEGER NOT NULL,
+            accepted_operation_count INTEGER NOT NULL,
+            rejected_operation_count INTEGER NOT NULL,
+            proposal_payload_digest TEXT NOT NULL DEFAULT '',
+            assessment_digest TEXT NOT NULL DEFAULT '',
+            related_tool_call_id TEXT,
+            created_at TEXT NOT NULL,
+            payload_json TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_synthesis_proposal_evidence_session "
+        "ON synthesis_proposal_evidence(session_id, proposal_attempt_index DESC, created_at DESC)"
+    )
+
+
 _MIGRATIONS = {
     1: _migration_1,
     2: _migration_2,
@@ -888,6 +929,7 @@ _MIGRATIONS = {
     5: _migration_5,
     6: _migration_6,
     7: _migration_7,
+    8: _migration_8,
 }
 
 
@@ -919,6 +961,7 @@ def _validate_required_schema(connection: sqlite3.Connection) -> None:
         "semantic_candidates",
         "review_decisions",
         "confirmed_semantic_findings",
+        "synthesis_proposal_evidence",
         _METADATA_TABLE,
     }
     missing = required_tables - _table_names(connection)

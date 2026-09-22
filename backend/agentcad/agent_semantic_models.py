@@ -7,6 +7,7 @@ from uuid import uuid4
 from pydantic import Field, model_validator
 
 from .diagram_quality_models import DiagramQualityReport
+from .m7_synthesis_models import Completeness, RejectedOperationReceipt
 from .models import (
     AddElementOperation,
     AddLayerOperation,
@@ -280,6 +281,20 @@ class AgentOperationIssue(StrictModel):
 
 
 class AgentTransactionAssessment(StrictModel):
+    """How a compiled plan is judged, on two axes rather than one.
+
+    ``valid`` answers "is each retained operation legal". ``completeness`` answers "is the
+    submitted plan whole". They were one field, which is why a plan that lost 39% of its own
+    operations was reported as passing validation and recorded as a completed session.
+
+    ``semantic_operation_count`` keeps its meaning (semantic operations submitted) and
+    ``compiled_operation_count`` keeps its meaning (low-level operations produced, which is
+    larger because one semantic operation expands into several elements). Neither of those
+    is the count of retained semantic operations, so ``accepted_operation_count`` carries it
+    explicitly and the invariant the gate wrote as "proposed = compiled + rejected" holds
+    here as ``semantic == accepted + rejected``.
+    """
+
     valid: bool
     stage: Literal["compile", "validate"]
     document_id: str
@@ -293,6 +308,26 @@ class AgentTransactionAssessment(StrictModel):
     updated_element_ids: list[str] = Field(default_factory=list)
     deleted_element_ids: list[str] = Field(default_factory=list)
     issues: list[AgentOperationIssue] = Field(default_factory=list)
+
+    # Phase 2A: the accountability axis. ``semantic_operation_count`` is the proposed count;
+    # these carry what survived, what did not, and why.
+    accepted_operation_count: int = Field(default=0, ge=0)
+    rejected_operation_count: int = Field(default=0, ge=0)
+    completeness: Completeness = "complete"
+    rejected_operations: list[RejectedOperationReceipt] = Field(default_factory=list)
+
+    @property
+    def proposed_operation_count(self) -> int:
+        return self.semantic_operation_count
+
+    @property
+    def is_complete(self) -> bool:
+        return self.completeness == "complete"
+
+    def may_proceed_to_authorisation(self) -> bool:
+        """The only combination that may be offered to a human."""
+
+        return self.valid and self.completeness == "complete"
 
 
 class AnnotationQuality(StrictModel):

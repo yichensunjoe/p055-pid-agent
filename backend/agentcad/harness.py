@@ -21,6 +21,7 @@ from .harness_models import (
     ToolCallRecord,
 )
 from .layout_models import AutoLayoutRequest
+from .m7_synthesis_models import SynthesisProposalEvidence
 from .models import TransactionRequest, TransactionResult
 from .service import (
     DocumentNotFoundError,
@@ -332,6 +333,53 @@ class AgentHarnessService:
             )
         )
 
+    def record_synthesis_proposal_evidence(
+        self, evidence: SynthesisProposalEvidence
+    ) -> SynthesisProposalEvidence:
+        """Append one proposal attempt. Append-only: a replan adds a row, never overwrites."""
+
+        self.store.append_synthesis_proposal_evidence(evidence)
+        self._emit(
+            "synthesis.proposal.recorded",
+            session_id=evidence.session_id,
+            document_id=evidence.document_id,
+            proposal_evidence_id=evidence.proposal_evidence_id,
+            proposal_attempt_index=evidence.proposal_attempt_index,
+            validity=evidence.validity,
+            completeness=evidence.completeness,
+            proposed_operation_count=evidence.proposed_operation_count,
+            accepted_operation_count=evidence.accepted_operation_count,
+            rejected_operation_count=evidence.rejected_operation_count,
+        )
+        return evidence
+
+    def latest_synthesis_proposal_evidence(
+        self, session_id: str
+    ) -> SynthesisProposalEvidence | None:
+        return self.store.latest_synthesis_proposal_evidence(session_id)
+
+    def assert_session_may_complete(self, session_id: str) -> None:
+        """Refuse to mark a session completed while its latest proposal is not whole.
+
+        The UI showing a completeness counts is not sufficient: a partially compiled plan
+        must not be recordable as a completed session by any caller. A session with no
+        synthesis proposal at all is unaffected, because most sessions do not synthesise.
+        """
+
+        evidence = self.store.latest_synthesis_proposal_evidence(session_id)
+        if evidence is None:
+            return
+        if evidence.is_success_candidate():
+            return
+        raise HarnessError(
+            f"agent session {session_id} may not be completed: its latest synthesis proposal "
+            f"is {evidence.validity}/{evidence.completeness} "
+            f"({evidence.accepted_operation_count} accepted, "
+            f"{evidence.rejected_operation_count} rejected of "
+            f"{evidence.proposed_operation_count})",
+            code="synthesis_proposal_incomplete",
+        )
+
     def complete_session(
         self,
         session_id: str,
@@ -339,6 +387,8 @@ class AgentHarnessService:
         end_revision: int | None,
         status: str = "completed",
     ) -> AgentSession:
+        if status == "completed":
+            self.assert_session_may_complete(session_id)
         session = self.get_session(session_id)
         updated = session.model_copy(
             update={

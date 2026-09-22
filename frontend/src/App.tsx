@@ -1153,13 +1153,16 @@ export default function App() {
               <label>Model name（可手工覆盖）<input value={model} onChange={(event: ChangeEvent<HTMLInputElement>) => setModel(event.target.value)} placeholder="从列表选择，或直接输入模型名称" /></label>
               <label className="provider-thinking-toggle"><span>思考模式</span><input type="checkbox" checked={thinkingEnabled} onChange={(event: ChangeEvent<HTMLInputElement>) => setThinkingEnabled(event.target.checked)} /></label>
               <label>思考等级<select value={thinkingLevel ?? "high"} disabled={!thinkingEnabled} onChange={(event: ChangeEvent<HTMLSelectElement>) => setThinkingLevel(event.target.value as ProviderConfig["thinking_level"])}><option value="low">低</option><option value="high">高</option><option value="max">最大</option></select></label>
+              {/* These labels must not contain another field's accessible name: the browser suite
+                  selects fields by role + name, and Playwright's name match is a substring match,
+                  so "TypeSafe Base URL" silently made "Base URL" ambiguous. */}
               <div className="typesafe-settings">
                 <label className="provider-thinking-toggle"><span>用 TypeSafe 判读并画图</span><input type="checkbox" checked={typesafeEnabled} onChange={(event: ChangeEvent<HTMLInputElement>) => { setTypesafeEnabled(event.target.checked); writeTypesafePreferences({ baseUrl: typesafeBaseUrl, model: typesafeModel, enabled: event.target.checked }); }} /></label>
                 <div className="typesafe-hint">开启后，本面板的生成请求改由 TypeSafe System One 判读：代码先按图纸与符号目录列出候选，模型只回答“指的是哪一个”，置信度低于阈值的子句会被跳过而不是猜着画。</div>
                 <div className={`typesafe-hint typesafe-key-source typesafe-key-source-${typesafeKeySource.tone}`}>{typesafeKeySource.message}</div>
-                <label>TypeSafe API Key<div className="secret-input-row"><input type={showTypesafeKey ? "text" : "password"} value={typesafeKey} onChange={(event: ChangeEvent<HTMLInputElement>) => { setTypesafeKey(event.target.value); setTypesafeApiKey(event.target.value); }} placeholder={typesafeKeySource.placeholder} autoComplete="off" spellCheck={false} /><button type="button" onClick={() => setShowTypesafeKey(!showTypesafeKey)}>{showTypesafeKey ? "隐藏" : "显示"}</button></div></label>
-                <label>TypeSafe Base URL<input value={typesafeBaseUrl} onChange={(event: ChangeEvent<HTMLInputElement>) => setTypesafeBaseUrl(event.target.value)} placeholder="https://api.typesafe.ai" /></label>
-                <label>TypeSafe 模型<input value={typesafeModel} onChange={(event: ChangeEvent<HTMLInputElement>) => setTypesafeModel(event.target.value)} placeholder="jev-latest" /></label>
+                <label>TypeSafe Key<div className="secret-input-row"><input type={showTypesafeKey ? "text" : "password"} value={typesafeKey} onChange={(event: ChangeEvent<HTMLInputElement>) => { setTypesafeKey(event.target.value); setTypesafeApiKey(event.target.value); }} placeholder={typesafeKeySource.placeholder} autoComplete="off" spellCheck={false} /><button type="button" onClick={() => setShowTypesafeKey(!showTypesafeKey)}>{showTypesafeKey ? "隐藏" : "显示"}</button></div></label>
+                <label>TypeSafe 判读服务地址<input value={typesafeBaseUrl} onChange={(event: ChangeEvent<HTMLInputElement>) => setTypesafeBaseUrl(event.target.value)} placeholder="https://api.typesafe.ai" /></label>
+                <label>TypeSafe 判读模型<input value={typesafeModel} onChange={(event: ChangeEvent<HTMLInputElement>) => setTypesafeModel(event.target.value)} placeholder="jev-latest" /></label>
                 <div className="provider-actions">
                   <button type="button" onClick={() => void verifyTypesafe()} disabled={testingTypesafe}>{testingTypesafe ? "正在核对…" : "测试 TypeSafe Key"}</button>
                   <button type="button" onClick={() => void refreshTypesafeStatus()}>刷新服务端配置</button>

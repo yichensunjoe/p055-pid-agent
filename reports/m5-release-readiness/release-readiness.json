@@ -1,0 +1,260 @@
+{
+  "schema": "pid-agent.m5-release-readiness",
+  "version": 1,
+  "release_anchor": "a92044f",
+  "anchor_title": "docs(m5): record the A6 qualification readiness instead of guessing at it",
+  "anchor_ci_run": "35708328119",
+  "anchor_ci_conclusion": "success",
+  "anchor_ci_jobs": {
+    "M5 self-repair · 72-case deterministic gate": "success",
+    "Backend · Python 3.11": "success",
+    "Frontend · Node 24": "success",
+    "Browser acceptance · Chromium": "success"
+  },
+  "overall_status": "release_ready_with_external_qualification_pending",
+  "status_vocabulary": {
+    "closed": "finished, verified, and reproducible; reopening has a written trigger",
+    "accepted": "implemented and live-verified, admitted to the integrated line by a release ruling",
+    "blocked_external": "cannot run here because a prerequisite outside this repository is absent; this is neither a failure nor a pass"
+  },
+  "identities": {
+    "spec_version": "3",
+    "spec_fingerprint": "8f522c758b67fc71e53d7d382f1c09fc3d922663ea500a7fc09106ece054c810",
+    "corpus_version": "3",
+    "core_corpus_digest": "96b999fa90403c82b58018ef82b06bb190932d97a66f179ebde2c0e2ef41c10f",
+    "oracle_version": "1",
+    "semantic_hash_version": "1",
+    "acceptance_cases": 72,
+    "dev_cases": 24,
+    "operators": 23,
+    "operators_with_a_target_code": 20,
+    "distinct_target_codes": 17,
+    "archived": {
+      "spec_version": "2",
+      "spec_fingerprint": "c8520c5e7b0b1d7e77e3752080393b4965aee60538ad71a6bf95d5fc4ab5ede1",
+      "corpus_version": "2",
+      "core_corpus_digest": "edb1c5d385bfd4f13a195119444dcb157f3bf0d893afd35e595ddc28c4b1c36c"
+    }
+  },
+  "frozen_evidence_directories_untouched": [
+    "reports/m5",
+    "reports/m5-promotion",
+    "reports/m5-closeout"
+  ],
+  "tracks": [
+    {
+      "id": "m5-deterministic-v3",
+      "title": "M5 deterministic self-repair benchmark",
+      "status": "closed",
+      "status_label": "CLOSED",
+      "scope": "72 acceptance cases across six families, the success oracle, the one-governed-write rule, the safety-negative suite and the frozen thresholds",
+      "anchor_sha": "5fc0964",
+      "commits": ["1ba141c", "f60693d", "acd0d94", "5fc0964"],
+      "ci_runs": {"35579988999": "success", "35702397038": "success"},
+      "visual_runs": {"35580046077": "success", "35703003401": "success"},
+      "identities": {
+        "spec_version": "3",
+        "spec_fingerprint": "8f522c758b67fc71e53d7d382f1c09fc3d922663ea500a7fc09106ece054c810",
+        "corpus_version": "3",
+        "core_corpus_digest": "96b999fa90403c82b58018ef82b06bb190932d97a66f179ebde2c0e2ef41c10f",
+        "oracle_version": "1",
+        "semantic_hash_version": "1"
+      },
+      "measured": {
+        "acceptance_passed": 72,
+        "acceptance_total": 72,
+        "s_at_5_overall": 1.0,
+        "family_s_at_5_min": 1.0,
+        "s_at_1": 0.8333,
+        "gate_failures": [],
+        "safety_passed": 13,
+        "safety_total": 13,
+        "pytest_on_python_3_11": 905
+      },
+      "evidence": [
+        "reports/m5/repair-benchmark-acceptance.json",
+        "reports/m5/repair-benchmark-summary.json",
+        "reports/m5-promotion/acceptance-v3.json",
+        "reports/m5-promotion/acceptance-v3-summary.json",
+        "reports/m5-promotion/spec-projection.txt",
+        "reports/m5-promotion/case-projection.txt",
+        "reports/m5-promotion/disposition-ledger.json",
+        "reports/m5-promotion/disposition-ledger-summary.json",
+        "reports/m5/repair-coverage-extension.json"
+      ],
+      "reopen_triggers": [
+        "spec_version, corpus_version or oracle_version changes at all",
+        "a family's S@5 drops below the frozen threshold, or F6's own S@5 drops below 1.0",
+        "a case with no retry contract stops succeeding on its first attempt",
+        "an F6 case stops converging on its declared attempt",
+        "the safety suite stops passing in full"
+      ]
+    },
+    {
+      "id": "a5-corpus-identity",
+      "title": "A5 corpus identity closeout",
+      "status": "closed",
+      "status_label": "CLOSED",
+      "scope": "the corpus is identified by a projection of its case universe and operator catalogue, interpreter-independent; the archived v2 identity stays recomputable",
+      "anchor_sha": "5fc0964",
+      "commits": ["f60693d", "acd0d94", "5fc0964"],
+      "ci_runs": {"35702397038": "success"},
+      "visual_runs": {"35703003401": "success"},
+      "identities": {
+        "core_corpus_digest": "96b999fa90403c82b58018ef82b06bb190932d97a66f179ebde2c0e2ef41c10f",
+        "archived_v2_digest": "edb1c5d385bfd4f13a195119444dcb157f3bf0d893afd35e595ddc28c4b1c36c",
+        "interpreter_independent": "true",
+        "nothing_environment_derived_inside": "true"
+      },
+      "measured": {
+        "definition_identities_recorded": 57,
+        "definition_identities_recomputed": 103,
+        "recomputed_on_python_3_11_in_ci": true,
+        "recomputed_on_python_3_12_locally": true
+      },
+      "evidence": [
+        "reports/m5-closeout/corpus-identity.json",
+        "reports/m5-closeout/corpus-identity.txt",
+        "reports/m5-closeout/corpus-identity-inputs.json",
+        "reports/m5-closeout/corpus-identity-python3.11.txt",
+        "reports/m5-closeout/corpus-identity-python3.12.txt"
+      ],
+      "reopen_triggers": [
+        "the same source is identified differently on two interpreters",
+        "the archived v2 spec body or rotation stops being re-derivable",
+        "a definition that participates in the identity stops being name-addressable"
+      ]
+    },
+    {
+      "id": "b-retry-contract-integrity",
+      "title": "B retry-contract integrity and first-attempt regression guard",
+      "status": "closed",
+      "status_label": "CLOSED",
+      "scope": "every first-attempt failure is declared by the frozen spec, and the converse claim is checked too: a case that declares no retry must succeed on its first attempt",
+      "anchor_sha": "263808f",
+      "commits": ["263808f"],
+      "ci_runs": {"35706204970": "success"},
+      "visual_runs": {"35706717144": "success"},
+      "identities": {
+        "s_at_1": "0.8333",
+        "s_at_1_derivation": "cases with no retry contract / total cases = 60/72 (derived, not pinned)",
+        "retrying_cases": "12 (F6 only, declared required_attempts 2/3/5)"
+      },
+      "measured": {
+        "first_attempt_failures_outside_f6": 0,
+        "f6_cases": 12,
+        "f6_control_flow": {"f6_replan_once": 2, "f6_replan_twice": 3, "f6_replan_four_times": 5},
+        "counterexample_test_present": true
+      },
+      "evidence": ["backend/tests/test_repair_contract.py"],
+      "reopen_triggers": [
+        "any F1-F5 case needs a second attempt",
+        "an F6 case converges on an attempt other than its declared one",
+        "a retry contract appears outside F6"
+      ]
+    },
+    {
+      "id": "typesafe-drawing",
+      "title": "TypeSafe judgment-based drawing and credential handling",
+      "status": "accepted",
+      "status_label": "ACCEPTED",
+      "scope": "a TypeSafe key can be configured in the agent panel, the panel reports where the key comes from without ever returning it, and a sentence is turned into a governed transaction by judgments rather than by generated text",
+      "anchor_sha": "72f364e",
+      "commits": ["eabb58c", "50653a5", "7ce1395", "72f364e"],
+      "ci_runs": {"35707486170": "success", "35706798185": "failure"},
+      "visual_runs": {"35707535636": "success"},
+      "identities": {
+        "key_transport": "request body only; never a URL, never a preference file, never a log",
+        "key_storage_in_browser": "sessionStorage (cleared with the tab session)",
+        "provider_class": "openai-compatible System One (jev-latest)",
+        "confidence_floor": "0.34 - a clause below it is skipped and reported, never guessed"
+      },
+      "measured": {
+        "live_acceptance": "PASS (manual, real credential, exit 0)",
+        "live_verify_latency_ms": 778,
+        "live_plan_judgments": 2,
+        "live_plan_confidence": [1.0, 1.0],
+        "live_compiled_transaction_valid": true,
+        "panel_check": "PASS (manual, Playwright against a real server, key never entered in the page)",
+        "hermetic_contract_tests": "backend 12 + frontend 5 + browser 4",
+        "credential_hygiene": "enforced by a repository scan, and CI is asserted to configure no TypeSafe credential"
+      },
+      "notes": [
+        "run 35706798185 is a failure that was fixed, not hidden: a new field label contained the accessible name of an existing field, so a selector by role and name resolved to two elements. The fix renamed the fields, added the browser regression, and the mutation check proves the regression bites.",
+        "live calls are manual by design; CI has no credential and makes no paid external call"
+      ],
+      "evidence": [
+        "reports/typesafe/live-acceptance.txt",
+        "docs/typesafe-drawing.md",
+        "backend/tests/test_typesafe_drawing.py",
+        "backend/tests/test_typesafe_credential_hygiene.py",
+        "frontend/e2e/typesafe-panel.spec.ts",
+        "frontend/tests/typesafeSettings.test.ts",
+        "frontend/scripts/typesafe-panel-check.mjs",
+        "scripts/typesafe_live_acceptance.py"
+      ],
+      "reopen_triggers": [
+        "a TypeSafe key reaches a URL, a preference, a log or the repository",
+        "CI gains a TypeSafe credential or a live call",
+        "the panel stops reporting which key a call would use"
+      ]
+    },
+    {
+      "id": "a6-qualification-readiness",
+      "title": "A6 real-model qualification readiness",
+      "status": "closed",
+      "status_label": "CLOSED",
+      "scope": "what the qualification contract requires, whether this machine satisfies it, and the exact command that turns it into evidence once a credential exists",
+      "anchor_sha": "a92044f",
+      "commits": ["a92044f"],
+      "ci_runs": {"35708328119": "success"},
+      "identities": {
+        "cases": "24 (dev suite, 4 per family x 6 families)",
+        "thresholds": {"model_s5_overall": 0.8, "model_family_min": 0.5},
+        "required_env": ["PID_AGENT_LLM_BASE_URL", "PID_AGENT_LLM_MODEL"],
+        "optional_env": ["PID_AGENT_LLM_API_KEY"],
+        "exit_codes": {"0": "qualified", "2": "ran and did not qualify", "3": "provider or execution prerequisite missing"}
+      },
+      "measured": {
+        "provider_configured": false,
+        "planner_construction_probe": "with the two variables set to a loopback probe (no call made), ModelRepairPlanner builds with planner_id='model-repair-planner', provider_class='openai-compatible', prompt_fingerprint='db205459aa542200ec3085dafa7bf8bd840069d756d8b36ef010f46c7843416c', schema_fingerprint='f2b11350b0dcded1a32defd81abed00649fb332b54be261ef1a72f5b7c28de78'",
+        "credential_scan": "the only credential on this machine is TypeSafe's; no PID_AGENT_LLM_* / AGENTCAD_LLM_* anywhere, and no local OpenAI-compatible server is listening",
+        "every_other_prerequisite": "satisfied"
+      },
+      "evidence": ["reports/m5-qualification/readiness.md", "reports/m5-qualification/readiness.json"],
+      "reopen_triggers": [
+        "a model endpoint that is the actual intended repair-agent candidate is configured via PID_AGENT_LLM_BASE_URL and PID_AGENT_LLM_MODEL"
+      ]
+    },
+    {
+      "id": "a6-real-model-qualification",
+      "title": "A6 real-model qualification (Track M)",
+      "status": "blocked_external",
+      "status_label": "BLOCKED — EXTERNAL PROVIDER DEPENDENCY",
+      "scope": "24 cases through the same oracle and orchestrator as the deterministic gate, with a real model in the planner seat",
+      "anchor_sha": null,
+      "commits": [],
+      "ci_runs": {},
+      "identities": {
+        "required_env": ["PID_AGENT_LLM_BASE_URL", "PID_AGENT_LLM_MODEL"]
+      },
+      "measured": {
+        "status": "awaiting_real_model_qualification",
+        "exit_code": 3,
+        "reason": "no model provider is configured: set PID_AGENT_LLM_BASE_URL and PID_AGENT_LLM_MODEL (CI has no external provider by design)",
+        "qualified": false
+      },
+      "evidence": ["reports/m5-qualification/readiness.json"],
+      "reopen_triggers": [
+        "a real repair-agent provider credential appears and the 24-case suite can be run unmodified"
+      ]
+    }
+  ],
+  "claims_not_made": [
+    "the real-model qualification has NOT been run: no model was evaluated, so the candidate is not model-qualified",
+    "exit code 3 is a missing prerequisite, not a pass and not a rejected candidate",
+    "the TypeSafe System One model is a judgment model for the drawing path and was not used as a repair-agent provider",
+    "no threshold, corpus, oracle, prompt contract or family denominator was changed to reach any status above",
+    "the v2 acceptance evidence in reports/m5 is historical: the current corpus identity is v3 and the archived v2 identity is recomputable but is not the active one"
+  ]
+}

@@ -117,6 +117,44 @@ export type TypesafeVerifyResult = {
   answer?: Record<string, unknown>;
 };
 
+// The panel can carry a key, but the server may already hold one (``TYPESAFE_API_KEY``). Which of the
+// two a blank field falls back to changes what the user has to do, so it is read from the server and
+// said out loud instead of guessed at from an empty input.
+const TYPESAFE_KEY_PLACEHOLDER = "在 typesafe.ai 控制台申请的 Key；也可由服务端环境变量提供";
+
+export function describeTypesafeKeySource(status: TypesafeProviderStatus | null): {
+  tone: "ok" | "warning";
+  message: string;
+  placeholder: string;
+} {
+  if (!status) {
+    return {
+      tone: "warning",
+      message: "正在询问服务端的 TypeSafe 配置…",
+      placeholder: TYPESAFE_KEY_PLACEHOLDER,
+    };
+  }
+  if (!status.configured) {
+    return {
+      tone: "warning",
+      message: "服务端环境变量里没有 TypeSafe Key：在下面填入，才由本机发起判读。",
+      placeholder: TYPESAFE_KEY_PLACEHOLDER,
+    };
+  }
+  if (status.api_key_source === "environment") {
+    return {
+      tone: "ok",
+      message: `服务端环境变量已提供 Key（TYPESAFE_API_KEY）：下面留空就用它 · ${status.base_url} · ${status.model}`,
+      placeholder: "留空即用服务端环境变量的 Key",
+    };
+  }
+  return {
+    tone: "ok",
+    message: `将使用本面板填写的 Key · ${status.base_url} · ${status.model}`,
+    placeholder: TYPESAFE_KEY_PLACEHOLDER,
+  };
+}
+
 export function setServiceAccessToken(token: string, persistForSession = true): void {
   serviceAccessToken = token.trim();
   try {

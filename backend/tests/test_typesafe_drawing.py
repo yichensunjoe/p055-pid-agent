@@ -30,6 +30,7 @@ from agentcad.typesafe import (
 from agentcad.typesafe_planner import (
     TypesafeSemanticPlanner,
     candidate_symbols,
+    confidence_of,
     split_clauses,
 )
 
@@ -164,6 +165,22 @@ def _place(service: DocumentService, document_id: str, label: str, x: float) -> 
     return element_id
 
 
+def test_confidence_reads_every_primitive_shape_a_live_answer_can_have() -> None:
+    """A live ``noul`` answers ``{"type": "noul", "noul": 0.97}`` -- not a Choice distribution.
+
+    Measured against api.typesafe.ai, so the shapes below are the service's, not a guess: reading
+    only ``confidence``/``probabilities`` would score a sure presence judgment as 0.0 and quietly
+    skip a clause the model was certain about.
+    """
+
+    assert confidence_of({"type": "noul", "noul": 0.97}) == 0.97
+    assert confidence_of({"choice": "centrifugal_pump", "confidence": 0.88}) == 0.88
+    assert confidence_of({"probabilities": {"a": 0.2, "b": 0.7}}) == 0.7
+    assert confidence_of({}) == 0.0
+    # The Choice distribution wins when both are present: it is the more specific number.
+    assert confidence_of({"confidence": 0.5, "probabilities": {"a": 0.9}}) == 0.9
+
+
 def test_plan_adds_the_symbol_the_judgment_chose(tmp_path) -> None:
     service, document_id = _service(tmp_path)
     recorder = _Recorder()
@@ -251,6 +268,36 @@ def test_the_route_is_mounted_and_a_missing_key_is_an_explicit_400(tmp_path, mon
     rejected = client.post("/api/v2/provider/typesafe/verify", json={})
     assert rejected.status_code == 400
     assert rejected.json()["detail"]["code"] == "typesafe_key_missing"
+
+
+def test_the_route_reports_a_key_that_only_the_server_environment_holds(tmp_path, monkeypatch) -> None:
+    """The panel's whole reason for asking: a key exported in a shell profile is invisible to the browser.
+
+    This is the shape the local development machine has -- ``TYPESAFE_API_KEY`` in ``~/.zshrc`` -- and the
+    panel must be able to say "leave the field empty, the server has one" instead of "no key configured".
+    """
+
+    from fastapi.testclient import TestClient
+
+    from agentcad.config import Settings
+    from agentcad.main import create_app
+
+    monkeypatch.setenv(TYPESAFE_ENV_API_KEY, "server-side-key")
+    client = TestClient(
+        create_app(
+            Settings(
+                database_path=tmp_path / "typesafe-route-env.db",
+                cors_origins=["http://localhost:5173"],
+                frontend_dist=tmp_path / "missing-dist",
+            )
+        )
+    )
+    body = client.get("/api/v2/provider/typesafe/status").json()
+    assert body["configured"] is True
+    assert body["api_key_present"] is True
+    assert body["api_key_source"] == "environment"
+    assert body["error_code"] is None
+    assert "server-side-key" not in str(body)
 
 
 def _input(prompt: str):

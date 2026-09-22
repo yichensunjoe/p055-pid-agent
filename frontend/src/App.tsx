@@ -24,7 +24,7 @@ import { HistoryPanel } from "./editor/HistoryPanel";
 import { LayerSystemPanel } from "./editor/LayerSystemPanel";
 import { PropertyInspector } from "./editor/PropertyInspector";
 import { SymbolPalette } from "./editor/SymbolPalette";
-import { api, ApiError, clearServiceAccessToken, downloadApiResource, getServiceAccessToken, getTypesafeApiKey, readTypesafePreference, setServiceAccessToken, setTypesafeApiKey, writeTypesafePreferences, type ProviderConfig, type ProviderTestResult } from "./api";
+import { api, ApiError, clearServiceAccessToken, describeTypesafeKeySource, downloadApiResource, getServiceAccessToken, getTypesafeApiKey, readTypesafePreference, setServiceAccessToken, setTypesafeApiKey, writeTypesafePreferences, type ProviderConfig, type ProviderTestResult, type TypesafeProviderStatus } from "./api";
 import { CAD_ACCEPT, cadReportLines, dwgConverterHint, isCadFileName, type CadCapabilities } from "./cadImport";
 import { documentDeletionConfirmation } from "./documentDeletion";
 import {
@@ -170,6 +170,7 @@ export default function App() {
   const [typesafeModel, setTypesafeModel] = useState(() => readTypesafePreference("model", "jev-latest"));
   const [typesafeEnabled, setTypesafeEnabled] = useState(() => readTypesafePreference("enabled", "false") === "true");
   const [typesafeTest, setTypesafeTest] = useState<{ ok: boolean; message: string } | null>(null);
+  const [typesafeStatus, setTypesafeStatus] = useState<TypesafeProviderStatus | null>(null);
   const [testingTypesafe, setTestingTypesafe] = useState(false);
   const [serviceToken, setServiceToken] = useState(() => getServiceAccessToken());
   const [showServiceToken, setShowServiceToken] = useState(false);
@@ -256,6 +257,15 @@ export default function App() {
     void api.cadImportCapabilities()
       .then((capabilities) => { if (!cancelled) setCadCapabilities(capabilities); })
       .catch(() => { if (!cancelled) setCadCapabilities(null); });
+    return () => { cancelled = true; };
+  }, []);
+  // Whether the server already holds a TypeSafe key decides what an empty field means, and the
+  // answer is not knowable from the browser: the key may live only in the server's environment.
+  useEffect(() => {
+    let cancelled = false;
+    void api.typesafeStatus()
+      .then((status) => { if (!cancelled) setTypesafeStatus(status); })
+      .catch(() => { if (!cancelled) setTypesafeStatus(null); });
     return () => { cancelled = true; };
   }, []);
   useEffect(() => {
@@ -423,6 +433,12 @@ export default function App() {
     ].filter(Boolean).join("\n");
   };
 
+  const refreshTypesafeStatus = async () => {
+    const status = await api.typesafeStatus().catch(() => null);
+    setTypesafeStatus(status);
+    return status;
+  };
+
   const verifyTypesafe = async () => {
     setTestingTypesafe(true);
     setTypesafeTest(null);
@@ -437,6 +453,8 @@ export default function App() {
       setTypesafeTest({ ok: false, message: error instanceof ApiError ? error.message : String(error) });
     } finally {
       setTestingTypesafe(false);
+      // A failure here is often "no key anywhere", which the hint above the field should say.
+      void refreshTypesafeStatus();
     }
   };
 
@@ -878,6 +896,8 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [commandPaletteOpen, shortcutMap, state.document, state.selectedElementIds, namedViews, navigationZones, canvasView]);
 
+  const typesafeKeySource = describeTypesafeKeySource(typesafeStatus);
+
   return (
     <div className="app-shell" data-testid="app-shell" data-theme={resolvedAppearance} data-document-id={state.document?.id ?? ""} data-revision={state.document?.revision ?? ""}>
       <header className="topbar">
@@ -1136,11 +1156,13 @@ export default function App() {
               <div className="typesafe-settings">
                 <label className="provider-thinking-toggle"><span>用 TypeSafe 判读并画图</span><input type="checkbox" checked={typesafeEnabled} onChange={(event: ChangeEvent<HTMLInputElement>) => { setTypesafeEnabled(event.target.checked); writeTypesafePreferences({ baseUrl: typesafeBaseUrl, model: typesafeModel, enabled: event.target.checked }); }} /></label>
                 <div className="typesafe-hint">开启后，本面板的生成请求改由 TypeSafe System One 判读：代码先按图纸与符号目录列出候选，模型只回答“指的是哪一个”，置信度低于阈值的子句会被跳过而不是猜着画。</div>
-                <label>TypeSafe API Key<div className="secret-input-row"><input type={showTypesafeKey ? "text" : "password"} value={typesafeKey} onChange={(event: ChangeEvent<HTMLInputElement>) => { setTypesafeKey(event.target.value); setTypesafeApiKey(event.target.value); }} placeholder="在 typesafe.ai 控制台申请的 Key；也可由服务端环境变量提供" autoComplete="off" spellCheck={false} /><button type="button" onClick={() => setShowTypesafeKey(!showTypesafeKey)}>{showTypesafeKey ? "隐藏" : "显示"}</button></div></label>
+                <div className={`typesafe-hint typesafe-key-source typesafe-key-source-${typesafeKeySource.tone}`}>{typesafeKeySource.message}</div>
+                <label>TypeSafe API Key<div className="secret-input-row"><input type={showTypesafeKey ? "text" : "password"} value={typesafeKey} onChange={(event: ChangeEvent<HTMLInputElement>) => { setTypesafeKey(event.target.value); setTypesafeApiKey(event.target.value); }} placeholder={typesafeKeySource.placeholder} autoComplete="off" spellCheck={false} /><button type="button" onClick={() => setShowTypesafeKey(!showTypesafeKey)}>{showTypesafeKey ? "隐藏" : "显示"}</button></div></label>
                 <label>TypeSafe Base URL<input value={typesafeBaseUrl} onChange={(event: ChangeEvent<HTMLInputElement>) => setTypesafeBaseUrl(event.target.value)} placeholder="https://api.typesafe.ai" /></label>
                 <label>TypeSafe 模型<input value={typesafeModel} onChange={(event: ChangeEvent<HTMLInputElement>) => setTypesafeModel(event.target.value)} placeholder="jev-latest" /></label>
                 <div className="provider-actions">
                   <button type="button" onClick={() => void verifyTypesafe()} disabled={testingTypesafe}>{testingTypesafe ? "正在核对…" : "测试 TypeSafe Key"}</button>
+                  <button type="button" onClick={() => void refreshTypesafeStatus()}>刷新服务端配置</button>
                 </div>
                 {typesafeTest ? <div className={typesafeTest.ok ? "provider-model-status" : "provider-model-status error"}>{typesafeTest.message}</div> : null}
               </div>

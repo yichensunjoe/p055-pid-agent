@@ -404,12 +404,40 @@ button:focus-visible, a:focus-visible { outline: none; box-shadow: var(--focus-r
   line-height: 1.5;
 }
 
+/* Which key the next call would actually use is information, not decoration: green when the server
+   already has one, amber when nothing does and the field below is the only way in. */
+.typesafe-key-source {
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: #f8fafc;
+}
+
+.typesafe-key-source-ok {
+  color: #047857;
+}
+
+.typesafe-key-source-warning {
+  color: #b45309;
+}
+
 .app-shell[data-theme="dark"] .typesafe-settings {
   border-color: #334155;
 }
 
 .app-shell[data-theme="dark"] .typesafe-hint {
   color: #94a3b8;
+}
+
+.app-shell[data-theme="dark"] .typesafe-key-source {
+  background: #1e293b;
+}
+
+.app-shell[data-theme="dark"] .typesafe-key-source-ok {
+  color: #34d399;
+}
+
+.app-shell[data-theme="dark"] .typesafe-key-source-warning {
+  color: #fbbf24;
 }
 
 .app-shell[data-theme="dark"] .workspace-control-buttons button,

@@ -515,12 +515,22 @@ def _process_tag_from_clause(clause: str) -> str:
 
 
 def confidence_of(answer: Mapping[str, Any]) -> float:
-    """The judgment's own number, exposed for callers that want to log the distribution too."""
+    """The judgment's own number, whatever primitive produced it.
+
+    A live answer looks like ``{"type": "noul", "noul": 0.97}`` for a presence question and like
+    ``{"choice": ..., "confidence": ..., "probabilities": {...}}`` for a Choice; reading only the
+    Choice shape would report a confident ``noul`` as 0.0 and make a caller skip a clause the model
+    was sure about.
+    """
 
     probabilities = choice_probabilities(answer)
     if probabilities:
         return max(probabilities.values())
-    return float(answer.get("confidence") or 0.0)
+    for key in ("confidence", "noul", "score"):
+        value = answer.get(key)
+        if isinstance(value, (int, float)):
+            return float(value)
+    return 0.0
 
 
 __all__ = [

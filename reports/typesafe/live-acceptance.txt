@@ -1,0 +1,10 @@
+# TypeSafe live acceptance (real key from the server environment) — 2026-09-22T08:27:57Z
+# .venv/bin/python scripts/typesafe_live_acceptance.py
+credential: {'base_url': 'https://api.typesafe.ai', 'model': 'jev-latest', 'api_key_present': True, 'api_key_source': 'environment', 'timeout_seconds': 60.0}
+verify: ok model=jev-1.13.0 latency=778.45ms answer={"type": "noul", "noul": 0.97}
+plan: TypeSafe 判读：2 个判断，候选 7 个符号 / 1 个连接组合。 model=jev-1.13.0 latency=906.57ms [添加] 新增一台离心泵 P-201 -> centrifugal_pump（置信度 1.00） [连接] 把 T-101 接到 T-102 -> T-101 → T-102（置信度 1.00）
+  - {"op": "add_element", "element": {"id": "sym_typesafe_doc_0000", "layer_id": "layer_default", "system_id": "system_default", "style": {"stroke": "#111827", "fill": "none", "stroke_width": 1.5, "opacit
+  - {"op": "connect_ports", "connector_id": "pipe_48bfbcec9df0", "source_element_id": "sym_T-101", "source_port_id": "suction", "target_element_id": "sym_T-102", "target_port_id": "suction", "routing": "o
+compile: valid=True stage=validate issues=none
+verdict: PASS — 每个子句都被判读选中，事务通过编译
+exit=0

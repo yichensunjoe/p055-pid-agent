@@ -1,3 +1,17 @@
+## 2026-09-23 · 「整体有个版本」不等于「每个 digest 有定义它的那个版本」（P055-PID-Agent）
+
+- 场景：为满足「provenance 必须可追溯」的要求，我在记录里放了一组 version 字段（layout digest / projection /
+  materializer / materialization digest）。审查者指出这证明的是**较弱的不变量**：整体有一个版本 ≠ 每个 digest
+  都有定义它自己的版本 —— 后者的缺失意味着单个存下来的 digest 单独拿出来仍无法解释。
+- 结论做法：把关系**声明成数据**而不是两个平行 tuple：
+  `BINDINGS = ((identity, (version, ...)), ...)`，version 字段列表由它**派生**（`dict.fromkeys(展平)`），
+  validator 两个方向都查（身份集合恰等于必需集合；version 列表恰等于绑定表并集，含顺序）。
+  新增的绑定是上游定义（spec schema / adapter digest version / symbol geometry catalog digest version）。
+- 踩坑点：① **两个平行列表就是会漂移的形状** —— “身份表”和“版本表”之间没有结构约束，改一个忘一个无人会发现；
+  改成一张表 + 派生，漂移在结构上不可能。② 证明强度要写在测试里：用**参数化遍历绑定表**跑 mutation
+  （逐个 identity、逐个它自己的 version 改名 → 7/7 全红），而不是手写七条用例 —— 绑定表新增一项时下一轮自动覆盖。
+- 适用场景：任何「一个对象的每个部分都要各自带元数据」的强不变量 —— 先问“我给的是整体的还是一个一个的”。
+
 ## 2026-09-23 · 「可选 provenance」等于没有 provenance；以及自证式断言会把 mutation 掩盖成绿的（P055-PID-Agent）
 
 - 场景：合同写着 `PROVENANCE_IS_RECORDED_ON_THE_WRITE = True`，运行时却是

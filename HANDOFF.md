@@ -2,7 +2,21 @@
 
 > 交接文档：每次开新会话先读本文件。更新规则见 `AGENTS.md`「HANDOFF 交接规则」。
 
-## 当前状态（2026-09-23 R25 —— **Phase-2B 已签已推（`origin/main = 592e6b9`）；Phase-3 候选已上 review branch（`review/m7-2-phase3 = 6a9bfe6`，四 commit、CI 四 job 全绿），等 Gate 复核 delta 后签；NL 纵切第一块已开工（sentence → DiagramSpec）**）
+## 当前状态（2026-09-23 R26 —— **Phase-3 候选在 `review/m7-2-phase3 = 28c4f96`（5 commit，CI 四 job 全绿），等 Gate 复核最后一轮 delta；`main` 仍是已签基线 `592e6b9`**）
+
+- **本轮做了什么（Gate 第五轮一个小 delta）**：把 provenance 的“identity ↔ version”从一个 version 集合改成**声明成数据的绑定表**
+  `PROVENANCE_IDENTITY_VERSION_BINDINGS`（identity → 定义它的 version(s)），`MATERIALIZATION_PROVENANCE_VERSION_FIELDS`
+  由它**派生**（不再手写，消掉会漂移的“两个平行 tuple”）；持久化命名空间从 9 个键 → **12 个键**
+  （5 identity + 7 version，新增 `diagram_spec_schema_version` / `adapter_topology_digest_version` /
+  `symbol_geometry_catalog_digest_version`）；validator 两个方向都查。
+- **为什么**：上一轮证明的是较弱的不变量——“整体有个版本”；要证明的是“**每个 digest 都有定义它自己的那个版本**”，
+  否则单个存下来的 digest 仍然无法解释。
+- **mutation（参数化遍历绑定表，不是手写七条）**：逐个 identity、逐个它自己的 version 改名 → **7/7 全红**。
+- **门禁**：在 cherry-pick 那棵树上实测（ruff clean / `validate_contract()` `[]` / 相关两文件 165 passed）；
+  本地整仓 **1519 passed**；CI run `35837022297` 四 job success。
+- **下一步**：等 Gate 复核 `6a9bfe6..28c4f96` 并签 M7-2 Phase-3 CLOSED；签后才 fast-forward main。
+  之后立即做 NL 纵切的第二块：把 `m7_text_planner` 接到 API + 面板（在界面 agent 里用 TypeSafe key 一句话出图），
+  再做“第二句中文改语义 → 重画 → 导出”。
 
 - **本轮做了什么**：① 按 Gate 授权把 `592e6b9..1f6bbd6` 原样推到 **`review/m7-2-phase3`**（不动 main、不 squash）；
   ② Gate 远端 exact-SHA 复核后只留一个 blocker（provenance 可选），已修并在同一分支追加 **`6a9bfe6`**；

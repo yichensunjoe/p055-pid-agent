@@ -42,11 +42,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
 from .m7_layout_contract import (
+    ANNOTATION_TEXT_EXTENT_CHARACTER_FACTOR,
     EQUIPMENT_SYMBOL_CATEGORIES_ARE_THE_REST,
     INSTRUMENT_SYMBOL_CATEGORY,
     LAYOUT_COORDINATE_DECIMALS,
@@ -58,6 +61,7 @@ from .m7_layout_contract import (
     SYMBOL_SCALE_CONSTRAINT_DEFAULT,
     SYMBOL_SCALE_CONSTRAINT_METADATA_KEY,
     SYMBOL_SCALE_CONSTRAINTS,
+    SYMBOL_SHAPE_KINDS,
 )
 from .symbols import SymbolRegistry
 
@@ -111,6 +115,253 @@ class SymbolNotRenderableError(SymbolGeometryError):
     """A symbol the catalogue defines without any renderer geometry to draw."""
 
     code = "symbol_not_renderable"
+
+
+class SymbolShapeOutOfBoundsError(SymbolGeometryError):
+    """A shape whose unstroked geometry leaves the symbol's own declared box.
+
+    The canvas inflates the declared box by the stroke envelope, which is only the right answer
+    while this invariant holds. A shape that overflows makes the rendered bounds an approximation
+    of something nobody drew, so it is refused where the geometry freezes -- with the symbol and
+    the shape named, because a catalogue defect nobody can locate is a catalogue defect that stays.
+    """
+
+    code = "symbol_shape_outside_intrinsic_box"
+
+    def __init__(self, message: str, *, symbol_key: str = "", shape_index: int = -1) -> None:
+        self.shape_index = shape_index
+        super().__init__(message, symbol_key=symbol_key)
+
+
+def unstroked_shape_bounds(shape: Any) -> tuple[float, float, float, float]:
+    """``(min_x, min_y, max_x, max_y)`` of one catalogue shape, ignoring its stroke.
+
+    Curve control points are included rather than sampled: a Bezier stays inside the convex hull
+    of its control points, so the hull is a conservative bound, while sampling would make the
+    check depend on a step size -- and a step size is a decision nobody declared.
+    """
+
+    kind = str(shape.get("type") if isinstance(shape, dict) else "")
+    if kind not in SYMBOL_SHAPE_KINDS:
+        raise SymbolShapeOutOfBoundsError(
+            f"shape kind {kind!r} is not one of {list(SYMBOL_SHAPE_KINDS)}: its bounds are "
+            "unknown, and an unknown extent cannot be proven to fit the symbol's box",
+            shape_index=-1,
+        )
+    if kind == "line":
+        xs = (float(shape["x1"]), float(shape["x2"]))
+        ys = (float(shape["y1"]), float(shape["y2"]))
+    elif kind == "polyline":
+        points = [(float(point[0]), float(point[1])) for point in shape["points"]]
+        xs = tuple(point[0] for point in points)
+        ys = tuple(point[1] for point in points)
+    elif kind == "rect":
+        xs = (float(shape["x"]), float(shape["x"]) + float(shape["width"]))
+        ys = (float(shape["y"]), float(shape["y"]) + float(shape["height"]))
+    elif kind == "circle":
+        cx, cy, radius = float(shape["cx"]), float(shape["cy"]), float(shape["r"])
+        xs = (cx - radius, cx + radius)
+        ys = (cy - radius, cy + radius)
+    elif kind == "path":
+        points = _path_points(str(shape["d"]))
+        xs = tuple(point[0] for point in points)
+        ys = tuple(point[1] for point in points)
+    else:  # text
+        font_size = float(shape.get("font_size", 12.0))
+        width = len(str(shape.get("text", ""))) * font_size * ANNOTATION_TEXT_EXTENT_CHARACTER_FACTOR
+        xs = (float(shape["x"]) - width, float(shape["x"]) + width)
+        ys = (float(shape["y"]) - font_size, float(shape["y"]) + font_size * 0.3)
+    return (min(xs), min(ys), max(xs), max(ys))
+
+
+def arc_extent_corners(
+    *,
+    start: tuple[float, float],
+    end: tuple[float, float],
+    radius_x: float,
+    radius_y: float,
+    rotation: float,
+    large_arc: bool,
+    sweep: bool,
+) -> tuple[tuple[float, float], ...]:
+    """Corners that bound an SVG arc, from the arc's own centre.
+
+    The endpoint parameterisation is the SVG specification's (F.6.5): the centre is recovered
+    from the endpoints, the radii and the two flags, radii are scaled up when they are too small
+    to span the chord, and the arc then lies inside the ellipse that centre and radii describe.
+    A degenerate radius is a straight line to the endpoint, which the endpoints already bound.
+    """
+
+    if radius_x == 0.0 or radius_y == 0.0:
+        return (start, end)
+    cos_rotation, sin_rotation = math.cos(rotation), math.sin(rotation)
+    half_dx = (start[0] - end[0]) / 2
+    half_dy = (start[1] - end[1]) / 2
+    x1 = cos_rotation * half_dx + sin_rotation * half_dy
+    y1 = -sin_rotation * half_dx + cos_rotation * half_dy
+    scale = (x1 / radius_x) ** 2 + (y1 / radius_y) ** 2
+    if scale > 1.0:
+        factor = math.sqrt(scale)
+        radius_x *= factor
+        radius_y *= factor
+    denominator = (radius_x * y1) ** 2 + (radius_y * x1) ** 2
+    numerator = (radius_x * radius_y) ** 2 - denominator
+    coefficient = math.sqrt(max(0.0, numerator / denominator)) if denominator else 0.0
+    if large_arc == sweep:
+        coefficient = -coefficient
+    centre_x = (
+        cos_rotation * coefficient * radius_x * y1 / radius_y
+        - sin_rotation * coefficient * radius_y * x1 / radius_x
+        + (start[0] + end[0]) / 2
+    )
+    centre_y = (
+        sin_rotation * coefficient * radius_x * y1 / radius_y
+        + cos_rotation * coefficient * radius_y * x1 / radius_x
+        + (start[1] + end[1]) / 2
+    )
+    # The axis-aligned extent of a rotated ellipse, which contains the whole arc and therefore
+    # also the part of it that is actually drawn.
+    half_x = math.sqrt((radius_x * cos_rotation) ** 2 + (radius_y * sin_rotation) ** 2)
+    half_y = math.sqrt((radius_x * sin_rotation) ** 2 + (radius_y * cos_rotation) ** 2)
+    return (
+        (centre_x - half_x, centre_y - half_y),
+        (centre_x + half_x, centre_y + half_y),
+        start,
+        end,
+    )
+
+
+#: The SVG path commands the catalogue may use, with how many numbers each takes. Relative
+#: commands are resolved so that a relative path is measured where it actually draws.
+_PATH_COMMAND_ARITY: dict[str, int] = {
+    "M": 2,
+    "L": 2,
+    "H": 1,
+    "V": 1,
+    "C": 6,
+    "S": 4,
+    "Q": 4,
+    "T": 2,
+    "A": 7,
+    "Z": 0,
+}
+
+
+def _path_points(described: str) -> tuple[tuple[float, float], ...]:
+    """Every point a path's ``d`` touches, control points included."""
+
+    tokens = re.findall(r"[MmLlHhVvCcSsQqTtAaZz]|-?\d*\.?\d+(?:[eE]-?\d+)?", described)
+    points: list[tuple[float, float]] = []
+    current = (0.0, 0.0)
+    subpath_start = (0.0, 0.0)
+    command = ""
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token.isalpha():
+            command = token
+            index += 1
+            if command.upper() == "Z":
+                current = subpath_start
+                points.append(current)
+                continue
+        if not command:
+            raise SymbolShapeOutOfBoundsError(
+                f"path {described!r} starts with a number rather than a command",
+                shape_index=-1,
+            )
+        arity = _PATH_COMMAND_ARITY[command.upper()]
+        if index + arity > len(tokens):
+            raise SymbolShapeOutOfBoundsError(
+                f"path {described!r} ends mid-command for {command!r}",
+                shape_index=-1,
+            )
+        numbers = [float(value) for value in tokens[index : index + arity]]
+        index += arity
+        relative = command.islower()
+        upper = command.upper()
+        if upper in ("M", "L", "T"):
+            point = (numbers[0], numbers[1])
+        elif upper == "H":
+            point = (numbers[0], current[1])
+        elif upper == "V":
+            point = (current[0], numbers[0])
+        elif upper == "A":
+            # An arc bulges beyond its endpoints, and the two possible arcs are not symmetric
+            # about them: the extent has to come from the arc's own centre. (Inflating the
+            # endpoints by the radii instead would flag two real catalogue symbols -- a buffer
+            # tank and a column -- that draw perfectly well inside their boxes.)
+            rx, ry = abs(numbers[0]), abs(numbers[1])
+            rotation = math.radians(numbers[2])
+            large_arc, sweep = numbers[3] != 0.0, numbers[4] != 0.0
+            endpoint = (numbers[5], numbers[6])
+            if relative:
+                endpoint = (current[0] + endpoint[0], current[1] + endpoint[1])
+            for point in arc_extent_corners(
+                start=current,
+                end=endpoint,
+                radius_x=rx,
+                radius_y=ry,
+                rotation=rotation,
+                large_arc=large_arc,
+                sweep=sweep,
+            ):
+                points.append(point)
+            current = endpoint
+            points.append(current)
+            continue
+        else:  # cubic / quadratic: the endpoint is the last pair, the rest are controls
+            point = (numbers[-2], numbers[-1])
+            for offset in range(0, arity - 2, 2):
+                control = (numbers[offset], numbers[offset + 1])
+                if relative:
+                    control = (current[0] + control[0], current[1] + control[1])
+                points.append(control)
+        if relative:
+            point = (current[0] + point[0], current[1] + point[1])
+        current = point
+        points.append(current)
+        if upper == "M":
+            subpath_start = current
+    if not points:  # pragma: no cover - a path with no geometry cannot be drawn
+        raise SymbolShapeOutOfBoundsError(
+            f"path {described!r} has no geometry", shape_index=-1
+        )
+    return tuple(points)
+
+
+def symbol_shape_overflow(symbol: Any) -> tuple[str, ...]:
+    """Every shape of a symbol that leaves its declared box, described for a human."""
+
+    problems: list[str] = []
+    width = float(symbol.width)
+    height = float(symbol.height)
+    for index, shape in enumerate(symbol.shapes):
+        kind = str(shape.get("type") if isinstance(shape, dict) else "")
+        try:
+            min_x, min_y, max_x, max_y = unstroked_shape_bounds(shape)
+        except SymbolShapeOutOfBoundsError as exc:
+            problems.append(f"shape {index} ({kind}): {exc}")
+            continue
+        if min_x < -1e-9 or min_y < -1e-9 or max_x > width + 1e-9 or max_y > height + 1e-9:
+            problems.append(
+                f"shape {index} ({kind}) spans ({min_x:g}, {min_y:g})..({max_x:g}, {max_y:g}), "
+                f"outside the declared box (0, 0)..({width:g}, {height:g})"
+            )
+    return tuple(problems)
+
+
+def require_shapes_fit_the_intrinsic_box(symbol: Any) -> None:
+    """The invariant the rendered-bounds rule rests on, enforced where geometry is frozen."""
+
+    problems = symbol_shape_overflow(symbol)
+    if problems:
+        raise SymbolShapeOutOfBoundsError(
+            f"symbol {symbol.key!r} draws outside its own declared box, so its rendered bounds "
+            "cannot be derived by inflating that box: " + "; ".join(problems),
+            symbol_key=symbol.key,
+            shape_index=0,
+        )
 
 
 def _canonical(value: Any) -> str:
@@ -367,6 +618,8 @@ def freeze_symbol_geometry(
                 symbol_key=symbol_key,
             )
         symbol = catalog.get(symbol_key)
+        if symbol.shapes:
+            require_shapes_fit_the_intrinsic_box(symbol)
         facts.append(
             SymbolGeometryFact(
                 symbol_key=symbol.key,

@@ -1165,3 +1165,49 @@ annotation_text stroke 0    allowance 0     → reach 0   （文本框本身就�
 以后改 stroke 宽度或 envelope 规则就是 rules 版本变更，不能再走这条捷径。
 `clipping_problems()` 的检查顺序也调整成**先裁剪、后 margin**：裁剪是关于这张图的属性（对任何画布都成立），
 margin 是关于派生的属性；先报前者，读者看到的才是自己能看见的东西。
+
+### 13.9 symbol 的「未描边几何 ⊆ intrinsic box」：把近似变成可证明的
+
+上一节说 `rendered symbol bounds = 声明盒 inflate stroke envelope`。这句话**只在**"所有未描边 shape 都在
+声明盒内"成立时才精确——否则对符号仍然是近似，而 `PRESENTATION_BOUNDS_ARE_RENDERED_EXTENTS = True` 是更强的声明。
+所以这条前提不能留成隐含假设，它在**冻结几何的地方**被验证：
+
+```
+SYMBOL_UNSTROKED_SHAPES_MUST_FIT_THE_INTRINSIC_BOX = True
+SYMBOL_SHAPE_OVERFLOW_IS_A_HARD_FAILURE_AT_FREEZE = True
+SYMBOL_SHAPE_OVERFLOW_NAMES_THE_SYMBOL_AND_THE_SHAPE = True
+SYMBOL_RENDERED_BOUNDS_RULE = "declared_intrinsic_box_inflated_by_the_declared_stroke_envelope_v1"
+SYMBOL_RENDERED_BOUNDS_ARE_EXACT_GIVEN_THE_CONTAINMENT_INVARIANT = True
+SYMBOL_SHAPE_BOUNDS_ARE_CONSERVATIVE_FOR_CURVES = True
+SYMBOL_SHAPE_BOUNDS_USE_CONTROL_POINTS_NOT_SAMPLED_CURVES = True
+SYMBOL_SHAPE_KINDS = (line, polyline, rect, circle, path, text)
+UNKNOWN_SYMBOL_SHAPE_KIND_IS_A_HARD_FAILURE = True
+SYMBOL_TEXT_SHAPE_EXTENT_REUSES_THE_DECLARED_CHARACTER_FACTOR = True
+```
+
+实现是"从冻结的 shapes 算未描边 bounds → 与 `width×height` 比对"，逐 shape 逐条报出**符号 + shape 序号 + 类型 + 实际跨度**；
+类别词汇之外的 shape kind 直接硬失败（未知 extent 不可能被证明在盒内）。曲线用**控制点**包围（Bézier 落在控制点凸包内），
+不采样——采样步长本身就是一个没人声明过的决定。
+
+**这一步抓到的真东西**：第一版把圆弧按"端点 ± 半径"包围，结果把 `buffer_tank`（`M 0 35 A 35 35 0 0 1 70 35 L 70 65 A 35 35 0 0 1 0 65 Z`）
+和 `fractionation_column` 判成越界（-35..105 vs 0..70）。两者画得完全正常——错的是包围方式：圆弧的极值来自**它的圆心**，
+不是端点。于是实现了 SVG 规范的端点→圆心参数化（F.6.5，含半径不足时的放大与两个 flag），并用旋转椭圆的轴对齐范围包围。
+修好后 84 个内置符号全部通过。这个过程本身值得记下来：**"校验器报红"有时是在说校验器错了**，
+判断依据不是"库里是不是真的有问题"，而是"我的包围是不是真的是包围"。
+
+**fixture 与 mutation**：
+
+| 用例 | 内容 |
+| --- | --- |
+| 内置目录不变量 | 84 个符号逐个 `symbol_shape_overflow(symbol) == ()` |
+| 圆弧回归 | `buffer_tank` / `fractionation_column` 必须通过（防止退回端点膨胀那种包围） |
+| 溢出 line / rect | 临时目录（`SymbolRegistry(search_paths=[...])`）→ freeze 必须失败并带 symbol key + `shape 0 (line)` |
+| 曲线控制点 | `M 0 10 Q 200 -100 100 90 Z` → 控制点在盒外，必须失败 |
+| 未知 kind | `{"type": "hull"}` → 硬失败（未知 extent 不能被证明） |
+| 无 shape | 仍然是 renderability 失败，不是这条规则 |
+| 相对路径 | `m 10 10 l 0 60 l 50 0 z` 必须与它的绝对孪生 `M 10 10 L 10 70 L 60 70 Z` 量出同一个盒子 |
+
+mutation（实测）：去掉 freeze 里的包含检查 → **4 条红**；圆弧退回端点膨胀 → **2 条红**；
+path 只读端点不读控制点 → **1 条红**；相对命令按绝对处理 → **1 条红**。
+其中"控制点"和"相对命令"两条最初都是绿的（内置目录里没有这类 shape），是补了专门 fixture 才咬合的——
+又一次同一种坑：**能力没人用过，就等于没有被证明过**。

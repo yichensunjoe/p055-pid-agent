@@ -26,6 +26,7 @@ from agentcad.m7_symbol_geometry import (
     MissingSymbolGeometryError,
     SymbolGeometryError,
     SymbolNotRenderableError,
+    SymbolShapeOutOfBoundsError,
     UnknownSymbolScaleConstraintError,
     declared_symbol_key,
     freeze_symbol_geometry,
@@ -33,6 +34,8 @@ from agentcad.m7_symbol_geometry import (
     symbol_closure_for_kinds,
     symbol_geometry_catalog_digest,
     symbol_key_field,
+    symbol_shape_overflow,
+    unstroked_shape_bounds,
 )
 from agentcad.models import Point, SymbolDefinition, SymbolPort, TextElement
 from agentcad.symbols import SymbolRegistry
@@ -477,3 +480,137 @@ def test_task_book_declares_the_step_3_obligations() -> None:
         "closure",
     ):
         assert token in text, token
+
+
+# ---------------------------------------------------------------------------------------
+# The containment invariant: inflating the declared box is only exact if shapes fit it
+# ---------------------------------------------------------------------------------------
+
+
+def test_the_builtin_catalogue_fits_its_own_declared_boxes() -> None:
+    """The invariant the rendered-bounds rule rests on, checked on the real catalogue."""
+
+    registry = SymbolRegistry()
+    symbols = registry.list()
+    assert len(symbols) > 50
+    overflowing = {
+        symbol.key: symbol_shape_overflow(symbol)
+        for symbol in symbols
+        if symbol_shape_overflow(symbol)
+    }
+    assert overflowing == {}, overflowing
+
+
+def test_an_arc_is_bounded_from_its_centre_not_by_inflating_its_endpoints() -> None:
+    """The false positive that made this worth doing properly.
+
+    A buffer tank and a column draw a semicircle between two points 70 apart with radius 35. The
+    arc lies inside the declared box; inflating the endpoints by the radii would say it spans
+    -35..105 and reject two symbols that draw perfectly well. The bound has to come from the arc's
+    own centre.
+    """
+
+    registry = SymbolRegistry()
+    for key in ("buffer_tank", "fractionation_column"):
+        symbol = registry.get(key)
+        assert any(shape.get("type") == "path" for shape in symbol.shapes)
+        assert symbol_shape_overflow(symbol) == (), key
+
+
+def _overflow_registry(tmp_path: Path, shapes: list[dict], *, key: str = "overflow_vessel"):
+    payload = {
+        "symbols": [
+            {
+                "key": key,
+                "name": "溢出容器",
+                "category": "容器",
+                "description": "test symbol",
+                "width": 100.0,
+                "height": 100.0,
+                "ports": [],
+                "shapes": shapes,
+            }
+        ]
+    }
+    path = tmp_path / "overflow_symbols.json"
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    return SymbolRegistry(search_paths=[path])
+
+
+def test_a_shape_that_overflows_its_box_is_refused_where_geometry_freezes(
+    tmp_path: Path,
+) -> None:
+    registry = _overflow_registry(
+        tmp_path, [{"type": "line", "x1": 0, "y1": 10, "x2": 140, "y2": 10}]
+    )
+    with pytest.raises(SymbolShapeOutOfBoundsError) as raised:
+        freeze_symbol_geometry(["overflow_vessel"], registry=registry)
+    message = str(raised.value)
+    assert raised.value.code == "symbol_shape_outside_intrinsic_box"
+    assert raised.value.symbol_key == "overflow_vessel"
+    assert "shape 0 (line)" in message
+    assert "140" in message
+
+
+def test_a_rect_that_overflows_its_box_is_refused_too(tmp_path: Path) -> None:
+    registry = _overflow_registry(
+        tmp_path, [{"type": "rect", "x": 0, "y": 0, "width": 100, "height": 130}]
+    )
+    with pytest.raises(SymbolShapeOutOfBoundsError) as raised:
+        freeze_symbol_geometry(["overflow_vessel"], registry=registry)
+    assert "shape 0 (rect)" in str(raised.value)
+
+
+def test_an_unrecognised_shape_kind_has_unknown_bounds_and_cannot_pass(tmp_path: Path) -> None:
+    registry = _overflow_registry(tmp_path, [{"type": "hull", "points": [[0, 0], [10, 10]]}])
+    with pytest.raises(SymbolShapeOutOfBoundsError) as raised:
+        freeze_symbol_geometry(["overflow_vessel"], registry=registry)
+    assert "not one of" in str(raised.value)
+
+
+def test_a_symbol_without_shapes_has_no_shapes_to_check(tmp_path: Path) -> None:
+    """A catalogue entry with no renderer geometry stays a *renderability* failure, not this one."""
+
+    registry = _overflow_registry(tmp_path, [])
+    snapshot = freeze_symbol_geometry(["overflow_vessel"], registry=registry)
+    assert snapshot.require("overflow_vessel").renderer_supported is False
+
+
+def test_a_curve_control_point_outside_the_box_is_caught(tmp_path: Path) -> None:
+    """Control points bound a curve, so a control outside the box is a bound outside the box.
+
+    Nothing in the built-in catalogue exercises this (its curves happen to stay inside), which is
+    exactly why the fixture exists: without it, "control points are read" would be a claim no test
+    could see.
+    """
+
+    registry = _overflow_registry(
+        tmp_path, [{"type": "path", "d": "M 0 10 Q 200 -100 100 90 Z"}]
+    )
+    with pytest.raises(SymbolShapeOutOfBoundsError) as raised:
+        freeze_symbol_geometry(["overflow_vessel"], registry=registry)
+    assert "shape 0 (path)" in str(raised.value)
+
+
+def test_a_relative_path_measures_the_same_as_its_absolute_twin() -> None:
+    """Relative commands have to be resolved where they draw, not where they were written.
+
+    Measured directly rather than through an overflow fixture: a relative path that stays inside
+    its box would look identical under both readings if the test only asked "did it overflow".
+    """
+
+    relative = {"type": "path", "d": "m 10 10 l 0 60 l 50 0 z"}
+    absolute = {"type": "path", "d": "M 10 10 L 10 70 L 60 70 Z"}
+    assert unstroked_shape_bounds(relative) == (10.0, 10.0, 60.0, 70.0)
+    assert unstroked_shape_bounds(relative) == unstroked_shape_bounds(absolute)
+
+
+def test_the_containment_rule_is_declared_and_is_what_makes_inflation_exact() -> None:
+    assert contract.validate_contract() == []
+    assert contract.SYMBOL_UNSTROKED_SHAPES_MUST_FIT_THE_INTRINSIC_BOX is True
+    assert contract.SYMBOL_SHAPE_OVERFLOW_IS_A_HARD_FAILURE_AT_FREEZE is True
+    assert contract.SYMBOL_SHAPE_OVERFLOW_NAMES_THE_SYMBOL_AND_THE_SHAPE is True
+    assert contract.SYMBOL_RENDERED_BOUNDS_ARE_EXACT_GIVEN_THE_CONTAINMENT_INVARIANT is True
+    assert contract.SYMBOL_SHAPE_BOUNDS_ARE_CONSERVATIVE_FOR_CURVES is True
+    assert contract.UNKNOWN_SYMBOL_SHAPE_KIND_IS_A_HARD_FAILURE is True
+    assert "intrinsic_box_inflated_by" in contract.SYMBOL_RENDERED_BOUNDS_RULE

@@ -1396,6 +1396,24 @@ SYMBOL_BOX_IS_NOT_THE_SYMBOL_RENDERED_EXTENT = True
 #: No step produces leader-line geometry yet. Named rather than left to a reader to notice, because
 #: "the policy covers leaders" and "there are leaders to cover" are different facts.
 LEADER_LINE_ROWS_EXIST_IN_THE_PLAN = False
+
+#: Why inflating the declared box is *exact* rather than approximate. Inflating is only the right
+#: answer if every unstroked shape fits the box the catalogue declares; the port stub that reaches
+#: ``x = 0`` shows the stroke crosses that edge, but says nothing about a shape that crosses it on
+#: its own. The invariant is therefore checked where the geometry is frozen, not assumed at the
+#: point where a canvas is measured.
+SYMBOL_UNSTROKED_SHAPES_MUST_FIT_THE_INTRINSIC_BOX = True
+SYMBOL_SHAPE_OVERFLOW_IS_A_HARD_FAILURE_AT_FREEZE = True
+SYMBOL_SHAPE_OVERFLOW_NAMES_THE_SYMBOL_AND_THE_SHAPE = True
+SYMBOL_RENDERED_BOUNDS_RULE = (
+    "declared_intrinsic_box_inflated_by_the_declared_stroke_envelope_v1"
+)
+SYMBOL_RENDERED_BOUNDS_ARE_EXACT_GIVEN_THE_CONTAINMENT_INVARIANT = True
+SYMBOL_SHAPE_BOUNDS_ARE_CONSERVATIVE_FOR_CURVES = True
+SYMBOL_SHAPE_BOUNDS_USE_CONTROL_POINTS_NOT_SAMPLED_CURVES = True
+SYMBOL_SHAPE_KINDS: tuple[str, ...] = ("line", "polyline", "rect", "circle", "path", "text")
+UNKNOWN_SYMBOL_SHAPE_KIND_IS_A_HARD_FAILURE = True
+SYMBOL_TEXT_SHAPE_EXTENT_REUSES_THE_DECLARED_CHARACTER_FACTOR = True
 #: A label's box is its text extent -- the deterministic rule §12 already names, not a second
 #: measurement of the same string.
 ANNOTATION_EXTENT_IS_THE_TEXT_BOX = True
@@ -2549,6 +2567,41 @@ def validate_contract() -> list[str]:
         problems.append(
             "the catalogue box is the symbol's geometry, not its drawn box: an outline reaches "
             "outside it"
+        )
+
+    # §13 inflating the declared box is exact only if the unstroked shapes fit it.
+    if not SYMBOL_UNSTROKED_SHAPES_MUST_FIT_THE_INTRINSIC_BOX:
+        problems.append(
+            "a symbol's unstroked shapes must fit its intrinsic box: otherwise the rendered "
+            "bounds are an approximation and the canvas is fitted to something nobody drew"
+        )
+    if not SYMBOL_SHAPE_OVERFLOW_IS_A_HARD_FAILURE_AT_FREEZE:
+        problems.append("a shape that overflows its intrinsic box is a failure where geometry freezes")
+    if not SYMBOL_SHAPE_OVERFLOW_NAMES_THE_SYMBOL_AND_THE_SHAPE:
+        problems.append(
+            "an overflow refusal must name the symbol and the shape: a catalogue defect nobody "
+            "can find is a catalogue defect that stays"
+        )
+    if not SYMBOL_RENDERED_BOUNDS_RULE.strip():
+        problems.append("the symbol rendered-bounds rule must be named")
+    if not SYMBOL_RENDERED_BOUNDS_ARE_EXACT_GIVEN_THE_CONTAINMENT_INVARIANT:
+        problems.append(
+            "inflating the declared box is only exact while the containment invariant holds"
+        )
+    if not SYMBOL_SHAPE_BOUNDS_ARE_CONSERVATIVE_FOR_CURVES:
+        problems.append("shape bounds must be conservative for curves, not optimistic")
+    if not SYMBOL_SHAPE_BOUNDS_USE_CONTROL_POINTS_NOT_SAMPLED_CURVES:
+        problems.append(
+            "control points bound a curve: sampling it would make the check depend on a step size"
+        )
+    for kind in ("line", "polyline", "rect", "circle", "path", "text"):
+        if kind not in SYMBOL_SHAPE_KINDS:
+            problems.append(f"the shape vocabulary must name the {kind!r} kind")
+    if not UNKNOWN_SYMBOL_SHAPE_KIND_IS_A_HARD_FAILURE:
+        problems.append("an unrecognised shape kind has unknown bounds, so it cannot pass silently")
+    if not SYMBOL_TEXT_SHAPE_EXTENT_REUSES_THE_DECLARED_CHARACTER_FACTOR:
+        problems.append(
+            "a text shape's extent reuses the declared character factor rather than inventing one"
         )
     if not ANNOTATION_EXTENT_IS_THE_TEXT_BOX:
         problems.append("a label's extent is its text box, not a second measurement of the same text")

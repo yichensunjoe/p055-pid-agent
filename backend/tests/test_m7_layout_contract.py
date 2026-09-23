@@ -1571,3 +1571,62 @@ def test_the_validator_reports_the_catalogue_box_read_as_the_drawn_box(
     monkeypatch.setattr(contract, "SYMBOL_BOX_IS_NOT_THE_SYMBOL_RENDERED_EXTENT", False)
     problems = contract.validate_contract()
     assert any("not its drawn box" in problem for problem in problems), problems
+
+
+def test_the_validator_reports_symbol_bounds_assumed_rather_than_proven(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Inflating the declared box is exact only while the containment invariant holds."""
+
+    monkeypatch.setattr(contract, "SYMBOL_UNSTROKED_SHAPES_MUST_FIT_THE_INTRINSIC_BOX", False)
+    problems = contract.validate_contract()
+    assert any("must fit its intrinsic box" in problem for problem in problems), problems
+    monkeypatch.undo()
+    monkeypatch.setattr(
+        contract, "SYMBOL_RENDERED_BOUNDS_ARE_EXACT_GIVEN_THE_CONTAINMENT_INVARIANT", False
+    )
+    problems = contract.validate_contract()
+    assert any("only exact while the containment invariant holds" in problem for problem in problems)
+    monkeypatch.undo()
+    monkeypatch.setattr(contract, "SYMBOL_SHAPE_OVERFLOW_IS_A_HARD_FAILURE_AT_FREEZE", False)
+    problems = contract.validate_contract()
+    assert any("failure where geometry freezes" in problem for problem in problems), problems
+
+
+def test_the_validator_reports_an_overflow_that_nobody_can_locate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(contract, "SYMBOL_SHAPE_OVERFLOW_NAMES_THE_SYMBOL_AND_THE_SHAPE", False)
+    problems = contract.validate_contract()
+    assert any("must name the symbol and the shape" in problem for problem in problems), problems
+
+
+def test_the_validator_reports_curve_bounds_that_are_optimistic_or_sampled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(contract, "SYMBOL_SHAPE_BOUNDS_ARE_CONSERVATIVE_FOR_CURVES", False)
+    problems = contract.validate_contract()
+    assert any("conservative for curves" in problem for problem in problems), problems
+    monkeypatch.undo()
+    monkeypatch.setattr(
+        contract, "SYMBOL_SHAPE_BOUNDS_USE_CONTROL_POINTS_NOT_SAMPLED_CURVES", False
+    )
+    problems = contract.validate_contract()
+    assert any("control points bound a curve" in problem for problem in problems), problems
+    monkeypatch.undo()
+    monkeypatch.setattr(contract, "SYMBOL_SHAPE_KINDS", ("line", "rect"))
+    problems = contract.validate_contract()
+    reported = {
+        kind
+        for kind in ("polyline", "circle", "path", "text")
+        if any(f"must name the {kind!r} kind" in problem for problem in problems)
+    }
+    assert reported == {"polyline", "circle", "path", "text"}, problems
+
+
+def test_the_validator_reports_an_unrecognised_shape_kind_passing_silently(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(contract, "UNKNOWN_SYMBOL_SHAPE_KIND_IS_A_HARD_FAILURE", False)
+    problems = contract.validate_contract()
+    assert any("unknown bounds" in problem for problem in problems), problems

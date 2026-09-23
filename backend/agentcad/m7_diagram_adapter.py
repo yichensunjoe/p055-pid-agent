@@ -287,6 +287,53 @@ def topology_digest(topology: SemanticTopology) -> str:
     )
 
 
+#: The canonical row shapes of the engineering digest, as *plain data*. Both sides of the
+#: semantic-preservation gate build their rows through this function -- the adapter from the
+#: topology it produced, the layout identity layer from the plan's record of what it received
+#: -- so "digest before == digest reconstructed after" compares two descriptions of the same
+#: plant rather than two copies of the same code.
+ENGINEERING_DIGEST_ROW_KEYS: tuple[str, ...] = (
+    "spec_schema",
+    "systems",
+    "entities",
+    "connections",
+    "required_loops",
+    "layout_intent",
+)
+
+
+def engineering_digest_rows(
+    *,
+    spec_schema: str,
+    systems: list[dict[str, Any]],
+    entities: list[dict[str, Any]],
+    connections: list[dict[str, Any]],
+    required_loops: list[dict[str, Any]],
+    layout_intent: dict[str, Any],
+) -> dict[str, Any]:
+    """The six parts of the engineering digest, assembled in one place.
+
+    The parts are sorted here rather than by the callers: two inputs that list the same plant in
+    a different order are the same plant, and a digest that depended on the caller's order would
+    report that difference as a change.
+    """
+
+    return {
+        "spec_schema": spec_schema,
+        "systems": sorted(systems, key=lambda row: str(row["system_id"])),
+        "entities": sorted(entities, key=lambda row: str(row["engineering_id"])),
+        "connections": sorted(connections, key=lambda row: str(row["engineering_id"])),
+        "required_loops": sorted(required_loops, key=lambda row: str(row["loop_id"])),
+        "layout_intent": dict(layout_intent),
+    }
+
+
+def engineering_digest(rows: dict[str, Any]) -> str:
+    """The engineering digest over rows built by :func:`engineering_digest_rows`."""
+
+    return _digest(rows)
+
+
 def spec_semantic_digest(spec: DiagramSpec) -> str:
     """The specification's own semantic digest, computed without any placement.
 
@@ -295,14 +342,14 @@ def spec_semantic_digest(spec: DiagramSpec) -> str:
     still. The adapter's own topology digest carries it, because the layout input did change.
     """
 
-    return _digest(
-        {
-            "spec_schema": spec.schema_version,
-            "systems": [
+    return engineering_digest(
+        engineering_digest_rows(
+            spec_schema=spec.schema_version,
+            systems=[
                 {"system_id": s.system_id, "name": s.name, "order": s.order}
-                for s in sorted(spec.systems, key=lambda item: item.system_id)
+                for s in spec.systems
             ],
-            "entities": [
+            entities=[
                 {
                     "engineering_id": entity.engineering_id,
                     "kind": entity.kind,
@@ -313,9 +360,9 @@ def spec_semantic_digest(spec: DiagramSpec) -> str:
                     "instrument_type": entity.instrument_type,
                     "measurement": entity.measurement,
                 }
-                for entity in sorted(spec.entities, key=lambda item: item.engineering_id)
+                for entity in spec.entities
             ],
-            "connections": [
+            connections=[
                 {
                     "engineering_id": connection.engineering_id,
                     "source_engineering_id": connection.source_engineering_id,
@@ -325,14 +372,14 @@ def spec_semantic_digest(spec: DiagramSpec) -> str:
                     "medium": connection.medium,
                     "tag": connection.tag,
                 }
-                for connection in sorted(spec.connections, key=lambda item: item.engineering_id)
+                for connection in spec.connections
             ],
-            "required_loops": [
+            required_loops=[
                 {"loop_id": loop.loop_id, "engineering_ids": list(loop.engineering_ids)}
-                for loop in sorted(spec.required_loops, key=lambda item: item.loop_id)
+                for loop in spec.required_loops
             ],
-            "layout_intent": spec.layout_intent.model_dump(mode="json"),
-        }
+            layout_intent=spec.layout_intent.model_dump(mode="json"),
+        )
     )
 
 
@@ -345,52 +392,63 @@ def topology_semantic_digest(topology: SemanticTopology) -> str:
     agree about is engineering semantics.
     """
 
-    entities = [
-        {
-            "engineering_id": node.engineering_id,
-            "kind": node.kind,
-            "system_id": node.system_id,
-            "tag": node.tag,
-            "name": node.name,
-            "equipment_class": node.equipment_class,
-            "instrument_type": node.instrument_type,
-            "measurement": node.measurement,
-        }
-        for node in sorted(topology.nodes, key=lambda item: item.engineering_id)
-    ]
-    return _digest(
-        {
-            "spec_schema": SPEC_SCHEMA,
-            "systems": [
-                {"system_id": s.system_id, "name": s.name, "order": s.order}
-                for s in sorted(topology.systems, key=lambda item: item.system_id)
-            ],
-            "entities": entities,
-            "connections": [
-                {
-                    "engineering_id": edge.engineering_id,
-                    "source_engineering_id": edge.source_engineering_id,
-                    "target_engineering_id": edge.target_engineering_id,
-                    "source_port_id": edge.source_port_id,
-                    "target_port_id": edge.target_port_id,
-                    "medium": edge.medium,
-                    "tag": edge.tag,
-                }
-                for edge in sorted(topology.edges, key=lambda item: item.engineering_id)
-            ],
-            "required_loops": [
-                {"loop_id": loop.loop_id, "engineering_ids": list(loop.engineering_ids)}
-                for loop in sorted(topology.required_loops, key=lambda item: item.loop_id)
-            ],
-            "layout_intent": {
-                "orientation": topology.intent.orientation,
-                "preferred_aspect_class": topology.intent.preferred_aspect_class,
-                "primary_flow_direction": topology.intent.primary_flow_direction,
-                "system_order": list(topology.intent.system_order),
-                "grouping": topology.intent.grouping,
-                "density": topology.intent.density,
-            },
-        }
+    return engineering_digest(
+        topology_engineering_rows(topology)
+    )
+
+
+def topology_engineering_rows(topology: SemanticTopology) -> dict[str, Any]:
+    """The engineering facts of a topology, in the shape the digest is computed over.
+
+    Public rather than private because it is one half of a two-sided gate: the layout identity
+    layer reconstructs the *other* half from the plan, and a test asserts the two halves agree
+    row for row. Sharing the shape while building the rows independently is what stops the gate
+    from being a digest compared with itself.
+    """
+
+    return engineering_digest_rows(
+        spec_schema=SPEC_SCHEMA,
+        systems=[
+            {"system_id": system.system_id, "name": system.name, "order": system.order}
+            for system in topology.systems
+        ],
+        entities=[
+            {
+                "engineering_id": node.engineering_id,
+                "kind": node.kind,
+                "system_id": node.system_id,
+                "tag": node.tag,
+                "name": node.name,
+                "equipment_class": node.equipment_class,
+                "instrument_type": node.instrument_type,
+                "measurement": node.measurement,
+            }
+            for node in topology.nodes
+        ],
+        connections=[
+            {
+                "engineering_id": edge.engineering_id,
+                "source_engineering_id": edge.source_engineering_id,
+                "target_engineering_id": edge.target_engineering_id,
+                "source_port_id": edge.source_port_id,
+                "target_port_id": edge.target_port_id,
+                "medium": edge.medium,
+                "tag": edge.tag,
+            }
+            for edge in topology.edges
+        ],
+        required_loops=[
+            {"loop_id": loop.loop_id, "engineering_ids": list(loop.engineering_ids)}
+            for loop in topology.required_loops
+        ],
+        layout_intent={
+            "orientation": topology.intent.orientation,
+            "preferred_aspect_class": topology.intent.preferred_aspect_class,
+            "primary_flow_direction": topology.intent.primary_flow_direction,
+            "system_order": list(topology.intent.system_order),
+            "grouping": topology.intent.grouping,
+            "density": topology.intent.density,
+        },
     )
 
 

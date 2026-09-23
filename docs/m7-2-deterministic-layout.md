@@ -1220,3 +1220,154 @@ mutation（实测）：去掉 freeze 里的包含检查 → **4 条红**；圆�
 path 只读端点不读控制点 → **1 条红**；相对命令按绝对处理 → **1 条红**。
 其中"控制点"和"相对命令"两条最初都是绿的（内置目录里没有这类 shape），是补了专门 fixture 才咬合的——
 又一次同一种坑：**能力没人用过，就等于没有被证明过**。
+
+## 14. M7-2 Phase-2B Step 5 —— canonical layout identity 与 deterministic replay
+
+Step 1–4 产出一张图；Step 5 说的是"**这是哪一张图**"。两条否定性闸门，都不关于"图好不好看"：
+
+### 14.1 闸门一：布局不能改工程语义（两侧独立重建，不是自己比自己）
+
+```
+LAYOUT_SEMANTIC_PRESERVATION_GATE =
+    "semantic_digest_before_layout_equals_the_semantic_digest_reconstructed_after_layout"
+SEMANTIC_DIGEST_BEFORE_LAYOUT_IS_COMPUTED_AT_INGRESS = True
+SEMANTIC_DIGEST_AFTER_LAYOUT_IS_RECONSTRUCTED_FROM_THE_FINALIZED_PLAN = True
+SEMANTIC_PRESERVATION_IS_VERIFIED_AT_THE_LAYOUT_IDENTITY_STEP = True
+SEMANTIC_PRESERVATION_FAILURE_IS_A_HARD_FAILURE = True
+```
+
+"前"是 `adapt()` 产出的 topology 的工程 digest（与 spec 的 `spec_semantic_digest` 相等，这条上游无损闸门已签）；
+"后"是**从 plan 自己的 live 字段重建**的同一个 digest。两者由**两条不同的代码路径、两份不同的输入**生成：
+
+- topology 侧：`topology_engineering_rows(topology)` —— 从 `SemanticTopology` 读事实；
+- plan 侧：`plan_engineering_rows(plan)` —— 从 plan 的 `engineering_systems` / `engineering_entities` /
+  `connections` / `required_loops` / `intent` 读事实；
+- 两者共用**同一种行形状**（`engineering_digest_rows()`），并由测试断言"行对行相等"。
+
+如果只调用同一个函数两次，那证明的只是"这个函数是确定性的"，而不是"布局没动过图纸"。所以 plan 在
+Step 1 就把收到的工程事实**原样记下来**（spec v7 字段：`engineering_systems`、`engineering_entities`、
+`PlanConnection.tag`），Step 5 再从这些字段重建 —— 一个被 Step 2/3/4 改过的 tag、system 归属、
+connection 端点或方向，会让两侧不等。
+
+覆盖范围是显式的，边界也是：
+
+```
+LAYOUT_SEMANTIC_PRESERVATION_COVERS = (
+    equipment_identity, instrument_identity, node_kind, symbol_binding,
+    connection_identity, connection_endpoints, connection_ports, connection_medium,
+    flow_direction, system_membership, system_order, required_loop_membership,
+    layout_intent_classes,
+)
+LAYOUT_SEMANTIC_PRESERVATION_DOES_NOT_COVER_PROSE_FACTS = True
+PROSE_FACTS_ARE_COVERED_BY_THE_UPSTREAM_ADAPTER_LOSSLESSNESS_GATE = True
+```
+
+标的是**结构**。plan 只承载引擎消费到的语义（`engineering_entities` 的 tag/name/class/type/measurement
+是"收到的记录"，不是新的事实来源），而对"整份 spec 无损"的断言由上游
+`spec_semantic_digest == topology_semantic_digest` 负责 —— 这里不重复声称。
+
+**digest 看不见"少了一行"**，所以同一个闸门的另一半是纯几何覆盖，与任何 digest 无关：
+
+```
+LAYOUT_GEOMETRY_MUST_COVER_EVERY_SEMANTIC_ENTITY = True
+LAYOUT_GEOMETRY_MUST_COVER_EVERY_SEMANTIC_CONNECTION = True
+LAYOUT_GEOMETRY_MUST_NOT_REFERENCE_AN_UNDECLARED_ENTITY = True
+LAYOUT_GEOMETRY_MUST_PLACE_EVERY_ENTITY_EXACTLY_ONCE = True
+LAYOUT_GEOMETRY_MUST_ROUTE_EVERY_CONNECTION_EXACTLY_ONCE = True
+A_DROPPED_ENTITY_OR_CONNECTION_IS_A_HARD_FAILURE = True
+```
+
+`geometry_coverage_problems()` 逐条报出：某 device 从未被放置、被放置两次、放置成了别的 kind、
+某 connection 没有 route、route 出现在没人声明的 id 上、annotation 挂在一个不存在（或未放置）的实体上。
+
+### 14.2 canonical projection：**digest 覆盖的是"东西在哪"，不是"写了什么"**
+
+```
+CANONICAL_PROJECTION_EXCLUDES_LABEL_TEXT = True
+CANONICAL_PROJECTION_EXCLUDES_TAGS = True
+CANONICAL_PROJECTION_SORT_KEY = ("placement_kind", "engineering_id")
+DUPLICATE_SORT_KEY_IS_HARD_FAIL = True
+```
+
+placement/routing/annotation 三张表合成**一个**投影（读者比较的是两张图，不是三条流水线），每行只保留声明的
+7 个字段（`engineering_id`/`placement_kind`/`x`/`y`/`width`/`height`/`ordered_waypoints`），坐标按
+`LAYOUT_COORDINATE_DECIMALS` 量化，`-0.0` 归一成 `0.0`，行内出现未声明字段（如 `z_index`）直接硬失败，
+排序键重复也硬失败（"canonical 取决于插入顺序"正是要避免的事）。标签文本（`el_ar_tank → "V-101"`）**不在**
+投影里 —— 这与 Step 3 对 annotation 的裁定是同一条：布局身份标识位置，不标识文案。
+
+### 14.3 闸门二：replay 比的是 canonical identity，不是 Python 对象
+
+```
+REPLAY_COMPARES_CANONICAL_IDENTITY_NOT_PYTHON_OBJECTS = True
+REPLAY_COMPARES_DIGESTS_NOT_SERIALIZED_OBJECTS = True
+VOLATILE_BOOKKEEPING_DIFFERENCES_DO_NOT_CHANGE_THE_IDENTITY = True
+INPUT_LIST_ORDER_IS_NOT_PART_OF_THE_LAYOUT_IDENTITY = True
+CANONICAL_LAYOUT_DIGEST_ENVELOPE_IS_CLOSED = True
+REPLAY_MAY_COMPARE_TWO_DIGESTS_FROM_DIFFERENT_VERSIONS = False
+```
+
+digest 的信封是**闭集**，键就是 `LAYOUT_DIGEST_INPUTS` 本身：
+
+```
+{
+  "layout_digest_version": "m7-layout-digest/2",
+  "layout_projection_version": "m7-layout-projection/1",
+  "diagram_spec_semantic_digest": <plan 重建的工程 digest>,
+  "layout_engine_version": <plan 记录的那次运行>,
+  "layout_rules_version": <同上>,
+  "symbol_geometry_catalog_digest": <Step 3 冻结的几何快照>,
+  "canonical_projection_envelope": {content_bounds, canvas_bounds},
+  "canonical_placement_projection": [...],
+}
+```
+
+`payload_problems()` 双向检查：少一个声明输入是缺陷，多一个键也是缺陷 —— 而且**点名**那些
+volatile 名单里的键（`created_at`、`duration_ms`、`layout_run_id`、`session_id`、`provider`、`model`、
+`attempt`、`iteration_count`、`plan_id`）。于是"某天有人把耗时塞进身份里"会**硬失败**，而不是变成
+一个时好时坏的 digest。engine/rules 版本从 **plan** 读（它记录的是真的跑过哪一次），不是读当天常量。
+
+输入列表顺序不是身份：同一份 spec 把 systems/entities/connections/required_loops 反序排列，
+`plan_engineering_rows` 与 canonical projection 都相等 → 同一个 digest（有 fixture 断言）。
+
+### 14.4 两个身份互相独立
+
+```
+LAYOUT_IDENTITY_FIELDS_OUTSIDE_THE_PLAN_DIGEST = (
+    canonical_placement_projection, canonical_projection_envelope, canonical_layout_digest)
+PLAN_DIGEST_AND_LAYOUT_DIGEST_ARE_INDEPENDENT = True
+CANONICAL_LAYOUT_DIGEST_IS_ABSENT_FROM_THE_PLAN_DIGEST = True
+```
+
+plan digest（`to_projection()`）覆盖 plan 的字段含 placement/routing；canonical digest 覆盖
+placement+routing+envelope+工程身份。把后者塞进前者会让"同一张图"有两个名字（且可能互相矛盾）；
+把前者塞进后者会带进 endpoint bindings、intent-use 表等布局身份不需要的东西。
+
+### 14.5 落点与 fixture / mutation
+
+实现落在 `auto_layout_identity.py`（§11.5 的模块白名单已加入），入口是引擎上的
+`layout_semantic_identity(plan, topology)` —— 与 Step 1/3/4 一样是**同一个 authority 的 mixin**，
+不是引擎旁边的第二个身份计算器。
+
+| 用例 | 内容 |
+| --- | --- |
+| 两侧行相等 | `plan_engineering_rows(plan) == topology_engineering_rows(topology)`（Step 1 就成立） |
+| 干净布局 | 无 preservation problem、无 coverage problem、payload 闭集 |
+| 改工程语义 ×7 | kind / tag / system_id / connection 目标 / 方向翻转 / system 记录 / loop 成员 —— 各自必须红并点名哪一部分 |
+| 改意图 | density 换档、reading order 反转 → `layout_intent` 红 |
+| 换了 topology | plan 与另一张图的 topology 配对 → 报 "no longer names the topology" |
+| 几何覆盖 ×6 | 丢 device、丢 connection、凭空多一个 id、kind 不符、放置两次、给未放置实体加标注 |
+| 投影 | 排序/字段集/无文本无 tag/重复 sort key/NaN/`-0.0`/未声明行字段 |
+| 信封闭集 | 缺声明输入、加非 volatile 键、逐个 volatile 名（9 个参数化用例）→ 硬失败 |
+| replay | 两次运行相等；时钟流逝不影响；输入反序仍相等；坐标 +1.0 / snapshot digest 变 / engine 或 rules 版本变 → 身份必须不同 |
+| 身份不含自己 | 三个身份字段不在 `to_projection()` 里；只改这三个字段时 plan digest 不变 |
+
+mutation（实测）：不做类型/枚举检查、把 `engineering_entities` 从 `to_projection` 之外"顺手"加进去、
+把 volatile 键加进 payload、把 `diagram_spec_semantic_digest` 换成 `plan.topology_digest`（即用
+adapter digest 顶替工程 digest）—— 四种改法都被上述用例咬住。
+
+### 14.6 本步为什么不升三处版本
+
+`LAYOUT_DIGEST_VERSION` / `LAYOUT_PROJECTION_VERSION` **不动**：投影字段集、排序键、量化规则、信封键都没变，
+本步只是把合同里早已声明的投影与 digest **真正实现出来**。`SEMANTIC_LAYOUT_PLAN_DIGEST_VERSION` 从
+`/6` → `/7`：plan 的字段集变了（新增 `engineering_systems`、`engineering_entities`、`PlanConnection.tag`），
+按"版本命名的是字段集"这条既有规则，字段集变就升版本。

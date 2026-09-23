@@ -9,6 +9,7 @@ from typing import Literal
 
 from .auto_layout_canvas import SemanticLayoutCanvas
 from .auto_layout_geometry import SemanticLayoutGeometry
+from .auto_layout_identity import SemanticLayoutIdentity
 from .auto_layout_semantic import SemanticTopologyIngress
 from .diagram_quality import port_outward_normal
 from .layout_models import (
@@ -92,7 +93,12 @@ class LayoutNode:
     rank: int = 0
 
 
-class AutoLayoutEngine(SemanticLayoutCanvas, SemanticLayoutGeometry, SemanticTopologyIngress):
+class AutoLayoutEngine(
+    SemanticLayoutIdentity,
+    SemanticLayoutCanvas,
+    SemanticLayoutGeometry,
+    SemanticTopologyIngress,
+):
     """The one layout authority.
 
     It gains a second way in for M7-2: :meth:`layout_semantic_topology` takes the
@@ -111,6 +117,11 @@ class AutoLayoutEngine(SemanticLayoutCanvas, SemanticLayoutGeometry, SemanticTop
     derived from it, and the final geometry checks. The canvas is the tail of the chain in the
     literal sense -- it is measured from what the earlier steps drew, so a canvas calculated
     anywhere else would be a second opinion about the same drawing.
+
+    :meth:`layout_semantic_identity` closes phase 2B with step 5: it proves the layout kept the
+    plant it was given, that its geometry covers every declared entity and connection exactly
+    once, and then names the drawing with the canonical layout digest. The name is a layout
+    output, not an input -- nothing in the drawing was chosen from it.
     """
 
     def __init__(self, service: DocumentService):

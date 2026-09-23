@@ -902,6 +902,7 @@ PHASE_2B_MAY_IMPORT_THE_CONTRACT: tuple[str, ...] = (
     "m7_endpoint_binding.py",
     "auto_layout_geometry.py",
     "auto_layout_canvas.py",
+    "auto_layout_identity.py",
 )
 
 # ------------------------------------------------------------------------------------
@@ -1513,6 +1514,117 @@ ROUTE_NODE_INTERSECTION_IS_VERIFIED_IN_FINAL_GEOMETRY_VALIDATION = True
 #: The narrow reading, as its own flag: "may cross the node it serves" must never be read as
 #: "may traverse the whole symbol because it happens to be one of the two ends".
 ROUTE_MAY_CROSS_ANY_NODE_IT_SERVES = False
+
+# --------------------------------------------------------------------------------------
+# §14 Phase-2B step 5: canonical layout identity and deterministic replay. Steps 1-4 produce
+#      a drawing; step 5 says *which drawing* it is, and proves the two things a layout may
+#      never do: change the plant, and depend on anything volatile.
+# --------------------------------------------------------------------------------------
+
+#: Which step produces the canonical identity, by the name the step table uses.
+LAYOUT_IDENTITY_STEP = "step_5"
+CANONICAL_LAYOUT_DIGEST_IS_PRODUCED_BY_THE_LAYOUT_ENGINE = True
+#: The identity is produced *from* the finished geometry, not from the plan's earlier stages:
+#: digesting a plan that has not been routed would name a drawing nobody drew.
+CANONICAL_LAYOUT_DIGEST_REQUIRES_THE_STEP_4_PLAN = True
+
+# --- Negative gate 1: layout may not change semantics ------------------------------------
+#: The two sides are computed by different code from different inputs -- the engineering digest
+#: is reconstructed from the topology that was received, the structure digest from the plan's own
+#: live fields -- and a layout that reclassifies a device, re-points a connection, moves a node to
+#: another system or drops a loop member makes them differ. Same digest function on both sides
+#: would only prove the function is deterministic.
+LAYOUT_SEMANTIC_PRESERVATION_GATE = (
+    "semantic_digest_before_layout_equals_the_semantic_digest_reconstructed_after_layout"
+)
+SEMANTIC_DIGEST_BEFORE_LAYOUT_IS_COMPUTED_AT_INGRESS = True
+SEMANTIC_DIGEST_AFTER_LAYOUT_IS_RECONSTRUCTED_FROM_THE_FINALIZED_PLAN = True
+SEMANTIC_PRESERVATION_IS_VERIFIED_AT_THE_LAYOUT_IDENTITY_STEP = True
+SEMANTIC_PRESERVATION_FAILURE_IS_A_HARD_FAILURE = True
+#: What the gate covers at the layout layer. Structural, because that is what the engine
+#: consumes and what the plan carries; a device's tag and name are covered a layer up, where
+#: they exist, and are deliberately *not* copied into the plan to be re-checked here:
+#: ``spec_semantic_digest`` == ``topology_semantic_digest`` is the gate that owns them.
+LAYOUT_SEMANTIC_PRESERVATION_COVERS: tuple[str, ...] = (
+    "equipment_identity",
+    "instrument_identity",
+    "node_kind",
+    "symbol_binding",
+    "connection_identity",
+    "connection_endpoints",
+    "connection_ports",
+    "connection_medium",
+    "flow_direction",
+    "system_membership",
+    "system_order",
+    "required_loop_membership",
+    "layout_intent_classes",
+)
+#: Named as an explicit boundary rather than left to a reader's assumption: the layout layer's
+#: gate is structural, and prose facts are covered upstream where they are carried.
+LAYOUT_SEMANTIC_PRESERVATION_DOES_NOT_COVER_PROSE_FACTS = True
+PROSE_FACTS_ARE_COVERED_BY_THE_UPSTREAM_ADAPTER_LOSSLESSNESS_GATE = True
+# And the second half of the same gate, which no digest can express: the geometry has to cover
+# the semantics exactly -- one placement per device, one route per connection, nothing placed
+# that nobody declared.
+LAYOUT_GEOMETRY_MUST_COVER_EVERY_SEMANTIC_ENTITY = True
+LAYOUT_GEOMETRY_MUST_COVER_EVERY_SEMANTIC_CONNECTION = True
+LAYOUT_GEOMETRY_MUST_NOT_REFERENCE_AN_UNDECLARED_ENTITY = True
+LAYOUT_GEOMETRY_MUST_PLACE_EVERY_ENTITY_EXACTLY_ONCE = True
+LAYOUT_GEOMETRY_MUST_ROUTE_EVERY_CONNECTION_EXACTLY_ONCE = True
+A_DROPPED_ENTITY_OR_CONNECTION_IS_A_HARD_FAILURE = True
+
+# --- Negative gate 2: replay compares canonical identity, not objects ---------------------
+#: Two runs of the same input are compared by digest, never by Python objects, ``repr``, raw
+#: bytes or file mtimes: those differ between two identical runs by construction, so comparing
+#: them would make a correct replay indistinguishable from a changed drawing.
+REPLAY_COMPARES_CANONICAL_IDENTITY_NOT_PYTHON_OBJECTS = True
+REPLAY_COMPARES_DIGESTS_NOT_SERIALIZED_OBJECTS = True
+VOLATILE_BOOKKEEPING_DIFFERENCES_DO_NOT_CHANGE_THE_IDENTITY = True
+#: The input order is not identity either. Two specifications that list the same systems,
+#: entities and connections in a different order describe the same plant, and the plan's
+#: composite sort key plus the canonical projection are what make their digests equal.
+INPUT_LIST_ORDER_IS_NOT_PART_OF_THE_LAYOUT_IDENTITY = True
+SAME_IDENTITY_FROM_A_PERMUTED_INPUT_IS_A_REQUIREMENT = True
+#: The digest envelope is closed: everything inside it is declared, and nothing volatile may be
+#: added to it without a version bump.
+CANONICAL_LAYOUT_DIGEST_ENVELOPE_IS_CLOSED = True
+CANONICAL_LAYOUT_DIGEST_CARRIES_ITS_VERSION = True
+REPLAY_MAY_COMPARE_TWO_DIGESTS_FROM_DIFFERENT_VERSIONS = False
+
+#: The canonical projection is a *layout* projection: it identifies where things are, never what
+#: they say. Label text is placed but not digested -- the same ruling §12 already made for
+#: annotations, restated here because the digest is the place someone would be tempted to add it.
+CANONICAL_PROJECTION_EXCLUDES_LABEL_TEXT = True
+CANONICAL_PROJECTION_EXCLUDES_TAGS = True
+
+#: Fields the step-5 plan carries that stay out of ``SemanticLayoutPlan.to_projection``: the
+#: canonical projection, its envelope and its digest. The two identities stay independent on
+#: purpose. The plan digest already covers the placement, the routes and the canvas, so folding
+#: the canonical digest into it would give one drawing two names and make the second depend on
+#: the first; and folding the plan digest into the canonical one would drag in fields -- endpoint
+#: bindings, the intent-use table -- that a layout identity has no business carrying. Declared so
+#: that "the canonical digest is not in the plan digest" reads as a decision, not an omission.
+LAYOUT_IDENTITY_FIELDS_OUTSIDE_THE_PLAN_DIGEST: tuple[str, ...] = (
+    "canonical_placement_projection",
+    "canonical_projection_envelope",
+    "canonical_layout_digest",
+)
+#: Neither identity contains the other, and that is enforced rather than left to discipline: the
+#: plan digest is computed over ``to_projection``, which does not list these three fields.
+PLAN_DIGEST_AND_LAYOUT_DIGEST_ARE_INDEPENDENT = True
+CANONICAL_LAYOUT_DIGEST_IS_ABSENT_FROM_THE_PLAN_DIGEST = True
+
+#: The full input set of the canonical digest, as a reader sees it: the contract's declared
+#: ``LAYOUT_DIGEST_INPUTS`` plus the two halves of the identity that step 5 adds to the plan.
+LAYOUT_IDENTITY_CHAIN: tuple[str, ...] = (
+    "step_4_finalized_geometry",
+    "semantic_preservation_verification",
+    "canonical_layout_projection",
+    "canonical_projection_envelope",
+    "canonical_layout_digest",
+    "deterministic_replay_verification",
+)
 
 
 # --------------------------------------------------------------------------------------
@@ -2777,6 +2889,127 @@ def validate_contract() -> list[str]:
         )
     if not ROUTE_MAY_CROSS_THE_NODE_IT_SERVES:
         problems.append("the escape allowance would have nothing to allow")
+
+    # §14 step 5: canonical layout identity and deterministic replay.
+    if LAYOUT_IDENTITY_STEP != PHASE_2B_STEPS[-1][0]:
+        problems.append(
+            "the layout identity is the last phase-2B step: an identity computed before the "
+            "geometry was final would name a drawing nobody drew"
+        )
+    if not CANONICAL_LAYOUT_DIGEST_REQUIRES_THE_STEP_4_PLAN:
+        problems.append("the canonical digest is computed over the finalized step-4 plan")
+    if CANVAS_DERIVATION_CHAIN[-1] != "canonical_layout_digest":
+        problems.append("the derivation chain ends at the canonical layout digest")
+    if LAYOUT_IDENTITY_CHAIN[0] != "step_4_finalized_geometry":
+        problems.append("the identity chain starts at the finalized geometry")
+    if LAYOUT_IDENTITY_CHAIN[-1] != "deterministic_replay_verification":
+        problems.append("the identity chain ends at the replay verification")
+    for identity_link in ("canonical_layout_projection", "canonical_layout_digest"):
+        if identity_link not in LAYOUT_IDENTITY_CHAIN:
+            problems.append(f"the identity chain must include {identity_link!r}")
+    if (
+        "semantic_preservation_verification" in LAYOUT_IDENTITY_CHAIN
+        and "canonical_layout_projection" in LAYOUT_IDENTITY_CHAIN
+        and LAYOUT_IDENTITY_CHAIN.index("semantic_preservation_verification")
+        > LAYOUT_IDENTITY_CHAIN.index("canonical_layout_projection")
+    ):
+        problems.append(
+            "the semantic preservation gate runs before the identity is computed: a digest of "
+            "a layout that changed the plant would be an identity for the wrong drawing"
+        )
+    if not LAYOUT_SEMANTIC_PRESERVATION_GATE:
+        problems.append("the layout must state its semantic preservation gate")
+    if not SEMANTIC_PRESERVATION_IS_VERIFIED_AT_THE_LAYOUT_IDENTITY_STEP:
+        problems.append("semantic preservation is verified at the identity step")
+    if not SEMANTIC_DIGEST_BEFORE_LAYOUT_IS_COMPUTED_AT_INGRESS:
+        problems.append("the before-layout digest is computed at ingress")
+    if not SEMANTIC_DIGEST_AFTER_LAYOUT_IS_RECONSTRUCTED_FROM_THE_FINALIZED_PLAN:
+        problems.append("the after-layout digest is reconstructed from the finalized plan")
+    if not SEMANTIC_PRESERVATION_FAILURE_IS_A_HARD_FAILURE:
+        problems.append("a layout that changed the plant is a hard failure")
+    preserved = set(LAYOUT_SEMANTIC_PRESERVATION_COVERS)
+    for noun in (
+        "equipment_identity",
+        "instrument_identity",
+        "connection_identity",
+        "connection_endpoints",
+        "system_membership",
+        "flow_direction",
+    ):
+        if noun not in preserved:
+            problems.append(f"the preservation gate must cover {noun!r}")
+    for noun, flag in (
+        ("equipment_and_instrument_identity", LAYOUT_GEOMETRY_MUST_COVER_EVERY_SEMANTIC_ENTITY),
+        ("route_per_connection", LAYOUT_GEOMETRY_MUST_COVER_EVERY_SEMANTIC_CONNECTION),
+        ("exactly_one_placement", LAYOUT_GEOMETRY_MUST_PLACE_EVERY_ENTITY_EXACTLY_ONCE),
+        ("exactly_one_route", LAYOUT_GEOMETRY_MUST_ROUTE_EVERY_CONNECTION_EXACTLY_ONCE),
+    ):
+        if not flag:
+            problems.append(f"the geometry must cover {noun}")
+    if not LAYOUT_GEOMETRY_MUST_NOT_REFERENCE_AN_UNDECLARED_ENTITY:
+        problems.append("geometry may not reference an entity nobody declared")
+    if not A_DROPPED_ENTITY_OR_CONNECTION_IS_A_HARD_FAILURE:
+        problems.append("a dropped entity or connection is a hard failure")
+    if not LAYOUT_SEMANTIC_PRESERVATION_DOES_NOT_COVER_PROSE_FACTS:
+        problems.append(
+            "the layout layer's gate is structural and must say so: prose facts are covered "
+            "where they are carried"
+        )
+    if not PROSE_FACTS_ARE_COVERED_BY_THE_UPSTREAM_ADAPTER_LOSSLESSNESS_GATE:
+        problems.append(
+            "if the layout gate does not cover prose facts, nothing would: name the gate that "
+            "does"
+        )
+    if not ADAPTER_SEMANTIC_DIGEST_BEFORE_EQUALS_AFTER:
+        problems.append("the upstream losslessness gate is what covers the prose facts")
+    if not REPLAY_COMPARES_CANONICAL_IDENTITY_NOT_PYTHON_OBJECTS:
+        problems.append("replay compares canonical identity, not Python objects")
+    if not REPLAY_COMPARES_DIGESTS_NOT_SERIALIZED_OBJECTS:
+        problems.append("replay compares digests, not serialized objects")
+    if not VOLATILE_BOOKKEEPING_DIFFERENCES_DO_NOT_CHANGE_THE_IDENTITY:
+        problems.append("volatile bookkeeping must not change the layout identity")
+    if not INPUT_LIST_ORDER_IS_NOT_PART_OF_THE_LAYOUT_IDENTITY:
+        problems.append("input list order is not part of the layout identity")
+    if not SAME_IDENTITY_FROM_A_PERMUTED_INPUT_IS_A_REQUIREMENT:
+        problems.append("a permuted input with the same identity must produce the same digest")
+    if not CANONICAL_LAYOUT_DIGEST_ENVELOPE_IS_CLOSED:
+        problems.append("the canonical digest envelope is closed")
+    if not CANONICAL_LAYOUT_DIGEST_CARRIES_ITS_VERSION:
+        problems.append("the digest envelope carries its version")
+    if REPLAY_MAY_COMPARE_TWO_DIGESTS_FROM_DIFFERENT_VERSIONS:
+        problems.append(
+            "two digests from different versions are different identities: comparing them "
+            "across versions is meaningless, not lenient"
+        )
+    if not CANONICAL_PROJECTION_EXCLUDES_LABEL_TEXT:
+        problems.append("the canonical projection identifies where things are, not what they say")
+    if not CANONICAL_PROJECTION_EXCLUDES_TAGS:
+        problems.append("a layout digest is not a tag digest")
+    if not PLAN_DIGEST_AND_LAYOUT_DIGEST_ARE_INDEPENDENT:
+        problems.append(
+            "the plan digest and the canonical layout digest must be independent: one containing "
+            "the other gives a single drawing two names that can disagree"
+        )
+    if not CANONICAL_LAYOUT_DIGEST_IS_ABSENT_FROM_THE_PLAN_DIGEST:
+        problems.append("the canonical layout digest is not an input of the plan digest")
+    for output_field in (
+        "canonical_placement_projection",
+        "canonical_projection_envelope",
+        "canonical_layout_digest",
+    ):
+        if output_field not in LAYOUT_IDENTITY_FIELDS_OUTSIDE_THE_PLAN_DIGEST:
+            problems.append(
+                f"{output_field!r} is a layout output and must be declared outside the plan "
+                "digest"
+            )
+    for digest_input in ("canonical_projection_envelope", "canonical_placement_projection"):
+        if digest_input not in LAYOUT_DIGEST_INPUTS:
+            problems.append(f"the canonical digest must be computed from {digest_input!r}")
+    if not CANONICAL_PROJECTION_IS_SORTED or not CANONICAL_PROJECTION_SORT_KEY_IS_UNIQUE:
+        problems.append(
+            "the canonical projection must be totally ordered: an unordered digest would make "
+            "a permuted input look like a changed drawing"
+        )
 
     return problems
 

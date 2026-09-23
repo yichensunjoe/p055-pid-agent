@@ -76,7 +76,12 @@ LAYOUT_RULES_VERSION = "deterministic-layout-rules/1"
 #:
 #: v6: the plan gained ``content_bounds`` -- the envelope the canvas is derived from. Same rule
 #: again: the version names a field set, so a field set change moves it.
-SEMANTIC_LAYOUT_PLAN_DIGEST_VERSION = "m7-semantic-layout-plan-digest/6"
+#:
+#: v7: the plan gained ``engineering_systems``, ``engineering_entities`` and the connection tag --
+#: the engineering facts the ingress received, recorded so step 5 can rebuild the same digest
+#: from the plan's own live fields and compare it with the topology it came from. Without the
+#: record, "the layout did not change the tag" is a sentence; with it, it is a digest comparison.
+SEMANTIC_LAYOUT_PLAN_DIGEST_VERSION = "m7-semantic-layout-plan-digest/7"
 
 #: One rules version governs the spacing policy, the node sizes and the rank rules. A separate
 #: spacing-policy version would be a second source of truth about the same drawing, which is
@@ -155,6 +160,11 @@ STEP_4 = next(
     key
     for key, value in PHASE_2B_STEPS
     if value == "content_bounds_to_canvas_bounds_and_aspect_enforcement"
+)
+
+#: Step 5, the canonical identity, by the name the contract gives it.
+STEP_5 = next(
+    key for key, value in PHASE_2B_STEPS if value == "canonical_projection_and_layout_digest"
 )
 
 
@@ -239,11 +249,63 @@ class SemanticIntentConstraints:
 
 
 @dataclass(frozen=True)
+class PlanSystemFact:
+    """A system as the ingress received it: identity, name and declared order.
+
+    Recorded on the plan rather than looked up from the specification later, because step 5's
+    gate has to compare what the *engine* was given with what the engine still holds. A lookup
+    into a document that may have moved on would compare the layout with the present, not the
+    layout with its own input.
+    """
+
+    system_id: str
+    name: str
+    order: int
+
+    def to_projection(self) -> dict[str, Any]:
+        return {"system_id": self.system_id, "name": self.name, "order": self.order}
+
+
+@dataclass(frozen=True)
+class PlanEngineeringFact:
+    """One device's engineering facts, verbatim from the topology.
+
+    ``tag``, ``name``, ``equipment_class``, ``instrument_type`` and ``measurement`` are here for
+    the same reason and are *not* read by any placement or routing step: they are the record a
+    semantic digest is reconstructed from, so a layout that rewrote one of them is caught by a
+    digest comparison rather than by a reviewer noticing. They stay engineering facts -- none of
+    them is a coordinate, a size or a style.
+    """
+
+    kind: str
+    engineering_id: str
+    system_id: str
+    tag: str
+    name: str
+    equipment_class: str
+    instrument_type: str
+    measurement: str
+
+    def to_projection(self) -> dict[str, Any]:
+        return {
+            "kind": self.kind,
+            "engineering_id": self.engineering_id,
+            "system_id": self.system_id,
+            "tag": self.tag,
+            "name": self.name,
+            "equipment_class": self.equipment_class,
+            "instrument_type": self.instrument_type,
+            "measurement": self.measurement,
+        }
+
+
+@dataclass(frozen=True)
 class PlanConnection:
     """One connection as an identity plus what it named: the input a binding is resolved from.
 
-    ``medium`` is carried because a route's own label is a fact about the connection, not
-    something to look up again later from a graph that may have moved on.
+    ``medium`` and ``tag`` are carried because a route's own label is a fact about the
+    connection, not something to look up again later from a graph that may have moved on -- and
+    because the semantic-preservation gate reconstructs the connection's digest from these fields.
     """
 
     connection_id: str
@@ -252,6 +314,7 @@ class PlanConnection:
     source_port_id: str
     target_port_id: str
     medium: str
+    tag: str = ""
 
     def to_projection(self) -> dict[str, Any]:
         return {
@@ -261,6 +324,7 @@ class PlanConnection:
             "source_port_id": self.source_port_id,
             "target_port_id": self.target_port_id,
             "medium": self.medium,
+            "tag": self.tag,
         }
 
 
@@ -290,6 +354,11 @@ class SemanticLayoutPlan:
     #: per connection, which is impossible to check if the plan only kept (source, target) pairs.
     connections: tuple[PlanConnection, ...] = field(default=())
     flow_edges: tuple[tuple[str, str], ...] = field(default=())
+    #: The engineering facts as received, recorded in the plan so step 5 can rebuild the same
+    #: semantic digest from what the plan still holds and compare it with the topology. Placement
+    #: and routing never read these fields: they are the identity's other half, not an input.
+    engineering_systems: tuple[PlanSystemFact, ...] = field(default=())
+    engineering_entities: tuple[PlanEngineeringFact, ...] = field(default=())
     produced_at_step: str = INGRESS_STEP
     engine_version: str = LAYOUT_ENGINE_VERSION
     rules_version: str = LAYOUT_RULES_VERSION
@@ -319,6 +388,12 @@ class SemanticLayoutPlan:
     #: projection fields, because they are the same projection later steps and the digest read.
     routing: tuple[dict[str, Any], ...] = field(default=())
     annotations: tuple[dict[str, Any], ...] = field(default=())
+    #: Step 5: the canonical identity. Deliberately absent from :meth:`to_projection`, because
+    #: the two identities are independent: the plan digest must not contain the digest of the
+    #: plan it describes, or one drawing would have two names that can disagree.
+    canonical_placement_projection: tuple[dict[str, Any], ...] = field(default=())
+    canonical_projection_envelope: dict[str, dict[str, float]] | None = None
+    canonical_layout_digest: str = ""
 
     def to_projection(self) -> dict[str, Any]:
         return {
@@ -338,6 +413,8 @@ class SemanticLayoutPlan:
             ],
             "node_kinds": [[node_id, kind] for node_id, kind in self.node_kinds],
             "node_symbols": [[node_id, symbol_key] for node_id, symbol_key in self.node_symbols],
+            "engineering_systems": [fact.to_projection() for fact in self.engineering_systems],
+            "engineering_entities": [fact.to_projection() for fact in self.engineering_entities],
             "connections": [connection.to_projection() for connection in self.connections],
             "flow_edges": [[source, target] for source, target in self.flow_edges],
             "placement": list(self.placement),
@@ -488,8 +565,26 @@ def plan_semantic_layout(topology: SemanticTopology) -> SemanticLayoutPlan:
                 source_port_id=edge.source_port_id,
                 target_port_id=edge.target_port_id,
                 medium=edge.medium,
+                tag=edge.tag,
             )
             for edge in sorted(topology.edges, key=lambda item: item.engineering_id)
+        ),
+        engineering_systems=tuple(
+            PlanSystemFact(system_id=system.system_id, name=system.name, order=system.order)
+            for system in sorted(topology.systems, key=lambda item: (item.order, item.system_id))
+        ),
+        engineering_entities=tuple(
+            PlanEngineeringFact(
+                kind=node.kind,
+                engineering_id=node.engineering_id,
+                system_id=node.system_id,
+                tag=node.tag,
+                name=node.name,
+                equipment_class=node.equipment_class,
+                instrument_type=node.instrument_type,
+                measurement=node.measurement,
+            )
+            for node in sorted(topology.nodes, key=lambda item: item.engineering_id)
         ),
         flow_edges=tuple(
             sorted(

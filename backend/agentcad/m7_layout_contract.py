@@ -1665,6 +1665,98 @@ LAYOUT_IDENTITY_CHAIN: tuple[str, ...] = (
 
 
 # --------------------------------------------------------------------------------------
+# §15 Phase 3: drawing materialization and production wiring. Phase 2B proved the engine can
+#      draw deterministically; phase 3 makes a drawing *exist* -- as a document revision written
+#      by the one governed writer.
+# --------------------------------------------------------------------------------------
+
+PHASE_3_NAME = "M7-2 Phase-3 — Drawing Materialization & Production Wiring"
+PHASE_3_MATERIALIZATION_STEP = "materialize_finalized_canonical_layout"
+MATERIALIZER_MODULE = "m7_layout_materialization.py"
+#: The phase-3 modules that read this contract. Kept apart from the phase-2B list so that
+#: "what phase 2B may build" and "what phase 3 may build" stay separate declarations.
+PHASE_3_MAY_IMPORT_THE_CONTRACT: tuple[str, ...] = (MATERIALIZER_MODULE,)
+#: Only a layout whose identity has been computed may be materialized: writing geometry no
+#: identity names is the state the whole milestone exists to remove.
+MATERIALIZATION_REQUIRES_THE_FINALIZED_CANONICAL_LAYOUT = True
+MATERIALIZATION_ACCEPTS_A_SPEC_OR_A_DOCUMENT_AS_GEOMETRY = False
+LLM_SUPPLIES_GEOMETRY_ON_THE_M7_MATERIALIZATION_PATH = False
+
+#: Two versions, for the same reason the layout has two: the materializer is a program and the
+#: digest describes what it digested.
+MATERIALIZER_VERSION = "m7-materializer/1"
+MATERIALIZATION_DIGEST_VERSION = "m7-materialization-digest/1"
+MATERIALIZATION_DIGEST_IS_NOT_THE_LAYOUT_DIGEST = True
+MATERIALIZATION_DIGEST_INPUTS: tuple[str, ...] = (
+    "materialization_digest_version",
+    "materializer_version",
+    "canvas",
+    "origin",
+    "rows",
+)
+MATERIALIZATION_DIGEST_ENVELOPE_IS_CLOSED = True
+#: The same three exclusions the layout digest declares, restated where the materialization can
+#: read them: element ids are *derived*, so two runs of one layout write the same ids.
+MATERIALIZATION_ELEMENT_IDS_ARE_DERIVED_FROM_ENGINEERING_IDS = True
+MATERIALIZATION_GENERATES_RANDOM_IDS = False
+MATERIALIZATION_EXCLUDES_VOLATILE_BOOKKEEPING: tuple[str, ...] = (
+    "document_id",
+    "created_at",
+    "updated_at",
+    "duration_ms",
+    "session_id",
+    "run_id",
+    "attempt",
+)
+MATERIALIZATION_DOES_NOT_READ_A_CLOCK = True
+
+#: What the materializer may emit. Adds only: a drawing that deletes or updates would be the
+#: layout changing a document that already existed rather than producing one.
+MATERIALIZATION_OPERATION_KINDS: tuple[str, ...] = ("add_system", "add_element")
+MATERIALIZATION_MAY_EMIT_DELETE_OPERATIONS = False
+MATERIALIZATION_MAY_EMIT_UPDATE_OPERATIONS = False
+MATERIALIZATION_MAY_CHANGE_A_TAG_OR_A_BINDING = False
+MATERIALIZATION_OPERATION_ORDER_IS_DECLARED = True
+MATERIALIZATION_INCLUDES_EVERY_PRESENTATION_ROW_EXACTLY_ONCE = True
+A_MISSING_OR_EXTRA_MATERIALIZED_ROW_IS_A_HARD_FAILURE = True
+
+#: The one writer. The output is a plain ``TransactionRequest`` for the governed write path, so
+#: the materializer compiles an input rather than opening a second write surface.
+MATERIALIZATION_USES_THE_EXISTING_PRODUCTION_WRITER = True
+MATERIALIZATION_MAY_CREATE_A_SECOND_WRITER = False
+MATERIALIZATION_ADDS_AN_HTTP_OR_MCP_SURFACE = False
+MATERIALIZATION_TARGET_DOCUMENT_MUST_ALREADY_EXIST = True
+#: The canvas belongs to the layout: a smaller target document is refused rather than cropped, and
+#: the caller creates the document with the materialized canvas.
+MATERIALIZATION_REPORTS_THE_DERIVED_CANVAS = True
+MATERIALIZATION_MAY_CROP_TO_A_SMALLER_CANVAS = False
+#: Connectors keep the engine's waypoints. The writer re-routes an ``orthogonal`` connector from
+#: its endpoints, which would replace the obstacle-aware route with a two-bend elbow, so the
+#: materialized connector is ``manual`` -- the mode that keeps the points and still binds ports.
+MATERIALIZATION_PRESERVES_THE_ENGINE_ROUTE = True
+MATERIALIZATION_MAY_LET_THE_WRITER_RE_ROUTE = False
+MATERIALIZATION_CONNECTOR_ROUTING_MODE = "manual"
+#: The drawing is translated by the derived canvas origin so the document's 0-based coordinate
+#: space holds it; the origin is recorded, and it is inside the digest because two drawings that
+#: differ only by the origin have their margins on different sides.
+MATERIALIZATION_TRANSLATES_BY_THE_DECLARED_CANVAS_ORIGIN = True
+MATERIALIZATION_RECORDS_THE_ORIGIN = True
+
+#: What a committed revision must be traceable through. Every link is a digest or a version
+#: string: tracing a revision is reading values, not re-running an engine.
+MATERIALIZATION_PROVENANCE_CHAIN: tuple[str, ...] = (
+    "diagram_spec_semantic_digest",
+    "adapter_topology_digest",
+    "symbol_geometry_catalog_digest",
+    "canonical_layout_digest",
+    "materialization_digest",
+    "resulting_revision",
+)
+MATERIALIZATION_PROVENANCE_IS_RECORDED_ON_THE_WRITE = True
+MATERIALIZATION_PROVENANCE_ENDS_AT_THE_COMMITTED_REVISION = True
+
+
+# --------------------------------------------------------------------------------------
 # The validator. Each temptation below is reported, and each has a mutation test in the
 # companion test module.
 # --------------------------------------------------------------------------------------
@@ -3103,6 +3195,108 @@ def validate_contract() -> list[str]:
         problems.append(
             "the canonical projection must be totally ordered: an unordered digest would make "
             "a permuted input look like a changed drawing"
+        )
+
+    # §15 phase 3: the drawing exists as a document revision, written by the one writer.
+    if not MATERIALIZATION_REQUIRES_THE_FINALIZED_CANONICAL_LAYOUT:
+        problems.append("materialization needs the finalized canonical layout")
+    if MATERIALIZATION_ACCEPTS_A_SPEC_OR_A_DOCUMENT_AS_GEOMETRY:
+        problems.append(
+            "materialization takes the layout as its only geometry input: a spec or a document "
+            "would let coordinates back onto the M7 path"
+        )
+    if LLM_SUPPLIES_GEOMETRY_ON_THE_M7_MATERIALIZATION_PATH:
+        problems.append("no model supplies geometry on the M7 materialization path")
+    for version in (MATERIALIZER_VERSION, MATERIALIZATION_DIGEST_VERSION):
+        if not version:
+            problems.append("the materializer and its digest must be versioned")
+    if MATERIALIZATION_DIGEST_VERSION == LAYOUT_DIGEST_VERSION:
+        problems.append(
+            "the materialization digest and the layout digest must not share a version: 'the "
+            "layout changed' and 'the writing changed' are different events"
+        )
+    if MATERIALIZATION_DIGEST_VERSION == LAYOUT_PROJECTION_VERSION:
+        problems.append("a materialization digest is not a layout projection")
+    for digest_input in MATERIALIZATION_DIGEST_INPUTS:
+        if not digest_input:
+            problems.append("the materialization digest must name its inputs")
+    if not MATERIALIZATION_DIGEST_ENVELOPE_IS_CLOSED:
+        problems.append("the materialization digest envelope is closed")
+    if not MATERIALIZATION_ELEMENT_IDS_ARE_DERIVED_FROM_ENGINEERING_IDS:
+        problems.append(
+            "element ids must be derived from engineering ids: a generated id differs between "
+            "two runs of the same layout"
+        )
+    if MATERIALIZATION_GENERATES_RANDOM_IDS:
+        problems.append("a random element id makes the drawing unprovable at the level it is read")
+    if not MATERIALIZATION_DOES_NOT_READ_A_CLOCK:
+        problems.append("the materialization may not read a clock")
+    for volatile in ("document_id", "created_at", "updated_at", "session_id"):
+        if volatile not in MATERIALIZATION_EXCLUDES_VOLATILE_BOOKKEEPING:
+            problems.append(f"{volatile!r} must be named as excluded from the drawing identity")
+    for kind in ("add_system", "add_element"):
+        if kind not in MATERIALIZATION_OPERATION_KINDS:
+            problems.append(f"the materializer must be allowed to emit {kind!r}")
+    if MATERIALIZATION_MAY_EMIT_DELETE_OPERATIONS:
+        problems.append("materializing a drawing may not delete anything")
+    if MATERIALIZATION_MAY_EMIT_UPDATE_OPERATIONS:
+        problems.append("materializing a drawing may not update anything")
+    if MATERIALIZATION_MAY_CHANGE_A_TAG_OR_A_BINDING:
+        problems.append("materialization may not change a tag or a binding")
+    if not MATERIALIZATION_INCLUDES_EVERY_PRESENTATION_ROW_EXACTLY_ONCE:
+        problems.append("every placement, route and annotation row is materialized exactly once")
+    if not A_MISSING_OR_EXTRA_MATERIALIZED_ROW_IS_A_HARD_FAILURE:
+        problems.append("a missing or extra materialized row is a hard failure")
+    if not MATERIALIZATION_USES_THE_EXISTING_PRODUCTION_WRITER:
+        problems.append("materialization goes through the existing governed writer")
+    if MATERIALIZATION_MAY_CREATE_A_SECOND_WRITER:
+        problems.append(
+            "a second writer is a second transaction system: the milestone exists to avoid one"
+        )
+    if MATERIALIZATION_ADDS_AN_HTTP_OR_MCP_SURFACE:
+        problems.append("phase 3 adds no surface: it compiles the writer's input")
+    if not MATERIALIZATION_TARGET_DOCUMENT_MUST_ALREADY_EXIST:
+        problems.append("the materializer targets an existing document rather than creating one")
+    if not MATERIALIZATION_REPORTS_THE_DERIVED_CANVAS:
+        problems.append("the materializer reports the derived canvas")
+    if MATERIALIZATION_MAY_CROP_TO_A_SMALLER_CANVAS:
+        problems.append("a canvas smaller than the layout's would crop the drawing")
+    if not MATERIALIZATION_PRESERVES_THE_ENGINE_ROUTE:
+        problems.append("materialization preserves the engine's route")
+    if MATERIALIZATION_MAY_LET_THE_WRITER_RE_ROUTE:
+        problems.append(
+            "the writer re-routes an orthogonal connector from its endpoints, which would "
+            "replace the obstacle-aware route"
+        )
+    if MATERIALIZATION_CONNECTOR_ROUTING_MODE != "manual":
+        problems.append("the materialized connector mode is the one that keeps its points")
+    if not MATERIALIZATION_TRANSLATES_BY_THE_DECLARED_CANVAS_ORIGIN:
+        problems.append("the drawing is translated by the derived canvas origin")
+    if not MATERIALIZATION_RECORDS_THE_ORIGIN:
+        problems.append("the origin is recorded, so absolute layout coordinates stay recoverable")
+    for link in (
+        "diagram_spec_semantic_digest",
+        "adapter_topology_digest",
+        "symbol_geometry_catalog_digest",
+        "canonical_layout_digest",
+        "materialization_digest",
+        "resulting_revision",
+    ):
+        if link not in MATERIALIZATION_PROVENANCE_CHAIN:
+            problems.append(f"a committed revision must be traceable through {link!r}")
+    if MATERIALIZATION_PROVENANCE_CHAIN[-1] != "resulting_revision":
+        problems.append("the provenance chain ends at the committed revision")
+    if not MATERIALIZATION_PROVENANCE_IS_RECORDED_ON_THE_WRITE:
+        problems.append("provenance is recorded in the same write as the revision")
+    if not MATERIALIZATION_PROVENANCE_ENDS_AT_THE_COMMITTED_REVISION:
+        problems.append("provenance that stops before the revision does not reach the drawing")
+    if not PHASE_3_MAY_IMPORT_THE_CONTRACT:
+        problems.append("phase 3 must name the module that reads this contract")
+    overlap = set(PHASE_2B_MAY_IMPORT_THE_CONTRACT) & set(PHASE_3_MAY_IMPORT_THE_CONTRACT)
+    if overlap:
+        problems.append(
+            f"{sorted(overlap)} cannot belong to two phases: a module that is both is a module "
+            "nobody can say when it landed"
         )
 
     return problems

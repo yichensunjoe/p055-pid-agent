@@ -398,9 +398,9 @@ def test_the_adapter_module_emits_no_geometry_field_in_its_projection() -> None:
 def test_only_the_declared_modules_read_the_contract() -> None:
     """The phase-1 rule ("no application module imports the contract") stays a rule.
 
-    Phase-2A declared the adapter modules; phase-2B declared the engine ingress. A phase-2B
-    name only counts once its module exists, so "declared for later" is not mistaken for
-    "already reading the contract".
+    Phase-2A declared the adapter modules; phase-2B declared the engine ingress; phase-3 declared
+    the materializer. A later-phase name only counts once its module exists, so "declared for
+    later" is not mistaken for "already reading the contract".
     """
 
     agentcad = Path(__file__).resolve().parents[1] / "agentcad"
@@ -411,9 +411,11 @@ def test_only_the_declared_modules_read_the_contract() -> None:
         and "m7_layout_contract" in path.read_text(encoding="utf-8")
     )
     allowed = set(contract.PHASE_2A_MAY_IMPORT_THE_CONTRACT)
-    allowed |= {
-        name for name in contract.PHASE_2B_MAY_IMPORT_THE_CONTRACT if (agentcad / name).exists()
-    }
+    for declared in (
+        contract.PHASE_2B_MAY_IMPORT_THE_CONTRACT,
+        contract.PHASE_3_MAY_IMPORT_THE_CONTRACT,
+    ):
+        allowed |= {name for name in declared if (agentcad / name).exists()}
     assert importers == sorted(allowed), importers
 
 

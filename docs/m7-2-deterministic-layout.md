@@ -1417,3 +1417,149 @@ adapter digest 顶替工程 digest）—— 四种改法都被上述用例咬住
 本步只是把合同里早已声明的投影与 digest **真正实现出来**。`SEMANTIC_LAYOUT_PLAN_DIGEST_VERSION` 从
 `/6` → `/7`：plan 的字段集变了（新增 `engineering_systems`、`engineering_entities`、`PlanConnection.tag`），
 按"版本命名的是字段集"这条既有规则，字段集变就升版本。
+
+## 15. M7-2 Phase-3 —— 图是**写出来的**：materialization 与生产写路径接线
+
+Phase-2B 证明的是"给定语义，引擎能确定性地画出一份 canonical layout"；Phase-3 让这张图**存在**——
+成为一个文档 revision，并且只能经由仓库里**唯一**那条受治理的写路径产生。
+
+> **唯一输入是 finalized canonical layout。** 这条要求不是一句口号，而是 `materialize_canonical_layout`
+> 的函数签名：它没有 `model`、没有 `prompt`、没有 `spec`、没有 `document`，也就**没有任何地方**能塞进一个坐标。
+
+### 15.1 合同（`§15` 段落）
+
+```
+PHASE_3_NAME = "M7-2 Phase-3 — Drawing Materialization & Production Wiring"
+PHASE_3_MATERIALIZATION_STEP = "materialize_finalized_canonical_layout"
+MATERIALIZER_MODULE = "m7_layout_materialization.py"
+PHASE_3_MAY_IMPORT_THE_CONTRACT = (MATERIALIZER_MODULE,)
+MATERIALIZATION_REQUIRES_THE_FINALIZED_CANONICAL_LAYOUT = True
+MATERIALIZATION_ACCEPTS_A_SPEC_OR_A_DOCUMENT_AS_GEOMETRY = False
+LLM_SUPPLIES_GEOMETRY_ON_THE_M7_MATERIALIZATION_PATH = False
+
+MATERIALIZER_VERSION = "m7-materializer/1"
+MATERIALIZATION_DIGEST_VERSION = "m7-materialization-digest/1"
+MATERIALIZATION_DIGEST_IS_NOT_THE_LAYOUT_DIGEST = True
+MATERIALIZATION_DIGEST_INPUTS = (materialization_digest_version, materializer_version,
+                                 canvas, origin, rows)
+MATERIALIZATION_DIGEST_ENVELOPE_IS_CLOSED = True
+MATERIALIZATION_ELEMENT_IDS_ARE_DERIVED_FROM_ENGINEERING_IDS = True
+MATERIALIZATION_GENERATES_RANDOM_IDS = False
+MATERIALIZATION_EXCLUDES_VOLATILE_BOOKKEEPING = (document_id, created_at, updated_at,
+    duration_ms, session_id, run_id, attempt)
+MATERIALIZATION_DOES_NOT_READ_A_CLOCK = True
+
+MATERIALIZATION_OPERATION_KINDS = ("add_system", "add_element")
+MATERIALIZATION_MAY_EMIT_DELETE_OPERATIONS = False
+MATERIALIZATION_MAY_EMIT_UPDATE_OPERATIONS = False
+MATERIALIZATION_MAY_CHANGE_A_TAG_OR_A_BINDING = False
+MATERIALIZATION_OPERATION_ORDER_IS_DECLARED = True
+MATERIALIZATION_INCLUDES_EVERY_PRESENTATION_ROW_EXACTLY_ONCE = True
+A_MISSING_OR_EXTRA_MATERIALIZED_ROW_IS_A_HARD_FAILURE = True
+
+MATERIALIZATION_USES_THE_EXISTING_PRODUCTION_WRITER = True
+MATERIALIZATION_MAY_CREATE_A_SECOND_WRITER = False
+MATERIALIZATION_ADDS_AN_HTTP_OR_MCP_SURFACE = False
+MATERIALIZATION_TARGET_DOCUMENT_MUST_ALREADY_EXIST = True
+MATERIALIZATION_REPORTS_THE_DERIVED_CANVAS = True
+MATERIALIZATION_MAY_CROP_TO_A_SMALLER_CANVAS = False
+MATERIALIZATION_PRESERVES_THE_ENGINE_ROUTE = True
+MATERIALIZATION_MAY_LET_THE_WRITER_RE_ROUTE = False
+MATERIALIZATION_CONNECTOR_ROUTING_MODE = "manual"
+MATERIALIZATION_TRANSLATES_BY_THE_DECLARED_CANVAS_ORIGIN = True
+MATERIALIZATION_RECORDS_THE_ORIGIN = True
+
+MATERIALIZATION_PROVENANCE_CHAIN = (diagram_spec_semantic_digest, adapter_topology_digest,
+    symbol_geometry_catalog_digest, canonical_layout_digest, materialization_digest,
+    resulting_revision)
+MATERIALIZATION_PROVENANCE_IS_RECORDED_ON_THE_WRITE = True
+MATERIALIZATION_PROVENANCE_ENDS_AT_THE_COMMITTED_REVISION = True
+```
+
+`validate_contract()` 新增 §15 段，逐条报出：允许 spec/document 当几何、允许 LLM 在这一步供几何、
+第二写者、新增 HTTP/MCP 面、允许裁剪画布、允许写者重路由、允许 delete/update、随机 id、
+digest 信封与声明输入不一致、把 volatile 键放进信封、把 materialization digest 当成 canonical layout digest。
+
+### 15.2 四个决定，每一个都有人会选反
+
+**① 元素 id 是推导出来的，不是生成的。** `materialized_element_id(engineering_id, role)` 把工程身份 +
+角色（symbol/connector/label）规范成一个字符串；两次运行同一份 layout 必须写出**同一批 id**，否则
+"同一张图"在图纸被读到的那个层级上无法证明。角色进 id 是因为一个节点和它的标签是**两个**元素；两个
+不同工程 id 规范后撞名时，按 canonical 行序确定性地加 `_1`，而不是交给文档校验器随便报一个错。
+
+**② connector 用 `routing="manual"` 携带引擎自己的 waypoints。** 写者对 `orthogonal` connector 会**从两端点重算**路由，
+那会把引擎避障后画的折线悄悄换成一条两折的直角肘形 —— 图还"合法"，但和引擎决定的那张图不是同一张。
+`manual` 是唯一既保留点、又仍然绑定端口的模式。行里第一点单独存（那是路由的起点），构造元素时是
+"首点 + waypoints"，只取 waypoints 会**丢掉出发段**（有 mutation 实测：9 个用例变红）。
+
+**③ 画布是报告的，不是发明的。** 目标文档比派生的 canvas 小 → 硬失败并**点名**该创建多大，而不是静默裁掉。
+画布属于 layout，不属于调用者。
+
+**④ 写完之后要**回读**并对账。** `materialization_matches_document()` 把提交后的文档读回成 canonical rows，
+与 layout 的 rows **双向**逐行比对：少一行是"layout 决策了却从没被写进图"（任何 digest 都看不见的失败），
+多一行是"写了 layout 从未决定过的东西"。比对字段是 `kind/engineering_id/tag/symbol_key/system_id` +
+`x/y/width/height` + waypoints —— 即"落图没有改动语义、也没有改动几何"。
+
+### 15.3 provenance 链：从 spec 语义一路到 revision
+
+```
+diagram_spec_semantic_digest ─┐
+adapter_topology_digest       ├─ 上游（Phase-2A / Step 1）
+symbol_geometry_catalog_digest┤   Step 3 冻结的符号几何
+canonical_layout_digest       ┘   Step 5 的 canonical layout identity
+materialization_digest        ── 本步：这次编译
+resulting_revision            ── 落到了哪个 revision
+```
+
+链随 `apply_transaction(..., audit=..., source="system")` 一起记录 —— 这正是本仓库记录"某个 revision 为什么存在"
+的地方。之所以不写进 document metadata：操作词表里没有写 metadata 的操作，为它发明一个操作就是**开第二条写路径**，
+与 `MATERIALIZATION_ADDS_AN_HTTP_OR_MCP_SURFACE = False` 是同一件事。
+
+### 15.4 确定性：digest 覆盖"进文档坐标系之后"的值
+
+materialization digest 覆盖：版本、画布尺寸、origin、以及每行**已平移**的坐标与 waypoints。
+平移必须在 digest **里面** —— 只差一个 origin 的两张图不是同一张图（一张的留白在另一侧）。信封是闭集，
+键就是 `MATERIALIZATION_DIGEST_INPUTS`；`document_id` 不在里面（它说的是"写到哪"，不是"画了什么"），
+时钟也不在（同一份 layout 写两次必须 digest 相同）。与 Step 5 同一套纪律。
+
+### 15.5 落点与验收
+
+实现落在 `m7_layout_materialization.py`（合同白名单新增 `PHASE_3_MAY_IMPORT_THE_CONTRACT`）；
+`PHASE_2A/2B/3` 三张白名单**互不重叠**（有测试钉住）。
+
+| 用例 | 内容 |
+| --- | --- |
+| 未 finalize 的 plan | step ≠ 5 或缺 digest → `LayoutIsNotFinalizedError`（不写一个没有身份命名的图） |
+| 空工程实体 | plan 没有任何 entity → 硬失败（"往没人能核对的文档里放元素"） |
+| 语义身份 | 每行都带 system_id/symbol_key/tag，且都来自 plan 的工程记录 |
+| 路由未声明 | route 出现在 plan 没声明的 connection 上、或端点无 binding → 硬失败 |
+| 标签与几何不同源 | 少一个标签文本、多一个布局没放的标签 → `MaterializationLabelError` |
+| 确定性 | 同一份 plan 两次 materialize → digest、operations、element ids **全部相等** |
+| 时钟 | 两次运行之间推进时钟 → digest 不变 |
+| origin 进 digest | 只改 origin → digest 必须变 |
+| 画布 | 目标文档小于派生 canvas → `MaterializationCanvasError` 并点名尺寸 |
+| 端到端 | 无坐标 DiagramSpec → adapter → 引擎 → Step 5 → materialize → `apply_transaction` → **revision +1**，回读对账 0 问题 |
+| 恰好一次 | 每个 symbol/connector/annotation 在提交后的文档里**存在且仅存在一次** |
+| 语义未改 | 落图前后 tag/system/port/symbol 绑定不变（回读比对） |
+| 缺行/多行/漂移 | 删掉一行、多写一行、改掉某行 tag、丢掉出发段 → 回读对账必须报出并点名 |
+
+mutation（**逐条实跑**，全部真红）：
+
+| mutation | 结果 | 说明 |
+| --- | --- | --- |
+| 回读只比对 id、不比对内容 | 1 红 | 漏行/多行仍对得上，内容漂移被抓 |
+| connector 丢掉出发段（只取 waypoints） | 9 红 | 路由起点丢失在多个用例里同时暴露 |
+| 去掉 `produced_at_step != STEP_5` 这层闸 | 1 红 | 第二个闸（无 envelope）会改名报错，用例断言点名两者 |
+| payload 里的 origin 写成常量 0.0 | 1 红 | `test_the_origin_is_digested_and_not_only_recorded` |
+| `_digest_row` 不减去 origin | 10 红 | 平移没进 digest 会被同一批用例咬住 |
+
+前两次实跑时 G/H 两种改法是**绿**的 —— 说明我原来的用例只验了"写入时用了 origin"，没验"身份里含 origin"。
+补了一条把 origin **双向**钉住的用例（信封里记、每行坐标里应用），并把"未 finalize"的用例从只断言异常
+类型改成**点名**那层闸，两条才真正变红。这是本步最值得记的一课：**"代码里做了这件事"与"测试能证明这件事被做了"是两件事**。
+
+### 15.6 为什么不新增身份轴
+
+Phase-3 只加了一个版本对：`materializer_version` + `materialization_digest_version`，且
+`MATERIALIZATION_DIGEST_IS_NOT_THE_LAYOUT_DIGEST = True` —— 它们是"这次编译"与"这次布局"的区别，
+不是第四个身份轴。整个 M7-2 的身份最终收敛为三层：**engineering semantic**（这份语义是什么）、
+**layout input**（引擎收到了什么）、**render artifact**（画出来了什么）；materialization digest 属于第三层。

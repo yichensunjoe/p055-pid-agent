@@ -541,21 +541,34 @@ def test_only_the_declared_modules_import_the_layout_contract() -> None:
         if path.name != "m7_layout_contract.py"
         and "m7_layout_contract" in path.read_text(encoding="utf-8")
     )
-    # A phase-2B module may only appear here once the module exists: the allow-list names the
-    # importer before it is written, so "declared for later" cannot be mistaken for "already
-    # reading the contract".
+    # A phase-2B or phase-3 module may only appear here once the module exists: the allow-list
+    # names the importer before it is written, so "declared for later" cannot be mistaken for
+    # "already reading the contract".
     agentcad = Path(__file__).resolve().parents[1] / "agentcad"
     allowed = set(contract.PHASE_2A_MAY_IMPORT_THE_CONTRACT)
-    allowed |= {
-        name for name in contract.PHASE_2B_MAY_IMPORT_THE_CONTRACT if (agentcad / name).exists()
-    }
+    for declared in (
+        contract.PHASE_2B_MAY_IMPORT_THE_CONTRACT,
+        contract.PHASE_3_MAY_IMPORT_THE_CONTRACT,
+    ):
+        allowed |= {name for name in declared if (agentcad / name).exists()}
     assert importers == sorted(allowed), importers
 
 
-def test_the_two_phase_import_lists_do_not_overlap() -> None:
-    assert not set(contract.PHASE_2A_MAY_IMPORT_THE_CONTRACT) & set(
-        contract.PHASE_2B_MAY_IMPORT_THE_CONTRACT
+def test_the_phase_import_lists_do_not_overlap() -> None:
+    """Three phases, three lists, no module in two of them.
+
+    A module in two lists would make "which phase may read the contract" depend on list order, and
+    the point of the lists is that a later phase's permission is a separate decision.
+    """
+
+    lists = (
+        contract.PHASE_2A_MAY_IMPORT_THE_CONTRACT,
+        contract.PHASE_2B_MAY_IMPORT_THE_CONTRACT,
+        contract.PHASE_3_MAY_IMPORT_THE_CONTRACT,
     )
+    for index, left in enumerate(lists):
+        for right in lists[index + 1 :]:
+            assert not set(left) & set(right), sorted(set(left) & set(right))
 
 
 # --------------------------------------------------------------------------------------

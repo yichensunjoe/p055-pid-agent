@@ -1359,10 +1359,43 @@ CONTENT_BOUNDS_INPUTS: tuple[str, ...] = (
 CONTENT_BOUNDS_IS_A_CLOSED_LIST = True
 CONTENT_BOUNDS_MUST_COVER_EVERY_PRESENTATION_ROW = True
 CONTENT_BOUNDS_MAY_EXCLUDE_A_PRESENTATION_ROW = False
-#: A route contributes its waypoints, not a stroke width. Giving a polyline a thickness here
-#: would be a presentation decision in a second place (and a second answer to "how thick is a
-#: pipe"); the margin is what keeps the outermost stroke off the edge.
-ROUTE_STROKE_WIDTH_CONTRIBUTES_TO_CONTENT_BOUNDS = False
+#: Each covered input contributes its **rendered** extent, not its centerline or its nominal box.
+#: "All presentation geometry fits the canvas" and "a stroke has no width" are two claims that
+#: cannot both hold, and the canvas is the one that would be wrong.
+CONTENT_BOUNDS_INPUTS_ARE_RENDERED_EXTENTS = True
+CONTENT_BOUNDS_MAY_USE_A_CENTERLINE_INSTEAD_OF_A_RENDERED_EXTENT = False
+
+#: The stroke rule, as data. A stroked path is drawn *around* its centerline, so its rendered
+#: extent is the geometry inflated by a declared envelope; the catalogue's own shapes make this
+#: concrete -- a port stub ends exactly at ``x = 0``, so a 1.5px outline reaches 0.75px outside
+#: the declared box. Named per kind because the kinds do not share a width.
+PRESENTATION_BOUNDS_ARE_RENDERED_EXTENTS = True
+ROUTE_STROKE_CONTRIBUTES_TO_PRESENTATION_BOUNDS = True
+LEADER_STROKE_CONTRIBUTES_TO_PRESENTATION_BOUNDS = True
+SYMBOL_OUTLINE_STROKE_CONTRIBUTES_TO_PRESENTATION_BOUNDS = True
+ANNOTATION_TEXT_HAS_NO_STROKE = True
+PRESENTATION_STROKE_POLICY_KINDS: tuple[str, ...] = (
+    "symbol_outline",
+    "connector",
+    "leader_line",
+    "annotation_text",
+)
+PRESENTATION_STROKE_ENVELOPE_RULE = (
+    "geometry_inflated_by_half_stroke_plus_declared_cap_join_allowance_v1"
+)
+#: Returns to the layout rules axis, for the same reason the text extent does: "how thick is a
+#: pipe" is a drawing rule, and a stroke width with its own lifecycle would be a second source of
+#: truth about the same drawing.
+PRESENTATION_STROKE_POLICY_IS_ENGINE_RULES = True
+PRESENTATION_STROKE_POLICY_IS_UNDER_THE_LAYOUT_RULES_VERSION = True
+PRESENTATION_STROKE_POLICY_CHANGE_REQUIRES_LAYOUT_RULES_VERSION_BUMP = True
+PRESENTATION_STROKE_IS_NOT_A_SEPARATE_DIGEST_INPUT = True
+#: The fact that motivated inflating symbol bounds rather than only route bounds: the catalogue
+#: box is the geometry, not the drawn box.
+SYMBOL_BOX_IS_NOT_THE_SYMBOL_RENDERED_EXTENT = True
+#: No step produces leader-line geometry yet. Named rather than left to a reader to notice, because
+#: "the policy covers leaders" and "there are leaders to cover" are different facts.
+LEADER_LINE_ROWS_EXIST_IN_THE_PLAN = False
 #: A label's box is its text extent -- the deterministic rule §12 already names, not a second
 #: measurement of the same string.
 ANNOTATION_EXTENT_IS_THE_TEXT_BOX = True
@@ -2466,10 +2499,56 @@ def validate_contract() -> list[str]:
         problems.append("a bounds computed over a subset is a canvas that crops")
     if CONTENT_BOUNDS_MAY_EXCLUDE_A_PRESENTATION_ROW:
         problems.append("no presentation row may be left out of the content envelope")
-    if ROUTE_STROKE_WIDTH_CONTRIBUTES_TO_CONTENT_BOUNDS:
+    if not CONTENT_BOUNDS_INPUTS_ARE_RENDERED_EXTENTS:
         problems.append(
-            "a route contributes its waypoints: line weight is a presentation decision, and "
-            "this is not where a second one gets made"
+            "each covered input contributes its rendered extent: a canvas fitted to centerlines "
+            "clips the strokes drawn around them"
+        )
+    if CONTENT_BOUNDS_MAY_USE_A_CENTERLINE_INSTEAD_OF_A_RENDERED_EXTENT:
+        problems.append(
+            "a centerline is not a presentation extent: 'all presentation geometry fits the "
+            "canvas' and 'a stroke has no width' cannot both hold"
+        )
+    if not PRESENTATION_BOUNDS_ARE_RENDERED_EXTENTS:
+        problems.append("presentation bounds are rendered extents, not nominal geometry")
+    for stroke_flag, stroke_sentence in (
+        (
+            ROUTE_STROKE_CONTRIBUTES_TO_PRESENTATION_BOUNDS,
+            "a connector is drawn around its centerline, so its stroke is part of its bounds",
+        ),
+        (
+            LEADER_STROKE_CONTRIBUTES_TO_PRESENTATION_BOUNDS,
+            "a leader line is drawn around its centerline, so its stroke is part of its bounds",
+        ),
+        (
+            SYMBOL_OUTLINE_STROKE_CONTRIBUTES_TO_PRESENTATION_BOUNDS,
+            "a catalogue outline is drawn around its geometry, so its stroke is part of its bounds",
+        ),
+    ):
+        if not stroke_flag:
+            problems.append(stroke_sentence)
+    if not ANNOTATION_TEXT_HAS_NO_STROKE:
+        problems.append("a text box is its own extent: it carries no stroke to inflate")
+    for kind in ("symbol_outline", "connector", "leader_line", "annotation_text"):
+        if kind not in PRESENTATION_STROKE_POLICY_KINDS:
+            problems.append(f"the stroke policy must name the {kind!r} kind")
+    if not PRESENTATION_STROKE_ENVELOPE_RULE.strip():
+        problems.append("the stroke envelope rule must be named, not restated per call site")
+    if not PRESENTATION_STROKE_POLICY_IS_ENGINE_RULES:
+        problems.append("the stroke policy is a declared engine rule")
+    if not PRESENTATION_STROKE_POLICY_IS_UNDER_THE_LAYOUT_RULES_VERSION:
+        problems.append("the stroke policy belongs to the layout rules version")
+    if not PRESENTATION_STROKE_POLICY_CHANGE_REQUIRES_LAYOUT_RULES_VERSION_BUMP:
+        problems.append("changing a stroke width changes the drawing, so it moves the rules version")
+    if not PRESENTATION_STROKE_IS_NOT_A_SEPARATE_DIGEST_INPUT:
+        problems.append("the stroke rides the layout rules version, not a third identity axis")
+    stroke_inputs = [name for name in LAYOUT_DIGEST_INPUTS if "stroke" in name]
+    if stroke_inputs:
+        problems.append(f"the stroke must not become a digest input on its own: {stroke_inputs}")
+    if not SYMBOL_BOX_IS_NOT_THE_SYMBOL_RENDERED_EXTENT:
+        problems.append(
+            "the catalogue box is the symbol's geometry, not its drawn box: an outline reaches "
+            "outside it"
         )
     if not ANNOTATION_EXTENT_IS_THE_TEXT_BOX:
         problems.append("a label's extent is its text box, not a second measurement of the same text")

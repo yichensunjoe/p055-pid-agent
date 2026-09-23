@@ -1104,3 +1104,64 @@ Step 4 是最后两个意图维度（`orientation`、`preferred_aspect_class`）
 `plan.pending_intent_dimensions == ()`——六个维度全部有落点，这正是 §11 里"声明了却不生效"那条 Gate 的兑现。
 plan 字段集增加 `content_bounds`，因此 `m7-semantic-layout-plan-digest` `/5 → /6`（字段集变就是版本变，
 未发布的中间版本不豁免）。门禁：ruff clean、`validate_contract()` 空、pytest 1351 passed。
+
+### 13.8 stroke 也是 presentation geometry（Gate 抓到的窄 blocker）
+
+原 §13 同时声明了"所有 presentation geometry ⊆ canvas_bounds"和"route 的 stroke 不计入 bounds"，
+这两条不能同时成立：管路/引线/符号轮廓都是有宽度的路径，**渲染范围在中心线两侧**。
+更糟的是"margin=32 通常够把 stroke 包进去"只是**两个声明数字碰巧的大小关系**，不是 bounds 对实际呈现的证明。
+而且这条假设连符号都没放过：目录里 `gas_tank` 的 port stub 画到 `x = 0`（`M`/`line` 坐标直接落在盒边上），
+所以 1.5px 的轮廓线本来就会画到声明盒外面 0.75px。
+
+修正后的形状（**每个 kind 的 stroke 都归 presentation bounds**）：
+
+```
+PRESENTATION_BOUNDS_ARE_RENDERED_EXTENTS = True
+CONTENT_BOUNDS_INPUTS_ARE_RENDERED_EXTENTS = True
+CONTENT_BOUNDS_MAY_USE_A_CENTERLINE_INSTEAD_OF_A_RENDERED_EXTENT = False
+ROUTE_STROKE_CONTRIBUTES_TO_PRESENTATION_BOUNDS = True
+LEADER_STROKE_CONTRIBUTES_TO_PRESENTATION_BOUNDS = True
+SYMBOL_OUTLINE_STROKE_CONTRIBUTES_TO_PRESENTATION_BOUNDS = True
+ANNOTATION_TEXT_HAS_NO_STROKE = True
+PRESENTATION_STROKE_POLICY_KINDS = (symbol_outline, connector, leader_line, annotation_text)
+PRESENTATION_STROKE_ENVELOPE_RULE =
+    "geometry_inflated_by_half_stroke_plus_declared_cap_join_allowance_v1"
+PRESENTATION_STROKE_POLICY_IS_UNDER_THE_LAYOUT_RULES_VERSION = True
+PRESENTATION_STROKE_POLICY_CHANGE_REQUIRES_LAYOUT_RULES_VERSION_BUMP = True
+PRESENTATION_STROKE_IS_NOT_A_SEPARATE_DIGEST_INPUT = True
+SYMBOL_BOX_IS_NOT_THE_SYMBOL_RENDERED_EXTENT = True
+LEADER_LINE_ROWS_EXIST_IN_THE_PLAN = False        （policy 覆盖引线，但当前还没有引线行）
+```
+
+引擎侧一条策略表，reach = `stroke_width / 2 + cap_join_allowance`：
+
+```
+symbol_outline  stroke 1.5  allowance 0.75  → reach 1.5
+connector       stroke 1.5  allowance 1.0   → reach 1.75
+leader_line     stroke 1.0  allowance 0.5   → reach 1.0
+annotation_text stroke 0    allowance 0     → reach 0   （文本框本身就是它的范围）
+```
+
+渲染范围 = 几何 **inflate** reach（对轴对齐折线，逐点方盒膨胀即折线的 Minkowski 包络）；
+`clipping_problems()` 检查的是**膨胀后**的 bounds（node / route waypoint / annotation 各报名字）。
+阈值都归 `layout_rules_version`，不新增 `stroke_digest`。
+
+**两个 fixture + mutation**：
+
+1. 需要一张"中心线全在里面、stroke 越界"的画布。注意它**不可能**来自本步的派生——margin(32) 远大于
+   reach(1.75)，派生出来的画布永远不会裁自己的 stroke。这正是这个校验存在的理由：它面向的是**来自别处**的画布
+   （旧默认、调用方、更小的包络）。fixture 因此取"中心线包络外扩 1 个单位"，使中心线判定与渲染判定给出
+   不同答案；测试同时断言"每个中心线都在里面"（旧的判定会全绿）与"确实有 stroke 越界"。
+2. 引线同类：`presentation_stroke_envelope("leader_line").reach > 0` 且 `rendered_extent` 对引线中心线生效。
+   当前 plan 不产生引线行，这一点作为**声明的事实**（`LEADER_LINE_ROWS_EXIST_IN_THE_PLAN = False`）写下来，
+   免得"策略覆盖引线"被读成"已经有引线要覆盖"。
+3. mutation：**去掉 stroke 膨胀 → 上述 fixture 必须红**（实测 2 条红）；只去掉符号轮廓膨胀也红（1 条红）。
+   我第一版的符号断言里带了一个 `or` 逃生口，mutation 全绿——说明它是假守卫，已改成经
+   `presentation_boxes` 读、并逐条断言 `box == nominal.expanded(reach)`。
+
+**版本结论**：不升 `LAYOUT_RULES_VERSION`。旧声明（"route stroke 不计入 bounds"）只存在于 `ad00e2c`
+——**未签名、未 push、没有任何一张图是用它量过的**——所以这属于"把尚未发布的定义补完整"，而不是改动一条
+已生效的规则。反过来说，前向规则已经命名为 `PRESENTATION_STROKE_POLICY_CHANGE_REQUIRES_LAYOUT_RULES_VERSION_BUMP`，
+以后改 stroke 宽度或 envelope 规则就是 rules 版本变更，不能再走这条捷径。
+`clipping_problems()` 的检查顺序也调整成**先裁剪、后 margin**：裁剪是关于这张图的属性（对任何画布都成立），
+margin 是关于派生的属性；先报前者，读者看到的才是自己能看见的东西。

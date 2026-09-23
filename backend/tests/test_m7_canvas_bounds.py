@@ -18,12 +18,14 @@ from agentcad import m7_layout_contract as contract
 from agentcad.auto_layout_canvas import (
     ASPECT_CLASS_RATIO_POLICY,
     CANVAS_MARGIN_POLICY,
+    PRESENTATION_STROKE_POLICY,
     CanvasClippingError,
     RouteCrossesProtectedNodeError,
     StepFourError,
     UnknownAspectClassError,
     UnknownCanvasMarginClassError,
     UnknownOrientationError,
+    UnknownPresentationKindError,
     aspect_class_ratio,
     bounds_rect,
     canvas_margin,
@@ -33,6 +35,8 @@ from agentcad.auto_layout_canvas import (
     derive_semantic_canvas,
     margin_is_preserved,
     presentation_boxes,
+    presentation_stroke_envelope,
+    rendered_extent,
     route_node_intersection_problems,
 )
 from agentcad.auto_layout_geometry import (
@@ -73,6 +77,17 @@ def _union(boxes) -> Rect:
     )
 
 
+def _contains(canvas: Rect, box: Rect) -> bool:
+    """Written out in the test rather than imported: the property is compared, not re-used."""
+
+    return (
+        box.x >= canvas.x - TOLERANCE
+        and box.y >= canvas.y - TOLERANCE
+        and box.right <= canvas.right + TOLERANCE
+        and box.bottom <= canvas.bottom + TOLERANCE
+    )
+
+
 def _node_rects(plan) -> dict[str, Rect]:
     return {
         row["engineering_id"]: Rect(row["x"], row["y"], row["width"], row["height"])
@@ -90,10 +105,14 @@ def test_the_content_envelope_is_the_union_of_nodes_routes_and_annotations() -> 
     boxes = presentation_boxes(plan)
     content = content_bounds_of(plan)
     assert content == _union(boxes.boxes())
-    # A route contributes waypoints, not a stroke: every waypoint is a point box.
-    for _name, points in boxes.routes:
+    # Every covered input contributes a *rendered* extent: a waypoint contributes its point box
+    # inflated by the connector stroke, never the bare point.
+    for _name, points, reach in boxes.routes:
+        assert reach > 0.0
         for point in points:
-            assert Rect(point[0], point[1], 0.0, 0.0).x >= content.x - TOLERANCE
+            rendered = Rect(point[0], point[1], 0.0, 0.0).expanded(reach)
+            assert rendered.width > 0.0
+            assert rendered.x >= content.x - TOLERANCE and rendered.right <= content.right + TOLERANCE
 
 
 def test_the_envelope_is_tight_on_every_side() -> None:
@@ -158,7 +177,7 @@ def test_a_canvas_too_small_to_hold_the_drawing_is_refused_by_name() -> None:
     shrunken = Rect(canvas.x + 200.0, canvas.y + 200.0, canvas.width, canvas.height)
     problems = clipping_problems(plan, shrunken)
     assert problems, "a canvas 200px in from the drawing must clip something"
-    assert any("is outside the canvas" in problem for problem in problems)
+    assert any("outside the canvas" in problem for problem in problems)
 
 
 def test_the_canvas_derivation_verifies_clipping_and_says_what_stuck_out(
@@ -474,3 +493,153 @@ def test_the_reflow_is_checked_against_clearance_not_against_the_origin_spacing(
     assert any("clearance" in problem for problem in problems), problems
     assert not any("rank gap" in problem or "node gap" in problem for problem in problems)
     assert touching
+
+
+# ---------------------------------------------------------------------------------------
+# Strokes: the rendered extent, not the centerline (the gate's blocker)
+# ---------------------------------------------------------------------------------------
+
+
+def test_every_presentation_kind_names_its_stroke_envelope() -> None:
+    """The policy is data, and a kind that has no entry is a failure rather than a zero."""
+
+    kinds = {name for name, _ in PRESENTATION_STROKE_POLICY}
+    assert kinds == set(contract.PRESENTATION_STROKE_POLICY_KINDS)
+    assert contract.PRESENTATION_STROKE_ENVELOPE_RULE
+    for kind in ("symbol_outline", "connector", "leader_line"):
+        assert presentation_stroke_envelope(kind).reach > 0.0
+    assert presentation_stroke_envelope("annotation_text").reach == 0.0
+    with pytest.raises(UnknownPresentationKindError) as raised:
+        presentation_stroke_envelope("hull_gradient")
+    assert raised.value.code == "unknown_presentation_kind"
+    assert contract.ROUTE_STROKE_CONTRIBUTES_TO_PRESENTATION_BOUNDS is True
+    assert contract.LEADER_STROKE_CONTRIBUTES_TO_PRESENTATION_BOUNDS is True
+    assert contract.SYMBOL_OUTLINE_STROKE_CONTRIBUTES_TO_PRESENTATION_BOUNDS is True
+    assert contract.CONTENT_BOUNDS_MAY_USE_A_CENTERLINE_INSTEAD_OF_A_RENDERED_EXTENT is False
+    assert not [name for name in contract.LAYOUT_DIGEST_INPUTS if "stroke" in name]
+
+
+def test_the_envelope_reaches_outside_both_the_geometry_and_its_nominal_box() -> None:
+    """The catalogue's own shapes make this concrete: a stub ends at ``x = 0``."""
+
+    symbol = presentation_stroke_envelope("symbol_outline").reach
+    connector = presentation_stroke_envelope("connector").reach
+    box = Rect(100.0, 100.0, 90.0, 140.0)
+    assert rendered_extent("symbol_outline", box) == Rect(
+        100.0 - symbol, 100.0 - symbol, 90.0 + symbol * 2, 140.0 + symbol * 2
+    )
+    assert rendered_extent("annotation_text", box) == box
+    assert connector > 0.0
+
+
+def test_the_content_envelope_grows_by_the_stroke_it_used_to_ignore() -> None:
+    """The measurable consequence of the fix, on the real fixture.
+
+    Read through `presentation_boxes`, not through the envelope function: the assertion has to
+    fail when the *code path the envelope comes from* stops inflating symbol bounds, which is a
+    different sentence from "the policy says 1.5".
+    """
+
+    plan = step_four_fixture_a()
+    content = content_bounds_of(plan)
+    symbol = presentation_stroke_envelope("symbol_outline").reach
+    rendered_nodes = presentation_boxes(plan).nodes
+    assert rendered_nodes
+    for name, box in rendered_nodes:
+        row = next(row for row in plan.placement if row["engineering_id"] == name)
+        nominal = Rect(row["x"], row["y"], row["width"], row["height"])
+        assert box == rendered_extent("symbol_outline", nominal)
+        assert box == nominal.expanded(symbol)
+        assert box.width > nominal.width and box.height > nominal.height
+        assert _contains(content, box)
+    # Every node's rendered extent reaches outside its declared box, so the envelope must too.
+    nominal_envelope = _union(list(_node_rects(plan).values()))
+    assert content.x <= nominal_envelope.x - symbol + TOLERANCE
+    assert content.y <= nominal_envelope.y - symbol + TOLERANCE
+
+
+def _canvas_one_unit_outside_every_centerline(plan) -> Rect:
+    """A canvas that contains every *centerline* and clips the *strokes* around them.
+
+    The gate asked for exactly this fixture, and it needs saying why it cannot come from the
+    derivation: the margin (32) is larger than a stroke reach (~1.75), so a canvas derived from
+    the rendered envelope will never clip its own strokes -- that is a coincidence of two declared
+    numbers, not a property of the check. What does clip a stroke is a canvas from somewhere else:
+    an old default, a caller, a smaller envelope. One unit outside the centerlines is the smallest
+    such canvas, and it makes the centerline check and the rendered-bounds check give different
+    answers -- which is the only way to observe that the second one exists.
+    """
+
+    centerlines = _union(
+        [
+            *(Rect(row["x"], row["y"], row["width"], row["height"]) for row in plan.placement),
+            *(
+                Rect(point[0], point[1], 0.0, 0.0)
+                for row in plan.routing
+                for point in ((row["x"], row["y"]), *[tuple(p) for p in row["ordered_waypoints"]])
+            ),
+            *(
+                Rect(row["x"], row["y"], row["width"], row["height"])
+                for row in plan.annotations
+            ),
+        ]
+    )
+    return centerlines.expanded(1.0)
+
+
+def test_a_route_whose_centerline_fits_but_whose_stroke_does_not_is_reported() -> None:
+    plan = annotated_fixture_a()
+    canvas = _canvas_one_unit_outside_every_centerline(plan)
+    reach = presentation_stroke_envelope("connector").reach
+    centerlines_inside = []
+    strokes_outside = []
+    for _name, points, _reach in presentation_boxes(plan).routes:
+        for point in points:
+            point_box = Rect(point[0], point[1], 0.0, 0.0)
+            centerlines_inside.append(_contains(canvas, point_box))
+            strokes_outside.append(not _contains(canvas, point_box.expanded(reach)))
+    assert centerlines_inside and all(centerlines_inside), "the fixture must keep centerlines in"
+    assert any(strokes_outside), "the fixture must push at least one stroke past the edge"
+
+    problems = clipping_problems(plan, canvas)
+    assert any("route" in problem and "rendered bounds" in problem for problem in problems), problems
+    # The centerline-only answer is the one that used to pass: every waypoint is inside, so a
+    # check that measured points would report nothing at all.
+    assert any("rendered bounds" in problem for problem in problems)
+    with pytest.raises(CanvasClippingError) as raised:
+        _derive_with_a_foreign_canvas(plan, canvas)
+    assert raised.value.code == "canvas_clips_content"
+
+
+def _derive_with_a_foreign_canvas(plan, canvas: Rect):
+    """Run the real derivation against a canvas that came from somewhere else.
+
+    Substituting the *derivation* -- not the envelope -- is what puts a foreign canvas in front of
+    the verification: substituting the envelope would still be grown by the margin and would clip
+    nothing, which is the coincidence this test exists to see past.
+    """
+
+    from agentcad import auto_layout_canvas
+
+    original = auto_layout_canvas.derive_canvas_bounds
+    try:
+        auto_layout_canvas.derive_canvas_bounds = lambda *_args, **_kwargs: canvas
+        return derive_semantic_canvas(plan)
+    finally:
+        auto_layout_canvas.derive_canvas_bounds = original
+
+
+def test_a_leader_line_stroke_is_part_of_its_presentation_bounds() -> None:
+    """No step produces leader rows yet, and the policy still has to cover them.
+
+    Declared as a fact rather than left implicit: "the policy covers leaders" and "there are
+    leaders to cover" are different sentences, and only the first one is true today.
+    """
+
+    assert contract.LEADER_LINE_ROWS_EXIST_IN_THE_PLAN is False
+    plan = step_four_fixture_a()
+    assert all(row["placement_kind"] != "leader_line" for row in plan.annotations)
+    leader = presentation_stroke_envelope("leader_line")
+    assert leader.reach > 0.0
+    centerline = Rect(10.0, 20.0, 40.0, 0.0)
+    assert rendered_extent("leader_line", centerline).height == leader.reach * 2

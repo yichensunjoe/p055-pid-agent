@@ -86,6 +86,12 @@ class RouteCrossesProtectedNodeError(StepFourError):
     code = "route_crosses_protected_node"
 
 
+class UnknownPresentationKindError(StepFourError):
+    """A presentation kind with no declared stroke envelope. Hard failure, never a zero."""
+
+    code = "unknown_presentation_kind"
+
+
 #: Declared engine numbers under ``LAYOUT_RULES_VERSION``, keyed by the density class the caller
 #: asked for -- the same shape as the spacing policy, and for the same reason: a margin nobody
 #: declared is a margin that drifts with the grid, the host or the export format.
@@ -103,6 +109,60 @@ ASPECT_CLASS_RATIO_POLICY: tuple[tuple[str, float], ...] = tuple(ASPECT_CLASS_TA
 #: where the port anchor and its stub live; a second segment would already be traversing the
 #: symbol rather than leaving it.
 ROUTE_ENDPOINT_ESCAPE_SEGMENTS = 1
+
+
+@dataclass(frozen=True)
+class PresentationStrokeEnvelope:
+    """How far a stroked path reaches beyond its own geometry, by kind.
+
+    ``half_stroke`` is ``stroke_width / 2``; ``cap_join_allowance`` covers what a cap or a miter
+    join adds on top of that. Both are declared numbers rather than renderer measurements: the
+    same drawing has to measure the same on every machine, and a canvas derived from a browser's
+    idea of a stroke would put the machine into the drawing's identity.
+    """
+
+    stroke_width: float
+    cap_join_allowance: float
+
+    @property
+    def reach(self) -> float:
+        return self.stroke_width / 2 + self.cap_join_allowance
+
+    def to_projection(self) -> dict[str, float]:
+        return {
+            "stroke_width": self.stroke_width,
+            "cap_join_allowance": self.cap_join_allowance,
+            "reach": self.reach,
+        }
+
+
+#: Declared engine numbers under ``LAYOUT_RULES_VERSION``, one entry per presentation kind. The
+#: widths match the document's own default style (``stroke_width = 1.5`` for outlines and
+#: connectors); the allowances are conservative envelopes rather than renderer queries.
+PRESENTATION_STROKE_POLICY: tuple[tuple[str, PresentationStrokeEnvelope], ...] = (
+    ("symbol_outline", PresentationStrokeEnvelope(stroke_width=1.5, cap_join_allowance=0.75)),
+    ("connector", PresentationStrokeEnvelope(stroke_width=1.5, cap_join_allowance=1.0)),
+    ("leader_line", PresentationStrokeEnvelope(stroke_width=1.0, cap_join_allowance=0.5)),
+    ("annotation_text", PresentationStrokeEnvelope(stroke_width=0.0, cap_join_allowance=0.0)),
+)
+
+
+def presentation_stroke_envelope(kind: str) -> PresentationStrokeEnvelope:
+    """The declared envelope for a presentation kind. Unknown is a failure, not a zero."""
+
+    for name, envelope in PRESENTATION_STROKE_POLICY:
+        if name == kind:
+            return envelope
+    raise UnknownPresentationKindError(
+        f"no stroke envelope is declared for presentation kind {kind!r}: assuming it has no "
+        "stroke would fit the canvas to a centerline"
+    )
+
+
+def rendered_extent(kind: str, box: Rect) -> Rect:
+    """A kind's rendered extent: its geometry inflated by the declared stroke envelope."""
+
+    return box.expanded(presentation_stroke_envelope(kind).reach)
 
 
 def canvas_margin(density: str) -> float:
@@ -128,22 +188,31 @@ def aspect_class_ratio(preferred_aspect_class: str) -> float:
 
 @dataclass(frozen=True)
 class PresentationBoxes:
-    """Everything the canvas has to contain, kept apart so a check can say *what* stuck out."""
+    """Everything the canvas has to contain, as rendered extents.
+
+    A route is kept as its centerline points plus the stroke reach that applies to them: the
+    centerline is what the router produced and the reach is what the renderer adds, and a check
+    that can see only the first is the check the gate caught.
+    """
 
     nodes: tuple[tuple[str, Rect], ...]
-    routes: tuple[tuple[str, tuple[tuple[float, float], ...]], ...]
+    routes: tuple[tuple[str, tuple[tuple[float, float], ...], float], ...]
     annotations: tuple[tuple[str, Rect], ...]
 
     def boxes(self) -> tuple[Rect, ...]:
         return (
             *(box for _name, box in self.nodes),
-            *(_point_box(point) for _name, points in self.routes for point in points),
+            *(
+                _point_box(point).expanded(reach)
+                for _name, points, reach in self.routes
+                for point in points
+            ),
             *(box for _name, box in self.annotations),
         )
 
 
 def _point_box(point: tuple[float, float]) -> Rect:
-    """A route contributes its waypoints, not a stroke width (§13)."""
+    """One waypoint as a point box, before the kind's stroke envelope is applied."""
 
     return Rect(point[0], point[1], 0.0, 0.0)
 
@@ -155,16 +224,41 @@ def _route_points(row: Mapping[str, Any]) -> tuple[tuple[float, float], ...]:
 
 
 def presentation_boxes(plan: SemanticLayoutPlan) -> PresentationBoxes:
-    """Read the drawing back out of the plan: nodes, route waypoints and annotation boxes."""
+    """Read the drawing back out of the plan as *rendered* extents.
 
+    A symbol's declared box is not its drawn box -- catalogue shapes reach the box edges, so a
+    stroked outline lands half a stroke outside it -- and a connector's waypoints are its
+    centerline, not its stroke. Every kind therefore contributes its geometry inflated by the
+    envelope the stroke policy declares for it, which is what makes "all presentation geometry
+    fits the canvas" a claim about the same picture the renderer draws.
+    """
+
+    symbols = presentation_stroke_envelope("symbol_outline").reach
+    connectors = presentation_stroke_envelope("connector").reach
+    annotations = presentation_stroke_envelope("annotation_text").reach
     return PresentationBoxes(
         nodes=tuple(
-            (row["engineering_id"], Rect(row["x"], row["y"], row["width"], row["height"]))
+            (
+                row["engineering_id"],
+                Rect(row["x"], row["y"], row["width"], row["height"]).expanded(symbols),
+            )
             for row in plan.placement
         ),
-        routes=tuple((row["engineering_id"], _route_points(row)) for row in plan.routing),
+        routes=tuple(
+            (
+                row["engineering_id"],
+                tuple(
+                    (point[0], point[1]) for point in _route_points(row)
+                ),
+                connectors,
+            )
+            for row in plan.routing
+        ),
         annotations=tuple(
-            (row["engineering_id"], Rect(row["x"], row["y"], row["width"], row["height"]))
+            (
+                row["engineering_id"],
+                Rect(row["x"], row["y"], row["width"], row["height"]).expanded(annotations),
+            )
             for row in plan.annotations
         ),
     )
@@ -253,14 +347,22 @@ def clipping_problems(plan: SemanticLayoutPlan, canvas: Rect) -> list[str]:
     boxes = presentation_boxes(plan)
     for name, box in boxes.nodes:
         if not _inside(box, canvas):
-            problems.append(f"node {name!r} at {box} is outside the canvas {canvas}")
-    for name, points in boxes.routes:
+            problems.append(
+                f"node {name!r} rendered bounds {box} are outside the canvas {canvas}"
+            )
+    for name, points, reach in boxes.routes:
         for point in points:
-            if not _inside(_point_box(point), canvas):
-                problems.append(f"route {name!r} waypoint {point} is outside the canvas {canvas}")
+            rendered = _point_box(point).expanded(reach)
+            if not _inside(rendered, canvas):
+                problems.append(
+                    f"route {name!r} waypoint {point} has rendered bounds {rendered} outside "
+                    f"the canvas {canvas}"
+                )
     for name, box in boxes.annotations:
         if not _inside(box, canvas):
-            problems.append(f"annotation {name!r} at {box} is outside the canvas {canvas}")
+            problems.append(
+                f"annotation {name!r} rendered bounds {box} are outside the canvas {canvas}"
+            )
     return problems
 
 
@@ -362,6 +464,14 @@ def derive_semantic_canvas(plan: SemanticLayoutPlan) -> SemanticLayoutPlan:
         plan.intent.orientation,
         plan.intent.preferred_aspect_class,
     )
+    # The clipping check comes first on purpose. It is a property of the *drawing* and holds for
+    # whatever canvas is in front of it -- including a canvas that came from somewhere else. The
+    # margin check is a property of the *derivation*; reporting "this canvas would clip the
+    # drawing" before "this canvas was not derived as declared" points at the thing a reader can
+    # see, and it keeps a stroke fixture from being answered by a margin complaint.
+    problems = clipping_problems(plan, canvas)
+    if problems:
+        raise CanvasClippingError("the derived canvas would clip the drawing: " + "; ".join(problems))
     if MARGIN_IS_PRESERVED_IN_THE_DERIVED_CANVAS and not margin_is_preserved(
         content, canvas, margin
     ):
@@ -369,9 +479,6 @@ def derive_semantic_canvas(plan: SemanticLayoutPlan) -> SemanticLayoutPlan:
             f"the aspect enforcement spent the declared margin: content {content}, canvas "
             f"{canvas}, margin {margin}"
         )
-    problems = clipping_problems(plan, canvas)
-    if problems:
-        raise CanvasClippingError("the derived canvas would clip the drawing: " + "; ".join(problems))
     crossing = route_node_intersection_problems(plan)
     if crossing:
         raise RouteCrossesProtectedNodeError(
@@ -423,15 +530,18 @@ class SemanticLayoutCanvas:
 __all__ = [
     "ASPECT_CLASS_RATIO_POLICY",
     "CANVAS_MARGIN_POLICY",
+    "PRESENTATION_STROKE_POLICY",
     "ROUTE_ENDPOINT_ESCAPE_SEGMENTS",
     "CanvasClippingError",
     "PresentationBoxes",
+    "PresentationStrokeEnvelope",
     "RouteCrossesProtectedNodeError",
     "SemanticLayoutCanvas",
     "StepFourError",
     "UnknownAspectClassError",
     "UnknownCanvasMarginClassError",
     "UnknownOrientationError",
+    "UnknownPresentationKindError",
     "aspect_class_ratio",
     "bounds_rect",
     "canvas_margin",
@@ -441,5 +551,7 @@ __all__ = [
     "derive_semantic_canvas",
     "margin_is_preserved",
     "presentation_boxes",
+    "presentation_stroke_envelope",
+    "rendered_extent",
     "route_node_intersection_problems",
 ]

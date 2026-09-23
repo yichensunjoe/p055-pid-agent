@@ -1498,3 +1498,76 @@ def test_the_validator_reports_a_margin_that_defaults_in_silence(
     monkeypatch.setattr(contract, "MARGIN_IS_PRESERVED_IN_THE_DERIVED_CANVAS", False)
     problems = contract.validate_contract()
     assert any("may not spend the margin" in problem for problem in problems), problems
+
+
+def test_the_validator_reports_presentation_bounds_measured_at_the_centerline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The gate's blocker, as a check: a canvas fitted to centerlines clips the strokes."""
+
+    monkeypatch.setattr(contract, "CONTENT_BOUNDS_INPUTS_ARE_RENDERED_EXTENTS", False)
+    problems = contract.validate_contract()
+    assert any("rendered extent" in problem for problem in problems), problems
+    monkeypatch.undo()
+    monkeypatch.setattr(
+        contract, "CONTENT_BOUNDS_MAY_USE_A_CENTERLINE_INSTEAD_OF_A_RENDERED_EXTENT", True
+    )
+    problems = contract.validate_contract()
+    assert any("cannot both hold" in problem for problem in problems), problems
+
+
+def test_the_validator_reports_a_stroked_kind_left_out_of_the_bounds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for flag, fragment in (
+        ("ROUTE_STROKE_CONTRIBUTES_TO_PRESENTATION_BOUNDS", "connector is drawn around"),
+        ("LEADER_STROKE_CONTRIBUTES_TO_PRESENTATION_BOUNDS", "leader line is drawn around"),
+        ("SYMBOL_OUTLINE_STROKE_CONTRIBUTES_TO_PRESENTATION_BOUNDS", "outline is drawn around"),
+    ):
+        monkeypatch.setattr(contract, flag, False)
+        problems = contract.validate_contract()
+        assert any(fragment in problem for problem in problems), (flag, problems)
+        monkeypatch.undo()
+    monkeypatch.setattr(contract, "ANNOTATION_TEXT_HAS_NO_STROKE", False)
+    problems = contract.validate_contract()
+    assert any("carries no stroke to inflate" in problem for problem in problems), problems
+
+
+def test_the_validator_reports_a_stroke_policy_without_a_rule_or_a_version_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(contract, "PRESENTATION_STROKE_ENVELOPE_RULE", "")
+    problems = contract.validate_contract()
+    assert any("envelope rule must be named" in problem for problem in problems), problems
+    monkeypatch.undo()
+    monkeypatch.setattr(
+        contract, "PRESENTATION_STROKE_POLICY_CHANGE_REQUIRES_LAYOUT_RULES_VERSION_BUMP", False
+    )
+    problems = contract.validate_contract()
+    assert any("moves the rules version" in problem for problem in problems), problems
+    monkeypatch.undo()
+    monkeypatch.setattr(contract, "PRESENTATION_STROKE_POLICY_KINDS", ("symbol_outline",))
+    problems = contract.validate_contract()
+    assert any("'leader_line'" in problem for problem in problems), problems
+
+
+def test_the_validator_reports_the_stroke_becoming_its_own_identity_axis(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        contract, "LAYOUT_DIGEST_INPUTS", (*contract.LAYOUT_DIGEST_INPUTS, "stroke_width")
+    )
+    problems = contract.validate_contract()
+    assert any("must not become a digest input on its own" in problem for problem in problems), (
+        problems
+    )
+
+
+def test_the_validator_reports_the_catalogue_box_read_as_the_drawn_box(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Catalogue shapes reach the box edges, so this is a fact, not a convention."""
+
+    monkeypatch.setattr(contract, "SYMBOL_BOX_IS_NOT_THE_SYMBOL_RENDERED_EXTENT", False)
+    problems = contract.validate_contract()
+    assert any("not its drawn box" in problem for problem in problems), problems

@@ -2,7 +2,27 @@
 
 > 交接文档：每次开新会话先读本文件。更新规则见 `AGENTS.md`「HANDOFF 交接规则」。
 
-## 当前状态（2026-09-23 R24 —— **Phase-2B 已签已推（`origin/main = 592e6b9`）；Phase-3 本地做完并已按 Gate 两轮收口（`e7fdbd0`→`ccfa836`→`1f6bbd6`），未 push，等 Gate 定 push 方式**）
+## 当前状态（2026-09-23 R25 —— **Phase-2B 已签已推（`origin/main = 592e6b9`）；Phase-3 候选已上 review branch（`review/m7-2-phase3 = 6a9bfe6`，四 commit、CI 四 job 全绿），等 Gate 复核 delta 后签；NL 纵切第一块已开工（sentence → DiagramSpec）**）
+
+- **本轮做了什么**：① 按 Gate 授权把 `592e6b9..1f6bbd6` 原样推到 **`review/m7-2-phase3`**（不动 main、不 squash）；
+  ② Gate 远端 exact-SHA 复核后只留一个 blocker（provenance 可选），已修并在同一分支追加 **`6a9bfe6`**；
+  ③ 开工 **NL 纵切第一块**：`m7_text_planner.py`（一句话 → DiagramSpec）。
+- **P0-3（provenance 必须强制）**：`MaterializedLayout` 自己携带 `provenance_identities`（编译时算好）；
+  `with_materialization_provenance()` 把**五个 identity + 各自版本**写进保留命名空间 `metadata["m7_materialization"]`，
+  caller 的同名 key → **写前硬失败**（不覆盖、不合并）；revision 仍从 `result.document.revision` 读。
+  一句概括：**attribution 是调用方的，provenance 是编译的。**
+- **三条必须说的证据**：`audit=None` 仍留完整链（读持久化 `audit_record`，key 集合恰等于声明的九个）；
+  caller 自带链 → 写前拒、revision 不变、elements 为空、history 只有 `create`；caller 的 attribution 仍生效且其 context 对象未被改动。
+  mutation：去注入 → 3 红；改成覆盖 → 1 红；只记 digest 不记版本 → 1 红（第三条**第一次是绿的**，因为断言两侧同源，
+  改成对**声明的 key 集合**断言后才真红）。
+- **NL 纵切第一块**：`device_phrases.py`（两个 planner 共用的、与模型无关的短语/候选词汇）+ `m7_text_planner.py`
+  （一句话 → 设备/连接候选（**代码**）→ TypeSafe 只在对查找无解处做选择 → 组装 DiagramSpec）。
+  关键性质：**模型只能从候选里选**，所以幻觉设备/悬空管道无法进入引擎（没有 parse 步骤）；不确定的子句**报告并跳过**；
+  未声明的位号**点名而不凭空造设备**。端到端用例：句子 → spec → step 5 finalize → materialize（图上文字就是句子写的位号）。
+- **门禁**：ruff clean、`validate_contract()` `[]`、后端 **1516 passed**（本轮新增 17 条 NL + 四条 provenance）；
+  同分支 CI run `35835758827` 四 job success。
+- **下一步**：① 等 Gate 复核 `1f6bbd6..6a9bfe6` 并签 Phase-3（签后 fast-forward main，需授权）；
+  ② 继续 NL 纵切：把 planner 接到 API + 面板（一句中文 → 出图），再做“第二句中文改语义 → 重画 → 导出”。
 
 - **本轮做了什么**：执行 Gate 授权的 **Phase-3（Drawing Materialization & Production Wiring）**，
   最小 DoD 未扩大。新模块 `m7_layout_materialization.py`（合同 §15 白名单新增 `PHASE_3_MAY_IMPORT_THE_CONTRACT`），

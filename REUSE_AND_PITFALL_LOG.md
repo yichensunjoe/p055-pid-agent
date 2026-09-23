@@ -1,3 +1,22 @@
+## 2026-09-23 · 「可选 provenance」等于没有 provenance；以及自证式断言会把 mutation 掩盖成绿的（P055-PID-Agent）
+
+- 场景：合同写着 `PROVENANCE_IS_RECORDED_ON_THE_WRITE = True`，运行时却是
+  `apply_materialized_layout(..., audit=None)`，把这个**可选** audit 直接交给 writer。于是
+  `audit=None` → 图照样提交，revision 有真实的 `result_revision`，**但没有五个 M7 identity**。
+  自己的测试辅助就这么调的，所以这不是理论路径。
+- 结论做法：① 身份链随**计算结果对象**走（编译时算好），不在调用点现算——写时才算会让两个调用点
+  对“这份东西来自哪条链”给出不同答案。② 一个人保留命名空间（`metadata["m7_materialization"]`）
+  而不是五个散键：散键允许只给一个、其余留空，把“有没有 provenance”变成五个独立问题。
+  ③ caller 已带同名 key → **写前硬失败**，不覆盖也不合并（覆盖会让 caller 以为自己那条链被记录了）。
+  ④ 分开两种东西：**attribution 是调用方的（actor/surface/tool/session），provenance 是编译的。**
+  ⑤ 断言要读**持久化**的记录（`audit_record`）而不是读传进去的参数。
+- 踩坑点：**自证式断言会把 mutation 掩盖成绿的**。我第一条断言写成
+  `{**recorded, resulting_revision} == materialization_record(layout, result)`——两侧都从同一个函数取，
+  函数一改（把版本字段丢掉）两边一起变，mutation 全绿。改成对**声明**的 key 集合断言
+  （`REQUIRED_IDENTITIES ∪ VERSION_FIELDS`）才真红。同理，把 revision 从“调用方传”改成“从提交结果读”时，
+  若用例只断言“相等”，改成断言“在非 1 的 revision 上也相等”才真有牙。
+- 适用场景：任何“某件事必须被记录/发生”的要求——先问“调用方能把它省略吗”，再问“我的断言是不是在拿同一个函数和自己比”。
+
 ## 2026-09-23 · 「唯一输入」要看签名，不看自己写的文档；「写后校验」不是写前边界（P055-PID-Agent）
 
 - 场景：M7-2 Phase-3 materializer，我在文档里写「唯一输入是 finalized canonical layout」，但实际签名是

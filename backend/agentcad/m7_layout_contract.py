@@ -392,8 +392,7 @@ CANONICAL_LAYOUT_PROJECTION_FIELDS: tuple[CanonicalProjectionField, ...] = (
     CanonicalProjectionField(
         "duration_ms",
         False,
-        "Volatile: two identical layouts differ here, so it would make determinism "
-        "unprovable.",
+        "Volatile: two identical layouts differ here, so it would make determinism unprovable.",
     ),
     CanonicalProjectionField(
         "created_at",
@@ -544,8 +543,7 @@ LAYOUT_ACCEPTANCE_FIXTURES: tuple[LayoutAcceptanceFixture, ...] = (
         key="B",
         name="multi_system_plant_with_required_loop",
         input_shape=(
-            "Many systems and devices, including a loop that must close, at reference "
-            "plant scale."
+            "Many systems and devices, including a loop that must close, at reference plant scale."
         ),
         must_observe=(
             "system grouping is preserved",
@@ -594,8 +592,143 @@ LAYOUT_ACCEPTANCE_FIXTURES: tuple[LayoutAcceptanceFixture, ...] = (
 
 M7_2_PHASES: tuple[tuple[str, str], ...] = (
     ("M7-2 Phase-1", "Design & Contract"),
-    ("M7-2 Phase-2", "Runtime Integration"),
+    ("M7-2 Phase-2A", "DiagramSpec Adapter"),
+    ("M7-2 Phase-2B", "Deterministic Layout Engine Integration"),
 )
+
+# ------------------------------------------------------------------------------------
+# §8.1 Phase-2A: the adapter, and the line it must stop at. The runtime chain ends before
+#      any placement exists, so that "the model has lost geometry authority" is provable
+#      independently of whether the engine lays a drawing out well.
+# ------------------------------------------------------------------------------------
+
+PHASE_2A_MAY_BUILD: tuple[str, ...] = (
+    "diagram_spec_runtime",
+    "diagram_spec_adapter",
+    "semantic_topology_input",
+    "adapter_topology_digest",
+)
+
+#: What phase 2A still may not do, including the surfaces phase 1 already forbade.
+PHASE_2A_FORBIDDEN: tuple[str, ...] = (
+    "absolute_geometry_generation",
+    "width_height_generation",
+    "waypoint_generation",
+    "routing",
+    "annotation_placement",
+    "canvas_calculation",
+    "auto_layout_engine_placement_changes",
+    "new_http_route",
+    "new_mcp_tool",
+    "new_ui_surface",
+)
+
+ADAPTER_OUTPUT_CONTAINS_ABSOLUTE_GEOMETRY = False
+ADAPTER_OUTPUT_CONTAINS_WAYPOINTS = False
+ADAPTER_OUTPUT_CONTAINS_CANVAS = False
+ADAPTER_REJECTS_MODEL_GEOMETRY_BEFORE_VALIDATION = True
+#: The tempting shortcut: strip the coordinates and carry on. That would make a response
+#: which violates the contract look like a success.
+ADAPTER_MAY_SILENTLY_STRIP_GEOMETRY = False
+
+#: The adapter preserves these exactly. A digest before and after proves it rather than
+#: asserting it.
+ADAPTER_MUST_PRESERVE: tuple[str, ...] = (
+    "engineering_ids",
+    "tags",
+    "system_membership",
+    "topology",
+    "required_loops",
+)
+
+#: The translation table, as data: the adapter maps meaning onto the engine's vocabulary and
+#: nothing else.
+ADAPTER_TRANSLATES: tuple[tuple[str, str], ...] = (
+    ("system", "topology_systems"),
+    ("equipment", "topology_nodes"),
+    ("instrument", "topology_instrument_nodes_and_relations"),
+    ("connection", "topology_edges"),
+    ("required_loop", "preserved_loop_constraints"),
+    ("layout_intent", "discrete_engine_constraints"),
+)
+
+ADAPTER_IS_DETERMINISTIC = True
+ADAPTER_SEMANTIC_DIGEST_BEFORE_EQUALS_AFTER = True
+ADAPTER_TOPOLOGY_DIGEST_IS_NOT_THE_LAYOUT_DIGEST = True
+ADAPTER_TOPOLOGY_DIGEST_VERSION = "m7-adapter-topology-digest/1"
+ADAPTER_TOPOLOGY_DIGEST_INPUTS: tuple[str, ...] = (
+    "adapter_topology_digest_version",
+    "adapter_topology_projection",
+)
+#: Sorted on the same composite key the layout projection uses, for the same reason.
+ADAPTER_TOPOLOGY_DIGEST_SORT_KEY: tuple[str, ...] = ("kind", "engineering_id")
+
+#: Every key any canonical row may carry. It is the union of the row shapes rather than a
+#: subset, so "a row has a field nobody declared" and "a declared field no row carries" are
+#: both reportable instead of being hidden behind a permissive superset check.
+ADAPTER_TOPOLOGY_PROJECTION_FIELDS: tuple[str, ...] = (
+    "kind",
+    "engineering_id",
+    "system_id",
+    "tag",
+    "name",
+    "equipment_class",
+    "instrument_type",
+    "measurement",
+    "ports",
+    "medium",
+    "source_engineering_id",
+    "target_engineering_id",
+    "source_port_id",
+    "target_port_id",
+    "engineering_ids",
+    "orientation",
+    "preferred_aspect_class",
+    "primary_flow_direction",
+    "grouping",
+    "density",
+    "system_order",
+)
+
+#: What the adapter digest version pins, for the same reason the layout digest pins its own
+#: field set: adding a row field without a new version would make two different digests share
+#: a name.
+ADAPTER_TOPOLOGY_DIGEST_VERSION_FIELD_SET: tuple[str, ...] = (
+    "kind",
+    "engineering_id",
+    "system_id",
+    "tag",
+    "name",
+    "equipment_class",
+    "instrument_type",
+    "measurement",
+    "ports",
+    "medium",
+    "source_engineering_id",
+    "target_engineering_id",
+    "source_port_id",
+    "target_port_id",
+    "engineering_ids",
+    "orientation",
+    "preferred_aspect_class",
+    "primary_flow_direction",
+    "grouping",
+    "density",
+    "system_order",
+)
+
+#: The contract is a review document that a phase-1 milestone must not import. Once a phase
+#: builds the runtime the contract describes, that runtime is the declared importer -- named
+#: here so the rule stays a rule rather than becoming an exception list in a test.
+PHASE_2A_MAY_IMPORT_THE_CONTRACT: tuple[str, ...] = (
+    "m7_diagram_spec.py",
+    "m7_diagram_adapter.py",
+)
+
+#: What a version check can and cannot do, stated so nobody builds a second layer of
+#: machinery to prove something unprovable.
+VERSION_CHECK_DETECTS_DRIFT_BETWEEN_LIVE_AND_FROZEN_DEFINITION = True
+VERSION_CHECK_CANNOT_PREVENT_A_DELIBERATE_DOUBLE_EDIT = True
 
 PHASE_1_FORBIDDEN_SURFACES: tuple[str, ...] = (
     "new_http_route",
@@ -736,9 +869,7 @@ def validate_contract() -> list[str]:
                 f"layout intent dimension {dimension.name!r} has no values and is not open"
             )
         if dimension.open_ended and dimension.values:
-            problems.append(
-                f"layout intent dimension {dimension.name!r} is open and fixed at once"
-            )
+            problems.append(f"layout intent dimension {dimension.name!r} is open and fixed at once")
     if FREE_RELATIVE_ANCHORS_ALLOWED_IN_V1:
         problems.append("free relative anchors must not be allowed in v1")
     if not FORBIDDEN_RELATIVE_ANCHOR_PREDICATES:
@@ -802,9 +933,7 @@ def validate_contract() -> list[str]:
         )
     overlap = set(LAYOUT_DIGEST_INPUTS) & set(LAYOUT_DIGEST_EXCLUDES_VOLATILE_BOOKKEEPING)
     if overlap:
-        problems.append(
-            f"volatile bookkeeping must not enter the layout digest: {sorted(overlap)}"
-        )
+        problems.append(f"volatile bookkeeping must not enter the layout digest: {sorted(overlap)}")
     included = [field.name for field in CANONICAL_LAYOUT_PROJECTION_FIELDS if field.included]
     excluded = [field.name for field in CANONICAL_LAYOUT_PROJECTION_FIELDS if not field.included]
     if not included or not excluded:
@@ -898,9 +1027,7 @@ def validate_contract() -> list[str]:
     if LAYOUT_COORDINATE_DECIMALS <= 0:
         problems.append("the coordinate decimals must be a positive constant")
     if LAYOUT_COORDINATE_QUANTUM != 10.0 ** (-LAYOUT_COORDINATE_DECIMALS):
-        problems.append(
-            "the coordinate quantum must be exactly the declared decimals"
-        )
+        problems.append("the coordinate quantum must be exactly the declared decimals")
     if not COORDINATE_QUANTUM_IS_DECLARED_NOT_DERIVED:
         problems.append(
             "the coordinate quantum must be a contract constant, not derived from the grid, "
@@ -966,7 +1093,9 @@ def validate_contract() -> list[str]:
     components = [entry.component for entry in LAYOUT_RESPONSIBILITIES]
     if tuple(components) != LAYOUT_COMPONENTS:
         problems.append(f"the layout components must be exactly {LAYOUT_COMPONENTS!r}")
-    adapter = [entry for entry in LAYOUT_RESPONSIBILITIES if entry.component == "DiagramSpecAdapter"]
+    adapter = [
+        entry for entry in LAYOUT_RESPONSIBILITIES if entry.component == "DiagramSpecAdapter"
+    ]
     if len(adapter) == 1:
         for forbidden in ("x", "y", "absolute_placement", "orthogonal_routing", "canvas_bounds"):
             if forbidden not in adapter[0].must_not_own:
@@ -1019,8 +1148,114 @@ def validate_contract() -> list[str]:
             problems.append(f"phase 1 must not add a {surface!r}")
     if PHASE_1_MAY_CHANGE_PRODUCTION_DRAWING_BEHAVIOUR:
         problems.append("phase 1 is design and contract only; it changes no drawing behaviour")
-    if tuple(name for name, _ in M7_2_PHASES) != ("M7-2 Phase-1", "M7-2 Phase-2"):
-        problems.append("M7-2 must declare its two phases in order")
+    if tuple(name for name, _ in M7_2_PHASES) != (
+        "M7-2 Phase-1",
+        "M7-2 Phase-2A",
+        "M7-2 Phase-2B",
+    ):
+        problems.append("M7-2 must declare its phases in order")
+    if not VERSION_CHECK_DETECTS_DRIFT_BETWEEN_LIVE_AND_FROZEN_DEFINITION:
+        problems.append("the version check must compare the live declaration to the frozen one")
+    if not VERSION_CHECK_CANNOT_PREVENT_A_DELIBERATE_DOUBLE_EDIT:
+        problems.append(
+            "a version rule cannot prevent a deliberate double edit; claiming otherwise "
+            "would invite machinery that proves nothing"
+        )
+
+    # §8.1 phase 2A: the adapter, and the geometry it must never emit.
+    for built in (
+        "diagram_spec_runtime",
+        "diagram_spec_adapter",
+        "semantic_topology_input",
+        "adapter_topology_digest",
+    ):
+        if built not in PHASE_2A_MAY_BUILD:
+            problems.append(f"phase 2A must build {built!r}")
+    for forbidden in (
+        "absolute_geometry_generation",
+        "width_height_generation",
+        "waypoint_generation",
+        "routing",
+        "annotation_placement",
+        "canvas_calculation",
+        "auto_layout_engine_placement_changes",
+        "new_http_route",
+        "new_mcp_tool",
+        "new_ui_surface",
+    ):
+        if forbidden not in PHASE_2A_FORBIDDEN:
+            problems.append(f"phase 2A must not do {forbidden!r}")
+    if set(PHASE_2A_MAY_BUILD) & set(PHASE_2A_FORBIDDEN):
+        problems.append("phase 2A may not both build and forbid the same thing")
+    if ADAPTER_OUTPUT_CONTAINS_ABSOLUTE_GEOMETRY:
+        problems.append("the adapter's output must not contain absolute geometry")
+    if ADAPTER_OUTPUT_CONTAINS_WAYPOINTS:
+        problems.append("the adapter must not produce waypoints; routing is phase 2B")
+    if ADAPTER_OUTPUT_CONTAINS_CANVAS:
+        problems.append("the adapter must not compute a canvas; bounds are layout output")
+    if not ADAPTER_REJECTS_MODEL_GEOMETRY_BEFORE_VALIDATION:
+        problems.append("geometry must be rejected before the specification is validated")
+    if ADAPTER_MAY_SILENTLY_STRIP_GEOMETRY:
+        problems.append(
+            "geometry must be refused, not stripped: a stripped violation looks like success"
+        )
+    for preserved in (
+        "engineering_ids",
+        "tags",
+        "system_membership",
+        "topology",
+        "required_loops",
+    ):
+        if preserved not in ADAPTER_MUST_PRESERVE:
+            problems.append(f"the adapter must preserve {preserved!r} exactly")
+    translated_from = [source for source, _ in ADAPTER_TRANSLATES]
+    if translated_from != list(DIAGRAM_SPEC_DECLARES):
+        problems.append(
+            "every declared specification input must be translated exactly once, found "
+            f"{translated_from!r}"
+        )
+    if not ADAPTER_IS_DETERMINISTIC:
+        problems.append("the adapter must be deterministic")
+    if not ADAPTER_SEMANTIC_DIGEST_BEFORE_EQUALS_AFTER:
+        problems.append("the adapter must not change the semantic digest")
+    if not ADAPTER_TOPOLOGY_DIGEST_IS_NOT_THE_LAYOUT_DIGEST:
+        problems.append(
+            "the adapter digest must stay distinct from the layout digest, or a later "
+            "difference cannot be attributed to the adapter or the engine"
+        )
+    if not ADAPTER_TOPOLOGY_DIGEST_VERSION:
+        problems.append("the adapter topology digest must be versioned")
+    if ADAPTER_TOPOLOGY_DIGEST_VERSION in LAYOUT_DIGEST_INPUTS:
+        problems.append("the adapter digest is not an input of the layout digest")
+    if len(ADAPTER_TOPOLOGY_DIGEST_SORT_KEY) < 2:
+        problems.append("the adapter projection needs a composite sort key to be canonical")
+    for key_field in ADAPTER_TOPOLOGY_DIGEST_SORT_KEY:
+        if key_field not in ADAPTER_TOPOLOGY_PROJECTION_FIELDS:
+            problems.append(f"the adapter sort key field {key_field!r} must be in its projection")
+    if tuple(ADAPTER_TOPOLOGY_DIGEST_VERSION_FIELD_SET) != tuple(
+        ADAPTER_TOPOLOGY_PROJECTION_FIELDS
+    ):
+        problems.append(
+            f"{ADAPTER_TOPOLOGY_DIGEST_VERSION!r} pins the adapter field set "
+            f"{tuple(ADAPTER_TOPOLOGY_DIGEST_VERSION_FIELD_SET)}; the contract declares "
+            f"{tuple(ADAPTER_TOPOLOGY_PROJECTION_FIELDS)}: changing it needs a new adapter "
+            "topology digest version"
+        )
+    geometry_in_adapter_projection = set(ADAPTER_TOPOLOGY_PROJECTION_FIELDS) & set(
+        FORBIDDEN_MODEL_GEOMETRY_FIELDS
+    )
+    if geometry_in_adapter_projection:
+        problems.append(
+            "the adapter projection must not contain geometry fields: "
+            f"{sorted(geometry_in_adapter_projection)}"
+        )
+    for intent_dimension in (dimension.name for dimension in LAYOUT_INTENT_DIMENSIONS):
+        if intent_dimension not in ADAPTER_TOPOLOGY_PROJECTION_FIELDS:
+            problems.append(
+                f"the adapter must carry the discrete intent dimension {intent_dimension!r}"
+            )
+    if not PHASE_2A_MAY_IMPORT_THE_CONTRACT:
+        problems.append("the modules a phase may import the contract from must be named")
     if not SUPERSEDES_DEFERRAL:
         problems.append("the M7 deferral this milestone takes over must be named")
     if DEFERRED_TO_PHASE != "M7-2":

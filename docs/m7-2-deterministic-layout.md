@@ -310,3 +310,124 @@ Phase-1 不许改它们，也不许添第三个。契约里因此多一条规则
 Phase-1 能断言的剩下那件事是：这个集合**没有变大**（多一条 auto-layout 表层就会被抓住）。
 
 Phase-1 的产物只有三件：契约数据、本任务书、绑定测试。**运行时不写，行为不改。**
+
+### 9.2 版本治理的能力边界（说清楚，不要为此再搭一层）
+
+```
+VERSION_CHECK_DETECTS_DRIFT_BETWEEN_LIVE_AND_FROZEN_DEFINITION = True
+VERSION_CHECK_CANNOT_PREVENT_A_DELIBERATE_DOUBLE_EDIT = True
+```
+
+任何"规则变了就必须升版本"的机器校验，本质上只能检测**当前声明与冻结定义的漂移**：
+`DIGEST_VERSION_CONTRACT` 是那份冻结定义，`validate_contract()` 把它和 live 声明对拍。
+如果将来有人**两边同时改、并故意保留旧版本字符串**，代码拦不住——那要靠 code review 与 Gate。
+这一条写进契约，就是为了**不再为"让代码无法修改自己的规则"这个不可能的目标再搭一层复杂机制**。
+目前这套 contract + mutation + Release Gate 是足够的。
+
+---
+
+## 10. M7-2 Phase-2A — DiagramSpec Adapter
+
+运行链**到此为止**：
+
+```
+DiagramSpec → validate → DiagramSpecAdapter → deterministic semantic topology input → STOP
+```
+
+`PHASE_2A_MAY_BUILD`：
+
+```
+diagram_spec_runtime · diagram_spec_adapter · semantic_topology_input · adapter_topology_digest
+```
+
+`PHASE_2A_FORBIDDEN`（本阶段禁止）：
+
+```
+absolute_geometry_generation · width_height_generation · waypoint_generation
+routing · annotation_placement · canvas_calculation
+auto_layout_engine_placement_changes
+new_http_route · new_mcp_tool · new_ui_surface
+```
+
+### 10.1 适配层的映射表
+
+| 输入（`DIAGRAM_SPEC_DECLARES`） | 输出 |
+|---|---|
+| `system` | `topology_systems` |
+| `equipment` | `topology_nodes` |
+| `instrument` | `topology_instrument_nodes_and_relations` |
+| `connection` | `topology_edges` |
+| `required_loop` | `preserved_loop_constraints` |
+| `layout_intent` | `discrete_engine_constraints` |
+
+`ADAPTER_MUST_PRESERVE`（一律**原样**保留，不得重命名、不得重分类、不得重新归属）：
+
+```
+engineering_ids · tags · system_membership · topology · required_loops
+```
+
+### 10.2 适配层不得输出几何
+
+```
+ADAPTER_OUTPUT_CONTAINS_ABSOLUTE_GEOMETRY = False
+ADAPTER_OUTPUT_CONTAINS_WAYPOINTS = False
+ADAPTER_OUTPUT_CONTAINS_CANVAS = False
+ADAPTER_REJECTS_MODEL_GEOMETRY_BEFORE_VALIDATION = True
+ADAPTER_MAY_SILENTLY_STRIP_GEOMETRY = False
+```
+
+`load_diagram_spec` 先用 `reject_geometry` 扫**原始 payload**，再交给模型校验；违规抛
+`DiagramSpecGeometryError`，并**在错误里指名违规字段**（例如 `$.entities[0].x`）。
+扫原始 payload 而不是已解析的模型，是因为字段白名单只能拒绝它知道的键；扫原始映射还能抓住
+实体内部、回路内部、以及将来新字段里的几何。
+
+**不得静默 strip 掉坐标继续跑**：那会让一个违反契约的模型响应看起来成功——
+这正是本里程碑要消除的那类缺陷，不能在另一个位置重演。相对锚点（`left_of` / `near` /
+`relative_to` / `anchor` / `offset` …）与坐标同罪：它们作为**键名**或作为**自由文本里的整词**
+都会被拒绝（整词匹配，避免误杀正常叙述）。
+
+### 10.3 适配层自己的摘要（与 layout digest 分开）
+
+```
+ADAPTER_IS_DETERMINISTIC = True
+ADAPTER_SEMANTIC_DIGEST_BEFORE_EQUALS_AFTER = True
+ADAPTER_TOPOLOGY_DIGEST_IS_NOT_THE_LAYOUT_DIGEST = True
+ADAPTER_TOPOLOGY_DIGEST_VERSION = "m7-adapter-topology-digest/1"
+ADAPTER_TOPOLOGY_DIGEST_INPUTS = (adapter_topology_digest_version, adapter_topology_projection)
+ADAPTER_TOPOLOGY_DIGEST_SORT_KEY = (kind, engineering_id)
+ADAPTER_TOPOLOGY_PROJECTION_FIELDS = (kind · engineering_id · system_id · tag · name ·
+    equipment_class · instrument_type · measurement · ports · medium · source_engineering_id ·
+    target_engineering_id · source_port_id · target_port_id · engineering_ids · orientation ·
+    preferred_aspect_class · primary_flow_direction · grouping · density · system_order)
+ADAPTER_TOPOLOGY_DIGEST_VERSION_FIELD_SET = 同上一行（版本号钉住字段集）
+```
+
+为什么适配层要自己的摘要：Phase-2B 出现"两次排版不一样"时，需要有东西能先回答
+**差异来自适配层还是来自排版引擎**。它**不是** `canonical_layout_digest`，也不进入后者的输入
+（`ADAPTER_TOPOLOGY_DIGEST_VERSION not in LAYOUT_DIGEST_INPUTS`）。
+
+两条可断言的性质：
+
+```
+adapter 前后语义摘要相等          （无损：不能掉一条连接、不能改一个设备类别）
+同一 DiagramSpec → 同一 topology 摘要   （确定性：调用方列出的顺序不进入身份）
+```
+
+### 10.4 可导入契约的模块（白名单，写在契约里）
+
+```
+PHASE_2A_MAY_IMPORT_THE_CONTRACT = (m7_diagram_spec.py, m7_diagram_adapter.py)
+```
+
+Phase-1 曾断言"没有任何 agentcad 模块 import 这份契约"（被运行时引用的契约就是运行时）。
+Phase-2A 落运行时后，这个断言变成白名单：**只有适配层那两个模块**可以读契约——
+其余模块一旦 import 就会被测试抓住。
+
+### 10.5 下一阶段（本阶段不做）
+
+| 阶段 | 名称 | 内容 |
+|---|---|---|
+| **M7-2 Phase-2B** | **Deterministic Layout Engine Integration** | 让 `AutoLayoutEngine` 真正接管 placement / routing / canvas bounds 与最终 `canonical_layout_digest`；主要用 fixture B/D 与确定性重放 |
+
+Phase-2A 不解决"大图怎么排"。拓扑难排、系统多、required loop 复杂都不是本阶段的失败；
+本阶段只证明一件事：**模型已经彻底失去 geometry authority，而所有工程语义完整、确定性地抵达了引擎门口。**

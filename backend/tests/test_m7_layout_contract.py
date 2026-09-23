@@ -186,7 +186,9 @@ def test_the_canonical_projection_decides_what_the_digest_sees() -> None:
         "canonical_projection_envelope",
         "canonical_placement_projection",
     )
-    included = [field.name for field in contract.CANONICAL_LAYOUT_PROJECTION_FIELDS if field.included]
+    included = [
+        field.name for field in contract.CANONICAL_LAYOUT_PROJECTION_FIELDS if field.included
+    ]
     excluded = [
         field.name for field in contract.CANONICAL_LAYOUT_PROJECTION_FIELDS if not field.included
     ]
@@ -203,7 +205,9 @@ def test_the_canonical_projection_decides_what_the_digest_sees() -> None:
 
 
 def test_bounds_are_envelope_fields_rather_than_repeated_rows() -> None:
-    included = [field.name for field in contract.CANONICAL_LAYOUT_PROJECTION_FIELDS if field.included]
+    included = [
+        field.name for field in contract.CANONICAL_LAYOUT_PROJECTION_FIELDS if field.included
+    ]
     assert contract.CANONICAL_PROJECTION_ENVELOPE_FIELDS == ("content_bounds", "canvas_bounds")
     assert contract.BOUNDS_ARE_ENVELOPE_FIELDS_NOT_ROWS is True
     for envelope_field in contract.CANONICAL_PROJECTION_ENVELOPE_FIELDS:
@@ -215,7 +219,9 @@ def test_bounds_are_envelope_fields_rather_than_repeated_rows() -> None:
 def test_the_total_order_is_proven_by_a_unique_composite_key() -> None:
     """A single identity field cannot order a projection that has several kinds of row."""
 
-    included = [field.name for field in contract.CANONICAL_LAYOUT_PROJECTION_FIELDS if field.included]
+    included = [
+        field.name for field in contract.CANONICAL_LAYOUT_PROJECTION_FIELDS if field.included
+    ]
     assert contract.CANONICAL_PROJECTION_SORT_KEY == ("placement_kind", "engineering_id")
     assert len(contract.CANONICAL_PROJECTION_SORT_KEY) >= 2
     assert contract.CANONICAL_PROJECTION_SORT_KEY_IS_COMPOSITE is True
@@ -514,17 +520,22 @@ def test_phase_one_added_no_layout_surface() -> None:
     )
 
 
-def test_no_layout_module_is_imported_by_the_application() -> None:
-    """A contract that the runtime imports is a runtime."""
+def test_only_the_declared_modules_import_the_layout_contract() -> None:
+    """A contract that no runtime imports is a review document; one that few import stays so.
+
+    Phase 1 asserted that *nothing* imported it. Once a phase builds the runtime the contract
+    describes, the declared whitelist replaces that assertion -- otherwise the rule would be
+    enforced by an exception list hidden in a test instead of by the contract.
+    """
 
     app_sources = list((Path(__file__).resolve().parents[1] / "agentcad").glob("*.py"))
-    importers = [
+    importers = sorted(
         path.name
         for path in app_sources
         if path.name != "m7_layout_contract.py"
         and "m7_layout_contract" in path.read_text(encoding="utf-8")
-    ]
-    assert importers == [], importers
+    )
+    assert importers == sorted(contract.PHASE_2A_MAY_IMPORT_THE_CONTRACT), importers
 
 
 # --------------------------------------------------------------------------------------
@@ -537,8 +548,7 @@ def test_the_validator_reports_the_model_being_allowed_geometry(
 ) -> None:
     monkeypatch.setattr(contract, "MODEL_OUTPUT_MAY_CONTAIN_ABSOLUTE_GEOMETRY", True)
     assert any(
-        "must not contain absolute geometry" in problem
-        for problem in contract.validate_contract()
+        "must not contain absolute geometry" in problem for problem in contract.validate_contract()
     )
 
 
@@ -561,9 +571,7 @@ def test_the_validator_reports_relative_anchors_being_re_admitted(
             contract.LayoutIntentDimension("relative_anchor", ("left_of",), False, "tiny"),
         ),
     )
-    assert any(
-        "must be exactly" in problem for problem in contract.validate_contract()
-    )
+    assert any("must be exactly" in problem for problem in contract.validate_contract())
 
 
 def test_the_validator_reports_canvas_creeping_back_into_the_request(
@@ -584,9 +592,7 @@ def test_the_validator_reports_preserve_positions_being_deleted_repo_wide(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(contract, "LEGACY_MANUAL_LAYOUT_MAY_PRESERVE_POSITIONS", False)
-    assert any(
-        "must remain available" in problem for problem in contract.validate_contract()
-    )
+    assert any("must remain available" in problem for problem in contract.validate_contract())
     monkeypatch.undo()
     monkeypatch.setattr(contract, "M7_SYNTHESIS_USES_PRESERVE_POSITIONS", True)
     assert any(
@@ -599,7 +605,9 @@ def test_the_validator_reports_layout_being_allowed_to_change_meaning(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(contract, "LAYOUT_MAY_CHANGE_TOPOLOGY", True)
-    assert any("must not change connectivity" in problem for problem in contract.validate_contract())
+    assert any(
+        "must not change connectivity" in problem for problem in contract.validate_contract()
+    )
     monkeypatch.undo()
     monkeypatch.setattr(contract, "LAYOUT_MAY_CHANGE_TAGS", True)
     assert any("must not change tags" in problem for problem in contract.validate_contract())
@@ -666,7 +674,10 @@ def test_the_validator_reports_a_projection_change_without_a_version_bump(
     monkeypatch.setattr(
         contract,
         "CANONICAL_LAYOUT_PROJECTION_FIELDS",
-        (*contract.CANONICAL_LAYOUT_PROJECTION_FIELDS, contract.CanonicalProjectionField("z", True, "new")),
+        (
+            *contract.CANONICAL_LAYOUT_PROJECTION_FIELDS,
+            contract.CanonicalProjectionField("z", True, "new"),
+        ),
     )
     problems = contract.validate_contract()
     assert any("needs a new projection version" in problem for problem in problems)
@@ -679,7 +690,9 @@ def test_the_validator_reports_a_single_field_sort_key(
 
     monkeypatch.setattr(contract, "CANONICAL_PROJECTION_SORT_KEY", "engineering_id")
     problems = contract.validate_contract()
-    assert any("single identity field cannot prove a total order" in problem for problem in problems)
+    assert any(
+        "single identity field cannot prove a total order" in problem for problem in problems
+    )
 
 
 def test_the_validator_reports_bounds_repeated_on_every_row(
@@ -688,7 +701,10 @@ def test_the_validator_reports_bounds_repeated_on_every_row(
     monkeypatch.setattr(
         contract,
         "CANONICAL_LAYOUT_PROJECTION_FIELDS",
-        (*contract.CANONICAL_LAYOUT_PROJECTION_FIELDS, contract.CanonicalProjectionField("canvas_bounds", True, "repeated")),
+        (
+            *contract.CANONICAL_LAYOUT_PROJECTION_FIELDS,
+            contract.CanonicalProjectionField("canvas_bounds", True, "repeated"),
+        ),
     )
     problems = contract.validate_contract()
     assert any("must not be repeated" in problem for problem in problems)
@@ -752,14 +768,21 @@ def test_the_validator_reports_a_fixture_d_that_does_not_check_determinism(
 ) -> None:
     relaxed = tuple(
         contract.LayoutAcceptanceFixture(
-            fixture.key, fixture.name, fixture.input_shape, ("something else",), fixture.must_not_observe
+            fixture.key,
+            fixture.name,
+            fixture.input_shape,
+            ("something else",),
+            fixture.must_not_observe,
         )
         if fixture.key == "D"
         else fixture
         for fixture in contract.LAYOUT_ACCEPTANCE_FIXTURES
     )
     monkeypatch.setattr(contract, "LAYOUT_ACCEPTANCE_FIXTURES", relaxed)
-    assert any("fixture D must observe digest equality" in problem for problem in contract.validate_contract())
+    assert any(
+        "fixture D must observe digest equality" in problem
+        for problem in contract.validate_contract()
+    )
 
 
 def test_the_validator_reports_the_legacy_surface_used_as_a_violation_token(
@@ -793,4 +816,6 @@ def test_the_validator_reports_a_phase_that_ships_a_runtime(
             if surface != "layout_service"
         ),
     )
-    assert any("must not build 'layout_service'" in problem for problem in contract.validate_contract())
+    assert any(
+        "must not build 'layout_service'" in problem for problem in contract.validate_contract()
+    )

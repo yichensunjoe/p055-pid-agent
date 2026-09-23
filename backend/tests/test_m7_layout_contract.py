@@ -1336,3 +1336,165 @@ def test_the_validator_reports_a_step_2_kind_that_belongs_to_a_later_step(
     monkeypatch.setattr(contract, "STEP_2_PLACEMENT_KINDS", ("equipment", "routing"))
     problems = contract.validate_contract()
     assert any("produced by a later step" in problem for problem in problems)
+
+
+# ---------------------------------------------------------------------------------------
+# Step 4: the content envelope, the derived canvas, and the narrowed crossing rule
+# ---------------------------------------------------------------------------------------
+
+
+def test_the_contract_declares_step_four_and_stays_coherent() -> None:
+    from agentcad.auto_layout_canvas import (  # noqa: PLC0415 - binding check, not an import cycle
+        ASPECT_CLASS_RATIO_POLICY,
+        CANVAS_MARGIN_POLICY,
+    )
+    from agentcad.auto_layout_geometry import (  # noqa: PLC0415
+        MATERIALIZED_CLEARANCE_POLICY,
+        MaterializedClearance,
+    )
+    from agentcad.auto_layout_semantic import (  # noqa: PLC0415
+        DENSITY_SPACING_POLICY,
+        STEP_4,
+    )
+
+    assert contract.validate_contract() == []
+    assert contract.PHASE_2B_STEPS[3][1] == "content_bounds_to_canvas_bounds_and_aspect_enforcement"
+    assert STEP_4 == contract.CANVAS_DERIVATION_STEP
+    assert "auto_layout_canvas.py" in contract.PHASE_2B_MAY_IMPORT_THE_CONTRACT
+    # The engine's numbers are the ones the contract names, read from both sides.
+    assert ASPECT_CLASS_RATIO_POLICY == tuple(contract.ASPECT_CLASS_TARGET_RATIOS)
+    assert {name for name, _ in CANVAS_MARGIN_POLICY} == {name for name, _ in DENSITY_SPACING_POLICY}
+    assert {name for name, _ in MATERIALIZED_CLEARANCE_POLICY} == {
+        name for name, _ in DENSITY_SPACING_POLICY
+    }
+    assert set(MaterializedClearance.__dataclass_fields__) == set(
+        contract.MATERIALIZED_CLEARANCE_FIELDS
+    )
+
+
+def test_the_validator_reports_an_aspect_class_without_a_ratio(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        contract,
+        "ASPECT_CLASS_TARGET_RATIOS",
+        (("standard", 4.0 / 3.0), ("wide", 16.0 / 9.0)),
+    )
+    problems = contract.validate_contract()
+    assert any("must name a ratio exactly once" in problem for problem in problems), problems
+
+
+def test_the_validator_reports_a_wider_class_that_is_not_wider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        contract,
+        "ASPECT_CLASS_TARGET_RATIOS",
+        (("standard", 12.0), ("wide", 1.5), ("extra_wide", 1.2)),
+    )
+    problems = contract.validate_contract()
+    assert any("a wider class must mean a wider ratio" in problem for problem in problems), problems
+
+
+def test_the_validator_reports_the_content_envelope_losing_a_row_kind(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A bounds over a subset is a canvas that crops -- so the subset must be reported."""
+
+    monkeypatch.setattr(contract, "CONTENT_BOUNDS_INPUTS", ("symbol_instance_geometry",))
+    problems = contract.validate_contract()
+    assert any("must cover 'orthogonal_routes'" in problem for problem in problems), problems
+    assert any(
+        "must cover 'annotations_and_leader_lines'" in problem for problem in problems
+    ), problems
+    monkeypatch.undo()
+    monkeypatch.setattr(contract, "CONTENT_BOUNDS_MAY_EXCLUDE_A_PRESENTATION_ROW", True)
+    problems = contract.validate_contract()
+    assert any("no presentation row may be left out" in problem for problem in problems), problems
+
+
+def test_the_validator_reports_a_canvas_allowed_to_shrink_to_reach_a_ratio(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(contract, "ASPECT_ENFORCEMENT_MAY_SHRINK_BELOW_THE_CONTENT", True)
+    problems = contract.validate_contract()
+    assert any("shrinking below the content is cropping" in problem for problem in problems), problems
+    monkeypatch.undo()
+    monkeypatch.setattr(contract, "CANVAS_NEVER_CROPS_CONTENT_TO_REACH_A_RATIO", False)
+    problems = contract.validate_contract()
+    assert any("never be reached by cropping" in problem for problem in problems), problems
+
+
+def test_the_validator_reports_clipping_that_is_assumed_rather_than_verified(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(contract, "CANVAS_CLIPS_NOTHING_IS_VERIFIED_NOT_ASSUMED", False)
+    problems = contract.validate_contract()
+    assert any("must be verified to clip nothing" in problem for problem in problems), problems
+    monkeypatch.undo()
+    monkeypatch.setattr(contract, "CANVAS_VERIFICATION_COVERS_ROUTES_AND_ANNOTATIONS", False)
+    problems = contract.validate_contract()
+    assert any("must cover routes and annotations" in problem for problem in problems), problems
+
+
+def test_the_validator_reports_the_canvas_step_not_being_where_the_intent_lands(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(contract, "CANVAS_DERIVATION_STEP", "step_9")
+    problems = contract.validate_contract()
+    assert any("must be a declared phase-2B step" in problem for problem in problems), problems
+    monkeypatch.undo()
+    moved = tuple(
+        contract.IntentConsumption(item.dimension, item.received_at_step, "step_2", item.behaviour)
+        if item.dimension == "orientation"
+        else item
+        for item in contract.LAYOUT_INTENT_CONSUMPTION
+    )
+    monkeypatch.setattr(contract, "LAYOUT_INTENT_CONSUMPTION", moved)
+    problems = contract.validate_contract()
+    assert any("not at the canvas step" in problem for problem in problems), problems
+
+
+def test_the_validator_reports_a_route_allowed_to_traverse_any_node_it_serves(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(contract, "ROUTE_MAY_CROSS_ANY_NODE_IT_SERVES", True)
+    problems = contract.validate_contract()
+    assert any("only on the segment that enters or leaves it" in problem for problem in problems), (
+        problems
+    )
+
+
+def test_the_validator_reports_the_clearance_policy_borrowing_the_rank_gap_names(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The rename the remote asked for, made checkable: two rules may not share their fields."""
+
+    monkeypatch.setattr(contract, "MATERIALIZED_CLEARANCE_FIELDS", ("rank_gap", "node_gap"))
+    problems = contract.validate_contract()
+    assert any("may not be a spacing policy field" in problem for problem in problems), problems
+    assert any("states a node and a system clearance" in problem for problem in problems), problems
+
+
+def test_the_validator_reports_the_clearance_rule_being_read_as_the_origin_spacing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(contract, "MATERIALIZED_CLEARANCE_IS_NOT_THE_RANK_GAP", False)
+    problems = contract.validate_contract()
+    assert any("is not the origin spacing" in problem for problem in problems), problems
+    monkeypatch.undo()
+    monkeypatch.setattr(contract, "SEPARATE_CLEARANCE_POLICY_VERSION_ALLOWED_IN_V1", True)
+    problems = contract.validate_contract()
+    assert any("second source of truth" in problem for problem in problems), problems
+
+
+def test_the_validator_reports_a_margin_that_defaults_in_silence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(contract, "CANVAS_MARGIN_DEFAULT_IS_APPLIED_IN_SILENCE", True)
+    problems = contract.validate_contract()
+    assert any("a margin nobody chose" in problem for problem in problems), problems
+    monkeypatch.undo()
+    monkeypatch.setattr(contract, "MARGIN_IS_PRESERVED_IN_THE_DERIVED_CANVAS", False)
+    problems = contract.validate_contract()
+    assert any("may not spend the margin" in problem for problem in problems), problems

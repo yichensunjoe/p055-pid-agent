@@ -276,7 +276,9 @@ def test_real_geometry_that_collides_triggers_a_deterministic_reflow() -> None:
     assert rows["el_2"]["x"] == rows["el_3"]["x"]
     assert rows["el_3"]["y"] - (rows["el_2"]["y"] + rows["el_2"]["height"]) >= 0
     assert overlap_problems(laid_out.placement) == []
-    assert placement_problems(laid_out.placement, laid_out, laid_out.spacing) == []
+    # Read from the plan the way the engine does: the reflow is checked against the materialized
+    # clearance policy, which is a different rule from the density class's origin spacing.
+    assert placement_problems(laid_out.placement, laid_out) == []
 
 
 def test_the_reflow_is_a_function_of_the_plan_and_the_snapshot() -> None:

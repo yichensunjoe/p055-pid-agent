@@ -978,8 +978,8 @@ Step 2 按 **origin 间距** = density policy 摆位（已签署的事实）；S
 ```
 MATERIALIZED_PLACEMENT_MUST_NOT_OVERLAP                = True   （step 2 继承的坐标：只要求不重叠）
 STEP_2_ORIGIN_SPACING_IS_INHERITED_NOT_RECHECKED       = True
-REFLOWED_PLACEMENT_MUST_SATISFY_DECLARED_CLEAR_SEPARATION = True （重排后的行：按清晰间距校验）
-REFLOW_RULE_IS_CLEAR_SEPARATION_NOT_ORIGIN_SPACING     = True
+REFLOWED_PLACEMENT_MUST_SATISFY_THE_MATERIALIZED_CLEARANCE_POLICY = True （重排后的行：按下述净空策略校验）
+REFLOW_VERIFICATION_USES_THE_MATERIALIZED_CLEARANCE_POLICY        = True
 ```
 
 结果：fixture A 的真实尺寸恰好放得下 → **保留 Step 2 的坐标**（`placement_reflowed = False`），
@@ -1002,3 +1002,105 @@ ROUTE_PREFERS_A_SHAPE_THAT_AVOIDS_EVEN_THE_NODES_IT_SERVES = True（更体面的
 `ANNOTATION_PLACEMENT_ATTEMPTS`），改任何一个都是 rules 版本变更；`INSTANCE_SCALE_FACTOR`
 v1 取 1.0（用目录标称尺寸），因为"实例缩放"是有排版后果的真特性，现在编一个系数等于把
 一个没人选过的数字写进每一张图。
+
+## 13. M7-2 Phase-2B Step 4 —— content bounds 与派生画布（画布是链条的尾巴）
+
+Step 4 回答的问题是"这张图需要多大地方"。**答案是一次测量，不是一条指令**——顺序本身就是结论：
+把画布交给引擎等于把第二个几何权威交出去，而 `1600×900` 那个默认值正是"没人选过、所有人继承"
+的坐标权威。本步落地 `auto_layout_canvas.py`，仍然作为 mixin 落在那**一个** `AutoLayoutEngine` 上
+（`layout_semantic_canvas`）：在引擎旁边算画布，就是对同一张图的第二种意见。
+
+### 13.1 content bounds 覆盖什么：一个闭集
+
+```
+CONTENT_BOUNDS_INPUTS = (symbol_instance_geometry, orthogonal_routes, annotations_and_leader_lines)
+CONTENT_BOUNDS_IS_A_CLOSED_LIST = True
+CONTENT_BOUNDS_MUST_COVER_EVERY_PRESENTATION_ROW = True
+CONTENT_BOUNDS_MAY_EXCLUDE_A_PRESENTATION_ROW = False
+ROUTE_STROKE_WIDTH_CONTRIBUTES_TO_CONTENT_BOUNDS = False   （管路贡献路径点，不贡献线宽）
+ANNOTATION_EXTENT_IS_THE_TEXT_BOX = True                   （标签的盒子就是 §12 那条纯文本规则）
+```
+
+"画布恰好装下这张图"这句话只有在"这张图"被枚举之后才可检验：**由子集算出的 bounds 就是一张会裁图的画布**，
+而子集正是这件事藏身的地方。
+
+### 13.2 margin：声明的引擎规则，按 density 档位
+
+```
+CANVAS_MARGIN_POLICY_IS_ENGINE_RULES = True
+CANVAS_MARGIN_IS_KEYED_BY_THE_DENSITY_CLASS = True
+UNKNOWN_CANVAS_MARGIN_CLASS_IS_A_HARD_FAILURE = True
+CANVAS_MARGIN_DEFAULT_IS_APPLIED_IN_SILENCE = False
+MARGIN_IS_PRESERVED_IN_THE_DERIVED_CANVAS = True
+```
+
+引擎侧 `CANVAS_MARGIN_POLICY = (compact 32, comfortable 48)`，与 spacing policy 同一形状、同一理由：
+没人声明的 margin 会随网格、宿主或导出格式漂移，于是同一张图两次跑出两个画布。比例强制**不得挪用** margin
+（可以再添空，不能拿 margin 去买比例）。
+
+### 13.3 aspect class 是比例；只增不减；orientation 定方向
+
+```
+ASPECT_CLASS_TARGET_RATIOS = (standard 4/3, wide 16/9, extra_wide 12.0)
+ASPECT_CLASS_IS_A_RATIO_NOT_A_SIZE = True
+ASPECT_ENFORCEMENT_ONLY_GROWS_THE_CANVAS = True
+ASPECT_ENFORCEMENT_MAY_SHRINK_BELOW_THE_CONTENT = False
+CANVAS_NEVER_CROPS_CONTENT_TO_REACH_A_RATIO = True
+ORIENTATION_IS_ENFORCED_ON_THE_DERIVED_CANVAS = True
+ORIENTATION_APPLIES_TO_THE_ENFORCED_RATIO_DIRECTION = True
+```
+
+`landscape` = `width/height` 是该档比例，`portrait` = `height/width` 是该档比例；缺的那一轴被**拉长**，
+两条边取整都朝**外**（`_floor_to_quantum` / `_ceil_to_quantum`），所以"量化后的画布仍然装得下内容"
+是推导的性质，而不是希望。实测 fixture A：content `374×320` → canvas `4608×384`（12:1）。
+
+### 13.4 无裁剪是**校验**出来的，不是论证出来的
+
+```
+CANVAS_CLIPS_NOTHING_IS_VERIFIED_NOT_ASSUMED = True
+PRESENTATION_GEOMETRY_OUTSIDE_THE_CANVAS_IS_A_HARD_FAILURE = True
+CANVAS_VERIFICATION_COVERS_ROUTES_AND_ANNOTATIONS = True
+```
+
+链条论证（"画布是从内容派生的"）与性质（"没有任何东西伸出去"）是两句不同的话，只有第二句在说这张图。
+这里有一个**实测出来的形状差异**，值得记住：`extra_wide` 下横向几乎不可能裁剪——比例把画布拉到内容高度的 12 倍，
+所以横向多出几个 margin 仍然装得下；**紧的那一轴是纵向**（横向拉长后 `height` 恰好等于 content + 2×margin）。
+因此"子集 bounds 会裁图"的变异必须在纵向取景，否则它会看着无害。
+
+### 13.5 端点 escape 段：Step 3 裁定的收窄，落在最终几何校验里
+
+```
+ROUTE_ENDPOINT_ESCAPE_SEGMENT_MAY_INTERSECT_ITS_ENDPOINT_NODE = True
+ROUTE_SEGMENTS_BEYOND_THE_ESCAPE_SEGMENT_MUST_STAY_OUTSIDE_PROTECTED_NODE_INTERIORS = True
+ROUTE_NODE_INTERSECTION_IS_VERIFIED_IN_FINAL_GEOMETRY_VALIDATION = True
+ROUTE_MAY_CROSS_ANY_NODE_IT_SERVES = False
+```
+
+§12 允许"穿过自己服务的节点"（端口锚点在符号内部时只能如此），但语义必须窄：**每个端点恰好一段**
+（离开源锚点的第一段、进入目标锚点的最后一段），其余所有段——包括对自己端点的其余段——都必须在节点内部之外。
+这条校验放在最终几何校验里，而不是路由器的候选排序里：在候选排序里，路由器同时是法官和被告。
+
+### 13.6 重排的规则有自己的名字：materialized clearance policy
+
+远端裁定：Step 2 保持已签署的 `origin spacing` 语义，不追改为 clear-gap；但 Step 3 那个"declared clear separation"
+必须**明确命名成另一条引擎规则**，别让人读成 `rank_gap`：
+
+```
+MATERIALIZED_NODE_CLEARANCE_POLICY_NAME = "materialized_clearance_policy_v1"
+MATERIALIZED_CLEARANCE_FIELDS = (minimum_node_clearance, minimum_system_clearance)
+MATERIALIZED_CLEARANCE_IS_NOT_THE_RANK_GAP = True
+MATERIALIZED_CLEARANCE_POLICY_IS_UNDER_THE_LAYOUT_RULES_VERSION = True
+SEPARATE_CLEARANCE_POLICY_VERSION_ALLOWED_IN_V1 = False
+UNKNOWN_CLEARANCE_CLASS_IS_A_HARD_FAILURE = True
+```
+
+`rank_gap` 是 lattice 上的**原点间距**，净空是**已物化符号边界之间**的余量；120 宽的节点放在 150 的原点间距上
+净空 30，它两条规则都没违反。校验器因此还双向检查：净空字段**不得**与 spacing policy 的字段重名
+（`DENSITY_SPACING_POLICY_FIELDS`），否则一条规则的签核会变成另一条的无声签核。
+
+### 13.7 意图闸门与交付
+
+Step 4 是最后两个意图维度（`orientation`、`preferred_aspect_class`）的**施加点**，所以过了这一步
+`plan.pending_intent_dimensions == ()`——六个维度全部有落点，这正是 §11 里"声明了却不生效"那条 Gate 的兑现。
+plan 字段集增加 `content_bounds`，因此 `m7-semantic-layout-plan-digest` `/5 → /6`（字段集变就是版本变，
+未发布的中间版本不豁免）。门禁：ruff clean、`validate_contract()` 空、pytest 1351 passed。

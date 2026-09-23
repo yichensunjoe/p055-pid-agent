@@ -10,8 +10,9 @@ Three things happen here, in the order the contract fixes:
    symbol's intrinsic size, and the step-2 placement is *re-validated*. If the real sizes still
    fit, the step-2 solution stands -- it was a correct initial solution, not a draft to discard.
    If they do not, the placement is recomputed deterministically from the real sizes, and the
-   result is verified again. A reflow that still fails is a hard failure, because the alternative
-   is a drawing that looks finished and overlaps itself.
+   result is verified against the separately named materialized clearance policy. A reflow that
+   still fails is a hard failure, because the alternative is a drawing that looks finished and
+   overlaps itself.
 2. **Bind, then route.** Endpoint bindings are resolved first (see ``m7_endpoint_binding``) and
    the router consumes bindings, never ports. Every semantic connection produces exactly one
    route; a route may add waypoints and may not add or remove a connection. A route never crosses
@@ -85,6 +86,12 @@ class PlacementReflowFailedError(StepThreeError):
     code = "placement_reflow_failed"
 
 
+class UnknownClearanceClassError(StepThreeError):
+    """A density class with no materialized clearance. Hard failure, never a fallback."""
+
+    code = "unknown_clearance_class"
+
+
 class UnroutableEdgeError(StepThreeError):
     """A connection that cannot be routed orthogonally without crossing protected node bounds."""
 
@@ -95,6 +102,53 @@ class AnnotationPlacementError(StepThreeError):
     """A label that could not be placed clear of the nodes and labels already there."""
 
     code = "annotation_placement_failed"
+
+
+@dataclass(frozen=True)
+class MaterializedClearance:
+    """The clearance a *materialized* placement must keep, keyed by the density class.
+
+    Deliberately not the spacing policy. ``rank_gap`` spaces *origins* on the step-2 lattice;
+    this separates the real symbol bounds the drawing now has. A 120-wide node on a 150 origin
+    spacing has a clearance of 30, and that violates neither rule -- which is exactly why the
+    two rules are named separately instead of one of them borrowing the other's vocabulary.
+    """
+
+    minimum_node_clearance: float
+    minimum_system_clearance: float
+
+    def to_projection(self) -> dict[str, float]:
+        return {
+            "minimum_node_clearance": self.minimum_node_clearance,
+            "minimum_system_clearance": self.minimum_system_clearance,
+        }
+
+
+#: The numbers the clearance policy maps a density class to. Like the spacing policy, they are
+#: engine facts under ``LAYOUT_RULES_VERSION``: a change here is a layout-rules change, not a
+#: separate version axis (§13).
+MATERIALIZED_CLEARANCE_POLICY: tuple[tuple[str, MaterializedClearance], ...] = (
+    (
+        "compact",
+        MaterializedClearance(minimum_node_clearance=30.0, minimum_system_clearance=60.0),
+    ),
+    (
+        "comfortable",
+        MaterializedClearance(minimum_node_clearance=50.0, minimum_system_clearance=100.0),
+    ),
+)
+
+
+def materialized_clearance(density: str) -> MaterializedClearance:
+    """The clearance policy a density class names. An unknown class is a failure, not a default."""
+
+    for name, clearance in MATERIALIZED_CLEARANCE_POLICY:
+        if name == density:
+            return clearance
+    raise UnknownClearanceClassError(
+        f"no materialized clearance is declared for density {density!r}: defaulting would choose "
+        "a separation nobody asked for"
+    )
 
 
 @dataclass(frozen=True)
@@ -234,19 +288,42 @@ def overlap_problems(rows: Sequence[dict[str, Any]]) -> list[str]:
     return problems
 
 
+def _axis_gap(first: Rect, second: Rect, axis: str) -> float:
+    """The signed gap between two boxes along one axis (negative when they overlap on it)."""
+
+    if axis == "x":
+        return max(first.x, second.x) - min(first.right, second.right)
+    return max(first.y, second.y) - min(first.bottom, second.bottom)
+
+
+def _envelope(boxes: Sequence[Rect]) -> Rect:
+    x = min(box.x for box in boxes)
+    y = min(box.y for box in boxes)
+    return Rect(
+        x,
+        y,
+        max(box.right for box in boxes) - x,
+        max(box.bottom for box in boxes) - y,
+    )
+
+
 def placement_problems(
     rows: Sequence[dict[str, Any]],
     plan: SemanticLayoutPlan,
-    policy: SpacingPolicy,
+    clearance: MaterializedClearance | None = None,
 ) -> list[str]:
-    """The full check: no overlap, and the declared clear separation between neighbours.
+    """The full check: no overlap, and the *materialized clearance* between neighbours.
 
-    Used to verify a *reflowed* placement, whose rule is clear separation rather than inherited
-    origin spacing. A placement that has not been reflowed is only required not to overlap;
-    demanding clear gaps of step 2's coordinates would report every drawing as broken.
+    Used to verify a *reflowed* placement. The rule is the separately named clearance policy --
+    `minimum_node_clearance` / `minimum_system_clearance` -- and not the density class's
+    `rank_gap` / `node_gap`: those space origins on the step-2 lattice, and asking for them here
+    would redefine a rule this project has already signed off on. A placement that has not been
+    reflowed is only required not to overlap, because that is the question real geometry asks of
+    an inherited solution.
     """
 
     problems = overlap_problems(rows)
+    policy = clearance if clearance is not None else materialized_clearance(plan.intent.density)
     rects = _rects_from_rows(rows)
     ids = sorted(rects)
     decomposition = _placement_decomposition(plan)
@@ -259,22 +336,38 @@ def placement_problems(
                 continue
             a, b = rects[first], rects[second]
             if first_lane == second_lane and abs(first_rank - second_rank) == 1:
-                gap = max(a.x, b.x) - min(a.right, b.right) if horizontal else (
-                    max(a.y, b.y) - min(a.bottom, b.bottom)
-                )
-                if gap < policy.rank_gap - 1e-9:
+                gap = _axis_gap(a, b, "x" if horizontal else "y")
+                if gap < policy.minimum_node_clearance - 1e-9:
                     problems.append(
-                        f"rank separation between {first!r} and {second!r} is {gap:g}, below the "
-                        f"declared rank gap {policy.rank_gap:g}"
+                        f"rank clearance between {first!r} and {second!r} is {gap:g}, below the "
+                        f"materialized node clearance {policy.minimum_node_clearance:g}"
                     )
             if first_rank == second_rank and abs(first_lane - second_lane) == 1:
-                gap = max(a.y, b.y) - min(a.bottom, b.bottom) if horizontal else (
-                    max(a.x, b.x) - min(a.right, b.right)
-                )
-                if gap < policy.node_gap - 1e-9:
+                gap = _axis_gap(a, b, "y" if horizontal else "x")
+                if gap < policy.minimum_node_clearance - 1e-9:
                     problems.append(
-                        f"lane separation between {first!r} and {second!r} is {gap:g}, below the "
-                        f"declared node gap {policy.node_gap:g}"
+                        f"lane clearance between {first!r} and {second!r} is {gap:g}, below the "
+                        f"materialized node clearance {policy.minimum_node_clearance:g}"
+                    )
+
+    # Different systems are separated by the grouping class: `flat` chains them along the flow
+    # axis, a grouped layout stacks them across it. Whichever axis does the separating is the one
+    # the system clearance is measured on -- measuring the other would compare two boxes that are
+    # deliberately side by side.
+    boxes_by_system: dict[str, list[Rect]] = {}
+    for node_id, box in rects.items():
+        boxes_by_system.setdefault(decomposition[node_id][2], []).append(box)
+    if len(boxes_by_system) > 1:
+        axis = "x" if (plan.intent.grouping == "flat") == horizontal else "y"
+        envelopes = {name: _envelope(boxes) for name, boxes in boxes_by_system.items()}
+        names = sorted(envelopes)
+        for index, first in enumerate(names):
+            for second in names[index + 1 :]:
+                gap = _axis_gap(envelopes[first], envelopes[second], axis)
+                if gap < policy.minimum_system_clearance - 1e-9:
+                    problems.append(
+                        f"system clearance between {first!r} and {second!r} is {gap:g}, below the "
+                        f"materialized system clearance {policy.minimum_system_clearance:g}"
                     )
     return problems
 
@@ -409,9 +502,10 @@ def materialize_semantic_layout(
     """Step 3a: bind every node to frozen geometry, then keep or reflow the placement.
 
     The step-2 result is treated as an initial solution rather than a frame the real sizes must
-    fit into: it is kept whenever it still satisfies the declared separations, and recomputed
-    when it does not. Either way the result is verified, and ``placement_reflowed`` records which
-    of the two happened, because a drawing that moved silently is a drawing nobody can explain.
+    fit into: it is kept whenever the real sizes still do not overlap, and recomputed when they
+    do. Either way the result is verified -- an inherited placement against overlap, a reflowed
+    one against the materialized clearance policy -- and ``placement_reflowed`` records which of
+    the two happened, because a drawing that moved silently is a drawing nobody can explain.
     """
 
     if plan.produced_at_step != STEP_2:
@@ -430,7 +524,7 @@ def materialize_semantic_layout(
     if problems:
         reflowed = True
         rows = _place_with_real_sizes(plan, sizes, policy)
-        remaining = placement_problems(rows, plan, policy)
+        remaining = placement_problems(rows, plan, materialized_clearance(plan.intent.density))
         if remaining:
             raise PlacementReflowFailedError(
                 "the deterministic reflow still leaves the drawing invalid: "

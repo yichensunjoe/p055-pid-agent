@@ -7,6 +7,7 @@ from heapq import heappop, heappush
 from math import hypot
 from typing import Literal
 
+from .auto_layout_canvas import SemanticLayoutCanvas
 from .auto_layout_geometry import SemanticLayoutGeometry
 from .auto_layout_semantic import SemanticTopologyIngress
 from .diagram_quality import port_outward_normal
@@ -91,7 +92,7 @@ class LayoutNode:
     rank: int = 0
 
 
-class AutoLayoutEngine(SemanticLayoutGeometry, SemanticTopologyIngress):
+class AutoLayoutEngine(SemanticLayoutCanvas, SemanticLayoutGeometry, SemanticTopologyIngress):
     """The one layout authority.
 
     It gains a second way in for M7-2: :meth:`layout_semantic_topology` takes the
@@ -105,6 +106,11 @@ class AutoLayoutEngine(SemanticLayoutGeometry, SemanticTopologyIngress):
     :meth:`layout_semantic_geometry` continues that chain with step 3: real symbol geometry,
     endpoint bindings, orthogonal routing and annotations. It is a second mixin for the same
     reason as the first -- a router beside the engine would be a second geometry authority.
+
+    :meth:`layout_semantic_canvas` closes it with step 4: the content envelope, the canvas
+    derived from it, and the final geometry checks. The canvas is the tail of the chain in the
+    literal sense -- it is measured from what the earlier steps drew, so a canvas calculated
+    anywhere else would be a second opinion about the same drawing.
     """
 
     def __init__(self, service: DocumentService):

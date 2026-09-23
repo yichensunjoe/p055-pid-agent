@@ -901,6 +901,7 @@ PHASE_2B_MAY_IMPORT_THE_CONTRACT: tuple[str, ...] = (
     "m7_symbol_geometry.py",
     "m7_endpoint_binding.py",
     "auto_layout_geometry.py",
+    "auto_layout_canvas.py",
 )
 
 # ------------------------------------------------------------------------------------
@@ -912,6 +913,9 @@ PHASE_2B_MAY_IMPORT_THE_CONTRACT: tuple[str, ...] = (
 #: fact, and a model that can state one has coordinate authority again through the intent.
 MODEL_MAY_DECLARE_GAP_NUMBERS = False
 DENSITY_SPACING_POLICY_IS_ENGINE_RULES = True
+#: The spacing policy's field names, declared here so §13 can prove that the materialized
+#: clearance policy is a *different* rule rather than the same fields renamed.
+DENSITY_SPACING_POLICY_FIELDS: tuple[str, ...] = ("rank_gap", "node_gap", "system_gap", "component_gap")
 DENSITY_POLICY_CHANGE_REQUIRES_THE_LAYOUT_RULES_VERSION_BUMP = True
 #: One rules version, not two: a spacing policy with its own lifecycle is a second source of
 #: truth about the same drawing until the rules are big enough to need one.
@@ -1248,14 +1252,19 @@ PLACEMENT_MUST_BE_REVALIDATED_AGAINST_MATERIALIZED_GEOMETRY = True
 
 #: What "valid" means at each of the two moments, named separately because they are different
 #: questions. Step 2 spaced *origins* by the density policy for assumed sizes; step 3 asks
-#: whether real sizes now overlap, and a reflow -- whose own rule is clear separation -- must
-#: satisfy the stronger set. Applying the stronger set to step 2's coordinates would report every
-#: drawing as broken, and applying only the weaker one to a reflow would let the reflow's rule
-#: go unchecked.
+#: whether real sizes now overlap, and a reflow must satisfy the stronger set. Applying the
+#: stronger set to step 2's coordinates would report every drawing as broken, and applying only
+#: the weaker one to a reflow would let the reflow's rule go unchecked.
+#:
+#: The stronger set is **not** the rank/node gap. Those are origin spacings on the step-2
+#: lattice; what a materialized drawing needs is a clearance between the symbol bounds it now
+#: really has. The rule is therefore named by its own policy (§13) rather than by reusing the
+#: step-2 names -- "declared clear separation" was the same sentence for two different
+#: quantities, which is how a sign-off on one becomes a silent sign-off on the other.
 MATERIALIZED_PLACEMENT_MUST_NOT_OVERLAP = True
 STEP_2_ORIGIN_SPACING_IS_INHERITED_NOT_RECHECKED = True
-REFLOWED_PLACEMENT_MUST_SATISFY_DECLARED_CLEAR_SEPARATION = True
-REFLOW_RULE_IS_CLEAR_SEPARATION_NOT_ORIGIN_SPACING = True
+REFLOWED_PLACEMENT_MUST_SATISFY_THE_MATERIALIZED_CLEARANCE_POLICY = True
+REFLOW_VERIFICATION_USES_THE_MATERIALIZED_CLEARANCE_POLICY = True
 
 #: Routing. Every semantic connection is routed exactly once; routing adds waypoints and removes
 #: nothing, because a drawing that quietly loses a connection is a drawing of something else.
@@ -1330,6 +1339,106 @@ ANNOTATION_TEXT_METRICS_GOLDEN_CASES: tuple[tuple[str, float, float], ...] = (
     ("PT-101", 12.0, 43.2),
     ("x", 14.0, 14.0),
 )
+
+# --------------------------------------------------------------------------------------
+# §13 Phase-2B step 4: content bounds and the derived canvas. The canvas is the *tail* of the
+#      derivation chain: it is computed from what was drawn. The intent states an orientation
+#      and an aspect *class*, the engine owns the margin and the pixels, and the result is
+#      verified to clip nothing -- "the canvas was derived from the content" is an argument
+#      about the code, and the check is about the drawing that came out.
+# --------------------------------------------------------------------------------------
+
+#: What the content envelope is measured over. A closed list, because "the canvas fits the
+#: drawing" is only checkable once "the drawing" is enumerated -- a bounds computed over a
+#: subset is a canvas that crops, and the subset is exactly where that hides.
+CONTENT_BOUNDS_INPUTS: tuple[str, ...] = (
+    "symbol_instance_geometry",
+    "orthogonal_routes",
+    "annotations_and_leader_lines",
+)
+CONTENT_BOUNDS_IS_A_CLOSED_LIST = True
+CONTENT_BOUNDS_MUST_COVER_EVERY_PRESENTATION_ROW = True
+CONTENT_BOUNDS_MAY_EXCLUDE_A_PRESENTATION_ROW = False
+#: A route contributes its waypoints, not a stroke width. Giving a polyline a thickness here
+#: would be a presentation decision in a second place (and a second answer to "how thick is a
+#: pipe"); the margin is what keeps the outermost stroke off the edge.
+ROUTE_STROKE_WIDTH_CONTRIBUTES_TO_CONTENT_BOUNDS = False
+#: A label's box is its text extent -- the deterministic rule §12 already names, not a second
+#: measurement of the same string.
+ANNOTATION_EXTENT_IS_THE_TEXT_BOX = True
+
+#: The margin is a declared engine rule under ``LAYOUT_RULES_VERSION``, keyed by the density
+#: class the caller asked for: the same shape as the spacing policy, and for the same reason.
+#: A margin nobody declared is a margin that drifts with the grid, the host or the export
+#: format -- and then two runs of the same drawing disagree about their own canvas.
+CANVAS_MARGIN_POLICY_IS_ENGINE_RULES = True
+CANVAS_MARGIN_IS_KEYED_BY_THE_DENSITY_CLASS = True
+UNKNOWN_CANVAS_MARGIN_CLASS_IS_A_HARD_FAILURE = True
+CANVAS_MARGIN_DEFAULT_IS_APPLIED_IN_SILENCE = False
+#: The margin survives the aspect enforcement: the ratio may only add room, never spend the
+#: margin to buy it.
+MARGIN_IS_PRESERVED_IN_THE_DERIVED_CANVAS = True
+
+#: The aspect classes as *ratios*. `extra_wide` is what the reference plant drawing needs --
+#: roughly 12:1 -- and a class is reachable only if the engine knows which ratio it names.
+ASPECT_CLASS_TARGET_RATIOS: tuple[tuple[str, float], ...] = (
+    ("standard", 4.0 / 3.0),
+    ("wide", 16.0 / 9.0),
+    ("extra_wide", 12.0),
+)
+ASPECT_CLASS_IS_A_RATIO_NOT_A_SIZE = True
+#: Enforcement grows the deficient axis. Reaching a ratio by shrinking would crop the drawing,
+#: which is the one thing a derived canvas exists to prevent.
+ASPECT_ENFORCEMENT_ONLY_GROWS_THE_CANVAS = True
+ASPECT_ENFORCEMENT_MAY_SHRINK_BELOW_THE_CONTENT = False
+CANVAS_NEVER_CROPS_CONTENT_TO_REACH_A_RATIO = True
+ASPECT_ENFORCEMENT_IS_UNDER_THE_LAYOUT_RULES_VERSION = True
+#: Orientation is a relationship between the axes, enforced in the direction the drawing reads:
+#: landscape means width/height is the class ratio, portrait means height/width is.
+ORIENTATION_IS_ENFORCED_ON_THE_DERIVED_CANVAS = True
+ORIENTATION_APPLIES_TO_THE_ENFORCED_RATIO_DIRECTION = True
+CANVAS_ORIENTATION_VALUES: tuple[str, ...] = ("landscape", "portrait")
+
+#: No-clipping is verified rather than assumed. The chain argument ("the canvas was derived
+#: from the content") and the property ("nothing sticks out") are different claims, and only the
+#: second one is about the drawing that came out of the engine.
+CANVAS_CLIPS_NOTHING_IS_VERIFIED_NOT_ASSUMED = True
+PRESENTATION_GEOMETRY_OUTSIDE_THE_CANVAS_IS_A_HARD_FAILURE = True
+CANVAS_VERIFICATION_COVERS_ROUTES_AND_ANNOTATIONS = True
+CANVAS_BOUNDS_ARE_QUANTIZED_LIKE_EVERY_OTHER_COORDINATE = True
+
+#: Which step produces the canvas, by the name the step table uses. Declared so that "the
+#: canvas is the tail of the chain" is a fact a test reads instead of a sentence a reviewer
+#: agrees with.
+CANVAS_DERIVATION_STEP = "step_4"
+CANVAS_IS_PRODUCED_BY_THE_LAYOUT_ENGINE = True
+
+#: The rule a reflow is verified against once real symbol geometry forces one. Named as its own
+#: policy so nobody reads it as `rank_gap`: rank_gap is *origin spacing* on the step-2 lattice,
+#: this is *clearance between materialized symbol bounds*. They are different quantities -- a
+#: 120-wide node on a 150 origin spacing has a clearance of 30 and violates neither rule.
+MATERIALIZED_NODE_CLEARANCE_POLICY_NAME = "materialized_clearance_policy_v1"
+MATERIALIZED_CLEARANCE_FIELDS: tuple[str, ...] = (
+    "minimum_node_clearance",
+    "minimum_system_clearance",
+)
+MATERIALIZED_CLEARANCE_IS_NOT_THE_RANK_GAP = True
+MATERIALIZED_CLEARANCE_POLICY_IS_UNDER_THE_LAYOUT_RULES_VERSION = True
+#: One rules version, for the same reason the spacing policy has one: a clearance policy with
+#: its own lifecycle is a second source of truth about the same drawing.
+SEPARATE_CLEARANCE_POLICY_VERSION_ALLOWED_IN_V1 = False
+UNKNOWN_CLEARANCE_CLASS_IS_A_HARD_FAILURE = True
+
+#: The step-3 ruling, implemented where it belongs. §12 permits a route to cross the node it
+#: serves, because an anchor inside a symbol can only be reached that way; this narrows the
+#: permission to the segment that actually leaves or enters, and verifies it in the final
+#: geometry validation rather than in the router's candidate ordering.
+ROUTE_ENDPOINT_ESCAPE_SEGMENT_MAY_INTERSECT_ITS_ENDPOINT_NODE = True
+ROUTE_SEGMENTS_BEYOND_THE_ESCAPE_SEGMENT_MUST_STAY_OUTSIDE_PROTECTED_NODE_INTERIORS = True
+ROUTE_NODE_INTERSECTION_IS_VERIFIED_IN_FINAL_GEOMETRY_VALIDATION = True
+#: The narrow reading, as its own flag: "may cross the node it serves" must never be read as
+#: "may traverse the whole symbol because it happens to be one of the two ends".
+ROUTE_MAY_CROSS_ANY_NODE_IT_SERVES = False
 
 
 # --------------------------------------------------------------------------------------
@@ -2197,9 +2306,12 @@ def validate_contract() -> list[str]:
             "step 2 spaced origins: re-checking clear separation against its coordinates would "
             "report every drawing as broken"
         )
-    if not REFLOWED_PLACEMENT_MUST_SATISFY_DECLARED_CLEAR_SEPARATION:
-        problems.append("a reflow whose rule is clear separation must be checked by that rule")
-    if not REFLOW_RULE_IS_CLEAR_SEPARATION_NOT_ORIGIN_SPACING:
+    if not REFLOWED_PLACEMENT_MUST_SATISFY_THE_MATERIALIZED_CLEARANCE_POLICY:
+        problems.append(
+            "a reflow must satisfy the materialized clearance policy: the real symbol bounds "
+            "are what the drawing now has to separate"
+        )
+    if not REFLOW_VERIFICATION_USES_THE_MATERIALIZED_CLEARANCE_POLICY:
         problems.append(
             "the reflow exists to separate nodes that no longer fit: it cannot reuse the "
             "spacing that failed"
@@ -2337,6 +2449,163 @@ def validate_contract() -> list[str]:
         problems.append("the text extent rule must name the function that implements it")
     if ANNOTATION_TEXT_EXTENT_CHARACTER_FACTOR <= 0:
         problems.append("the declared text extent factor must be positive")
+
+    # §13 the canvas is derived from a content envelope that covers the whole drawing.
+    if not CONTENT_BOUNDS_IS_A_CLOSED_LIST:
+        problems.append("the content envelope must be measured over a closed list")
+    if not CONTENT_BOUNDS_INPUTS:
+        problems.append("what the content envelope covers must be named")
+    for covered in (
+        "symbol_instance_geometry",
+        "orthogonal_routes",
+        "annotations_and_leader_lines",
+    ):
+        if covered not in CONTENT_BOUNDS_INPUTS:
+            problems.append(f"the content envelope must cover {covered!r}")
+    if not CONTENT_BOUNDS_MUST_COVER_EVERY_PRESENTATION_ROW:
+        problems.append("a bounds computed over a subset is a canvas that crops")
+    if CONTENT_BOUNDS_MAY_EXCLUDE_A_PRESENTATION_ROW:
+        problems.append("no presentation row may be left out of the content envelope")
+    if ROUTE_STROKE_WIDTH_CONTRIBUTES_TO_CONTENT_BOUNDS:
+        problems.append(
+            "a route contributes its waypoints: line weight is a presentation decision, and "
+            "this is not where a second one gets made"
+        )
+    if not ANNOTATION_EXTENT_IS_THE_TEXT_BOX:
+        problems.append("a label's extent is its text box, not a second measurement of the same text")
+    if not CANVAS_MARGIN_POLICY_IS_ENGINE_RULES:
+        problems.append("the canvas margin must be a declared engine rule")
+    if not CANVAS_MARGIN_IS_KEYED_BY_THE_DENSITY_CLASS:
+        problems.append("the margin must be keyed by the density class the caller chose")
+    if not UNKNOWN_CANVAS_MARGIN_CLASS_IS_A_HARD_FAILURE:
+        problems.append("an unknown margin class is a failure, not a default")
+    if CANVAS_MARGIN_DEFAULT_IS_APPLIED_IN_SILENCE:
+        problems.append("a default margin applied in silence is a margin nobody chose")
+    if not MARGIN_IS_PRESERVED_IN_THE_DERIVED_CANVAS:
+        problems.append("the aspect enforcement may add room; it may not spend the margin")
+
+    # §13 the aspect classes are ratios, and enforcement only ever grows the canvas.
+    declared_aspect_classes = layout_intent_dimension("preferred_aspect_class").values
+    named_aspect_classes = tuple(name for name, _ in ASPECT_CLASS_TARGET_RATIOS)
+    if named_aspect_classes != tuple(declared_aspect_classes):
+        problems.append(
+            "every aspect class must name a ratio exactly once: expected "
+            f"{declared_aspect_classes!r}, found {named_aspect_classes!r}"
+        )
+    for name, ratio in ASPECT_CLASS_TARGET_RATIOS:
+        if ratio <= 0:
+            problems.append(f"the target ratio of aspect class {name!r} must be positive")
+    ratio_of = dict(ASPECT_CLASS_TARGET_RATIOS)
+    if not (
+        ratio_of.get("extra_wide", 0.0) > ratio_of.get("wide", 0.0) > ratio_of.get("standard", 0.0)
+    ):
+        problems.append("a wider class must mean a wider ratio, or the class names say nothing")
+    if not ASPECT_CLASS_IS_A_RATIO_NOT_A_SIZE:
+        problems.append("an aspect class is a ratio: a class is not a size")
+    if not ASPECT_ENFORCEMENT_ONLY_GROWS_THE_CANVAS:
+        problems.append("aspect enforcement may only grow the canvas")
+    if ASPECT_ENFORCEMENT_MAY_SHRINK_BELOW_THE_CONTENT:
+        problems.append("reaching a ratio by shrinking below the content is cropping")
+    if not CANVAS_NEVER_CROPS_CONTENT_TO_REACH_A_RATIO:
+        problems.append("a ratio must never be reached by cropping the drawing")
+    if not ASPECT_ENFORCEMENT_IS_UNDER_THE_LAYOUT_RULES_VERSION:
+        problems.append("the aspect targets are layout rules, not a new version axis")
+    declared_orientations = layout_intent_dimension("orientation").values
+    if tuple(CANVAS_ORIENTATION_VALUES) != tuple(declared_orientations):
+        problems.append(
+            "the orientations the canvas enforces must be the orientations the intent declares"
+        )
+    if not ORIENTATION_IS_ENFORCED_ON_THE_DERIVED_CANVAS:
+        problems.append("landscape or portrait must be enforced on the derived canvas")
+    if not ORIENTATION_APPLIES_TO_THE_ENFORCED_RATIO_DIRECTION:
+        problems.append(
+            "orientation states which axis carries the ratio: landscape is width/height, "
+            "portrait is height/width"
+        )
+
+    # §13 no-clipping is verified, and the canvas is produced by the engine at the declared step.
+    if not CANVAS_CLIPS_NOTHING_IS_VERIFIED_NOT_ASSUMED:
+        problems.append("the derived canvas must be verified to clip nothing")
+    if not PRESENTATION_GEOMETRY_OUTSIDE_THE_CANVAS_IS_A_HARD_FAILURE:
+        problems.append("presentation geometry outside the canvas is a hard failure")
+    if not CANVAS_VERIFICATION_COVERS_ROUTES_AND_ANNOTATIONS:
+        problems.append("the no-clipping check must cover routes and annotations, not only nodes")
+    if not CANVAS_BOUNDS_ARE_QUANTIZED_LIKE_EVERY_OTHER_COORDINATE:
+        problems.append("canvas bounds are coordinates: they carry the declared quantum")
+    if not CANVAS_IS_PRODUCED_BY_THE_LAYOUT_ENGINE:
+        problems.append("the canvas must be produced by the layout engine")
+    canvas_step_name = next(
+        (value for key, value in PHASE_2B_STEPS if key == CANVAS_DERIVATION_STEP), ""
+    )
+    if not canvas_step_name:
+        problems.append(f"the canvas step {CANVAS_DERIVATION_STEP!r} must be a declared phase-2B step")
+    else:
+        for dimension in ("orientation", "preferred_aspect_class"):
+            applied = next(
+                (
+                    item.applied_at_step
+                    for item in LAYOUT_INTENT_CONSUMPTION
+                    if item.dimension == dimension
+                ),
+                "",
+            )
+            if applied != CANVAS_DERIVATION_STEP:
+                problems.append(
+                    f"the intent dimension {dimension!r} is applied at {applied!r}, not at the "
+                    f"canvas step {CANVAS_DERIVATION_STEP!r}: the canvas is what enforces it"
+                )
+
+    # §13 the materialized clearance policy is its own rule, not the rank gap wearing a second hat.
+    if not MATERIALIZED_NODE_CLEARANCE_POLICY_NAME.strip():
+        problems.append("the materialized clearance policy must be named")
+    if tuple(MATERIALIZED_CLEARANCE_FIELDS) != (
+        "minimum_node_clearance",
+        "minimum_system_clearance",
+    ):
+        problems.append(
+            "the materialized clearance policy states a node and a system clearance: found "
+            f"{list(MATERIALIZED_CLEARANCE_FIELDS)}"
+        )
+    if not MATERIALIZED_CLEARANCE_IS_NOT_THE_RANK_GAP:
+        problems.append(
+            "the materialized clearance is not the origin spacing: sharing the name is how a "
+            "sign-off on one becomes a silent sign-off on the other"
+        )
+    if not MATERIALIZED_CLEARANCE_POLICY_IS_UNDER_THE_LAYOUT_RULES_VERSION:
+        problems.append("the clearance policy belongs to the layout rules version")
+    if SEPARATE_CLEARANCE_POLICY_VERSION_ALLOWED_IN_V1:
+        problems.append(
+            "a clearance policy with its own lifecycle is a second source of truth about the "
+            "same drawing"
+        )
+    if not UNKNOWN_CLEARANCE_CLASS_IS_A_HARD_FAILURE:
+        problems.append("an unknown clearance class is a hard failure, not a fallback")
+    for clearance_field in MATERIALIZED_CLEARANCE_FIELDS:
+        if clearance_field in DENSITY_SPACING_POLICY_FIELDS:
+            problems.append(
+                f"the clearance field {clearance_field!r} may not be a spacing policy field: the "
+                "two rules are different quantities"
+            )
+
+    # §13 the step-3 crossing permission is narrow, and verified in the final geometry check.
+    if ROUTE_MAY_CROSS_ANY_NODE_IT_SERVES:
+        problems.append(
+            "a route may cross its endpoint node only on the segment that enters or leaves it"
+        )
+    if not ROUTE_ENDPOINT_ESCAPE_SEGMENT_MAY_INTERSECT_ITS_ENDPOINT_NODE:
+        problems.append(
+            "an anchor inside a symbol can only be reached by crossing it: forbidding the "
+            "escape segment would make some ports unreachable"
+        )
+    if not ROUTE_SEGMENTS_BEYOND_THE_ESCAPE_SEGMENT_MUST_STAY_OUTSIDE_PROTECTED_NODE_INTERIORS:
+        problems.append("every segment beyond the escape segment stays outside node interiors")
+    if not ROUTE_NODE_INTERSECTION_IS_VERIFIED_IN_FINAL_GEOMETRY_VALIDATION:
+        problems.append(
+            "the crossing rule is verified in the final geometry validation, not only in the "
+            "router's candidate ordering"
+        )
+    if not ROUTE_MAY_CROSS_THE_NODE_IT_SERVES:
+        problems.append("the escape allowance would have nothing to allow")
 
     return problems
 

@@ -73,7 +73,10 @@ LAYOUT_RULES_VERSION = "deterministic-layout-rules/1"
 #: which step 3 needs to resolve an endpoint binding per connection. Adding the field without a
 #: new version would be a different plan under the same name, and an unpublished intermediate
 #: version is not exempt from that: the version names a field set, not a release.
-SEMANTIC_LAYOUT_PLAN_DIGEST_VERSION = "m7-semantic-layout-plan-digest/5"
+#:
+#: v6: the plan gained ``content_bounds`` -- the envelope the canvas is derived from. Same rule
+#: again: the version names a field set, so a field set change moves it.
+SEMANTIC_LAYOUT_PLAN_DIGEST_VERSION = "m7-semantic-layout-plan-digest/6"
 
 #: One rules version governs the spacing policy, the node sizes and the rank rules. A separate
 #: spacing-policy version would be a second source of truth about the same drawing, which is
@@ -145,6 +148,13 @@ STEP_2 = next(
 #: Step 3, by the name the contract gives it.
 STEP_3 = next(
     key for key, value in PHASE_2B_STEPS if value == "orthogonal_routing_and_annotation_placement"
+)
+
+#: Step 4, by the name the contract gives it.
+STEP_4 = next(
+    key
+    for key, value in PHASE_2B_STEPS
+    if value == "content_bounds_to_canvas_bounds_and_aspect_enforcement"
 )
 
 
@@ -258,9 +268,10 @@ class PlanConnection:
 class SemanticLayoutPlan:
     """What the engine knows after receiving a topology, before it places anything.
 
-    Intermediate by construction: :attr:`placement` is empty and :attr:`canvas_bounds` is
-    ``None``, so this cannot be mistaken for a finished layout. Step 2 fills the placement,
-    step 4 the canvas, step 5 the canonical digest.
+    Intermediate by construction: :attr:`placement` is empty and :attr:`content_bounds` /
+    :attr:`canvas_bounds` are ``None``, so this cannot be mistaken for a finished layout. Step 2
+    fills the placement, step 3 the routes and labels, step 4 the content envelope and the
+    canvas, step 5 the canonical digest.
     """
 
     topology_digest: str
@@ -288,8 +299,11 @@ class SemanticLayoutPlan:
     digest_version: str = SEMANTIC_LAYOUT_PLAN_DIGEST_VERSION
     #: Filled by step 2. Empty is the correct value at step 1, not an oversight.
     placement: tuple[dict[str, Any], ...] = field(default=())
-    #: Produced by step 4 from the content bounds. ``None`` until then.
-    canvas_bounds: None = None
+    #: Produced by step 4: the envelope of everything the layout actually drew -- node bounds,
+    #: route waypoints, annotation boxes -- and the canvas derived from it. ``None`` until then,
+    #: which is the honest value: a plan that has not routed anything has no content to measure.
+    content_bounds: dict[str, float] | None = None
+    canvas_bounds: dict[str, float] | None = None
     #: Set by step 2: the numbers the engine chose. The *grouping* class needs no field of its
     #: own -- an intent the engine cannot honour is refused before a plan is placed, so
     #: ``intent.grouping`` is always the class that was honoured.
@@ -327,6 +341,7 @@ class SemanticLayoutPlan:
             "connections": [connection.to_projection() for connection in self.connections],
             "flow_edges": [[source, target] for source, target in self.flow_edges],
             "placement": list(self.placement),
+            "content_bounds": self.content_bounds,
             "canvas_bounds": self.canvas_bounds,
             "spacing": self.spacing.to_projection() if self.spacing else None,
             "symbol_geometry_catalog_digest": self.symbol_geometry_catalog_digest,

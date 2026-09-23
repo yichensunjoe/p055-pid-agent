@@ -1,4 +1,370 @@
+## 2026-09-23 · 「唯一输入」要看签名，不看自己写的文档；「写后校验」不是写前边界（P055-PID-Agent）
+
+- 场景：M7-2 Phase-3 materializer，我在文档里写「唯一输入是 finalized canonical layout」，但实际签名是
+  `materialize_canonical_layout(plan, *, document_id, labels: Mapping[str,str] | None = None)`。`document_id` 是落点无妨，
+  `labels` 却让**同一个 finalized plan、同一个 canonical_layout_digest** 产出两张不同的图——
+  「finalized layout → drawing」不再是函数关系。而且回读比对字段里没有 `text`/`label`，
+  「几何/tag/connector 全对但图上文字错了」能 PASS。
+- 结论做法：① **把参数删掉**，而不是加校验——文本从已被上游身份闸绑定的 `tag` 推导，
+  再用**同一个纯函数**（`text_bounds`）证明「布局放的盒子就是该文本量出来的盒子」；不另写宽度公式（两套实现就是漂移的开始）。
+  ② 回读比对加入 `text`/`label`；第二文本面（`SymbolElement.label`）写空但**读**它，不许假设它空着。
+  ③ `add`-only + 写后回读有个明确失败模式：目标里已有无关元素 X → 整张图 add → **提交、revision+1、audit 写下** → 回读才发现多一行。
+  所以基线必须在**写之前**冻结：`require_empty_target()` ＋ 把 preflight 读到的 revision 写进 `expected_revision`（用已有的原子机制）。
+  ④ 审计链里的 `resulting_revision` **不许由调用方预测**——两个写者能做同一个预测；改成从 `result.document.revision` 读。
+- 踩坑点：① **签名才是边界**。「唯一输入」这种话要拿 `inspect.signature()` 验；有校验的参数仍然是调用方在决定图的内容。
+  ② 「空」的定义要写清楚是「没有**工程内容**」还是「没有**行**」——新建文档本来就带默认图层与 `system_default`，
+  按「systems == []」写会把每个新建文档都拒掉。③ 测试要断言副作用没发生（revision 没动、元素没进去、
+  history 里没有声称写了图的记录），而不只是「抛了异常」。④ 同长度的文本替换在纯几何校验下是**不可见**的——
+  盒子宽度逐位相同；要分清哪个闸管哪一段，别声称「都覆盖了」。
+- 适用场景：任何「把 A 确定性地转成 B」的编译/落库步骤——先验签名里有没有能让调用方绕过确定性的参数，再问失败是在**提交前**还是**提交后**才被发现。
+
+## 2026-09-23 · 一道叫「语义保持」的闸门会把刚分开的三层身份又合回去（P055-PID-Agent）
+
+- 场景：M7-2 Step 5 我用一道 `semantic_digest_before_layout` 同时覆盖工程事实、renderer 绑定（symbol_key）
+  与 layout intent。上一阶段刚刚签署的身份边界是三层：工程语义 / adapter-layout 输入 / canonical layout。
+- 结论做法：拆成两道**各自命名**的证明——证明 A 工程语义（tag/class/type/measurement/连接端点·端口·medium/
+  方向/system·loop，显式列出 NOT COVER symbol_key 与 layout_intent），证明 B layout input（symbol binding /
+  rendering kind / intent / adapter topology identity，用与「引擎收到的 topology」逐项结构相等实现，**不新增身份轴**）。
+  两两双向盲区必须有用例：改 intent 或 symbol → A 绿 B 红；改 tag → A 红 B 绿。
+- 踩坑点：① 「语义」是个会吸东西的词；一道以它命名的闸门会把不同层的事实重新聚成一个 identity，
+  从而撤销前面所有的分层工作。闸门的名字要精确到**是哪一层**的事实。② 顺带的措辞坑：写「布局 digest 只标识位置」
+  对几何投影成立、对整个 digest 过强——信封绑定语义输入身份，所以 tag 改、坐标不变时 projection 相同而 digest 必须不同；
+  把 projection 的范围当成 digest 的范围，会让一个真实变化被声明成「不可见」。
+- 适用场景：任何「保持 X 不变」的证明——先问 X 的边界是否与已分层的身份一一对应，名字错了就会把边界磨掉。
+
 # REUSE_AND_PITFALL_LOG — P055-PID-Agent
+
+## 2026-09-23 · 「两侧独立重建」才叫闸门：同一个函数调两遍只证明了它自己是确定性的（P055-PID-Agent）
+
+- 场景：M7-2 Step 5 要证明「布局没改工程语义」：`semantic_digest_before_layout == semantic_digest_reconstructed_after_layout`。
+  最省事的写法是同一个 `plan_semantic_digest(plan)` 在 Step 1 与 Step 5 各调一次。
+- 结论做法：两侧**两份输入、两条代码路径、共用一种行形状**——topology 侧从 `SemanticTopology` 读，
+  plan 侧从 `plan` 的 live 字段读，只在 `engineering_digest_rows()` 里共用拼装与排序。为此 plan 在 Step 1
+  就把收到的工程事实**原样记下来**（systems 含 name/order、entities 含 tag/name/class/type/measurement、
+  connection 自带 tag），Step 5 再从这些字段重建。测试先钉住前提："Step 1 做完时两侧行对行相等"。
+- 踩坑点：① 如果用同一个函数在同一份数据上调两次，红只会出现在"数据被改"这一种情况，而"数据**少了**一行"
+  永远不会红——digest 结构上看不见缺失；所以同一道闸门必须有**纯几何覆盖**的另一半（每个设备恰好放置一次、
+  每条连接恰好路由一次、不许凭空多一个 id）。② 覆盖体量的代价要付：把 tag 记进 plan 才看得见 tag，
+  把标签文本排除在 canonical 投影之外才不违背"布局身份标识位置、不标识文案"的旧裁定。
+- 适用场景：任何"处理前后不许改变 X"的断言——先问"前后两侧是不是同一份输入的两次读取"，是就不是证据。
+
+## 2026-09-23 · 「现在恰好相同」不是合并两个概念的理由：renderer binding 塞进 engineering class（P055-PID-Agent）
+
+- 场景：M7-2 Step 3 要给每个节点一个 catalogue symbol key。当时 `equipment_class` / `instrument_type` 与
+  catalogue key **碰巧逐个相同**，直接复用是零成本方案。
+- 结论做法：新增显式 `symbol_key`，并把身份拆成两根轴——工程语义 digest（不受 renderer 变化影响）与
+  layout/topology digest（必须含 `symbol_key`）。级联升版 `m7-diagram-spec/1→/2`、`adapter-topology-digest/1→/2`、
+  `semantic-layout-plan-digest/3→/5`（字段集变了就升版，**未发布的中间版本也不豁免**）。旧 fixture 改成真实
+  catalogue 绑定（`pressure_transmitter`→`pressure_indicator`），而不是放宽 production 规则。
+- 踩坑点：一个工程类别将来可能有多种合法图形变体，renderer 目录也可能整体重构而不动工程语义；
+  一旦复用，"换个等价符号"会同时沉默地改掉两个应该分别回答的问题。
+- 适用场景：任何"当前实现里两个概念取值相同"的合并机会——先问"它们会不会各自变化"，会就分开。
+
+## 2026-09-23 · 同一个词「间距」在两个时刻是两条规则：拿已签的约定去重新校验，每张图都会被判坏（P055-PID-Agent）
+
+- 场景：Step 3 要用真实符号尺寸校验放置。第一版直接用"清晰间距"校验**继承自 Step 2 的坐标**，结果
+  fixture A 也判不合格：Step 2 的约定是 **origin 间距 = density policy**（`rank_gap(compact)=150`），
+  节点宽 120 时清晰间距只有 30 → "清晰间距 ≥ 150"永远不成立。
+- 结论做法：把两个时刻分开记名——继承坐标只要求**不重叠**（`MATERIALIZED_PLACEMENT_MUST_NOT_OVERLAP`、
+  `STEP_2_ORIGIN_SPACING_IS_INHERITED_NOT_RECHECKED`），重排行才按**清晰间距**校验
+  （`REFLOWED_PLACEMENT_MUST_SATISFY_DECLARED_CLEAR_SEPARATION`）。并实测两条路径都可达（A 不重排、
+  重排 payload 触发性重排 + 两次运行逐字相同），否则就是一个死分支。
+- 踩坑点："校验失败"的第一反应不该是改数据或改算法——先问**这条校验针对的是哪个时刻的产物**。
+- 适用场景：任何"上游按约定 A 生成、下游按更严的 B 复检"的流水线。
+
+## 2026-09-23 · 变异第一版全绿，先怀疑 fixture 有没有走到那条分支（P055-PID-Agent）
+
+- 场景：Step 3 标注避让守卫，变异"忽略标签间 clearance"后 **0 条测试变红**。测试在、断言对，
+  问题是 fixture 里两个长标签从来不靠近，守卫结构上从未咬合。
+- 结论做法：补一条"两个长标签相邻必碰撞"的用例 → 重跑变异 **1 条红**。并区分全绿的两种原因：
+  "测试没抓住"（补 fixture）还是"路径不可达"（改断言构造，不补运行时用例）。
+- 适用场景：contract + mutation 当防线的项目；"变异不红"至少三种原因——变异是假的 / fixture 没覆盖 /
+  路径不可达——必须分别定案后才能宣称守卫已就位。
+
+## 2026-09-23 · 「确定」有两个成本：算法确定 ≠ 排版保真（P055-PID-Agent）
+
+- 场景：Step 3 要判定标注文字尺寸。浏览器 `measureText` 会随 OS 字体与回退而变，因此复用
+  `annotation_layout.text_bounds`（纯码点：`max(font_size, len(text)*font_size*0.6)`）。
+- 结论做法：记名为 `ANNOTATION_TEXT_METRICS_POLICY = "deterministic_codepoint_extent_v1"` + 改动需升
+  `layout_rules_version`；**不**因此新增第三根 digest 输入轴（身份轴保持"算法→rules version、
+  renderer 几何→symbol_geometry_catalog_digest"）。黄金用例是固定文本/字号/期望宽度（含一个"字号下限起作用"
+  的短标签），**不** hash 源码或字节码。
+- 踩坑点：中文与复杂字符宽度迟早要质量升级，但那是 annotation quality 的问题，不该在布局阶段顺手重写
+  （会同时移动身份轴与视觉验收基线）。
+- 适用场景：把"确定性"写成验收项时，分开记名"输出可复现"与"视觉质量合格"。
+
+## 2026-09-23 · 变异测试本身有四类假货：「只加注释」「变异没接上」「守卫写错方向」「坏声明无报告」（P055-PID-Agent）
+
+- 场景：M7-2 Phase-2B Step 1/2（引擎语义入口 + 确定性放置）要证明「模型已失去几何权威」的守卫是真的。
+- **坑 1 · 变异只改了注释**：第一版"引擎假装给节点塞 (0,0)"的变异只加了一句注释，`placement` 仍为空 →
+  测试不红。**变异必须真的改变行为**：改成真的写入 `(0,0)` 行之后 5 条测试变红。看到"不红"先怀疑变异，不要先怀疑测试。
+- **坑 2 · 变异没接上调用点**：把「放置写回节点坐标」做成变异后 27 条测试全绿——因为写回循环依赖一个
+  默认参数，而调用点没传。**全绿也是一条信息**：它说明这条路径在当前数据流下**结构上不可达**。
+  于是正确的做法不是补一条运行时测试，而是**把守卫改成断言构造**：`TopologyNode`/`SemanticLayoutPlan`
+  是 frozen dataclass、放置函数签名只接受 plan（无 topology 引用）。再验证"去掉 frozen=True → 红"。
+- **坑 3 · 断言写错方向**：写出 `assert "preserve_positions" in signature(preview_document).parameters`，
+  实际它是 `AutoLayoutRequest` 的**字段**而不是函数参数 → 断言永远为假却"看着像守卫"。
+  写边界断言前先 `print` 一次真实形状，别凭印象。
+- **坑 4 · 校验器自己不报就崩**：`CANVAS_DERIVATION_CHAIN.index("content_bounds")` 在名字缺失时抛
+  `ValueError`，结果是"声明被改坏 → 校验器崩掉"而不是"报一条违规"。**校验器必须先判在不在、再比位置**，
+  并且要为这种"缺件"补一条变异测试（我补了 `chain=("semantic_topology","routing")`）。
+- 适用场景：任何用 contract + mutation + Gate 当防线的项目：发布"守卫已就位"之前，逐个变异确认**真的变红**，
+  并区分"测试没抓住"与"路径不可达"这两种全绿。
+
+## 2026-09-23 · 声明在一边、事实在另一边：新加的边界规则会误杀合法响应（P055-PID-Agent）
+
+- 场景：M7 收尾要把「服务端没评估」（`not_evaluated`，合法业务结果）与「响应压根没带契约」（协议违规）分成两条路。
+  前端规则写成「`not_evaluated` 必须带 `global_failure_reason`」，看起来很合理。
+- 结果：**写边界测试时才发现**——那个原因字段**只写在证据行里**，`/agent/plan-v2` 的 assessment 上**没有**。
+  真实的 revision conflict 响应会因此被判成契约违规，即：**新加的边界规则会把合法回答误杀**。
+- 同一模式在前两轮也出现过：v8 表结构（计数必填）与 "未评估" 这个事实冲突；契约说 `m6patch_<digest[:16]>`
+  而代码是全长。共同点都是：**规则在一处、事实在另一处**，只有把两端对拍才看得见。
+- 可复用做法：给任何新边界规则同时写一条**正向**测试（合法输入必须通过）与一条**负向**测试（违规必须拒绝）。
+  只写负向的那一条，会得到一个"什么都能拒绝"的守卫，而它误杀的正是合法流量。
+
+## 2026-09-23 · 没 push 但真实库已经执行过的迁移＝已发布：只能加新版本，不能原地改（P055-PID-Agent）
+
+- 场景：M7 的 schema v9 是本分支上**尚未 push** 的版本，按"未发布即可原地改"的直觉，本可以改 `_migration_9`。
+- 反例事实：`data/pid-agent.db`（真实的 109MB 库）`PRAGMA user_version` **已经是 9**。原地改 v9 会让
+  **测试新建的库**看到新结构、而**用户手上的真实库**停在旧结构——分歧只会在用户数据上显形。
+- 做法：v9 的定义一字不改，新增 `_migration_10` 只做一件事（补唯一索引），幂等且对两种库都成立。测试两头都钉：
+  ① fresh 库直接有唯一索引；② 把库改回"v9 且无索引"再跑迁移，索引必须回来、且库仍可写入。
+- 规则（可复用）：迁移的"已发布"判据不是 **git 是否 push**，而是 **是否已被任何真实数据库执行**。
+  判断方法一行：`PRAGMA user_version`。
+
+## 2026-09-23 · 违规 token 撞上既有功能名：`auto_layout` 把 legacy 报成了新违规（P055-PID-Agent）
+
+- 场景：给 M7-2 Phase-1 写"本阶段不得新增排版表层"的测试，token 里放了 `auto_layout`。
+- 结果：测试报出 `preview_auto_layout` / `apply_auto_layout` 两个**早已存在**的 MCP 工具——它们是确定性制图
+  那条线的**人工排版路径**。于是"违规列表"里全是假阳，真违规会被埋掉。
+- 做法：契约新增 `PRE_EXISTING_LAYOUT_SURFACES` 声明既有表层，并加一条规则：**违规 token 不得是任何既有表层名的子串**
+  （不是相等——`auto_layout` 是 `preview_auto_layout` 的子串，相等判断发不现）。能断言的变成"这个集合没有变大"。
+- 附带：这和 `preserve_positions` 的分流是同一件事在表层的投影——既有工具就是 legacy 路径，不许改、也不许添第三个。
+
+## 2026-09-23 · 单字段排序键证明不了全序；裸字符串排序键会静默变成字符列表（P055-PID-Agent）
+
+- 场景：canonical projection 声明 `CANONICAL_PROJECTION_SORT_KEY = engineering_id` 同时又声明
+  `IS_TOTAL_ORDERED = True`——后者只是**愿望**：不同类型完全可能共享同一个 engineering id，
+  那样"canonical 顺序"取决于插入顺序。
+- 修法：改成复合键 `(placement_kind, engineering_id)`，并让"唯一性"成为硬失败（重复排序键 = hard fail）、
+  未来多呈现行时再用 `presentation_role` 补齐——**全序由数据结构证明，不由布尔常量宣称**。
+- 第二个坑（变异测试时发现）：第一版守卫写 `len(sort_key) < 2`，而变异的"单字段"是**裸字符串**
+  `"engineering_id"`，长度 13 —— 守卫假绿。字符串可迭代，还会在后续 `for field in sort_key` 里变成一串字符。
+  守卫必须显式挡 `isinstance(..., str)`。**再次印证：新守卫要用"应该变红"的变异验收，且变异形状要照着真实误用写。**
+
+## 2026-09-22 · 全绿的 gate 不等于成立的证据：`gate_failures: []` 与 `evidence_verified: false` 可以同时为真（P055-PID-Agent）
+
+- 场景：M6 Phase-2A 收尾跑 acceptance 72 条，命令里忘了 `--candidate-sha`。结果：**八项 gate 全部 `true`、
+  `gate_failures: []`、S@1/S@5 与六 family 全部与对照一致**——但 `evidence_verified: false`，
+  72 条成功用例**毎条**都带 `success_evidence_incomplete: … missing ['candidate_sha']`。
+- 原因：`candidate_sha` 是 CLI 参数（默认空串），acceptance 的种子由它派生。少了它，用例仍能全过
+  （种子退化成 `spec::family:index`），于是**跑的是一批“描述不了任何候选”的用例**。
+- 更值得记的是**两条断言轴的分离**：`gate_failures` 检查阈值是否达到，`evidence_verified` 检查
+  “这条成功声称是否有证据”。**前者不覆盖后者**，所以“gate 绿”不能用来推“证据成立”。
+  正确地跑法是 `--candidate-sha $(git rev-parse HEAD)`（CI 里用的正是 `github.sha`）。
+- 教训：看到 `gate_failures: []` 就停下，等于只看了一半；同时看 `evidence_verified` 与
+  `verification_findings` 的**条数**。两条轴都要绿，而且最好在报告里分两行写。
+- 相关但独立：M5 release criteria 要不要把 `evidence_verified` 并进 gate，是一个单独的决策，
+  不应在别的里程碑里顺手改（本轮按远端裁定只记 pitfall、不改 gate）。
+
+## 2026-09-22 · 一个“永远会通过”的守卫比没有守卫更危险：引号吃掉了一次真的变异检查（P055-PID-Agent）
+
+- 场景：把五类持久身份的格式从散文提升为契约数据（`PERSISTENT_IDENTITIES`），并加一条守卫：
+  “核心源码里不得出现任何身份前缀字面量”。
+- 第一版断言写的是**带引号的**形式：`f'"{prefix}"' not in core_source`。而真实字面量是
+  `patch_id=f"m6patch_{digest}"`——前缀后面跟的是 `{`，**不是引号**，于是断言永远成立。
+- 发现方式只有一种：**把真缺陷改回去看它会不会红**。第一次变异检查输出 `1 passed`，
+  我差点把它当成“守卫有效”。改成裸子串断言后同一变异 `1 failed`。
+- 教训：**任何新守卫都必须用一次“应该变红”的变异来验收**，而且变异要照着真实代码形状来写
+  （这里的真实形状是 f-string，不是普通字符串）。断言一个近似的形状，等于没断言。
+- 附带收获：同一轮里“文档说 16 hex、代码写 64 hex”这种**同文自相矛盾**，之所以能活到
+  Gate 肉眼核对，正是因为格式写在两处而没有对拍。把格式**降为数据**后，文档对代码的对拍才可写。
+
+## 2026-09-22 · 拷过来的 `ON DELETE CASCADE` 会静默删掉证据；同样的形状在仓库里已有正反两个例子（P055-PID-Agent）
+
+- 场景：给 M6 的 review 聚合建表，最自然的写法是把已有表结构拷过来——而 `document_history` / `agent_sessions`
+  写的是 `FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE`。照抄就等于：**删掉一张图纸，
+  就把“某人曾确认过这条事实”的历史一起删了**，而那正是审阅需要的记录。
+- 仓库里其实同时存在正反两个例子：`document_history` 级联删；而 `audit_records` **故意不指向 `documents`**，
+  注释写着 "the evidence for a deletion must outlive the deleted document"。
+- 反过来也不能用普通外键（`NO ACTION`/`RESTRICT`）：那会让“存在一条审阅记录”变成图纸删不掉的固因。
+  所以正确形式是：**不建这个外键**，只保留一个带索引的 `source_document_id` 列。
+- 教训：**“聚合从哪里来”不能靠拷表结构决定**。写外键前先问一句“这条记录的存在依赖于被引用对象存在吗？”——
+  图纸与它的历史：是；图纸与关于它的审阅/审计证据：不是。后者必须能活得更久，并且这个选择应该有测试钉住
+  （断言 `PRAGMA foreign_key_list` 为空，而不是靠注释）。
+
+## 2026-09-22 · 同一个错犯了两次：把运行时的 volatile metadata 混进身份／契约（P055-PID-Agent）
+
+- 场景（第一次）：A5 的语料身份一开始用 `inspect.getclosurevars` 判断「哪些名字是全局」，那是**运行时的编译
+  器**说了算——3.12 内联推导式后同一个函数里的 `__name__` 不再算已解析全局，于是**两边 AST 完全相同、身份
+  却随解释器漂**。修法：名字从源码（AST）取，分类从 `co_freevars` 取。
+- 场景（第二次，M6）：replay 契约初稿写成「已应用事务的操作**逐字节**比较」
+  （`REPLAY_MUST_BE_BIT_IDENTICAL = True`）。它把 `transaction_id` / timestamp / 审计时间这类**合理的
+  volatile provenance** 变成了失败原因——正确的重放会因为记账字段不同而报错。
+- **同一个错**：把「系统为了记录而生成的运行期字段」当成「被验证对象的一部分」。于是验证要么变成假阴性
+  （字节不等 → 明明对的重放被判失败），要么被绕过（“那我们就排除掉……越来越多”），而真正的语义差异反而
+  被埋在噪声里。
+- 教训（可复用）：任何 digest / replay / 身份契约，**先把字段分成「语义性的」与「记账性的」两列再写代码**，
+  然后对**规范化后的语义投影**做哈希（M6 改为 canonical compiled patch digest + resulting semantic
+  state digest 两层，并显式声明排除的 volatile 字段）。
+- 附带教训：「更严格」不等于「更安全」。逐字节契约看起来更严，实际上它验证的东西不是我们关心的东西；
+  严苛用错了对象，会把测试变成噪声源。
+
+## 2026-09-22 · 「谁有写权限」写进数据后，自检第一次运行就抓出了我自己的人工错误（P055-PID-Agent）
+
+- 场景：M6 的治理契约把「哪一层可以写工程模型」当成需要断言的不变式，而不是散文里的一句承诺。写八层链时，
+  我给 `apply_v2_transaction`（执行写入的事务）和 `committed_revision`（事务产出的那次 revision）都标了工程写权限。
+- **自检当场报错**：`exactly one layer may write the engineering model, found ['apply_v2_transaction',
+  'committed_revision']`。
+- **真实错误**：`committed_revision` **记录的是结果**，权限属于执行写入的事务，**不属于被它创建的 revision**。
+  把「产出物」和「写入者」混为一谈，会让「只有一个写入口」这条不变式永远成立不了（总能找到第二个"写过的层"）。
+- 教训一：**「唯一写入者」类不变式要断言集合相等，而不是断言集合里包含谁**——`found == [X]` 能报错，
+  `X in found` 不会。
+- 教训二：**散文规范里这类错误是不会被发现的**。八层链写成一张表时，两种标法读起来都通顺；只有把权限
+  变成可被反驳的数据，它才变成一个当场会红的错误。所以「设计文档 + 契约数据 + 文档↔数据一致性测试」
+  这三件套不是重复劳动：文档负责说明为什么，数据负责能被反驳，测试负责两者不脉开。
+
+## 2026-09-22 · 一个标签名字可以把另一个字段的选择器变成“两个元素”（P055-PID-Agent）
+
+- 场景：在 Agent 面板里新增 TypeSafe 区块，字段命名为「TypeSafe Base URL」「TypeSafe API Key」。本地单测全绿，
+  但**第一次进 CI 时** Browser acceptance 直接红：`strict mode violation: getByRole('textbox', { name: 'Base URL' })
+  resolved to 2 elements`。
+- **原因**：Playwright 的 `getByRole(role, { name })` **默认是子串匹配**（case-insensitive，`exact: true` 才是全等），
+  所以「TypeSafe Base URL」同时是「Base URL」的匹配项——旧字段（服务预设那块）的选择器从此不再唯一。
+  同样的坑对 `Model name` / `API Key` 也成立。
+- 教训：新增带标签的字段时，**不要把一个已有字段的 accessible name 包进去**；要么取独特名字
+  （「TypeSafe 判读服务地址」），要么用 `exact: true` 的选择器。这段约束以注释形式写在 `App.tsx` 的区块上方。
+- 次要教训：这类冲突在本地的**单元测试无法发现**（node 测试不渲染 React），只有浏览器层能抦住；
+  所以新增面板字段后应当跑一次 e2e，而不是等 CI。现在有 `frontend/e2e/typesafe-panel.spec.ts` 专门钉字段命名。
+
+## 2026-09-22 · `npx playwright test` **不会重建 dist**：用旧包做的“变异测试”会假装道过（P055-PID-Agent）
+
+- 场景：为证明新写的 e2e 真的能捕捉上面那个标签冲突，我把标签改回旧名字跑测试——结果 **4 条全绿**，看上去“测试没用”。
+- **原因**：`npx playwright test` 只启动 `npm run preview`，serve 的是磁盘上**上一次构建的 `dist`**；
+  而 `npm run test:e2e` 里才有 `build:e2e`。所以那次变异跑的是**修复后的旧包**，源文件改了但页面没变。
+- 正确做法：变异检查必须 `npm run build:e2e`（或 `npm run test:e2e`）后再跑；重做后测试如期变红。
+- 推广：任何“改了源码但页面/服务端仍是旧产物”的验证都是假证据。跑浏览器层断言前，先确认产物是本次构建的。
+
+## 2026-09-22 · “环境变量里明明有”与“非交互式 shell 看不到”是两件事（P055-PID-Agent）
+
+- 场景：用户说本机环境变量里有 `TYPESAFE_API_KEY`，而我上一轮报的是“本机没有 key、所以没做真调用”。
+- **原因**：它 `export` 在 `~/.zshrc`，而 agent 的终端工具跑的是**非交互式 bash**——两者都不会 source 用户 rc 文件，
+  所以 `env | grep TYPESAFE` 在这个 shell 里真的是空的。报“不存在”和“在但继承不到”是两回事，写报告时必须区分。
+- 顺带暴露的产品缺陷（已修）：key 只存在于服务端环境时，浏览器无从得知，面板只能显示空输入框，
+  用户看到的就是“我配了 key 但界面说没有”。现在面板会问 `/provider/typesafe/status` 并把 `api_key_source` 写出来。
+- 取用方式（不打印 key）：`set -a; eval "$(grep -E 'TYPESAFE_[A-Z_]+=' ~/.zshrc | sed -E 's/^\s*export\s+//' | tr -d '\"')"; set +a`。
+- 同类坑：GUI/IDE/launcher/`nohup` 启动的服务同样不继承 rc 里的变量；本地真的“拉了服务”却连不上上游时，先查这里。
+
+## 2026-09-22 · 「跨解释器恒定的代码身份」有三个连环坑：`ast.dump` 不是稳定格式 / 空字段 / 匿名定义（P055-PID-Agent）
+
+- 场景：让冻结语料的身份能覆盖“哪个 producer 以什么声明配置画出哪条 case”，而 producer 的行为有一部分
+  只存在于函数体里。选“规范化 AST digest”而不是字节码（后者正是 `generator_fingerprint`，换解释器就变）。
+- **坑 1 · `ast.dump` 不是跨版本稳定的格式**：同一份源码里的同一个 `_patch`，`ast.dump(node,
+  include_attributes=False)` 在 CPython 3.11.15 给出 `930398d67e9220f4`、3.12.12 给出 `a182c517faab2e95`
+  ——3.12 给 `FunctionDef` 加了 `type_params` 字段，dump 里就多一段 `type_params=[]`。
+  用它当“跨解释器身份”，会造出一个**看起来**干净、实际仍绑解释器的指纹（而且只在 CI 的 3.11 上才暴露）。
+  正确做法：自己投一份规范形式（`agentcad/source_identity.py`）——按 `ast.iter_fields` 取字段，**丢掉 `None` 与空列表**，
+  再对 sorted-key JSON 取 SHA-256。新版本新增的字段只要还是空的，就不参与身份。
+- **坑 2 · “两个解释器都说一样”必须真的跑两个解释器**：验证脚本如果 import 项目代码，就没法在缺依赖的
+  第二个解释器上跑。把规范化形式放成**零依赖模块**，验证脚本只 import 它（外加标准库），才能在
+  `python3.11` / `python3.12` 上各自复算——不然“跨解释器恒定”只是一句断言。
+- **坑 3 · 匿名定义在身份里只会变成 `<lambda>`**：有个 operator 用 inline lambda 重建底座，于是身份表里出现
+  一个叫 `<lambda>` 的条目（两个不同 lambda 还会互相覆盖），而“从源码文件复算”的一方无法按名字找到它。
+  它同时是一处真重复（同文件早就有那个命名函数，注释还写着“命名是免得两个 operator 漂成两张不同的图”）。
+  教训：**要进身份的东西必须能被名字寻址**；顺手把 inline lambda 换回命名函数，行为不变、身份可查。
+- **坑 4 · 源码读不到时不要退化成哨兵值**：`inspect.getsource` 失败如果返回 `"unavailable"`，两台机器会
+  “同意”一个什么都不标识的数。直接抛错更诚实（`BenchmarkSetupError`），而归档语料那种**真读不到**的情况，
+  就明确写成 `ARCHIVED_DEFINITION_IDENTITY = "unavailable: archived declarative definition only"`——
+  声明能力边界，而不是伪造历史实现。
+- **坑 5 · 身份字段本身也会过期**：第一版 projection 换实现后 digest 从 `471968de…` 变成 `115fe509…`，
+  而我把旧值写进了测试常量（跑测试才发现）。凡是“先算、再手抄进测试”的常量，都要**当场从产物里读回**，
+  不要凭记忆或从早先的输出里复制。
+- 适用场景：任何要发布“跨环境可复算的身份/指纹”的地方（语料、模型、构建产物、schema），
+  以及任何想用“打印出来的树”当哈希输入的地方。
+
+## 2026-09-22 · “名字从哪来”也能把身份绑回解释器：`inspect.getclosurevars` 在 3.11/3.12 给出不同的全局集（P055-PID-Agent）
+
+- 场景：A5 的语料身份要包含 producer/case 的代码定义身份。已经在做 AST 规范化（避开 `ast.dump` 的格式漂移），
+  自认为跨解释器已稳；本机 3.12 全绿，还加了第二个解释器复算脚本。
+- **真正的坑**：身份还折入了“这个定义用到的模块级常量/帮助函数”。我用 `inspect.getclosurevars(fn).globals`
+  决定哪些名字属于这一类——而这个集合是**运行中的编译器**说了算：CPython 3.12 内联了推导式（PEP 709），
+  同一个函数里一个普通的 `__name__` 在 3.11 被报成“已解析的全局”、在 3.12 就不在集合里。
+  于是 digest 依旧随解释器变，而且这个差异 **AST 层看不到**（两边 AST 完全相同）。
+- **怎么发现的**：把钉住 golden 的那套测试放到 uv 建的 3.11 环境里跑，5 条挂；再在两个解释器上把
+  `core_corpus_projection()` dump 成 JSON 直接 diff，2243 行里只有 1 行不同，定位到一个 safety builder。
+  教训：**“我用了 AST 所以跨版本稳”是不够的——只要有一环的信息来自运行时反射，那一环就必须单独证明**。
+- **修法**：名字从**源码**取（`ast.walk` 里所有 `Name`/`Load`，包含嵌套作用域），分类用 `co_freevars` + `__closure__`，
+  值才去模块命名空间里查。名字集在两台机器上一致，身份才可能一致。
+- **顺带的一个产品事实**：安全用例表实际有 13 条，而 spec 里写的 declared count 是 12（`d8b` 是后加的）。
+  不要“顺手改成一致”——那个数在冻结 spec body 里，改了会动 `spec_fingerprint`；正确做法是把两个数并列
+  展示（投影报 13 条 case + 记录 spec declared 12），把差异交给审阅者。
+- 适用场景：任何用反射（`getclosurevars`/`co_names`/`__globals__`/`vars()`）去构造“稳定标识”的代码，
+  以及任何只在单一版本上验证过的“跨版本”声明。
+
+## 2026-09-22 · Blender 自动化五个坑：本地化节点名 / save_as 改路径 / 近垂直 TRACK_TO / 影子像变形（P055-PID-Agent）
+
+- 场景：把 P&ID 复现结果推进成 Blender 3D 模型（116 台设备，14 种参数化形体）。通过 blender-mcp 插件的
+  `127.0.0.1:9876` socket 驱动（裸 TCP + JSON，`{"type":"execute_code","params":{"code":...}}`）。
+- **坑 1 · 界面本地化会毁掉按名字取节点**：中文界面下 Principled BSDF 节点名是 `原理化 BSDF`，
+  `nodes.get("Principled BSDF")` 返回 `None`，于是 `if bsdf:` 整段静默跳过 —— 材质全灰但不报错。
+  正确做法：**按 type 取**，`next(n for n in mat.node_tree.nodes if n.type == "BSDF_PRINCIPLED")`。
+  教训：**任何按显示名索引对象的地方，都要警惕界面语言。**
+- **坑 2 · `save_as_mainfile` 会改掉会话的文件路径**：直接保存后用户当前打开的文件路径被改指向新文件，
+  他下次 Cmd+S 就存错地方。正确做法：加 `copy=True`，只写副本、不动 `bpy.data.filepath`。
+- **坑 3 · `TRACK_TO` 约束在近垂直视角退化**：相机放正上方时约束的 up 轴不稳定，俯视图视角异常。
+  正确做法：近垂直视角直接设 `rotation_euler=(0,0,0)` 并临时 `constraint.mute = True`。
+- **坑 4 · 俯视图里的"几何变形"其实是影子**：低角度太阳（仰角 52°）把 3 m 高的圆柱投影成 2.3 m 长的暗带，
+  看起来像圆柱被压扁成胶囊，白查一轮。正确做法：俯视图关 `sun.data.use_shadow`，或把太阳调陡。
+- **坑 5 · 渲染引擎名**：Blender 5.2 里没有 `BLENDER_EEVEE_NEXT`，用 `BLENDER_EEVEE`
+  （报错信息会列出合法枚举，比猜快）。
+- 附带：**在新场景里建、绝不碰用户已有场景** —— `bpy.data.scenes.new()` + 新建 collection + 手动
+  `coll.objects.link(obj)`，全程不用 `bpy.ops`（避免它把对象塞进活动场景）。收尾把
+  `bpy.context.window.scene` 切回用户原场景。本次用户场景 1019 个对象全程零改动。
+- 适用场景：任何通过脚本/MCP 驱动 Blender、DCC 软件或 GUI 应用的自动化任务。
+
+## 2026-09-22 · 用 TypeSafe 把「几何复现」推进到「语义可读」，且不越过 P0（P055-PID-Agent）
+
+- 场景：CAD 导入按 Charter P0 刻意不推断工程语义，所以 9757 图元导入后是 **0 symbol / 0 connector**，
+  符号语义映射表仍缺。但图纸自带词表：12 个图层名 + 355 条文字（「燃料盐泵A」「氚分离塔T101」「FCV」「DN50」）。
+- 结论做法：用 TypeSafe System One（`jev-latest`）对**每个唯一标注**问两个彼此独立的 Choice 问题——
+  `role`（是什么：equipment/valve/instrument/line_spec/system_area/note/symbol_marker/other）
+  与 `subsystem`（属于哪部分：salt/gas_supply/cover_gas/offgas/tritium/space_purge/generic）。
+  112 标注 + 12 图层，批大小 28、4 个请求并发，**3.11 s / 95.9K in + 18.0K out tokens**。
+  state 用结构化对象（`label` / `layer` / `neighbours`），`instructions` 用对象引用 `labels[i]`，
+  把「附近标注」作为上下文喂进去——近邻信息显著帮助了 `P`/`F` 这类单字母符号的判断（conf 0.99）。
+- 关键经验：**置信度是真信号，不是装饰。** 41/112 两条都 ≥0.90 可直接采用；
+  `尾气处理系统？` 因原文带问号掉到 0.31，`干净`、`预留接口` 掉到 0.29/0.32——模型在真不知道的地方说了不知道，
+  这批低分行就是人工复核队列。反过来，`DN50` 的 role=1.000 但 subsystem=0.510，
+  说明**两个维度要分别看**，不能用一个总分糊过去。
+- 边界：产物 `semantics_candidates.json` 只作为**旁挂候选**，不写进 P&ID 文档。
+  文档里仍然只有几何/图层/文字/块来源——人工正式审批的边界没有被绕过。
+
+## 2026-09-22 · `import-cad --frame` 的 y 轴是翻转的，按直觉填会溢出画布（P055-PID-Agent）
+
+- 场景：把 `气路系统总图.dwg`（939,381 B / AC1032 / 9757 图元）裁到总图本体，得到可直接编辑的画布。
+  按「frame = x0,y0,x1,y1，y0 是上边界」的直觉填 `23780,8160,29480,11670`，画布高度报 3510，
+  但元素实际落到 canvas y **1510→4857**——超出画布，图面下半截被切掉、上半截大片空白。
+- 根因：`cad_import.py:565` 取 `origin_x, origin_y = frame[0], frame[3]`，即原点是 **(x0, y1)**，
+  画布坐标是 `canvas_y = y1 − source_y`。所以 **`y0` 是下边界、`y1` 是上边界**（CAD 的 y 向上）。
+  x 轴没有这个问题，所以「只裁 x 不裁 y」的 frame 看起来完全正常，很容易把问题误判成解码器。
+- 结论做法：正确写法是 `23780,6760,29480,10210` → 9494 元素、画布 5700×3450、图面填满。
+  诊断捷径：先用**只读**的 `POST /imports/cad/plan` 试 frame（毫秒级、不写库），确认 `canvas` 与 `counts.elements`
+  再落库；不要直接正式导入试错。另外 frame 只裁画布、**不裁几何**：框外图元被如实计入
+  `CAD_PRIMITIVES_NOT_IMPORTED`（本次 263 个），不会静默消失。
+- 关键经验：**给「窗口/范围」这类参数，先确认原点和 y 方向，再谈数值。** 只在一个轴上出错时，
+  另一个轴的正确会掩盖问题，让人误以为是渲染或解码的锅。
+
+## 2026-09-22 · 图纸的 extents 不等于图纸的内容，游离图元会把画布撑大 10 倍（P055-PID-Agent）
+
+- 场景：`气路系统总图.dwg` 全幅导入后画布是 **58273.8 × 4772.2**，但总图本体只占最右侧
+  **5437 × 3347**（x 52837→58274）——导入没有错，是图纸自身的 extents 被撑开了。
+- 实测三簇：总图本体 9494 元素；左侧 4347×2705 一片 256 条散碎多段线（全在 `0` 图层）；
+  中部 7 条设计问题清单文字（「待解决问题和工作：」等）。后两者合计占画布宽度 90% 却无内容。
+- 结论做法：全幅版和「图面区域」版**都要留**——全幅是忠实复现（验收用），裁切版是可用画布（编辑用）。
+  判断内容真实范围时别用元素包围盒，先做 **x 方向分桶直方图**：本次 24 桶里有 19 桶为空，
+  主簇一眼可见。另外统计点集时必须同时取 `position`、`start`/`end`、`center`、`points`/`vertices`，
+  漏掉 `start`/`end` 会把所有线段算成坐标 0，得出「所有线段都在左侧」的假结论（本次踩过）。
+- 关键经验：**「图纸范围」是元数据，「图纸内容」是数据。** 二者相等只是巧合，不是保证。
 
 ## 2026-09-21 · 只记 fingerprint 不记 body，等于把旧身份变成只能“信”的数字（P055-PID-Agent）
 

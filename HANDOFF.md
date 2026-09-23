@@ -2,7 +2,485 @@
 
 > 交接文档：每次开新会话先读本文件。更新规则见 `AGENTS.md`「HANDOFF 交接规则」。
 
-## 当前状态（2026-09-21 R7，最新轮次：**A5 corpus identity closeout 本地做完（未 commit、未 push），等远端签 Gate**）
+## 当前状态（2026-09-23 R24 —— **Phase-2B 已签已推（`origin/main = 592e6b9`）；Phase-3 本地做完并已按 Gate 两轮收口（`e7fdbd0`→`ccfa836`→`1f6bbd6`），未 push，等 Gate 定 push 方式**）
+
+- **本轮做了什么**：执行 Gate 授权的 **Phase-3（Drawing Materialization & Production Wiring）**，
+  最小 DoD 未扩大。新模块 `m7_layout_materialization.py`（合同 §15 白名单新增 `PHASE_3_MAY_IMPORT_THE_CONTRACT`），
+  唯一输入 = finalized canonical layout（函数签名里没有 model/prompt/spec/document，**没有地方能塞坐标**）。
+- **Gate 第一轮 HOLD 的两个 P0，已闭**：
+  ① `labels` 参数**删掉**——标签文本从工程行的 `tag` 推导，并用**同一个纯函数**证明布局放的盒子就是该文本量出来的盒子
+  （长度不同的改 tag 在这里拒；长度相同的改 tag 盒子相同、这一层看不见，由 Step 5 工程语义闸拦，**两闸各管一段**）；
+  回读比对新增 `text`/`label`，`symbol.label` 写空并被回读**读**（不许假设空着）。
+  ② **target baseline 在写之前冻结**：`require_empty_target()` + `MaterializationTargetNotEmptyError`；
+  "空" = 没有任何工程内容（默认图层/`system_default` 属于空文档，放行），并发用**已有** `expected_revision` 原子拒绝、冲突为终态。
+- **Gate 第三轮裁决**：`resulting_revision` 不许预测——拆成 `materialization_provenance()`（随写走的五个身份，不含 revision）
+  ＋ `materialization_record()`（读 `result.document.revision` 闭合，**没有** revision 参数）。
+- **门禁**：ruff clean、`validate_contract()` 0、后端 **1495 passed**（Phase-3 新增 43 条）；
+  6 条实跑变异全部变红（标签通道 / 回读不比文案 / 不证盒子 / 去 preflight / 身份里塞预测 revision）。
+- **下一步**：等 Gate 回答 push 方式（授权 push / 不 push 按 diff 复核 / 压成单 commit）；签后按 reply63 的方向裁决
+  直接开始 **自然语言纵切**（一句中文 → DiagramSpec → 确定性链 → UI 出图 → 第二句中文改语义 → 重画 → 导出）。
+
+- **Step 5 已签已推**：`2676378`（canonical layout identity）+ `592e6b9`（按 Gate 收口：**两道**保持证明 ——
+  engineering semantic（tag/class/type/measurement/连接端点·端口·medium/方向/system·loop，**不含** symbol_key 与 layout_intent）
+  ＋ layout-input（symbol binding / rendering kind / intent / adapter topology identity，结构相等、不新增身份轴）；
+  并修正措辞：projection 是几何投影，canonical layout digest 比它宽（tag 变、坐标不变 → projection 相同、digest 必须不同）。
+- **Gate 裁定**：Step 1–5 与整个 **M7-2 Phase-2B Release Gate = CLOSED @ 592e6b9**（CI 四 job 实测全绿：
+  Backend 3.11 / Frontend Node 24 / Browser Chromium / M5 72-case）。
+  **Phase-3 已授权，最小 DoD 已固定**（不再扩大）：唯一输入 = finalized canonical layout；确定性 materialization；
+  完整落图且不改工程语义；**只复用现有 production writer**（`POST /api/v2/documents/{id}/transactions` →
+  `DocumentService.apply_transaction`）；provenance 全链（DiagramSpec → topology → snapshot → canonical digest →
+  materialization digest/version → production transaction → revision）；先用 A/B fixture 证明单份无坐标 DiagramSpec 真能出图。
+- **方向审视（新开会话，独立线）**：远端结论是「方向没根本性偏差，但顺序偏了」——应**暂停纵向加深布局证明**，
+  把 Phase-2B 降级为「稳定编译后端」，立即打通 **NL → DiagramSpec → 确定性链 → UI → 自然语言修改 → 导出** 的
+  产品纵切（每轮验证上限三层：contract / regression / product E2E；CAD 不再作主验收对象）。
+  这与 Gate 的 Phase-3 授权不矛盾：Phase-3 正是产品纵切所需的最后一公里，做完立即转 NL 纵切。
+
+## 近期轮次（2026-09-23 R22 —— Step 4 已签已推；Step 5 本地完成等签）
+
+- **`origin/main = f1acb21`**（Step 4：内容测量 + 派生画布 + 最终几何校验 + stroke 包络 + 包含证明）。
+  Step 5 本地：**`2676378`** → **`592e6b9`**（两道保持证明的分层修正）。
+- **Step 5 交付**：新模块 `auto_layout_identity.py`（闸门一：topology 侧工程 digest vs **从 plan live 字段重建**的同一 digest，
+  两侧共用一种行形状但**不共用一次调用**；闸门一的另一半是纯几何覆盖：设备/连接各恰好一次、不许凭空多）；
+  canonical projection（三表合一、7 字段、量化、`-0.0` 归一、重复 sort key 与未声明行字段硬失败）；
+  digest 信封 = `LAYOUT_DIGEST_INPUTS` 闭集（9 个 volatile 名逐个硬拒绝）；replay 只比身份。
+  plan 新增 `engineering_systems` / `engineering_entities` / `PlanConnection.tag`（引擎收到的工程事实记录），
+  `SEMANTIC_LAYOUT_PLAN_DIGEST_VERSION` **/6 → /7**；`LAYOUT_DIGEST_VERSION`、`LAYOUT_PROJECTION_VERSION` 不动。
+- **Step 5 门禁**：ruff clean、`validate_contract()` 0 problems、后端 **1446 passed**（新增 58 条）、
+  6 条实跑变异全部变红（忽略闸门 / 丢覆盖 / 取消排序 / 放行 volatile / 去量化 / 清空 snapshot digest → 13 红）。
+- **签后一条命令**：`git push origin 2676378:main` → 等四 job → 按网关裁定进入收口（Phase-2B release gate 或 Step 6）。
+- **TypeSafe 画图**：UI 侧 key/Base URL/model/开关（`App.tsx` typesafe-settings）+ 后端
+  `typesafe.py` / `typesafe_planner.py` / `/provider/typesafe/status|verify` / `/documents/{id}/agent/typesafe-plan` 均已落地。
+
+## 近期轮次（2026-09-23 R21 —— Step 3 已签已推；Step 4 经两轮 Gate 修正后等签）
+
+- **`origin/main = c439e47`**（Step 3：冻结 symbol geometry + 端点绑定 + 正交路由 + 标注）。
+  Step 4 range（无共享文档改动）：`ad00e2c` → `1b0d4dc` → `6daa563` → `f1acb21`。
+- **Step 4 交付**：`auto_layout_canvas.py`（content bounds 闭集 = 节点/管路/标注的**渲染范围**；margin 按 density 档位；
+  aspect class 是比例且只增不减；orientation 定方向；无裁剪校验；端点 escape 段收窄的交叉检查）、
+  `PRESENTATION_STROKE_POLICY`（symbol_outline 1.5 / connector 1.75 / leader_line 1.0 / annotation_text 0 的 reach，
+  归 `layout_rules_version`，不新增 digest 轴）、`m7_symbol_geometry` 冻结时校验
+  `unstroked shape bounds ⊆ intrinsic box`（含 SVG 端点→圆心圆弧参数化）、契约 §13.1–§13.9、任务书 §13、
+  plan 字段集 +`content_bounds` → plan digest `/6`。门禁：ruff clean、两份 `validate_contract` 空、
+  **pytest 1386 passed**（本轮起点 1373）、14 条变异全部确认变红（其中 3 条“第一版全绿”已补 fixture）。
+- **历史改写（按网关裁定）**：记账提交 `b5e1765`（HANDOFF/踩坑日志）已 **drop**，range 内不再含共享文档改动；
+  两个文档仍在**工作区**更新（未提交）；记账与本轮可回溯信息写在 `.freebuff/remote-bridge/m7-step4-accounting.md`
+  （`.freebuff/` 被 .gitignore 忽略，所以它是记录位置而非提交位置）。旧 tip `b307dae` 仍可从 reflog 找回。
+- **签后一条命令**：`git push origin 6daa563:main` → 等四 job → 直接进 Step 5（canonical projection →
+  语义保持校验 → `canonical_layout_digest` → deterministic replay），网关已批准不必再申请开工许可。
+
+## 近期轮次（2026-09-23 R19 —— **等远端签 Step 2 checkpoint（`ef0fb1d..c319e4e`），本地已就绪，卡在浏览器扩展断线**）
+
+- **`origin/main = 9ab3900`**（M7-2 Phase-2B Step 1，CI 35807302063 四 job success；Phase-2A 在其下 `1f2de99`）。
+  本地 `main` 仍是 `4e661b1`（M6 Phase-2B-1，未签）——**M7 线一律显式推 SHA**（`git push origin <sha>:main`），从不推本地 main。
+- **待签的两个提交（未 push）**：`ef0fb1d`（Step 2 确定性放置）＋ `c319e4e`（Step 2 唯一 blocker 的修复：
+  `grouped_by_zone` 无 zone 语义时**硬拒绝**，删掉 `GROUPING_FALLBACKS`，plan digest 升 `/3`）。
+  门槛已过：ruff clean、两份 validate_contract 空、pytest 1258 passed。
+- **卡点（非代码）**：`.freebuff/remote-bridge/53-chat-body.txt` 已写好（Step 2 修复报告），但 `bsk` 报
+  `0 browsers connected` —— 浏览器扩展断线，重发前需要人把浏览器/扩展连回来。连回后一条命令：
+  `bash .freebuff/remote-bridge/send.sh .freebuff/remote-bridge/53-chat-body.txt` → `bash .freebuff/remote-bridge/poll53.sh`。
+- **Step 3 方向已收（reply52）但按纪律未开工**：`SymbolRegistry` → 冻结 `SymbolGeometryCatalogSnapshot`（只给
+  事实/约束，不给 x/y/rank/canvas/route）→ 先 materialize 几何并**必要时重算 placement** → 才 routing；
+  新增 `symbol_geometry_catalog_digest`（`m7-symbol-geometry-catalog-digest/1`）进 `LAYOUT_DIGEST_INPUTS`，
+  `LAYOUT_DIGEST_VERSION` 升 `m7-layout-digest/2`，`layout_rules_version` 不被偷塞。
+- **本轮关键教训**：① "假的守卫"不只指假绿测试，也包括**变异选得不对**——我第一次的"引擎假装排版"变异
+  只加了注释，测试当然不红，重做成真的写入 `(0,0)` 才有 5 条变红；② 校验器里 `.index()` 在名字缺失时会
+  抛异常而不是报问题，等于让坏声明"无报告"（已改为先判在不在，再比位置）；③ 一条测试断言
+  `preview_document` 有 `preserve_positions` 参数，实际它是 `AutoLayoutRequest` 的**字段**——
+  断言写错方向会让守卫看着存在但什么都没验。
+- **M7 已完成**：Phase-1 `b339039` → **Phase-2A CLOSED @ `6250f93`**（CI 35802706611 + Visual baselines
+  35803207406 双绿）。交付：两轴 assessment（valid × complete）、逐操作回执、`synthesis_proposal_evidence`
+  append-only（schema v9/v10）、后台拒绝 partial 完成会话、六分支前端决定循环、确认界面显示 197/120/77。
+- **M7-2 Phase-1 Design & Contract = CLOSED @ `07e93d6`**：`m7_layout_contract.py` + `docs/m7-2-deterministic-layout.md`
+  + 绑定/表层/变异测试；含 digest/projection 版本号、数值规范化（1e-6、禁 NaN、-0→0）、复合排序键
+  `(placement_kind, engineering_id)`、bounds 归包络、`preserve_positions` 按路径分流。
+- **已授权开工：M7-2 Phase-2A — DiagramSpec Adapter**（远端 reply49）。只做 adapter：
+  `DiagramSpec → validate → adapter → 确定性语义拓扑输入 → STOP`；禁止产生 x/y、width/height、waypoints、
+  走线、标注、画布，禁止改 AutoLayoutEngine 放置算法，禁止新 HTTP/MCP/UI 表层。fixture A 正向、C 硬拒绝（不得静默 strip）。
+- **本轮关键教训**（已写入项目内日志）：① 声明在一边、事实在另一边——`global_failure_reason` 只在证据行、
+  assessment 上没有，导致合法的 `not_evaluated` 被新前端判成契约违规（写边界测试时才发现）；
+  ② 未被 push 但**真实库已执行过**的迁移等同于已发布：v8/v9 都不能原地改，只能加 v10；
+  ③ 违规 token 若匹配既有表层名（`auto_layout` vs `preview_auto_layout`）会把 legacy 报成新违规；
+  ④ 单字段排序键证明不了全序，而裸字符串排序键会静默变成字符列表。
+
+## 近期轮次（2026-09-23 R17 — M7-2 Phase-2A CLOSED / Phase-2B Step 1）
+
+- **`origin/main`：`07e93d6`（Phase-1）→ `1f2de99`（Phase-2A，已签已推）→ 本地 `9ab3900`（2B Step 1，待签）**。
+- **Phase-2A 交付**：`m7_diagram_spec.py`（wire-form 几何硬拒绝：按字段路径拒绝、相对锚点同罪、
+  **拒绝而非 strip**）+ `m7_diagram_adapter.py`（`SemanticTopology`、canonical `(kind, engineering_id)` 排序、
+  `spec_semantic_digest == topology_semantic_digest` 无损等式、独立版本化的 adapter digest）。
+  gate：1152 passed；三条变异（去扫描 / 让锚点过 / 去排序）均变红。
+- **Phase-2B Step 1 交付**：`auto_layout_semantic.py` + 契约 §8.2 + 任务书 §11 + 两类测试（1203 passed）。
+  `LAYOUT_INTENT_CONSUMPTION` 把六个维度的"接收步 / 施加步"变成可对拍的数据；
+  `CANVAS_DERIVATION_CHAIN` 十段焊死"画布是输出"。
+- **向远端提的两个新问题**：Step 2 的 `density` 是映射到既有 `node_gap/component_gap` 离散档位，
+  还是由 Step 2 自己定义间距规则并把规则版本作为 digest 输入（我倾向前者/后者中的后者）；
+  以及 Phase-2A 文本扫描收窄是否挂到具体 milestone。
+
+## 近期轮次（2026-09-22 R16 — M6 Phase-2A CLOSED / Phase-2B-1 边界）
+
+- **`origin/main = 3147a22`**（Phase-2A final anchor；本地 `main` 领先 1：`4e661b1` 未 push）。
+- **M6 Phase-2A 收尾**：`156481a`（治理核心）。随后远端发现报告一处长度不一致 → 查清是**文档自相矛盾**
+  （同节一处 `m6patch_<digest[:16]>`、一处 `m6patch_<sha256>`，而代码一直是对的），修法不是改文字而是
+  **把五类持久身份格式降为契约数据**（`PERSISTENT_IDENTITIES` / `identity_prefix()`），并让测试从任务书里
+  正则抽出所有 ``前缀<宽度>`` 与声明对拍 → `3147a22`。该提交的第二个守卫**第一版是假绿**（断言带引号的
+  `"m6prefix_"`，而真实字面量是 f-string），靠变异检查才发现，已记入 `REUSE_AND_PITFALL_LOG.md`。
+- **M6 Phase-2B-1 已开工**：`4e661b1` 落契约第 §12 节（写入顺序 / 授权绑定 / attempt↔transaction 分离 /
+  补偿模型 / 原子性声明）+ `m6_governed_models.py` + 20 条契约测试。**关键发现**：`store.save` 本身
+  就是一个 `BEGIN IMMEDIATE`，工程 revision 与它的 provenance 已同事务，所以
+  `TWO_PHASE_RECOVERY_PROTOCOL_REQUIRED = False`（缝存在与否由契约规则强制二选一，不允许沉默）。
+  剩下的 schema v8 / 服务 / 七条拒绝路径尚未写。
+- **更早一轮**：`origin/main = 0db2585`。
+- **M5 收口**：`reports/m5-release-readiness/`（md + json：六条 track 的 anchor / commits / CI+Visual run / 不变式 /
+  证据指针 / **重开触发条件** / `claims_not_made`）+ `scripts/m5_release_readiness.py`（身份**重算**而不是照抄）+
+  `backend/tests/test_m5_release_readiness.py`（同一 verifier 跑在 CI 里；三条变异都会红）。
+  CI **35710996168** 四 job 全 success。状态：deterministic v3 CLOSED・A5 CLOSED・B CLOSED・TypeSafe ACCEPTED・
+  A6 readiness CLOSED・**A6 real-model qualification BLOCKED_EXTERNAL**（外部 provider 依赖，不阻断发布）。
+- **M6 已开**（远端 `reply26` 固定十条口径）：域名 **Governed Semantic Ingestion**，第一阶段**只做设计与契约**。
+  交付：`docs/m6-governed-semantic-ingestion.md`（任务书）+ `backend/agentcad/m6_ingestion_contract.py`（治理契约数据）
+  + `backend/tests/test_m6_ingestion_contract.py`（文档 ↔ 数据一致性 + 表层边界 + 变异）。
+  **已推送**：`4b2c1be`（初稿）+ `a35d20f`（六项裁定并入），`origin/main = a35d20f`，
+  CI **35729718047** 四 job 全 success（940 passed / ruff clean / `gate_failures []` / digest `96b999fa…` 未漂）。
+  **M6 Phase-1 Design & Contract = CLOSED**；下一阶段 = **Phase-2 Minimal Governed Vertical Slice**（仅 domain/service 层，暂不开表层、暂不接 R8 批量数据）。
+- **未提交**：M6 三个新文件 + `PROJECT_CHARTER.md` §51 改写；`HANDOFF.md` / `REUSE_AND_PITFALL_LOG.md`
+  （里面同时有另一会话 R8 的未提交文本，所以不整文件提交）。未跟踪：`.workbuddy-ai/`、`reports/pid-repro/`（另一会话产物）。
+- **下一步**：把 M6 任务书通报远端 Gate（十条口径的落地形式 + 六个未决问题的裁定请求）；签署后再进入
+  candidate schema 实体化与 review queue 表层（**那时才登记表层**）。
+
+## 本轮进展（2026-09-22 R13：**M6 Phase-2A 已做（Governed Candidate Core），等 integrity fix 后的 Gate**）
+
+- **远端裁定（`reply28`/`reply30`）**：Phase-1 Design Gate **已签**（`a35d20f` 已 push，CI 35729718047 全 success）；
+  Phase-2A **授权开工**，边界：仅内部 domain/service 层，**暂不开 HTTP/MCP/UI**、不接 R8 数据、不接 TypeSafe/LLM 摄取、
+  不做 apply-v2/undo。
+- **已实现**：`m6_candidate_models.py`（domain schemas）+ `m6_candidate_core.py`（治理核心）+ schema **v7**
+  三张 insert-only 表（`semantic_candidates` / `review_decisions` / `confirmed_semantic_findings`）+ store 方法。
+  三个关键设计：**状态从 append-only 日志回放而不是读列**；**`patch_id = m6patch_<完整 digest>`**；
+  **编译器拒绘不猜**（overwrite → conflict，destructive → forbidden，未支持意图→ reason code）。
+- **integrity fix（第一遵）**：`review_decisions`/`confirmed_semantic_findings` 内部链改为**真外键 +
+  composite FK + ON DELETE RESTRICT**（仍不引用 `documents`）；确认的 decision + finding **同事务**提交
+  （故障注入测试证明）。schema v7 未发布，按远端裁定**原地修**，不造 v8。
+- **identity fix（第二遵，两个 blocker）**：① 编译生成元素 id 从 64 bit 改为**完整 256 bit**
+  （`el_m6_<sha256>`，它将成为真工程对象身份）；② `review_decision_id` 改为
+  **`review-decision-v1` + 决策的不可变内容**（candidate/kind/from/to + reviewer_identity/action/note +
+  baseline revision·identity·path·digest_version·digest + resolution/successor），`decided_at` 排除——
+  否则“同一位工程师基于 revision 7 与 revision 8 的两次不同确认”会碰成同一个审计事件，
+  而 `(candidate_id, review_decision_id)` 是 finding 的外键基础；③ 语义值规范化改为
+  **path-aware**（`equipment_tag`/`equipment_class` → identifier 规则；`annotation_role`/`existence` → exact；
+  未登记 path → hard fail，不回退 tag 规范化）。
+- **门禁（本地）**：`ruff` ✓・`pytest -q` **988 passed**・harness ✓・acceptance `gate_failures []`・
+  `validate_contract()` []・无新增 HTTP/MCP/UI 表层・`reports/m5*` 一字未改。
+- **证据**：`scripts/m6_phase2a_walkthrough.py` → `reports/m6-phase2a/walkthrough.txt`（正向链 / replay digest /
+  apply 拒绝 / baseline 漂移 / cascade 存活），并由测试**执行**（不是引用）。
+- **下一步**：签 Phase-2A Gate 后进 **Phase-2B**（apply-v2 governed write + provenance + compensating undo + replay）。
+
+## 本轮收口（2026-09-22 R12c：**M6 Phase-1 Design Gate 已签、已 push、CI 全绗**）
+
+- **远端裁定（`reply28`）**：M6 Phase-1 Design Gate **签署通过**；十四条逐项 PASS（含 region 多 selector +
+  revision identity、review 独立生命周期、authoritative baseline + optimistic conflict recheck、calibration 独立
+  Gate、canonical patch + semantic poststate replay、raw byte equality 禁止、undo 为补偿事务、Phase-1 无偷跑）；
+  授权 `git push origin a35d20f:main`。
+- **已推并验证**：`0db2585..a35d20f` 两条提交；CI **35729718047** 四 job（Browser / M5 72-case gate /
+  Backend 3.11 / Frontend）全 success；3.11 上 `pytest` **940 passed**、ruff `All checks passed`、
+  acceptance `gate_failures []`、`core_corpus_digest 96b999fa…` 与冻结 v3 一致。本阶段无 UI 变化，未 dispatch Visual。
+- **记账口径**（远端）：`REUSE_AND_PITFALL_LOG.md` 内容仍是未提交本地文本，所以那两条 pitfall 不算 `a35d20f`
+  的发布交付物；不阻塞，继续维持共享文件隔离规则。
+- **下一步（远端已定边界）**：**M6 Phase-2 — Minimal Governed Vertical Slice**：
+  `source artifact → SemanticCandidate → review decision → ConfirmedSemanticFinding → deterministic patch
+  compilation → apply-v2 dry-run / conflict check → 单次 governed write → provenance + undo/replay evidence`。
+  先做内部 domain/service 层最小闭环，**暂不开放 HTTP/MCP 表层，也暂不接 R8 的 112×2 批量摄取**。
+
+## 本轮修订（2026-09-22 R12b：**远端六项裁定并入契约 —— 含一处被明确要求改掉的既有选择**）
+
+- **远端对 `4b2c1be` 的定性（`reply27`）**：架构全 APPROVED（candidate/patch 分离、producer 权限模型、
+  review 状态机、apply-v2 唯一写者、破坏性默认拒、provenance 模型），但 **push 暂未授权** —— 六项裁定必须
+  写回任务书与机器契约，replay 契约需要语义修改。要求**在其上再加一个纯 design/contract 提交，不 amend**。
+  仍不得加 runtime / HTTP-MCP 表层 / 持久化实现 / 真值语料。
+- **裁定①区域**：三类 selector 都存（`geometry_selector` / `element_refs` / `text_spans`）+ frame 字段；
+  `region_id` 的契约是「同一 source revision 下可确定性重定位」而非「坐标不变」，
+  **revision 变则必须产生新区域身份**。
+- **裁定②review 持久化**：**同库、独立聚合**；三实体各有不可变 ID；**删除文档/元素不得级联删审阅历史**；
+  「确认并应用」可同事务，但 `review_decision_id` 只能被引用、不能被折叠。
+- **裁定③conflict 基准**：以 **apply-v2 管理的 current committed engineering semantic state** 为唯一权威基准
+  （不是原始图纸 / candidate / TypeSafe 输出）；比较键 = 目标工程身份 + 语义路径；**apply 前必须重读 baseline**，
+  `reviewed baseline != current authoritative value` 即 `conflicted` —— 即**乐观并发控制**，并配套新机器不变量：
+  `confirmed + baseline changed before apply → conflicted → 禁止进入 applied`，解除 conflict 必须产生
+  **新的** reviewer decision。
+- **裁定④校准**：`measured_on_gold_corpus` 在 v1 **默认禁止**，必须独立 Calibration Gate（仍由远端 Release Gate
+  签）并附八项证据；**不得写「达到 N 条即自动 calibrated」的规则**（`CALIBRATION_CLASS_AUTO_PROMOTION_RULE = None`）。
+- **裁定⑤replay（唯一被要求改掉的既有选择）**：删掉「原始序列化字节完全相同」，改为两层 digest ——
+  `REPLAY_CANONICAL_PATCH_MUST_MATCH` + `REPLAY_SEMANTIC_POSTSTATE_MUST_MATCH`，显式排除
+  `transaction_id` / `timestamps` / `audit_time` 等 volatile provenance；冻结输入加 `authoritative_baseline_revision`。
+  远端指出这与 A5「把运行时 metadata 混进身份」是同一个错 —— 已记入 `REUSE_AND_PITFALL_LOG`。
+- **裁定⑥undo**：不增加 candidate 级 `reverted` 状态（本地原选择被批准）；但 **transaction 层**必须能表达
+  `TRANSACTION_STATES = applied / reverted / superseded`，界面需要时用派生展示态
+  `confirmed + last applied transaction reverted`，不得变成新的权威 candidate 状态。
+- **自检新增 5 类检查**：区域 selector 与 revision 换身份、review 持久化三条、conflict 基准与乐观并发
+  （含「入 `applied` 必带 `baseline_recheck`」与「存在 `confirmed → conflicted` 回落边」）、校准闸、
+  replay 两层 + 排除 volatile。测试从 23 条增到 **33 条**，新增 5 条变异含**baseline-change → conflicted** 那条。
+- **门禁（本地）**：`ruff check backend` ✓・`pytest -q` **940 passed**・`validate_contract()` 无违规。
+
+## 本轮进展（2026-09-22 R12：**M6 第一阶段（设计与契约）本地完成 —— 任务书 + 可被反驳的治理契约**）
+
+- **远端十条口径的落地形式**（`reply26`）：① `SemanticCandidate` **独立建模**，现成的 `SemanticDiff` /
+  `StructuredEngineeringPatch` 只在 `confirmed → compile → apply-v2` 段复用；② 规则引擎 / TypeSafe / repair-LLM
+  职责分离，**都只产出 candidate**；③ **confidence 永远不等于 authority**；④ review queue 是显式状态机，
+  **禁止 `proposed → applied`**，人工确认必须记录 reviewer action；⑤ 人工确认的是**事实**不是裸 patch；
+  ⑥ **apply-v2 是唯一生产写入口**；⑦ 删除 / 覆盖 / 拓扑替换默认禁止（"模型认为旧内容错了"首先产生
+  conflict candidate）；⑧ provenance 要能回答四问；⑨ **undo 与 replay 分开**；⑩ gold corpus 从零建
+  （R8 的 112×2 只能进 `research_examples/` / `candidate_seed_material/`）。
+- **架构的机器形式**：八层链 `imported_artifact → source_region → semantic_candidate → review_decision →
+  confirmed_semantic_finding → structured_engineering_patch → apply_v2_transaction → committed_revision`，
+  每层一个不可变 id；`validate_contract()` 断言**有工程写权限的层恰好是 `apply_v2_transaction` 一个**。
+- **两条性质是"遍历声明的边"验证出来的，不是表格里的一句话**：`applied` 只有一条入边且来自 `confirmed`；
+  whitelist 为空时进入 `confirmed` 必须带 `reviewer_action` + `review_decision`。v1 的
+  `AUTO_ACCEPT_WHITELIST = ()`——要开任何自动接收类别必须单独签一个 Gate。
+- **自检抓到我自己一个真错误**：我一开始给 `committed_revision` 也标了工程写权限；它记录的是事务产出的**结果**，
+  权限属于事务而不属于被它创建的 revision。这正是"把权限写成数据"的用处。
+- **未决问题（明确留给 Gate，不自作主张）**：`source_region` 的形式、review queue 的持久化位置、conflict 的
+  比较基准、`calibration_class` 何时可写 `measured_on_gold_corpus`、replay 的比较粒度、是否需要独立的
+  `reverted` 状态（本任务书选择不加，撤销记录在事务层）。
+- **门禁（本地）**：`ruff check` ✓・`pytest tests/test_m6_ingestion_contract.py` **23 passed**・
+  `validate_contract()` 无违规・文档 ↔ 契约逐名核对（层 / 状态 / 禁止边 / 策略意图 / 语料维度 / 候选字段 /
+  producer）✓・活的 OpenAPI + MCP 表层里没有任何 candidate/ingestion 形状的路由 ✓。
+
+## 上一状态（2026-09-22 R10：**B（重试契约完整性）与 TypeSafe（判读式画图 + 凭据卫生）都已进 `origin/main`**）
+
+- **`origin/main = 72f364e`**（本地 `main` 同步于此，无领先提交）。本地分支 `local-pre-replay = 925ced2` 保留了重放前的旧 TypeSafe 链（仅供对照，已不在 origin）。
+- **五个提交，两段**：
+
+  ```
+  5fc0964
+    └─ 263808f  test(m5): check the other half of the attempt contract…   ← B（CI 35706204970 success / Visual 35706717144 success）
+        └─ eabb58c  feat(agent): configure a TypeSafe key in the panel…
+            └─ 50653a5  feat(agent): report which TypeSafe key…
+                └─ 7ce1395  test(agent): refuse to let a TypeSafe credential reach the repository
+                    └─ 72f364e  fix(agent): give the TypeSafe fields names of their own…  ← 修 7ce1395 的 CI 红
+  ```
+
+  CI **35707486170 (72f364e)** 四 job 全 success（3.11 上 `pytest` 905 passed），Visual **35707535636 (72f364e)** success。
+- **一次真实的 CI 红（必须记住）**：`7ce1395` 的 Browser job 因 `strict mode violation: getByRole('textbox',{name:'Base URL'}) resolved to 2 elements` 而红——
+  我把新字段命名为「TypeSafe Base URL」，而 Playwright 的 `name` 默认**子串匹配**，旧字段的选择器不再唯一。
+  本地 node 单测发现不了（不渲染 React）。修法：改名 + `frontend/e2e/typesafe-panel.spec.ts` 4 条 hermetic 断言
+  （字段名唯一 / 来源提示 / 空 key 报错 / typesafe-plan 路由且 body 无 `api_key`），并用标签改回去的变异验证它确实会红。
+- **远端裁定要点（reply23）**：① B 正式改写为 **F6 retry-contract integrity + first-attempt regression guard**（不再追整体 S@1）；
+  ② 旧的 `39d8b75` **不得**从 TypeSafe 链上 push（ancestry 里含两个 TypeSafe 提交），必须从 `5fc0964` 干净重放；
+  ③ 重放后 patch-id 一致、门全绿则**预授权**直接 push；④ TypeSafe 在 B 之后重放到新 main 上，并加一条凭据硬检查。
+  四件事都按此执行：`39d8b75→263808f`、`2270ab6→eabb58c`、`a514bc3→50653a5` 的 patch-id 两两**完全相同**。
+- **B 的内容**：acceptance 回归测试同时钉——无重试契约的 case 首轮必须成功；只有 F6 能声明重试且
+  `required_attempts` 必须等于冻结 `F6_CONTROL_FLOW[operator_id]` 且恰在该轮收敛；`S@1 == 无契约 case 数 / 总数`
+  （动态推导，不写死 60/72）。反向断言能变红由 synthetic case 单独证明。
+- **TypeSafe 第三个提交（凭据卫生）**：`backend/tests/test_typesafe_credential_hygiene.py` 扫全部文本文件找**形状**
+  （`apikey_` 字面量 / 24 位以上 Bearer / `TYPESAFE_API_KEY=<字面值>` / JSON body 里 24 位以上 api_key），
+  并断言 CI workflow 一个字都不提 TypeSafe 凭据、提交的 evidence 只记录来源与有无；扫描器自身对合成样本会报红。
+- **门禁（本地，final SHA `72f364e`）**：`ruff` ✓・`pytest -q` **905 passed**・harness 9/9・acceptance **72/72**
+  （六 family S@5 全 1.0、`gate_failures []`、safety 13/13、`core_corpus_digest 96b999fa…`）・coverage exit 0・scale exit 0・
+  qualification exit 3（按契约）・前端 `npm test` **149 passed** + build ✓・`npm run test:e2e` **56 passed / 1 skipped**
+  （视觉基线 10/10 未变）・shared 2 passed・secrets ✓・面板 Playwright 检查 PASS・live acceptance PASS（真 key）。
+  本机 e2e 用 `PID_AGENT_E2E_API_PORT=8137 PID_AGENT_E2E_PREVIEW_PORT=4391`（默认 8000 被另一会话占用，8123 被一个 http.server 占着）。
+- **未提交**：`HANDOFF.md` / `REUSE_AND_PITFALL_LOG.md`（里面同时有另一会话 R8 的未提交文本，所以不整文件提交）。
+  未跟踪：`.workbuddy-ai/`、`reports/pid-repro/`（另一会话产物）。
+- **下一方向**：远端排期 **A6 qualification**——已做完**零代码 readiness check**，见下节。
+
+## 本轮进展（2026-09-22 R11：**A6 readiness check：其余前置全满足，唯一缺口是 provider 凭据**）
+
+- **远端裁定（reply23）**：B = **CLOSED**（语义固定为 F6 retry-contract integrity + first-attempt guard，不是追 S@1）；
+  TypeSafe = **ACCEPTED @ 72f364e**；**不做** F6 预期重试 UI（那是 benchmark 诊断，已在 spec/report 里有契约）；
+  下一步只做 A6 **零代码 readiness check**：先查清合约与本机凭据，有凭据就跑 24 条，没有再报 readiness 并停。
+- **合约（读代码得出）**：OpenAI-compatible 端点；`PID_AGENT_LLM_BASE_URL` + `PID_AGENT_LLM_MODEL` **两者必须有**
+  （`PID_AGENT_LLM_API_KEY` 可选，别名 `AGENTCAD_LLM_*`）；用例集 = dev 4/family × 6 = **24**（已实跑确认）；
+  门槛 `model_s5_overall ≥ 0.80` + `model_family_min ≥ 0.5` + safety smoke 100%；退出码 0/2/3。
+- **本机扫描（只看名字）**：仅 `~/.zshrc` / `~/.zshenv` 里的 **TypeSafe** 凭据；无 `PID_AGENT_LLM_*`；
+  无 Ollama(11434)/LM Studio(1234)（5000 是 macOS AirPlay）；`.env` 只有 `.env.example`；`launchctl getenv` 无。
+  → 项目自己的 qualification 凭据在本机**不存在**，且**没有**拿 TypeSafe key 顶替。
+- **其余前置已满足**：设两变量指向 loopback 探针（不发请求）后 `configured_provider()` + `ModelRepairPlanner` 成功构建，
+  identity 带 `provider_class='openai-compatible'`、`prompt_fingerprint db205459…`、`schema_fingerprint f2b11350…`；
+  oracle/orchestrator/safety/证据复算器由 CI 905 tests 覆盖；deterministic 侧未动（acceptance 72/72、digest `96b999fa…`）。
+- **产物**：`reports/m5-qualification/readiness.md` + `readiness.json`（`status=awaiting_real_model_qualification`，exit 3），
+  commit **`a92044f`**（本地，**未 push**）。凭据到位后的命令写在报告第 4 节。
+- **远端裁定（reply24）**：**A6 readiness = CLOSED**；**A6 real-model qualification = BLOCKED（外部 provider 依赖）**；
+  M5 deterministic v3 / A5 / B / TypeSafe 各自已收口。明确要求：**不要为了消掉 exit 3 随便接一个端点**，
+  也不要拿 TypeSafe 顶替 repair planner provider；只有拿到“真正准备采用的 repair-agent 模型配置”才重新打开 A6。
+  `a92044f` 已获授权 push（已推，`origin/main = a92044f`，CI **35708328119** 四 job 全 success；
+  readiness 证据不要求单独跑 Visual baselines）。
+- **重新打开 A6 的条件（写给下一个会话）**：有 `PID_AGENT_LLM_BASE_URL` + `PID_AGENT_LLM_MODEL`（+ 必要时 `PID_AGENT_LLM_API_KEY`），
+  且该 provider/model 就是实际候选；届时直接跑冻结的 24-case dev qualification，**不改** threshold/corpus/prompt contract/oracle/family 分母。
+  结果语义固定：exit 0 = QUALIFIED、2 = 真跑了但未达标（真实能力发现，不得调低门槛解释）、3 = 前置缺失。
+  证据写 `reports/m5-qualification/qualification.json` + 同目录 artifact，同时记录**非秘密 identity**
+  （provider_class / base_url_class / model / planner_version / prompt_fingerprint / schema_fingerprint / candidate_sha / core_corpus_digest）；
+  不得提交 key、Authorization header、带密请求体或可反推凭据的日志。
+- **可继续的下一步**：远端说“不必等 A6”，可进入下一里程碑（尚未定义）。
+
+## 上一状态（2026-09-22 R8：**真实图纸 `气路系统总图.dwg` 在本地 pidagent 上复现完成 + TypeSafe 语义索引**）
+
+- **本轮性质**：用户驱动的**演示/验收轮**，非 Charter milestone。不改架构、不改版本轴、不动语料；
+  git 工作树干净（`f60693d` 之上无新提交），产物全部落在 `reports/pid-repro/`。
+- **拉起**：`.venv/bin/agentcad serve --host 127.0.0.1 --port 8000`（后端同时托管已构建前端）。
+  旧进程（Sep 21 10:02 启动，早于 `f60693d`）已优雅 TERM 重启，新 PID 13802，`/health` 200。
+  前端 dist（Sep 21 15:44）经比对**不比任何前端源码旧**，未重建。
+- **计时（本次实测，口径见报告）**：
+  | 阶段 | 服务端 | 端到端 | 产物 |
+  |---|---|---|---|
+  | 只读预演 `plan`（冷启动） | 4,197 ms | 4.21 s | — |
+  | 全幅复现 | 4,001 ms | **8.37 s** | `doc_d17f1c7d174f` · 9757 元素 |
+  | 图面区域复现 | 3,895 ms | 7.93 s | `doc_72dabc6268d8` · 9494 元素 |
+  | TypeSafe 语义索引 | — | 3.11 s | `semantics_candidates.json` |
+  **「画完」= 8.4 s**（含 939 KB 上传 + 9757 图元响应回传；服务端自身 4.0 s）。
+- **复现保真**：`autocad-core-console` 路线 9757 图元 / **0 块定义缺失**，对比仓库既有 LibreDWG 文档
+  `doc_32774539f798` 的 9242 / 157 缺失（多 515 图元）。图层 12 个全保留（含中文图层名
+  `阀门`/`管道`/`覆盖气`/`仪表`/`取样`）。诚实缺失报告：hatch 边界 128、旋转文字 104、图案填充 7。
+- **图幅发现**：图纸自身 extents 被游离内容撑到画布 **58273.8×4772.2**，图面本体只占最右 5437×3347
+  （9494 元素）；左侧 256 条散碎多段线（`0` 图层）+ 中部 7 条设计待办文字是撑开画布的元凶。
+  故保留**两份**：全幅版（忠实复现，验收）+ 图面区域版（可用画布，编辑）。
+- **踩坑（已双写日志）**：`frame` 的 **y 轴是翻转的**——原点是 `(x0, y1)`，`y0` 是下边界。
+  按直觉填 `23780,8160,29480,11670` 会让元素落到 canvas y 1510→4857（溢出画布高 3510）；
+  正确写法 `23780,6760,29480,10210`。诊断捷径：先用只读 `plan` 试 frame 再落库。
+- **TypeSafe 补的语义层**：导入按 P0 刻意 0 symbol / 0 connector，但图纸自带词表（12 图层 + 355 文字）。
+  用 System One `jev-latest` 对 **112 个唯一标注 × 2 个独立判断**（`role` 是什么 / `subsystem` 属哪部分）
+  + 12 图层，批 28、4 请求并发，**3.11 s / 95.9K in + 18.0K out**。
+  41/112 两维都 ≥0.90 可直接采用；49/112 进人工复核队列。
+  置信度是真信号：`尾气处理系统？` 0.31、`干净` 0.29、`预留接口` 0.32——模型在真不知道处说了不知道。
+  产物 `reports/pid-repro/semantics_candidates.json` 是**旁挂候选**，**未写进文档**，P0 边界未越。
+- **本轮交付物**：`reports/pid-repro/` 下 `复现报告.html`（主交付）、`final_drawing.png`（图面区域渲染）、
+  `main_drawing.png`（全幅裁剪渲染）、`semantics_candidates.json`、`ts_semantics.py`（可复跑脚本）。
+- **R8 追加 · Blender 3D 模型**：用 TypeSafe 对 71 个设备标注定**形体（15 类）+ 尺寸档（4 级）**
+  （3 请求 / 1.83 s），经 blender-mcp 的 `127.0.0.1:9876` 裸 TCP socket 驱动 Blender 5.2，
+  在**新建独立场景 `气路系统3D`**（`bpy.data.scenes.new()` + 手动 `coll.objects.link()`，不用 `bpy.ops`）
+  建出 **116 台设备**（14 个参数化形体构建函数），按图纸真实坐标 × `SCALE=0.04 m/单位` 落位（厂区 197.7×114.9 m）。
+  **用户既有场景 `Scene` 的 1019 个对象全程零改动**（收尾已把 `window.scene` 切回）。
+  交付：`reports/pid-repro/气路系统_3D.blend`（1.4 MB）、`3D模型报告.html`、三张渲染图
+  （`model_3d_iso.png` / `model_3d_iso_clean.png` / `model_3d_top.png`）、`blender_build.py` / `blender_drive.py`（可复跑）。
+  能力边界已如实声明：**设备本体 + 真实坐标布局**，不含管线/连接关系（P&ID 语义未发明）。
+  踩坑 5 条已双写日志（中文界面节点名 / `save_as_mainfile` 改路径 / 近垂直 TRACK_TO / 影子像变形 / `BLENDER_EEVEE`）。
+- **待用户操作**：`~/.workbuddy-ai/mcp.json` 已写入 `blender` MCP 配置，需用户在连接器管理页右上角「自定义连接器」
+  点「信任」后 MCP 工具才暴露；**本轮建模走直连 socket，未依赖该信任链**。
+- **下一步（沿用 R7 未完成项）**：A5 汇报远端 → 签 Gate → push → 核对 CI 3.11 的 `core_corpus_digest`；
+  随后 **B（F6 首答/注入契约）**。本轮未触碰该链路，无回归风险。
+
+## 本轮收口（2026-09-22 R9c：**A5 Release Gate 已签并 push；post-push 验证全过**）
+
+- **远端 reply22 正式签署 A5 Release Gate**，授权范围 **`1ba141c..5fc0964`**（f60693d / acd0d94 / 5fc0964），
+  **明确排除 TypeSafe 提交**。按它的指定执行显式 push：`git push origin 5fc0964:main` → `1ba141c..5fc0964  main -> main`。
+  `origin/main = 5fc0964`（本地 `main` 顶端仍是 TypeSafe `2270ab6`，`git merge-base --is-ancestor 2270ab6 origin/main` 为假）。
+- **CI run `35702397038`（5fc0964）四 job 全 success**：M5 72-case gate / Backend 3.11 / Frontend Node 24 / Browser Chromium。
+- **3.11 上的关键确认（从 CI 日志取）**：identity 复算步骤 exit 0（`identical: True`，`recorded 57` 定义身份 / 两文件 `recomputed 103`，
+  missing/mismatched 均 none）；harness payload 里 `core_corpus_digest = 96b999fa…`；全量 pytest **884 passed**；
+  acceptance `gate_failures []` + `safety_passed 13`；coverage/scale exit 0；qualification 按契约 exit 3。
+- **Visual baselines run `35703003401`（5fc0964）= success**（手动 dispatch，因该 workflow 不跟 push 自动触发）。
+- **A5 最终 golden（冻结）**：v3 `96b999fa90403c82b58018ef82b06bb190932d97a66f179ebde2c0e2ef41c10f`、
+  归档 v2 `edb1c5d385bfd4f13a195119444dcb157f3bf0d893afd35e595ddc28c4b1c36c`（v2 定义为 A5 后派生的 archival 身份）。
+- **下一个方向**：远端排期 **B — F6 首答 / 注入契约**；A6 qualification 继续是 non-blocking external dependency。
+
+## 本轮补强（2026-09-22 R9d：**TypeSafe 真 key 跑通了，面板会说明"这次用谁的 key"**）
+
+- **一个我上一轮报错的事实**：我说"本机没有 `TYPESAFE_API_KEY`"——错了。它就在 `~/.zshrc`（`export TYPESAFE_API_KEY=apikey_…`）。
+  我的工具 shell 是**非交互式 bash**，从不 source `~/.zshrc`，所以我"看不到"它。这同时暴露了一个真实的界面缺陷：
+  key 藏在 shell 配置里时，浏览器无法判断服务端有没有继承到它，于是"配了 key 界面却说没有"。
+- **修复**：面板挂载时问一次 `/provider/typesafe/status`，在 Key 输入框上方写清**来源**：
+  绿色"服务端环境变量已提供 Key（`TYPESAFE_API_KEY`）：下面留空就用它"／黄色"服务端环境变量里没有，请在下面填入"；
+  输入框提示词同步改成"留空即用服务端环境变量的 Key"；另加一个「刷新服务端配置」按钮，`verify` 之后也自动刷新。
+  逻辑放在 `describeTypesafeKeySource()`（`api.ts`，纯函数、可被 node 测试直接覆盖）。
+- **真实调用（不再只有注入 transport）**：
+  - `scripts/typesafe_live_acceptance.py`：真 key → `verify` `noul 0.97` 778 ms；一句"新增一台离心泵 P-201，把 T-101 接到 T-102"
+    → 2 个判断（候选 7 符号 / 1 连接组合）907 ms、两处置信度 **1.00**，事务 `valid=True issues=none`，**exit 0**。
+  - `frontend/scripts/typesafe-panel-check.mjs`（Playwright）：起真实服务端（key 只在服务端环境里，页面什么都不填），
+    点 Agent 标签 → 展开「模型服务与高级设置」→ 断言来源提示是绿色且含 `TYPESAFE_API_KEY`、输入框提示为"留空…"，
+    再点「测试 TypeSafe Key」→ 真答案 `Key 有效 · jev-1.13.0 · 749 ms`（服务端 `POST /provider/typesafe/verify 200`），无 console 错误。
+  - 证据落 `reports/typesafe/`（`live-acceptance.txt`、`panel-key-source.png`）。本机 8000 端口是另一会话的服务，验收用 8123 + `/tmp/ts-ui.db`。
+- **新增测试**：`frontend/tests/typesafeSettings.test.ts`（5 条：key 只进 `sessionStorage`、偏好里绝不含 key、
+  三种来源提示、verify 的 key 在 body 不在 URL）；后端加 1 条"key 只在服务端环境里时 status 报 `api_key_source=environment`"的路由测试。
+- **门禁（本地）**：`ruff` ✓；`pytest -q` **896 passed**；harness 9/9；acceptance **72/72**（六 family S@5 1.0、`gate_failures []`、safety 13/13、
+  `core_corpus_digest 96b999fa…` 与冻结 v3 一致）；`repair-coverage` exit 0、`repair-scale` exit 0、`repair-qualification` exit 3（无凭据，按契约）；
+  前端 `npm test` **149 passed** + build ✓。`reports/m5*` 一字节未改。
+- **仍未 push**：本地 `2270ab6`（TypeSafe 主体）+ 本轮补强提交，远端明确要求排除 A5/F6 链。
+
+## 下一步进展（2026-09-22 R9e：**B 项第一步——S@1 缺口定位为“全是 F6 夹具”，且这半个契约以前没人检查**）
+
+- **定位（跑出来的，不是推断）**：acceptance 72 条逐条摊开，`S@1 = 0.8333` 的缺口**恰好是 12 条 F6**（0 条 F1–F5），
+  三条 F6 operator 各 4 条，`required_attempts` = 2/3/5（`F6_CONTROL_FLOW`）。全部首轮 `compile_failed` 后收敛。
+  即缺口 **100% 由冻结 spec 声明产生**，与 `docs/m5-agent-self-repair.md` 的记录一致。
+- **真实缺陷在“量”的那侧**：`attempt_contract` 门只检查声明方向（声明 N 次 ⇒ 首次成功在第 N 次），
+  “没声明重试 ⇒ 必须首轮成功”**从未被检查**（源码注释自己写着“no retry contract ⇒ no attempt claim”）。
+  后果：F1–F5 里任何一条开始需要第二次尝试，只会让 S@1 变小，八项 gate 仍然全绿。
+- **改法（测试层，不动冻结 spec/evidence）**：acceptance 回归测试现在钉三件事——① 无重试契约的 case 首轮必须成功；
+  ② 只有 F6 能声明重试，且 `required_attempts` 必须等于 `F6_CONTROL_FLOW` 里该 operator 的值（“F6 变容易”会表现为 spec 变更）；
+  ③ `S@1 == 无契约 case 数 / 总数`。反向断言能否变红由 synthetic case 单独证明。
+  新提交 `39d8b75`（本地，未 push）。
+- **结论（对远端 B 的回应）**：S@1 缺口里**没有 planner 缺陷可修**，它是控制流夹具；B 的剩下一步应当是把
+  “减少 F6 首轮失败”换成“证明首轮失败只来自声明”，否则就是在拆掉 F6 存在的理由。
+
+## 本轮追加（2026-09-22 R9b：**界面里配置 TypeSafe Key，并用 System One 判读画图**）
+
+- **需求**：用户要求“在界面中的 agent 里面能支持配置 typesafe ai 的 api key，利用它来画图”。
+- **做法**：新增 `backend/agentcad/typesafe.py`（凭据解析 request→环境、`/v1/systemone` 提交、`verify()`、状态；
+  **从不把 key 写进日志/错误/响应**）与 `backend/agentcad/typesafe_planner.py`（判读式画图）。
+  两个 POST 路由接在既有 semantic agent router 上：`/api/v2/provider/typesafe/verify`、
+  `/api/v2/documents/{id}/agent/typesafe-plan`（返回与 `plan-v2` 相同的 `SemanticAgentPlanResult`，
+  预览/应用走原有 apply-v2 + harness 闸门）。两者均已进 `surface_contract.py`（未登记写路径会被测试抦住）。
+- **判读式画图的关键约束**：候选由代码给（符号目录按中文提示词组筛、已有设备两两组合取空闲端口）；
+  模型只能在候选里选，选到候选外直接拒；置信度 < 0.34 的子句**跳过并写进说明**，不猜；
+  位号/管径从用户原文正则取，几何由代码排（不占已有图形）。
+- **前端**：Agent 面板内新增 TypeSafe 区块（开关 / Key / Base URL / 模型 / “测试 TypeSafe Key”）。
+  key 存 **sessionStorage**（与既有服务令牌同一策略：刷新不丢、关浏览器失效、不落盘）；非机密的偏好进 localStorage。
+  开启开关后本面板的生成请求改走 `typesafe-plan`。
+- **文档**：`docs/typesafe-drawing.md`（界面字段、流程图、接口表、边界）+ README 一句。
+- **测试**：`backend/tests/test_typesafe_drawing.py` **10 passed**（凭据优先级/缺失 400、不返回部分判断、
+  子句分类、候选筛选、添加/连接建 op、低置信度跳过、候选外拒绝、路由挂载与缺 key 契约）。
+  `pytest -q` **894 passed**（含 TypeSafe 与 A5 的 28 条），`ruff` ✓，前端 `npm test` **144 passed** + build ✓。
+- **未验证部分（如实声明）**：本机环境没有 `TYPESAFE_API_KEY`，所以**没有做真实网络调用**；
+  测试全部走注入 transport，请求形状与 `reports/pid-repro/ts_smoke.py` 已验证可用的调用一致：
+  `POST https://api.typesafe.ai/v1/systemone`、`Authorization: Bearer …`、`model: jev-latest`、
+  响应 `{"answers": {id: {choice, confidence, probabilities}}}`。用户一在面板里填 key，
+  “测试 TypeSafe Key” 就会发出那一次真调用。
+
+## 本轮状态（2026-09-22 R9：**A5 修正 —— 语料身份从“摘要”换成 corpus projection，等远端复查同一 Gate**）
+
+- **远端 `reply20` 的裁定**：A5 架构、跨解释器、兼容性、历史 pin、CI ledger 全过；**唯一 blocker 是 identity
+  强度不够**——它列的机械反例是“operator 数、code 集合、family/case 数全不变，但轮转 / base_variant / 声明参数 /
+  producer 变化时 digest 不动”，因此 f60693d 那个东西的名字应该是 “stable corpus summary digest”。
+  允许在同一本地提交上直接修正，**不要求 squash、不需要 spec v4 / corpus v4**，两个 golden 可以重算（它们从未发布）。
+- **修正后的身份**：`core_corpus_digest(version)` 现在是 `core_corpus_projection(version)` 的 canonical SHA-256。
+  projection 顶层：`corpus_id` / `corpus_version` / `spec_version` / `families` / `acceptance_cases_per_family` /
+  `dev_cases_per_family` / `safety_case_count` / `case_derivation` / **`operator_catalogue`（23 行，含声明字段 +
+  producer/base 定义身份）** / **`case_universe`（72 条）** / **`dev_case_universe`（24 条）**。
+  每条 case 自带 `case_id` / `suite` / `family` / `index` / `operator_id` / `operator_declaration`。
+  case 由 `generate_cases()` 真派生（不在这里重写轮转），seed **不进身份**（它随 candidate 变），身份记的是派生规则。
+- **新 golden（本轮最终）**：v3 `96b999fa90403c82…`、归档 v2 `edb1c5d385bfd4f1…`
+  （取代未发布的 `a60e07f1…` / `acb4a3bd…`，以及两个中间态 `115fe509…`/`a91461eb…`、`e23ce74c…`/`af6e5759…`；
+  都未出版，按远端指示不保留为 legacy alias）。
+- **远端点名的 `safety_case_universe` 已补，并按 reply21 拆干净字段**：投影里不再有裸名 `safety_case_count`，
+  而是五个字段 —— `status`（projected / unavailable_archived）、`spec_declared_safety_case_count = 12`、
+  `actual_safety_case_count = 13`（硬恒等于 `len(cases)`）、`cases`（13 行 case_id + title + builder 定义身份；
+  归档为 `null` 而不是 `[]`）、`count_disposition = {declared: 12, actual: 13, status: frozen_spec_metadata_mismatch}`。
+  两个数不一致是**被点名**的事实而不是被混用一个字段掩盖；下一次真正切 spec 版本时必须消掉。
+  本轮 **未改冻结 spec 里那个 12**（改了会动 `spec_fingerprint`）。
+- **本轮又拆出一个真坑（已双写日志）**：定义身份原先用 `inspect.getclosurevars` 决定“哪些名字是全局”，
+  而这个集合随编译器变——3.12 内联推导式（PEP 709）后，同一个函数里的 `__name__` 在 3.11 被算作已解析全局、
+  3.12 不算。AST 两边完全相同，所以这个差异**只有第二个解释器能暴露**（3.12 全绿、3.11 挂 5 条，dump 投影 diff 到 1 行）。
+  修法：名字从 AST 取（`_referenced_names`），分类用 `co_freevars`/`__closure__`，值才查模块命名空间。
+- **定义身份的覆盖面也扩了**：帮助函数按“它自己那个模块”折入（safety builder 的 `_add_layer` 之类在
+  `repair_safety` 里），trace 键改为 `module:qualname`；复算脚本现在校验 **两个文件 101 条**定义身份。
+- **实现那半边（声明式表达不了的部分）**：新增 `backend/agentcad/source_identity.py`（**零依赖**）把源码 AST 投成
+  规范化形式再哈希；不能用 `ast.dump`——同一份 `_patch` 在 3.11 是 `930398d67e9220f4`、3.12 是 `a182c517faab2e95`
+  （3.12 给 `FunctionDef` 加了 `type_params`）。规范化投影丢掉 `None`/空字段，所以新解释器新增字段只要为空就不影响身份。
+  目录行发布 `producer_definition_identity` / `base_builder_definition_identity`；同模块被调函数递归折入、工厂
+  绑定参数计入（`_build_f6` 的 `failures`/`base_operator_id`）。源码不可读时**报错而不是退化**（否则两台机器
+  会“同意”一个什么都不标识的数）。
+- **顺带清掉一个真重复**：`f3_delete_middle_detach` 原本用 inline lambda 重建 `three_valves` 底座，而
+  `_three_valves_base` 的注释正是“命名而不是内联，免得两个 operator 漂成两张稍有不同的图”——现在它真的用那个函数，
+  lambda 消失（也顺带修掉了匿名定义在身份里只能记成 `<lambda>` 的问题）。**行为不变**（同一 `build_base_drawing` 参数）。
+- **双层测试（远端要求的两个方向）**：`tests/test_core_corpus_identity.py` **28 条**。
+  **敏感性**：改 operator_id / 交换两个同 family operator 的 id（id 集合不变、只变归属）/ 改 defect code /
+  改 base_variant / 改声明写入策略 / 换 producer 实现 / 增删 case / 增删 operator / 改 seed 派生规则 —— 9 条都必须移动 digest。
+  **稳定性**：`generator_fingerprint` 变、`spec_fingerprint` 变、（本机+CI 两解释器）都必须不动。
+- **跨解释器是实测的**：`/tmp/a5-311`（uv + CPython 3.11.15）与仓库 `.venv`（3.12.12）**各自跑完这 28 条全绿**，
+  同一条 golden `96b999fa…` 两边都成立；`scripts/m5_closeout_identity_311_check.py`（标准库 + 零依赖的
+  `source_identity`）在两个解释器上复算 digest 与 **101 条定义身份**（两个文件）全部相等。CI 的 M5 job 本身就是 3.11，
+  已加一步跑这个脚本，所以这条性质由 CI 每天重跑而不是只在本地成立。
+- **门禁（本地，全部在 `f60693d` + 本轮工作树上）**：`ruff` ✓；`pytest -q` **878 passed**；harness **9/9**；
+  acceptance **72/72**（S@5 1.0、六 family 1.0、八门全 true、`gate_failures []`、safety 13/13、
+  `core_corpus_digest 96b999fa…` 已进 payload）；`repair-coverage` exit 0；`repair-scale` exit 0；
+  `repair-qualification` exit 3（无凭据，按设计）。**未 push**（远端明确要求修完先给它看）。
+
+## 上一状态（2026-09-21 R7：**A5 corpus identity closeout 本地做完（未 commit、未 push），等远端签 Gate**）
 
 - **基线**：`origin/main = 1ba141c`（R6 已 push 并验证，v3 冻结 anchor）；本轮按远端 `reply19` 的 A5 授权做。
   改动已落成本地提交（`feat(m5): give the frozen corpus an identity that does not move with the interpreter`，
@@ -381,6 +859,34 @@
 - **当時の“下一步”（已被 M3 取代，仅作历史）**：**Charter Priority 2 —— Validator Framework**：把当前分散在 `diagram_quality.py` / `engineering_reports.py` / `engineering_ir.py` 的 deterministic 规则收拢为可注册、可版本化、可按项目标准加载的 validator 框架（每条规则带 id/severity/scope/evidence/项目标准引用），并让 IR findings 成为其消费者。**注意编号**：Charter 的长期 milestone 是 `M2 Engineering Semantic Graph → M3 Deterministic Drafting Engine → M4 Engineering Validation System`；Validator Framework 属于 **Priority 2 implementation priority**，**不要把它改口叫 M3**（本轮之前 HANDOFF 里写成“下一步 M3 Validator Framework / 随后 M4 Drafting”，与 Charter 不一致，特此修正）。
 
 ## 近期轮次（最新在上，保留全部）
+
+- 2026-09-22（R8：真实图纸 `气路系统总图.dwg` 本地复现 + TypeSafe 语义索引 + Blender 3D 模型，演示/验收轮）：
+  - **做了什么**：拉起服务（重启后端到最新代码，PID 13802，托管已构建前端）→ 用项目自己的 CAD 导入管线把
+    939 KB / AC1032 / 9757 图元的真实图纸导入本地 pidagent → 计时 → 用 TypeSafe System One 补语义索引。
+  - **计时**：全幅复现 **8.37 s** 端到端 / 4.00 s 服务端（`doc_d17f1c7d174f`，9757 元素）；
+    图面区域版 7.93 s / 3.90 s（`doc_72dabc6268d8`，9494 元素）；只读预演 4.21 s；TypeSafe 3.11 s。
+  - **关键结论**：① `autocad-core-console` 路线 0 块定义缺失，比仓库既有 LibreDWG 文档多 515 图元；
+    ② 图纸 extents 被游离内容撑到画布 58273.8×4772.2，图面本体只占最右 5437×3347，故保留全幅 + 裁切两份；
+    ③ **`frame` 的 y 轴翻转**（原点是 `(x0, y1)`，`y0` 是下边界），按直觉填会溢出画布——已双写踩坑日志；
+    ④ TypeSafe 对 112 标注 × 2 维 + 12 图层给出带概率的类型判定，41/112 可直接采用、49/112 进人工复核，
+    产物为**旁挂候选**，未写进文档（P0「不发明工程语义」未越界）。
+  - **产物**：`reports/pid-repro/`（`复现报告.html`、`final_drawing.png`、`main_drawing.png`、
+    `semantics_candidates.json`、`ts_semantics.py`）。**未产生 git 提交**，工作树干净。
+  - **R8 追加（Blender 3D 模型）**：TypeSafe 对 71 个设备标注定形体（15 类）+ 尺寸档（4 级）（3 请求 / 1.83 s）→
+    `make_build_plan.py` 展开位号得 **116 个实例** → 经 blender-mcp 的 `127.0.0.1:9876` 裸 TCP socket 驱动
+    Blender 5.2，在**新建独立场景 `气路系统3D`** 建出 116 台设备（14 个 `bmesh` 参数化形体函数），
+    按图纸真实坐标 × `0.04 m/单位` 落位（厂区 197.7×114.9 m）。**隔离验证：用户场景 `Scene` 1019 对象零改动、
+    `bpy.data.filepath` 未变、`window.scene` 已切回 `Scene`。**
+    产物：`气路系统_3D.blend`（1.4 MB）、`3D模型报告.html`、三张渲染图、`blender_build.py` / `blender_drive.py` /
+    `ts_blender_forms.py` / `make_build_plan.py`。能力边界如实声明：**设备本体 + 真实坐标布局，不含管线/连接关系**（守 P0）。
+    踩坑 5 条已双写日志。**待用户操作**：`~/.workbuddy-ai/mcp.json` 的 `blender` server 需在连接器页点「信任」
+    （本轮建模走直连 socket，未依赖该信任链）。
+  - **R8 追加 2（覆盖气系统流程描述）**：应要求产出 `reports/pid-repro/覆盖气系统流程描述.md`——把整张总图读成
+    **三条主线**（① 供气 5.0→1.0MPa；② 覆盖气主回路；③ 尾气与氚处理），并分「甲·设备清单与图面布局（高可信）」
+    与「乙·流向叙述（结构性阅读，非机器验证）」两层交付，图上 6 条设计待办原文照录。
+    分析方法可复用：**逐图层统计几何范围 + 长线分桶 + 文字按 x 排序 + 用图上明写的方向性标注交叉验证**。
+    关键防误读：图上氩/氦两套气源是**并列候选方案（未定选）**，不是冗余备份；气路与主回路边界图上未定论。
+  - **下一步**：回到 R7 的 A5 汇报 → 签 Gate → push；随后 **B（F6 首答/注入契约）**。
 
 - 2026-09-18（M3 Deterministic Drafting Engine，本轮，已提交并推送）：
   - **新增文件**：`drafting_models.py`（契约/策略/门禁/可复现性模型）、`drafting_geometry.py`（纯几何与整理语义）、`drafting_engine.py`（七阶段确定性流水线）、`api_drafting.py`（两个只读 REST 路由）；测试 `test_drafting_geometry.py` / `test_drafting_engine.py` / `test_drafting_api.py` / `test_drafting_cli.py`；前端 `drafting.ts` / `draftingTypes.ts` / `editor/DraftingPanel.tsx` / `tests/drafting.test.ts` / `e2e/drafting.spec.ts`。

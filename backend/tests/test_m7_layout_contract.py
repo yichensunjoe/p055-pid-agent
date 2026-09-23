@@ -1114,7 +1114,12 @@ def test_the_task_book_declares_the_step_2_rules() -> None:
         "SEPARATE_SPACING_POLICY_VERSION_ALLOWED_IN_V1",
         "UNKNOWN_DENSITY_IS_A_HARD_FAILURE",
         "GROUPING_IS_INTENT_ONLY",
-        "GROUPING_FALLBACKS",
+        "UNSUPPORTED_INTENT_IS_NEVER_SUBSTITUTED",
+        "UNSUPPORTED_INTENT_PRODUCES_ZERO_PLACEMENT",
+        "UNSUPPORTED_INTENT_CLASSES_MAY_STAY_IN_THE_VOCABULARY",
+        "UNSUPPORTED_LAYOUT_INTENT",
+        "SUPPORTED_LAYOUT_INTENT_CLASSES",
+        "zone_grouping_requires_zone_membership",
         "PLACEMENT_NEVER_WRITES_INTO_THE_TOPOLOGY",
         "SEMANTIC_DIGEST_IS_UNCHANGED_BY_PLACEMENT",
         "PLACEMENT_PROJECTION_IS_A_PREFIX_OF_THE_CANONICAL_PROJECTION",
@@ -1225,26 +1230,88 @@ def test_the_validator_reports_a_placement_projection_without_the_sort_key(
     assert any("must carry the canonical sort key" in problem for problem in problems)
 
 
-def test_the_validator_reports_an_undeclared_grouping_fallback(
+def test_the_validator_reports_an_unsupported_intent_outside_the_vocabulary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A value the protocol does not recognise is a parse failure, not a capability gap."""
+
+    monkeypatch.setattr(
+        contract,
+        "UNSUPPORTED_LAYOUT_INTENT",
+        (
+            contract.UnsupportedLayoutIntent(
+                dimension="grouping", value="grouped_by_continent", code="code", reason="reason"
+            ),
+        ),
+    )
+    problems = contract.validate_contract()
+    assert any("is not in the 'grouping' vocabulary" in problem for problem in problems), problems
+
+
+def test_the_validator_reports_an_unsupported_intent_with_no_code_or_reason(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
         contract,
-        "GROUPING_FALLBACKS",
-        (("grouped_by_continent", "grouped_by_system", "reason"),),
+        "UNSUPPORTED_LAYOUT_INTENT",
+        (
+            contract.UnsupportedLayoutIntent(
+                dimension="grouping", value="grouped_by_zone", code="", reason=""
+            ),
+        ),
     )
     problems = contract.validate_contract()
-    assert any("is not a declared grouping class" in problem for problem in problems), problems
+    assert any("needs a lowercase code" in problem for problem in problems), problems
+    assert any("must say what is missing" in problem for problem in problems), problems
 
 
-def test_the_validator_reports_a_grouping_fallback_with_no_reason(
+def test_the_validator_reports_substituting_an_unsupported_intent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(contract, "UNSUPPORTED_INTENT_IS_NEVER_SUBSTITUTED", False)
+    problems = contract.validate_contract()
+    assert any("must be refused, not replaced" in problem for problem in problems), problems
+    monkeypatch.undo()
+    monkeypatch.setattr(contract, "UNSUPPORTED_INTENT_PRODUCES_ZERO_PLACEMENT", False)
+    problems = contract.validate_contract()
+    assert any("must produce no placement at all" in problem for problem in problems), problems
+
+
+def test_the_validator_reports_a_class_that_is_both_supported_and_unsupported(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        contract, "GROUPING_FALLBACKS", (("grouped_by_zone", "grouped_by_system", ""),)
+        contract,
+        "SUPPORTED_LAYOUT_INTENT_CLASSES",
+        (
+            *contract.SUPPORTED_LAYOUT_INTENT_CLASSES,
+            contract.SupportedLayoutIntentClass(dimension="grouping", value="grouped_by_zone"),
+        ),
     )
     problems = contract.validate_contract()
-    assert any("must say why it falls back" in problem for problem in problems), problems
+    assert any("both supported and unsupported" in problem for problem in problems), problems
+
+
+def test_the_validator_reports_a_grouping_class_with_no_declared_disposition(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every class in the vocabulary is either executable or refused, and that is checked."""
+
+    monkeypatch.setattr(
+        contract,
+        "UNSUPPORTED_LAYOUT_INTENT",
+        (),
+    )
+    problems = contract.validate_contract()
+    assert any("either supported or unsupported" in problem for problem in problems), problems
+
+
+def test_the_validator_reports_no_executable_grouping_class(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(contract, "SUPPORTED_LAYOUT_INTENT_CLASSES", ())
+    problems = contract.validate_contract()
+    assert any("at least one grouping class" in problem for problem in problems), problems
 
 
 def test_the_validator_reports_a_step_2_kind_that_belongs_to_a_later_step(

@@ -900,15 +900,55 @@ UNKNOWN_DENSITY_IS_A_HARD_FAILURE = True
 GROUPING_IS_INTENT_ONLY = True
 
 #: Grouping *classes* mean something to the model; how they become ranks, gaps and in-group
-#: order is engine rules. A class the specification cannot yet express is a declared fallback,
-#: not a silent substitution.
-GROUPING_FALLBACKS: tuple[tuple[str, str, str], ...] = (
-    (
-        "grouped_by_zone",
-        "grouped_by_system",
-        "the specification models no zones yet, so a zone grouping falls back to system bands "
-        "by declaration",
+#: order is engine rules.
+#:
+#: An intent the engine cannot honour is **refused**, not replaced. Substituting the nearest
+#: class -- even one that reports itself -- is still substituting a layout the caller explicitly
+#: asked not to have. Recognition and executability are different facts: a class may stay in the
+#: vocabulary (the protocol knows the intent exists) while being unsupported for execution.
+UNSUPPORTED_INTENT_IS_NEVER_SUBSTITUTED = True
+UNSUPPORTED_INTENT_PRODUCES_ZERO_PLACEMENT = True
+UNSUPPORTED_INTENT_CLASSES_MAY_STAY_IN_THE_VOCABULARY = True
+
+
+@dataclass(frozen=True)
+class UnsupportedLayoutIntent:
+    """An intent the protocol recognises and the engine cannot honour, with a named code.
+
+    The code is the point: a caller gets `zone_grouping_requires_zone_membership` rather than
+    "unsupported", so the refusal says what is missing instead of only that something is.
+    """
+
+    dimension: str
+    value: str
+    code: str
+    reason: str
+
+
+UNSUPPORTED_LAYOUT_INTENT: tuple[UnsupportedLayoutIntent, ...] = (
+    UnsupportedLayoutIntent(
+        dimension="grouping",
+        value="grouped_by_zone",
+        code="zone_grouping_requires_zone_membership",
+        reason=(
+            "the specification models no zones and no zone membership, so a zone grouping "
+            "cannot be honoured; it is refused rather than replaced with system bands"
+        ),
     ),
+)
+
+
+@dataclass(frozen=True)
+class SupportedLayoutIntentClass:
+    """One intent class the engine can honour today, named so "supported" is a list, not a mood."""
+
+    dimension: str
+    value: str
+
+
+SUPPORTED_LAYOUT_INTENT_CLASSES: tuple[SupportedLayoutIntentClass, ...] = (
+    SupportedLayoutIntentClass(dimension="grouping", value="grouped_by_system"),
+    SupportedLayoutIntentClass(dimension="grouping", value="flat"),
 )
 
 #: What a placement row may say it is. Routing and annotations are named now so that "the
@@ -1625,14 +1665,45 @@ def validate_contract() -> list[str]:
         problems.append("an unknown density class must fail rather than default")
     if not GROUPING_IS_INTENT_ONLY:
         problems.append("grouping is intent; how it becomes ranks and gaps is engine rules")
-    grouping_classes = set(layout_intent_dimension("grouping").values)
-    for source, target, reason in GROUPING_FALLBACKS:
-        if source not in grouping_classes:
-            problems.append(f"the grouping fallback {source!r} is not a declared grouping class")
-        if target not in grouping_classes:
-            problems.append(f"the grouping fallback {target!r} is not a declared grouping class")
-        if not reason.strip():
-            problems.append(f"the grouping fallback {source!r} must say why it falls back")
+    if not UNSUPPORTED_INTENT_IS_NEVER_SUBSTITUTED:
+        problems.append("an intent the engine cannot honour must be refused, not replaced")
+    if not UNSUPPORTED_INTENT_PRODUCES_ZERO_PLACEMENT:
+        problems.append("a refused intent must produce no placement at all")
+    for entry in UNSUPPORTED_LAYOUT_INTENT:
+        if entry.dimension not in {d.name for d in LAYOUT_INTENT_DIMENSIONS}:
+            problems.append(
+                f"the unsupported intent {entry.value!r} names an undeclared dimension "
+                f"{entry.dimension!r}"
+            )
+            continue
+        vocabulary = set(layout_intent_dimension(entry.dimension).values)
+        if entry.value not in vocabulary:
+            problems.append(
+                f"the unsupported intent {entry.value!r} is not in the {entry.dimension!r} "
+                "vocabulary: an unrecognised value is a parse failure, not a capability gap"
+            )
+        if not entry.code.strip() or entry.code != entry.code.lower():
+            problems.append(f"the unsupported intent {entry.value!r} needs a lowercase code")
+        if not entry.reason.strip():
+            problems.append(f"the unsupported intent {entry.value!r} must say what is missing")
+    supported = {(item.dimension, item.value) for item in SUPPORTED_LAYOUT_INTENT_CLASSES}
+    unsupported = {(item.dimension, item.value) for item in UNSUPPORTED_LAYOUT_INTENT}
+    if supported & unsupported:
+        problems.append(
+            f"an intent class cannot be both supported and unsupported: "
+            f"{sorted(supported & unsupported)}"
+        )
+    grouping_vocabulary = set(layout_intent_dimension("grouping").values)
+    declared_grouping = {value for dimension, value in supported if dimension == "grouping"}
+    grouped_grouping = grouping_vocabulary - {value for _, value in unsupported}
+    if declared_grouping != grouped_grouping:
+        problems.append(
+            "every grouping class must be declared either supported or unsupported "
+            f"(missing={sorted(grouped_grouping - declared_grouping)}, "
+            f"unexpected={sorted(declared_grouping - grouped_grouping)})"
+        )
+    if not declared_grouping:
+        problems.append("at least one grouping class must be executable")
     canonical_included = tuple(
         field.name for field in CANONICAL_LAYOUT_PROJECTION_FIELDS if field.included
     )

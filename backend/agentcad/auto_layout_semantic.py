@@ -36,7 +36,6 @@ from typing import Any
 
 from .m7_diagram_adapter import SemanticTopology
 from .m7_layout_contract import (
-    GROUPING_FALLBACKS,
     INTENT_DIMENSIONS_ARE_RECEIVED_AT_STEP,
     LAYOUT_COORDINATE_DECIMALS,
     LAYOUT_DIGEST_INPUTS,
@@ -48,6 +47,8 @@ from .m7_layout_contract import (
     PLACEMENT_PROJECTION_FIELDS,
     PLACEMENT_PROJECTION_VERSION,
     STEP_2_PLACEMENT_KINDS,
+    SUPPORTED_LAYOUT_INTENT_CLASSES,
+    UNSUPPORTED_LAYOUT_INTENT,
 )
 
 #: Published by the engine, not by the contract: a rules change is an engine edit that carries
@@ -62,7 +63,7 @@ LAYOUT_RULES_VERSION = "deterministic-layout-rules/1"
 #: field set a version names is part of what the version means -- adding fields under v1 would
 #: have been a different plan wearing the same name, which is the failure this milestone is
 #: about, one layer down.
-SEMANTIC_LAYOUT_PLAN_DIGEST_VERSION = "m7-semantic-layout-plan-digest/2"
+SEMANTIC_LAYOUT_PLAN_DIGEST_VERSION = "m7-semantic-layout-plan-digest/3"
 
 #: One rules version governs the spacing policy, the node sizes and the rank rules. A separate
 #: spacing-policy version would be a second source of truth about the same drawing, which is
@@ -144,6 +145,25 @@ class UnknownPlacementKindError(SemanticTopologyIngressError):
     """A node whose kind has no declared size. Hard failure, for the same reason."""
 
 
+class UnsupportedLayoutIntentError(SemanticTopologyIngressError):
+    """An intent the protocol recognises and the engine cannot honour.
+
+    Carries the declared ``code``, so a caller learns what is missing rather than only that
+    something is. The point of refusing instead of substituting is that a substitute is still a
+    drawing nobody asked for.
+    """
+
+    def __init__(self, dimension: str, value: str, code: str, reason: str) -> None:
+        self.dimension = dimension
+        self.value = value
+        self.code = code
+        self.reason = reason
+        super().__init__(
+            f"layout intent {dimension}={value!r} is recognised but not executable "
+            f"({code}): {reason}"
+        )
+
+
 def _step_index(step: str) -> int:
     keys = tuple(key for key, _ in PHASE_2B_STEPS)
     if step not in keys:
@@ -223,10 +243,9 @@ class SemanticLayoutPlan:
     placement: tuple[dict[str, Any], ...] = field(default=())
     #: Produced by step 4 from the content bounds. ``None`` until then.
     canvas_bounds: None = None
-    #: Set by step 2: the grouping class the engine honoured, and the class it replaced when
-    #: the specification cannot yet express what was asked for.
-    honoured_grouping: str = ""
-    grouping_fallback_from: str | None = None
+    #: Set by step 2: the numbers the engine chose. The *grouping* class needs no field of its
+    #: own -- an intent the engine cannot honour is refused before a plan is placed, so
+    #: ``intent.grouping`` is always the class that was honoured.
     spacing: SpacingPolicy | None = None
 
     def to_projection(self) -> dict[str, Any]:
@@ -249,8 +268,6 @@ class SemanticLayoutPlan:
             "flow_edges": [[source, target] for source, target in self.flow_edges],
             "placement": list(self.placement),
             "canvas_bounds": self.canvas_bounds,
-            "honoured_grouping": self.honoured_grouping,
-            "grouping_fallback_from": self.grouping_fallback_from,
             "spacing": self.spacing.to_projection() if self.spacing else None,
         }
 
@@ -415,18 +432,36 @@ def node_size(kind: str) -> NodeSize:
     )
 
 
-def resolve_grouping(grouping: str) -> tuple[str, str | None]:
-    """The grouping class the engine will honour, and the fallback it used, if any.
+def require_supported_intent(dimension: str, value: str) -> str:
+    """The value if the engine can honour it, and a refusal that names what is missing if not.
 
-    A class the specification cannot yet express (`grouped_by_zone`: there are no zones in the
-    model) falls back *by declaration* and reports which class was honoured, so "we did
-    something else" is visible in the plan rather than inferable from the picture.
+    The refusal is the whole point. Substituting the nearest supported class would produce a
+    drawing that looks like an answer to a request the caller did not make -- and reporting the
+    substitution afterwards does not make the drawing the right one.
     """
 
-    for source, target, _reason in GROUPING_FALLBACKS:
-        if source == grouping:
-            return target, source
-    return grouping, None
+    for entry in UNSUPPORTED_LAYOUT_INTENT:
+        if entry.dimension == dimension and entry.value == value:
+            raise UnsupportedLayoutIntentError(
+                entry.dimension, entry.value, entry.code, entry.reason
+            )
+    supported = {
+        (item.dimension, item.value) for item in SUPPORTED_LAYOUT_INTENT_CLASSES
+    }
+    if (dimension, value) not in supported:
+        raise UnsupportedLayoutIntentError(
+            dimension,
+            value,
+            "no_declared_execution_for_this_intent_class",
+            f"the contract declares no execution for {dimension}={value!r}",
+        )
+    return value
+
+
+def resolve_grouping(grouping: str) -> str:
+    """The grouping class the engine will honour, or a refusal. There is no third outcome."""
+
+    return require_supported_intent("grouping", grouping)
 
 
 def _strongly_connected_components(
@@ -578,7 +613,12 @@ def place_semantic_layout(plan: SemanticLayoutPlan) -> SemanticLayoutPlan:
         )
 
     policy = spacing_policy(plan.intent.density)
-    honoured_grouping, fallback_from = resolve_grouping(plan.intent.grouping)
+    # A grouping the engine cannot honour is refused, so no placement value escapes at all --
+    # not a substitute and not a partial drawing. (Whether the refusal happens before or after
+    # the rows are built is not observable from outside, so this comment claims only what a
+    # caller can see: the call either returns a placement for the intent it was given, or it
+    # raises.)
+    honoured_grouping = resolve_grouping(plan.intent.grouping)
     kinds = dict(plan.node_kinds)
     unroutable = sorted(
         node_id for node_id, kind in plan.node_kinds if kind not in STEP_2_PLACEMENT_KINDS
@@ -677,8 +717,6 @@ def place_semantic_layout(plan: SemanticLayoutPlan) -> SemanticLayoutPlan:
         plan,
         placement=tuple(rows),
         produced_at_step=STEP_2,
-        honoured_grouping=honoured_grouping,
-        grouping_fallback_from=fallback_from,
         spacing=policy,
     )
 

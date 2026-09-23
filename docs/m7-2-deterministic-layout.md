@@ -620,21 +620,48 @@ gap 数值新增成 `LAYOUT_DIGEST_INPUTS` 的独立字段。三条钉住：每�
 
 ```
 GROUPING_IS_INTENT_ONLY = True
-GROUPING_FALLBACKS = ((grouped_by_zone → grouped_by_system, 原因：模型尚未表达 zone),)
+UNSUPPORTED_INTENT_IS_NEVER_SUBSTITUTED = True
+UNSUPPORTED_INTENT_PRODUCES_ZERO_PLACEMENT = True
+UNSUPPORTED_INTENT_CLASSES_MAY_STAY_IN_THE_VOCABULARY = True
+
+UNSUPPORTED_LAYOUT_INTENT = (
+  grouping=grouped_by_zone → code=zone_grouping_requires_zone_membership
+    （原因：模型没有 zones / zone_membership，兑现不了）
+)
+SUPPORTED_LAYOUT_INTENT_CLASSES = (grouping=grouped_by_system, grouping=flat)
 ```
 
 怎么划 rank、留多少 system gap、组内怎么排序、跨组 edge 怎么处理——全部是引擎规则。
 模型**不得**输出具体 group bounds。
 
+**兑现不了就是拒，不是找最像的。** `grouped_by_zone` 在词表里合法（协议认识这个意图），
+但当前**不可执行**——认识的意图 ≠ 可以执行的意图。因此：
+
+```
+grouped_by_zone + 无 zone 语义 → UnsupportedLayoutIntent(code=zone_grouping_requires_zone_membership)
+                              → zero placement
+不可兑现的 grouping             → 绝不静默替换，也绝不显式替换
+grouped_by_system / flat       → 既有确定性行为不变
+```
+
+把 `grouped_by_zone` 降级成 `grouped_by_system` 即使自报降级，仍然是**替换了调用方明确声明的
+布局意图**——"看起来像答案"不等于"是对那个问题的答案"。将来 `DiagramSpec` 真正引入
+zone membership 时，它才从 unsupported capability 转为 implemented capability。
+
+引擎侧对应 `require_supported_intent()` / `resolve_grouping()`：不可兑现的意图在**计算任何东西之前**
+被拒（`UnsupportedLayoutIntentError`，携带声明的 code），所以不会产生半张图。
+
 当前引擎规则（`auto_layout_semantic.py`）：
 
 | grouping | 排布 |
 |---|---|
-| `grouped_by_system` / `grouped_by_zone`（fallback） | 每个系统沿**横轴**占一条带，带间为 `system_gap` |
+| `grouped_by_system` | 每个系统沿**横轴**占一条带，带间为 `system_gap` |
 | `flat` | 单带，各系统沿**流向轴**首尾相接，接缝为 `component_gap` |
+| `grouped_by_zone` | **不执行**：拒（见上），不产生 placement |
 
-fallback **必须自报**：`plan.honoured_grouping` / `plan.grouping_fallback_from` 记录"实际兑现的是
-哪个类别、替换掉了哪个类别"，所以"我们做了别的事"是可见的，而不是只能从图里反推。
+`SemanticLayoutPlan` 因此**不需要** `honoured_grouping` / `grouping_fallback_from` 这类字段：
+不可兑现的意图在 plan 被放置之前就被拒了，所以 `intent.grouping` **永远就是**被兑现的那个类别。
+（这两个字段随本次修复一并移除，plan digest 因此升到 `/3`。）
 
 rank 规则（同样是引擎规则，两条是**选择**而非推论）：
 
@@ -688,9 +715,12 @@ NODE_SIZE_IS_DECLARED_BY_ENGINE_RULES_UNTIL_ROUTING = True
 #### 还有一个身份需要 bump
 
 Step 2 给 `SemanticLayoutPlan` 增加了 `node_kinds` 与 `flow_edges`（几何自由的图事实）——
-**v1 的字段集变了，所以 plan digest 版本必须升到 `m7-semantic-layout-plan-digest/2`**。
-字段集是版本语义的一部分：在 v1 下加字段，就是"不同的 plan 顶着同一个名字"，
-这正是本里程碑要消灭的那种失败，只是低了一层。
+**v1 的字段集变了，所以 plan digest 版本升到 `m7-semantic-layout-plan-digest/2`**。
+随后 grouped_by_zone 改为硬拒绝，`honoured_grouping` / `grouping_fallback_from` 两个字段被移除
+（字段集再次变化）→ **`m7-semantic-layout-plan-digest/3`**。
+字段集是版本语义的一部分：在旧版本下加/删字段，就是"不同的 plan 顶着同一个名字"，
+这正是本里程碑要消灭的那种失败，只是低了一层。**未发布的中间版本也不豁免**——
+版本号是字段集的函数，不是发布记录的函数。
 
 #### 散文扫描延期的触发条件（机器规则，不挂 milestone）
 

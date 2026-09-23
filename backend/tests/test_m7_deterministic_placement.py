@@ -34,6 +34,7 @@ from agentcad.auto_layout_semantic import (
     STEP_2,
     UnknownDensityError,
     UnknownPlacementKindError,
+    UnsupportedLayoutIntentError,
     place_semantic_layout,
     placement_digest,
     plan_semantic_layout,
@@ -260,18 +261,62 @@ def test_flat_grouping_chains_systems_instead_of_stacking_them() -> None:
     assert flat_rows["el_recycle"]["y"] == 0 and flat_rows["el_recycle"]["x"] > 0
 
 
-def test_a_grouping_class_the_specification_cannot_express_falls_back_by_declaration() -> None:
+def test_a_grouping_class_the_engine_cannot_honour_is_refused_with_a_code() -> None:
+    """Refused, not replaced. A substitute -- even one that reports itself -- is still a drawing
+    nobody asked for, and it looks like an answer while being the wrong one."""
+
     payload = fixture_a_payload()
     payload["layout_intent"]["grouping"] = "grouped_by_zone"
 
-    plan = placed(payload)
+    with pytest.raises(UnsupportedLayoutIntentError) as failure:
+        placed(payload)
 
-    assert resolve_grouping("grouped_by_zone") == ("grouped_by_system", "grouped_by_zone")
-    assert plan.honoured_grouping == "grouped_by_system"
-    assert plan.grouping_fallback_from == "grouped_by_zone"
-    # The class it honoured is what the drawing actually shows.
-    assert plan.placement == placed(fixture_a_payload()).placement
+    assert failure.value.code == "zone_grouping_requires_zone_membership"
+    assert failure.value.dimension == "grouping"
+    assert failure.value.value == "grouped_by_zone"
+    assert "zone membership" in failure.value.reason
+
+
+def test_a_refused_intent_produces_no_placement_at_all() -> None:
+    """Zero placement, not a partial one: the refusal happens before anything is computed."""
+
+    from agentcad.auto_layout_semantic import placement_digest as digest_of
+
+    payload = fixture_a_payload()
+    payload["layout_intent"]["grouping"] = "grouped_by_zone"
+    plan = plan_semantic_layout(adapt(payload))
+
+    # The plan itself is still built -- it records the intent it was given ...
     assert plan.intent.grouping == "grouped_by_zone"
+    assert plan.placement == ()
+    assert plan.spacing is None
+    # ... and the refusal is where the drawing would have been.
+    with pytest.raises(UnsupportedLayoutIntentError):
+        place_semantic_layout(plan)
+    assert plan.placement == ()
+    assert digest_of(plan) != digest_of(placed())
+
+
+def test_the_supported_grouping_classes_are_exactly_the_declared_supported_ones() -> None:
+    """Recognition and executability are different facts: a class may stay in the vocabulary."""
+
+    from agentcad.m7_layout_contract import (
+        SUPPORTED_LAYOUT_INTENT_CLASSES,
+        UNSUPPORTED_LAYOUT_INTENT,
+    )
+
+    vocabulary = tuple(layout_intent_dimension_values("grouping"))
+    unsupported = {item.value for item in UNSUPPORTED_LAYOUT_INTENT}
+    supported = {item.value for item in SUPPORTED_LAYOUT_INTENT_CLASSES}
+
+    assert "grouped_by_zone" in vocabulary
+    assert "grouped_by_zone" in unsupported
+    assert set(vocabulary) - unsupported == supported == {"grouped_by_system", "flat"}
+    for value in sorted(supported):
+        assert resolve_grouping(value) == value
+    for value in sorted(unsupported):
+        with pytest.raises(UnsupportedLayoutIntentError):
+            resolve_grouping(value)
 
 
 def test_an_unknown_density_is_a_hard_failure() -> None:

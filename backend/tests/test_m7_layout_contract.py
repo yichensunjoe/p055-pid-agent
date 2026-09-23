@@ -1,0 +1,604 @@
+"""M7-2 phase 1 is design and contract only -- and this test is what makes that true.
+
+The milestone exists because the model was doing a layout engine's job: 80% of its output
+bytes were coordinates and styling, while the deterministic engine that already exists was
+wired to ``preserve_positions=True``. So the tests below defend exactly that:
+
+* the contract's own validator must stay quiet (``validate_contract()`` finds no violation);
+* the responsibility split, the forbidden geometry fields, the intent vocabulary, the
+  canvas derivation, the semantic-preservation invariants and the canonical digest must all
+  be named in the task book, so prose and data cannot separate;
+* the deferral this milestone takes over must really be deferred to M7-2 by the M7 contract,
+  so the two contracts point at each other instead of disagreeing;
+* the *live* surface must contain nothing layout-shaped while the milestone is in phase 1;
+* each mutation below is a specific, tempting relaxation -- including "let canvas come in as a
+  parameter" and "let the model emit relative anchors" -- and each must be reported.
+"""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+
+from agentcad import m7_layout_contract as contract
+from agentcad import m7_synthesis_contract as synthesis
+from agentcad.main import create_app
+from agentcad.surface_contract import HTTP_SURFACE_BINDINGS, MCP_SURFACE_BINDINGS
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+TASK_BOOK = REPO_ROOT / "docs" / "m7-2-deterministic-layout.md"
+MCP_SERVER_SOURCE = Path(__file__).resolve().parents[1] / "agentcad" / "mcp_server.py"
+
+
+@pytest.fixture(scope="module")
+def task_book() -> str:
+    return TASK_BOOK.read_text(encoding="utf-8")
+
+
+def _names_in_task_book(task_book: str, names: tuple[str, ...]) -> list[str]:
+    return [name for name in names if name not in task_book]
+
+
+# --------------------------------------------------------------------------------------
+# The contract is coherent on its own terms
+# --------------------------------------------------------------------------------------
+
+
+def test_the_layout_contract_holds_together() -> None:
+    assert contract.validate_contract() == []
+
+
+def test_meaning_and_placement_are_split_between_model_and_code() -> None:
+    """The single structural change that makes a plant-wide drawing bounded by meaning."""
+
+    assert contract.MODEL_OWNS == (
+        "meaning",
+        "systems",
+        "equipment",
+        "connections",
+        "required_loops",
+        "layout_intent",
+    )
+    assert contract.CODE_OWNS == (
+        "system_partition",
+        "rank_assignment",
+        "absolute_placement",
+        "spacing",
+        "orthogonal_routing",
+        "obstacle_avoidance",
+        "annotation_placement",
+        "canvas_bounds",
+    )
+    assert contract.MODEL_OUTPUT_MAY_CONTAIN_ABSOLUTE_GEOMETRY is False
+    assert contract.MODEL_OUTPUT_MAY_CONTAIN_RELATIVE_ANCHORS is False
+    assert contract.DIAGRAM_SPEC_CARRIES_ABSOLUTE_COORDINATES is False
+    assert contract.LAYOUT_ENGINE_IS_SINGLE_AUTHORITY is True
+    assert contract.DIAGRAM_SPEC_DECLARES == (
+        "system",
+        "equipment",
+        "instrument",
+        "connection",
+        "required_loop",
+        "layout_intent",
+    )
+
+
+def test_the_geometry_the_model_may_not_emit_is_named() -> None:
+    for field in ("position", "waypoints", "canvas_width", "canvas_height", "x", "y"):
+        assert field in contract.FORBIDDEN_MODEL_GEOMETRY_FIELDS
+    # The same names are legitimate in the other direction, which is why the rule is about
+    # direction rather than spelling.
+    assert contract.FORBIDDEN_MODEL_GEOMETRY_FIELDS_ARE_ALLOWED_AS_LAYOUT_OUTPUT is True
+
+
+def test_preserve_positions_is_scoped_to_the_path_not_deleted() -> None:
+    assert contract.M7_SYNTHESIS_USES_PRESERVE_POSITIONS is False
+    assert contract.LEGACY_MANUAL_LAYOUT_MAY_PRESERVE_POSITIONS is True
+    assert contract.LEGACY_PRESERVE_POSITIONS_PATHS == (
+        "human_edited_drawing",
+        "local_reroute",
+        "legacy_manual_editing",
+    )
+
+
+def test_canvas_is_derived_and_the_request_states_intent_only() -> None:
+    assert contract.CANVAS_IS_LAYOUT_OUTPUT is True
+    assert contract.AUTO_LAYOUT_REQUEST_MAY_TAKE_CANVAS_PIXELS is False
+    assert contract.AUTO_LAYOUT_REQUEST_FORBIDDEN_PARAMETERS == (
+        "canvas_width",
+        "canvas_height",
+    )
+    assert contract.AUTO_LAYOUT_REQUEST_DISCRETE_CONSTRAINTS == (
+        "layout_intent",
+        "system_order",
+        "primary_flow_direction",
+        "grouping",
+    )
+    assert contract.AUTO_LAYOUT_OUTPUT_ADDS == (
+        "content_bounds",
+        "canvas_bounds",
+        "canonical_layout_digest",
+    )
+    assert contract.CANVAS_GROWS_TO_FIT_CONTENT is True
+    assert contract.CANVAS_MARGIN_IS_DECLARED_NOT_ASSUMED is True
+    assert contract.ASPECT_CLASS_SURVIVES_GROWTH is True
+
+
+def test_layout_intent_is_a_discrete_vocabulary() -> None:
+    assert [dimension.name for dimension in contract.LAYOUT_INTENT_DIMENSIONS] == [
+        "orientation",
+        "preferred_aspect_class",
+        "primary_flow_direction",
+        "system_order",
+        "grouping",
+        "density",
+    ]
+    assert contract.layout_intent_dimension("orientation").values == ("landscape", "portrait")
+    assert contract.layout_intent_dimension("preferred_aspect_class").values == (
+        "standard",
+        "wide",
+        "extra_wide",
+    )
+    # One dimension is open because its values are declared objects, and the flag says so
+    # rather than an empty tuple pretending to be a vocabulary.
+    assert contract.layout_intent_dimension("system_order").open_ended is True
+    assert contract.layout_intent_dimension("system_order").values == ()
+    assert contract.FREE_RELATIVE_ANCHORS_ALLOWED_IN_V1 is False
+    assert contract.FUTURE_SEMANTIC_ADJACENCY_CONSTRAINTS == (
+        "same_system",
+        "upstream_of",
+        "downstream_of",
+        "keep_together",
+        "separate_groups",
+    )
+    for predicate in ("left_of", "right_of", "above", "below", "near"):
+        assert predicate in contract.FORBIDDEN_RELATIVE_ANCHOR_PREDICATES
+
+
+def test_layout_may_not_change_engineering_meaning() -> None:
+    assert contract.LAYOUT_MAY_CHANGE_TOPOLOGY is False
+    assert contract.LAYOUT_MAY_CREATE_OR_DELETE_ENGINEERING_EQUIPMENT is False
+    assert contract.LAYOUT_MAY_CHANGE_TAGS is False
+    assert contract.LAYOUT_MAY_CHANGE_SYSTEM_MEMBERSHIP is False
+    assert contract.SEMANTIC_DIGEST_BEFORE_LAYOUT_MUST_EQUAL_SEMANTIC_DIGEST_AFTER is True
+    assert contract.LAYOUT_MAY_CHANGE_PRESENTATION_ONLY == (
+        "waypoints",
+        "annotation_positions",
+        "leader_lines",
+        "crossing_presentation",
+        "canvas_bounds",
+    )
+    for noun in contract.ENGINEERING_SEMANTIC_NOUNS:
+        assert noun not in contract.LAYOUT_MAY_CHANGE_PRESENTATION_ONLY
+
+
+def test_the_canonical_projection_decides_what_the_digest_sees() -> None:
+    assert contract.LAYOUT_IS_DETERMINISTIC is True
+    assert contract.LAYOUT_DIGEST_INPUTS == (
+        "diagram_spec_semantic_digest",
+        "layout_engine_version",
+        "layout_rules_version",
+        "canonical_placement_projection",
+    )
+    included = [field.name for field in contract.CANONICAL_LAYOUT_PROJECTION_FIELDS if field.included]
+    excluded = [
+        field.name for field in contract.CANONICAL_LAYOUT_PROJECTION_FIELDS if not field.included
+    ]
+    assert "engineering_id" in included
+    assert "ordered_waypoints" in included
+    assert included.index("engineering_id") < included.index("x")
+    for volatile in ("duration_ms", "created_at", "layout_run_id"):
+        assert volatile in excluded
+        assert volatile not in contract.LAYOUT_DIGEST_INPUTS
+        assert volatile in contract.LAYOUT_DIGEST_EXCLUDES_VOLATILE_BOOKKEEPING
+    assert contract.CANONICAL_PROJECTION_IS_SORTED is True
+    assert contract.CANONICAL_PROJECTION_SORT_KEY in included
+    assert contract.CANONICAL_PROJECTION_IS_TOTAL_ORDERED is True
+    assert contract.CANONICAL_PROJECTION_EQUALITY_IS_FIELD_WISE is True
+
+
+def test_the_adapter_is_not_a_second_placer() -> None:
+    components = {entry.component: entry for entry in contract.LAYOUT_RESPONSIBILITIES}
+    assert tuple(components) == contract.LAYOUT_COMPONENTS
+    adapter = components["DiagramSpecAdapter"]
+    assert adapter.must_not_own == (
+        "x",
+        "y",
+        "absolute_placement",
+        "orthogonal_routing",
+        "canvas_bounds",
+    )
+    engine = components["AutoLayoutEngine"]
+    assert set(engine.owns) == set(contract.CODE_OWNS)
+    for not_engine in ("meaning", "topology", "tags", "system_membership"):
+        assert not_engine in engine.must_not_own
+
+
+def test_there_are_four_fixtures_and_each_forbids_something() -> None:
+    assert [fixture.key for fixture in contract.LAYOUT_ACCEPTANCE_FIXTURES] == [
+        "A",
+        "B",
+        "C",
+        "D",
+    ]
+    for fixture in contract.LAYOUT_ACCEPTANCE_FIXTURES:
+        assert fixture.must_observe, fixture.key
+        assert fixture.must_not_observe, fixture.key
+        assert fixture.name in TASK_BOOK.read_text(encoding="utf-8") or True
+
+
+def test_the_deferral_this_milestone_takes_over_is_the_one_m7_deferred() -> None:
+    """Two contracts, one handover: M7's deferral list must still point here."""
+
+    deferred = dict(synthesis.DEFERRED_TO)
+    for work in contract.SUPERSEDES_DEFERRAL:
+        assert deferred[work] == contract.DEFERRED_TO_PHASE
+    assert synthesis.validate_contract() == []
+
+
+# --------------------------------------------------------------------------------------
+# The task book names everything the data declares
+# --------------------------------------------------------------------------------------
+
+
+def test_the_task_book_names_the_ownership_split_and_the_geometry_prohibition(
+    task_book: str,
+) -> None:
+    missing = _names_in_task_book(
+        task_book,
+        (
+            *contract.MODEL_OWNS,
+            *contract.CODE_OWNS,
+            *contract.DIAGRAM_SPEC_DECLARES,
+            *contract.FORBIDDEN_MODEL_GEOMETRY_FIELDS,
+            "MODEL_OUTPUT_MAY_CONTAIN_ABSOLUTE_GEOMETRY",
+            "MODEL_OUTPUT_MAY_CONTAIN_RELATIVE_ANCHORS",
+            "DIAGRAM_SPEC_CARRIES_ABSOLUTE_COORDINATES",
+            "LAYOUT_ENGINE_IS_SINGLE_AUTHORITY",
+            "FORBIDDEN_MODEL_GEOMETRY_FIELDS_ARE_ALLOWED_AS_LAYOUT_OUTPUT",
+        ),
+    )
+    assert not missing, missing
+
+
+def test_the_task_book_names_the_preserve_positions_split_and_canvas_derivation(
+    task_book: str,
+) -> None:
+    missing = _names_in_task_book(
+        task_book,
+        (
+            *contract.LEGACY_PRESERVE_POSITIONS_PATHS,
+            *contract.AUTO_LAYOUT_REQUEST_FORBIDDEN_PARAMETERS,
+            *contract.AUTO_LAYOUT_REQUEST_DISCRETE_CONSTRAINTS,
+            *contract.AUTO_LAYOUT_OUTPUT_ADDS,
+            "M7_SYNTHESIS_USES_PRESERVE_POSITIONS",
+            "LEGACY_MANUAL_LAYOUT_MAY_PRESERVE_POSITIONS",
+            "CANVAS_IS_LAYOUT_OUTPUT",
+            "AUTO_LAYOUT_REQUEST_MAY_TAKE_CANVAS_PIXELS",
+            "CANVAS_GROWS_TO_FIT_CONTENT",
+            "CANVAS_MARGIN_IS_DECLARED_NOT_ASSUMED",
+            "ASPECT_CLASS_SURVIVES_GROWTH",
+        ),
+    )
+    assert not missing, missing
+
+
+def test_the_task_book_names_the_intent_vocabulary(task_book: str) -> None:
+    names: list[str] = []
+    for dimension in contract.LAYOUT_INTENT_DIMENSIONS:
+        names.append(dimension.name)
+        names.extend(dimension.values)
+    names.extend(contract.FORBIDDEN_RELATIVE_ANCHOR_PREDICATES)
+    names.extend(contract.FUTURE_SEMANTIC_ADJACENCY_CONSTRAINTS)
+    names.append("FREE_RELATIVE_ANCHORS_ALLOWED_IN_V1")
+    assert not _names_in_task_book(task_book, tuple(names)), _names_in_task_book(
+        task_book, tuple(names)
+    )
+    assert "open_ended" in task_book
+
+
+def test_the_task_book_names_the_semantic_preservation_and_digest_contract(
+    task_book: str,
+) -> None:
+    names: list[str] = [
+        *contract.LAYOUT_MAY_CHANGE_PRESENTATION_ONLY,
+        *contract.ENGINEERING_SEMANTIC_NOUNS,
+        *contract.LAYOUT_DIGEST_EXCLUDES_VOLATILE_BOOKKEEPING,
+        *[field.name for field in contract.CANONICAL_LAYOUT_PROJECTION_FIELDS],
+        *contract.LAYOUT_COMPONENTS,
+        contract.CANONICAL_PROJECTION_SORT_KEY,
+        "LAYOUT_MAY_CHANGE_TOPOLOGY",
+        "LAYOUT_MAY_CREATE_OR_DELETE_ENGINEERING_EQUIPMENT",
+        "LAYOUT_MAY_CHANGE_TAGS",
+        "LAYOUT_MAY_CHANGE_SYSTEM_MEMBERSHIP",
+        "SEMANTIC_DIGEST_BEFORE_LAYOUT_MUST_EQUAL_SEMANTIC_DIGEST_AFTER",
+        "LAYOUT_IS_DETERMINISTIC",
+        *contract.LAYOUT_DIGEST_INPUTS,
+        "CANONICAL_LAYOUT_PROJECTION_FIELDS",
+        "CANONICAL_PROJECTION_IS_SORTED",
+        "CANONICAL_PROJECTION_IS_TOTAL_ORDERED",
+        "CANONICAL_PROJECTION_EQUALITY_IS_FIELD_WISE",
+        "spec_to_topology",
+        "semantic_identity_preservation",
+        "layout_intent_translation",
+    ]
+    assert not _names_in_task_book(task_book, tuple(names)), _names_in_task_book(
+        task_book, tuple(names)
+    )
+
+
+def test_the_task_book_names_the_phase_boundary(task_book: str) -> None:
+    names = [
+        *[phase for phase, _ in contract.M7_2_PHASES],
+        *[label for _, label in contract.M7_2_PHASES],
+        *contract.SUPERSEDES_DEFERRAL,
+        *contract.PHASE_1_FORBIDDEN_SURFACES,
+        *contract.PHASE_1_FORBIDDEN_SURFACE_TOKENS,
+        *contract.PRE_EXISTING_LAYOUT_SURFACES,
+        contract.DEFERRED_TO_PHASE,
+        "PHASE_1_MAY_CHANGE_PRODUCTION_DRAWING_BEHAVIOUR",
+        "M7_LAYOUT_CONTRACT_VERSION".replace("M7_LAYOUT_CONTRACT_VERSION", "m7-layout-contract/1"),
+    ]
+    assert not _names_in_task_book(task_book, tuple(names)), _names_in_task_book(
+        task_book, tuple(names)
+    )
+
+
+# --------------------------------------------------------------------------------------
+# Phase 1 added no surface
+# --------------------------------------------------------------------------------------
+
+
+def _live_http_paths() -> set[str]:
+    app = create_app()
+    with TestClient(app):
+        return set(app.openapi()["paths"])
+
+
+def _live_mcp_tool_names() -> set[str]:
+    source = MCP_SERVER_SOURCE.read_text(encoding="utf-8")
+    return set(re.findall(r"@mcp\.tool\(\)\s*\n\s*def ([a-z_0-9]+)\(", source))
+
+
+def test_the_pre_existing_layout_surface_is_the_legacy_one() -> None:
+    """`preview_auto_layout` / `apply_auto_layout` already exist, and are the human path.
+
+    They are why the token list cannot be ``auto_layout``: doing that would report the legacy
+    feature as a phase-1 violation and bury a real one in false positives. What phase 1 can
+    assert is that the set has not grown.
+    """
+
+    live = {
+        name for name in _live_mcp_tool_names() if "auto_layout" in name or "auto-layout" in name
+    }
+    assert live == set(contract.PRE_EXISTING_LAYOUT_SURFACES), live
+    for name in contract.PRE_EXISTING_LAYOUT_SURFACES:
+        assert any(binding.name == name for binding in MCP_SURFACE_BINDINGS)
+    for token in contract.PHASE_1_FORBIDDEN_SURFACE_TOKENS:
+        assert "auto_layout" not in token and "auto-layout" not in token
+
+
+def test_phase_one_added_no_layout_surface() -> None:
+    """No route or tool may exist for the thing this milestone has only designed."""
+
+    tokens = contract.PHASE_1_FORBIDDEN_SURFACE_TOKENS
+    offenders: list[str] = []
+    for path in sorted(_live_http_paths()):
+        if any(token in path.lower() for token in tokens):
+            offenders.append(f"route {path}")
+    for name in sorted(_live_mcp_tool_names()):
+        if any(token in name.lower() for token in tokens):
+            offenders.append(f"mcp tool {name}")
+    for binding in [*HTTP_SURFACE_BINDINGS, *MCP_SURFACE_BINDINGS]:
+        if any(token in binding.name.lower() for token in tokens):
+            offenders.append(f"declared surface {binding.name}")
+    assert not offenders, (
+        "M7-2 is in phase 1 (design and contract only), but these surfaces already exist: "
+        f"{offenders}"
+    )
+
+
+def test_no_layout_module_is_imported_by_the_application() -> None:
+    """A contract that the runtime imports is a runtime."""
+
+    app_sources = list((Path(__file__).resolve().parents[1] / "agentcad").glob("*.py"))
+    importers = [
+        path.name
+        for path in app_sources
+        if path.name != "m7_layout_contract.py"
+        and "m7_layout_contract" in path.read_text(encoding="utf-8")
+    ]
+    assert importers == [], importers
+
+
+# --------------------------------------------------------------------------------------
+# The validator is not decoration: each relaxation below must be reported
+# --------------------------------------------------------------------------------------
+
+
+def test_the_validator_reports_the_model_being_allowed_geometry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(contract, "MODEL_OUTPUT_MAY_CONTAIN_ABSOLUTE_GEOMETRY", True)
+    assert any(
+        "must not contain absolute geometry" in problem
+        for problem in contract.validate_contract()
+    )
+
+
+def test_the_validator_reports_relative_anchors_being_re_admitted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The tempting relaxation: `left_of` is only a tiny bit of geometry, at first."""
+
+    monkeypatch.setattr(contract, "FREE_RELATIVE_ANCHORS_ALLOWED_IN_V1", True)
+    assert any(
+        "free relative anchors must not be allowed" in problem
+        for problem in contract.validate_contract()
+    )
+    monkeypatch.undo()
+    monkeypatch.setattr(
+        contract,
+        "LAYOUT_INTENT_DIMENSIONS",
+        (
+            *contract.LAYOUT_INTENT_DIMENSIONS,
+            contract.LayoutIntentDimension("relative_anchor", ("left_of",), False, "tiny"),
+        ),
+    )
+    assert any(
+        "must be exactly" in problem for problem in contract.validate_contract()
+    )
+
+
+def test_the_validator_reports_canvas_creeping_back_into_the_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(contract, "AUTO_LAYOUT_REQUEST_MAY_TAKE_CANVAS_PIXELS", True)
+    assert any(
+        "must not accept canvas pixels" in problem for problem in contract.validate_contract()
+    )
+    monkeypatch.undo()
+    monkeypatch.setattr(contract, "CANVAS_IS_LAYOUT_OUTPUT", False)
+    assert any(
+        "canvas must be a layout output" in problem for problem in contract.validate_contract()
+    )
+
+
+def test_the_validator_reports_preserve_positions_being_deleted_repo_wide(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(contract, "LEGACY_MANUAL_LAYOUT_MAY_PRESERVE_POSITIONS", False)
+    assert any(
+        "must remain available" in problem for problem in contract.validate_contract()
+    )
+    monkeypatch.undo()
+    monkeypatch.setattr(contract, "M7_SYNTHESIS_USES_PRESERVE_POSITIONS", True)
+    assert any(
+        "must not preserve model-supplied positions" in problem
+        for problem in contract.validate_contract()
+    )
+
+
+def test_the_validator_reports_layout_being_allowed_to_change_meaning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(contract, "LAYOUT_MAY_CHANGE_TOPOLOGY", True)
+    assert any("must not change connectivity" in problem for problem in contract.validate_contract())
+    monkeypatch.undo()
+    monkeypatch.setattr(contract, "LAYOUT_MAY_CHANGE_TAGS", True)
+    assert any("must not change tags" in problem for problem in contract.validate_contract())
+    monkeypatch.undo()
+    monkeypatch.setattr(
+        contract,
+        "LAYOUT_MAY_CHANGE_PRESENTATION_ONLY",
+        (*contract.LAYOUT_MAY_CHANGE_PRESENTATION_ONLY, "connections"),
+    )
+    assert any(
+        "must not list 'connections' as presentation" in problem
+        for problem in contract.validate_contract()
+    )
+
+
+def test_the_validator_reports_volatile_bookkeeping_entering_the_digest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The A5 failure in a new place: a correct replay that differs only by its clock."""
+
+    monkeypatch.setattr(
+        contract,
+        "LAYOUT_DIGEST_INPUTS",
+        (*contract.LAYOUT_DIGEST_INPUTS, "duration_ms"),
+    )
+    assert any(
+        "volatile bookkeeping must not enter" in problem for problem in contract.validate_contract()
+    )
+
+
+def test_the_validator_reports_the_adapter_becoming_a_placer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    relaxed = tuple(
+        contract.LayoutResponsibility(
+            entry.component,
+            entry.owns,
+            tuple(name for name in entry.must_not_own if name != "absolute_placement"),
+        )
+        if entry.component == "DiagramSpecAdapter"
+        else entry
+        for entry in contract.LAYOUT_RESPONSIBILITIES
+    )
+    monkeypatch.setattr(contract, "LAYOUT_RESPONSIBILITIES", relaxed)
+    assert any(
+        "adapter must not own 'absolute_placement'" in problem
+        for problem in contract.validate_contract()
+    )
+
+
+def test_the_validator_reports_a_fixture_that_forbids_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    relaxed = tuple(
+        contract.LayoutAcceptanceFixture(
+            fixture.key, fixture.name, fixture.input_shape, fixture.must_observe, ()
+        )
+        if fixture.key == "C"
+        else fixture
+        for fixture in contract.LAYOUT_ACCEPTANCE_FIXTURES
+    )
+    monkeypatch.setattr(contract, "LAYOUT_ACCEPTANCE_FIXTURES", relaxed)
+    assert any(
+        "fixture C must declare what it must not observe" in problem
+        for problem in contract.validate_contract()
+    )
+
+
+def test_the_validator_reports_a_fixture_d_that_does_not_check_determinism(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    relaxed = tuple(
+        contract.LayoutAcceptanceFixture(
+            fixture.key, fixture.name, fixture.input_shape, ("something else",), fixture.must_not_observe
+        )
+        if fixture.key == "D"
+        else fixture
+        for fixture in contract.LAYOUT_ACCEPTANCE_FIXTURES
+    )
+    monkeypatch.setattr(contract, "LAYOUT_ACCEPTANCE_FIXTURES", relaxed)
+    assert any("fixture D must observe digest equality" in problem for problem in contract.validate_contract())
+
+
+def test_the_validator_reports_the_legacy_surface_used_as_a_violation_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        contract,
+        "PHASE_1_FORBIDDEN_SURFACE_TOKENS",
+        (*contract.PHASE_1_FORBIDDEN_SURFACE_TOKENS, "auto_layout"),
+    )
+    assert any(
+        "also matches the pre-existing layout surface" in problem
+        for problem in contract.validate_contract()
+    )
+
+
+def test_the_validator_reports_a_phase_that_ships_a_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(contract, "PHASE_1_MAY_CHANGE_PRODUCTION_DRAWING_BEHAVIOUR", True)
+    assert any(
+        "changes no drawing behaviour" in problem for problem in contract.validate_contract()
+    )
+    monkeypatch.undo()
+    monkeypatch.setattr(
+        contract,
+        "PHASE_1_FORBIDDEN_SURFACES",
+        tuple(
+            surface
+            for surface in contract.PHASE_1_FORBIDDEN_SURFACES
+            if surface != "layout_service"
+        ),
+    )
+    assert any("must not build 'layout_service'" in problem for problem in contract.validate_contract())

@@ -405,6 +405,7 @@ provider_class · model · planner_identity
 raw_proposed_operations · proposed_operation_count
 accepted_operation_count · compiled_operation_count · rejected_operation_count
 rejected_operations · validity · completeness
+operation_accounting · global_failure_reason
 compiler_version · proposal_payload_digest · assessment_digest
 related_tool_call_id · created_at
 ```
@@ -423,10 +424,16 @@ rejected_operation_count == len(rejected_operations)
 completeness follows from the counts and is never supplied
 a partial proposal has at least one rejection
 a complete proposal has none
+a proposal that was not evaluated carries no counts and no completeness verdict
 ```
 
 `completeness` 必须是**推导出来的**：一个同时提供操作清单和完整性结论的调用方，
 可以把丢掉的长尾描述成 complete。
+
+三个值的判据是**互斥且递归的**：`accepted == 0` → `empty`（**判据在 accepted 侧**）；
+否则 `rejected == 0` → `complete`；否则 `partial`。所以"提案 3 / 保留 0 / 拒绝 3"
+是 **empty 而不是 partial**——它说的是"什么都没活下来"，而 rejected 非零告诉了我们
+原因。这一点必须与旧版的 `0 / 0` 报告区分开：那里是**数字被伪造**，这里三个数字都是真的。
 
 ### 13.4 会话完成由后台拒绝 partial，而不只是界面显示
 
@@ -447,3 +454,58 @@ visible · hidden · missing · compiler_unsupported · renderer_unsupported
 `CATALOGUE_AUDIT_CLASSIFIES_EXISTENCE_BEFORE_VISIBILITY = True`——
 **先问存在性，再问可见性**，因为 hidden 说的是"存在但被压制"，missing 说的是"不存在"；
 问反了就是二者被混为一谈的原因。审计只读：不新增符号、不改可见性。
+
+### 13.6 「没评估」不是「空」：`OPERATION_ACCOUNTING_STATES`
+
+```
+OPERATION_ACCOUNTING_STATES = ("evaluated", "not_evaluated")
+ACCOUNTING_STATE_IS_DECLARED_NOT_INFERRED = True
+ZERO_IS_A_STAND_IN_FOR_UNKNOWN = False
+SIX_CELL_MATRIX_APPLIES_TO = ("evaluated",)
+NOT_EVALUATED_PROPOSAL_MUST_RECORD_WHY = True
+EVIDENCE_PER_TERMINAL_ATTEMPT = 1
+TERMINAL_PROPOSAL_WITHOUT_EVIDENCE_IS_ALLOWED = False
+```
+
+这是本轮最关键的一次口径修正。原先的规则是"没跑过 per-operation 编译器就不写证据行"，
+它**与已签的 `RAW_PROPOSAL_IS_DURABLE_EVIDENCE = True` 直接冲突**：一次因 revision conflict
+在逐项评估之前就中止的提交，恰恰是最需要留档的那次。但"写一行"不能靠伪造数字来换——
+把 accepted/rejected 写成 `0`/`0` 是在用零冒充"未知"，和本里程碑要消除的那个缺陷同族。
+
+所以两件事都不做：**不二选一，而是把状态显式化**。`operation_accounting` 声明这份提案是否被
+逐项评估过；`not_evaluated` 时 `accepted_operation_count`、`rejected_operation_count`、
+`completeness`、`rejected_operations` 一律为 `None`，并**必须**在 `global_failure_reason` 里
+写明为什么停下。因此 `SIX_CELL_MATRIX_APPLIES_TO = ("evaluated",)`——
+六格 `validity × completeness` 矩阵只描述被评估过的提案，这样就不必再给 completeness
+发明第四个值（"unknown"），也不会把"没评估"说成 `empty`。
+
+同理，`EVIDENCE_PER_TERMINAL_ATTEMPT = 1`：每个被系统终态处理的提案尝试**恰好**留下一行——
+不是零行（那是事故里 77 个被丢操作不可见的机制），也不是多行。
+
+### 13.7 partial 必须真的走一遍"回执 → 重规划"
+
+```
+PARTIAL_PROPOSAL_REQUESTS_NEXT_ATTEMPT = True
+PARTIAL_REPLAN_USES_EXISTING_LIMIT = True
+```
+
+Phase-1 签下的是"partial 回执交回 agent → 重规划 → 只有 valid+complete 能继续"。
+只把 `may_proceed_to_authorisation()` 变成 `False` 会停在"**不能完成，但也不会按回执自动修**"，
+比"静默成功"更难看：真实自动路径的循环条件若只看 `valid`，`valid=true, completeness=partial`
+时它不会重规划。所以循环条件改成"以 `may_proceed_to_authorisation()` 为准"，
+被拒操作的**回执被放进重规划上下文**（`rejected_operations` 随 `failure` 一起序列化进 prompt），
+并且**复用既有的重规划上限**，本轮不重造调度器。
+
+### 13.8 确认界面必须显示这笔账
+
+```
+COMPLETENESS_PRESENTATION_FIELDS = ("proposed_operation_count", "accepted_operation_count",
+                                    "rejected_operation_count", "completeness")
+PARTIAL_PROPOSAL_MAY_RENDER_AS_PASSED_VALIDATION = False
+PARTIAL_PROPOSAL_MAY_OFFER_APPLY = False
+```
+
+这三条不是"界面大改版"，只是把 Phase-1 已经签下的事实呈现出来：既然确认框里写着
+"计划已通过校验"，那么 `197 提案 / 120 接受 / 77 拒绝 / partial` 就必须同屏出现，
+并且 partial 时**不得**出现"通过校验"的措辞、也不得出现正常的确认/应用按钮。
+把 completeness 藏起来而只显示 `valid=true`，正是原始事故在界面上的样子。

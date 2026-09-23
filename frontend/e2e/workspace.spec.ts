@@ -84,6 +84,14 @@ test("previews a deterministic Agent transaction without revision changes, then 
         updated_element_ids: ["tank"],
         deleted_element_ids: [],
         issues: [],
+        // The server always reports the accounting axes; a fixture that omits them is
+        // describing a response that no longer exists, and the confirmation surface reads
+        // them before it offers apply.
+        operation_accounting: "evaluated",
+        accepted_operation_count: 1,
+        rejected_operation_count: 0,
+        completeness: "complete",
+        rejected_operations: [],
       },
       attempt: 1,
       parent_plan_id: null,

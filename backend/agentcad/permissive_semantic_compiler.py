@@ -73,7 +73,12 @@ class PermissiveSemanticTransactionCompiler(StrictSemanticTransactionCompiler):
             receipts.append(self._rejection_receipt(index, operation, result.assessment))
 
         if not accepted:
-            return strict_result
+            # Every operation was examined and every one was refused. That is a real,
+            # evaluated result: 0 accepted of `proposed` reviewed, and it must be recorded as
+            # such rather than left looking unevaluated.
+            return self._with_accounting(
+                strict_result, proposed=proposed, accepted=0, receipts=receipts
+            )
 
         skipped = proposed - len(accepted)
         label = transaction.label or "Agent semantic transaction"
@@ -129,6 +134,7 @@ class PermissiveSemanticTransactionCompiler(StrictSemanticTransactionCompiler):
         assessment = compiled.assessment.model_copy(
             update={
                 "semantic_operation_count": proposed,
+                "operation_accounting": "evaluated",
                 "accepted_operation_count": accepted,
                 "rejected_operation_count": len(receipts),
                 "completeness": completeness,

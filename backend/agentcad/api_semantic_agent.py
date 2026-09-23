@@ -25,7 +25,7 @@ from .flow_topology import build_agent_harness_context
 from .harness import AgentHarnessService
 from .harness_models import AgentSessionCreateRequest
 from .llm import PlannerError
-from .m7_synthesis_models import build_proposal_evidence
+from .m7_synthesis_models import build_not_evaluated_evidence, build_proposal_evidence
 from .models import AgentPlan, StrictModel, TransactionRequest, TransactionResult
 from .permissive_semantic_compiler import (
     COMPILER_VERSION,
@@ -213,28 +213,42 @@ def _record_proposal_evidence(
     """
 
     assessment = compiled.assessment
-    if not (assessment.accepted_operation_count or assessment.rejected_operation_count):
-        return
     previous = harness.latest_synthesis_proposal_evidence(session_id)
     attempt = previous.proposal_attempt_index + 1 if previous is not None else 0
     provider = request.provider
-    evidence = build_proposal_evidence(
-        session_id=session_id,
-        document_id=document_id,
-        proposal_attempt_index=attempt,
-        raw_proposed_operations=[
+    common = {
+        "session_id": session_id,
+        "document_id": document_id,
+        "proposal_attempt_index": attempt,
+        "raw_proposed_operations": [
             operation.model_dump(mode="json") for operation in plan.transaction.operations
         ],
-        accepted_operation_count=assessment.accepted_operation_count,
-        compiled_operation_count=assessment.compiled_operation_count,
-        rejected_operations=list(assessment.rejected_operations),
-        validity="valid" if assessment.valid else "invalid",
-        provider_class="llm" if provider is not None and provider.base_url else "unknown",
-        model=(provider.model if provider is not None and provider.model else ""),
-        planner_identity=PLANNER_IDENTITY,
-        compiler_version=COMPILER_VERSION,
-        assessment=assessment.model_dump(mode="json"),
-    )
+        "provider_class": "llm" if provider is not None and provider.base_url else "unknown",
+        "model": (provider.model if provider is not None and provider.model else ""),
+        "planner_identity": PLANNER_IDENTITY,
+        "compiler_version": COMPILER_VERSION,
+        "assessment": assessment.model_dump(mode="json"),
+    }
+    if assessment.operation_accounting == "evaluated":
+        evidence = build_proposal_evidence(
+            **common,
+            accepted_operation_count=assessment.accepted_operation_count,
+            compiled_operation_count=assessment.compiled_operation_count,
+            rejected_operations=list(assessment.rejected_operations),
+            validity="valid" if assessment.valid else "invalid",
+        )
+    else:
+        # The proposal still reached a terminal state, so the raw submission is durable
+        # evidence in its own right. No count is invented for a plan the compiler never
+        # examined operation by operation; the reason it stopped is recorded instead.
+        first_issue = assessment.issues[0] if assessment.issues else None
+        reason = first_issue.code if first_issue is not None else "not_evaluated"
+        if first_issue is not None and first_issue.message:
+            reason = f"{reason}: {first_issue.message}"
+        evidence = build_not_evaluated_evidence(
+            **common,
+            global_failure_reason=reason,
+        )
     harness.record_synthesis_proposal_evidence(evidence)
 
 

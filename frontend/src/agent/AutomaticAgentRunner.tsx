@@ -8,15 +8,23 @@ import {
   automaticAgentRunContextError,
   type AutomaticAgentRunOrigin,
 } from "./automaticAgentRunGuard";
+import {
+  MAX_REPLANS,
+  automaticAgentReceipt,
+  automaticAgentVerdict,
+  driveAutomaticAgentPlan,
+} from "./automaticAgentLoop";
+import { ProposalAccounting } from "./ProposalAccounting";
 import { AgentStreamingViewer } from "./AgentStreamingViewer";
 
-const MAX_REPLANS = 5;
 const HIGH_RISK_OPERATIONS = new Set(["delete_element", "delete_layer", "delete_system", "clear_document"]);
 
 type TraceEntry = {
   attempt: number;
   planId: string;
   valid: boolean;
+  completeness: string;
+  summary: string;
   issueCodes: string[];
 };
 
@@ -36,22 +44,18 @@ type PendingApproval = {
   origin: AutomaticAgentRunOrigin;
 };
 
-function issueSignature(result: SemanticAgentPlanResult): string {
-  return result.assessment.issues
-    .map((issue) => `${issue.code}:${issue.field_path}`)
-    .sort()
-    .join("|");
-}
-
 function containsHighRiskOperation(operations: SemanticOperation[]): boolean {
   return operations.some((operation) => HIGH_RISK_OPERATIONS.has(operation.op));
 }
 
 function traceEntry(result: SemanticAgentPlanResult): TraceEntry {
+  const verdict = automaticAgentVerdict(result);
   return {
     attempt: result.attempt,
     planId: result.plan.plan_id,
     valid: result.assessment.valid,
+    completeness: verdict.completeness,
+    summary: automaticAgentReceipt(result).summary,
     issueCodes: result.assessment.issues.map((issue) => issue.code),
   };
 }
@@ -134,8 +138,10 @@ export function AutomaticAgentRunner({
   ) => {
     const current = useWorkspace.getState().document;
     const compiled = result.compiled_plan;
-    if (!current || !compiled || !result.assessment.valid) {
-      throw new Error("自动执行没有得到可应用的有效事务");
+    // Apply is gated on the two-axis verdict, not on `valid` alone: a partial plan is valid and
+    // must never be applied through this path even if a caller reaches it directly.
+    if (!current || !compiled || !automaticAgentVerdict(result).mayProceed) {
+      throw new Error("自动执行没有得到可应用的有效且完整的提案");
     }
     assertRunContext(origin, result, true);
     setPhase("正在应用有效事务…");
@@ -228,7 +234,6 @@ export function AutomaticAgentRunner({
     setTrace([]);
     setStreamingThinking("");
     setStreamingContent("");
-    const seenFailures = new Set<string>();
     try {
       setPhase("正在规划并编译…");
       const firstController = new AbortController();
@@ -251,38 +256,45 @@ export function AutomaticAgentRunner({
       const entries: TraceEntry[] = [traceEntry(result)];
       setTrace(entries);
 
-      while (!result.assessment.valid) {
-        assertRunContext(origin, result);
-        if (cancelRequested.current) throw new Error("自动执行已停止");
-        const signature = issueSignature(result);
-        if (signature && seenFailures.has(signature)) {
-          throw new Error(`检测到重复失败循环：${signature}`);
-        }
-        if (signature) seenFailures.add(signature);
-        if (result.attempt >= MAX_REPLANS) {
-          throw new Error(`达到最大重规划次数 ${MAX_REPLANS}`);
-        }
-        const nextAttempt = result.attempt + 1;
-        setPhase(`正在按结构化错误自动重规划（${nextAttempt}/${MAX_REPLANS}）…`);
-        const replanController = new AbortController();
-        abortControllerRef.current = replanController;
-        result = await api.replanSemanticAgent(
-          origin.documentId,
-          origin.revision,
-          prompt.trim(),
-          context,
-          result.session_id,
-          result.plan,
-          nextAttempt,
-          provider,
-          images,
-          requireVisibleOutput,
-          replanController.signal,
-        );
-        assertRunContext(origin, result);
-        entries.push(traceEntry(result));
-        setTrace([...entries]);
-      }
+      // The loop asks again on anything that is not a valid, evaluated, complete proposal: a
+      // partial plan is repaired (its receipt is what names the missing part), an invalid one
+      // keeps its existing recovery path, and an unevaluated one is not mistaken for empty.
+      const driven = await driveAutomaticAgentPlan(
+        result,
+        async ({ failed, nextAttempt, receipt }) => {
+          setPhase(
+            `正在按回执重新规划（${nextAttempt}/${MAX_REPLANS}）：${receipt.summary}`,
+          );
+          const replanController = new AbortController();
+          abortControllerRef.current = replanController;
+          const next = await api.replanSemanticAgent(
+            origin.documentId,
+            origin.revision,
+            prompt.trim(),
+            context,
+            failed.session_id,
+            failed.plan,
+            nextAttempt,
+            provider,
+            images,
+            requireVisibleOutput,
+            replanController.signal,
+          );
+          assertRunContext(origin, next);
+          entries.push(traceEntry(next));
+          setTrace([...entries]);
+          return next;
+        },
+        {
+          isCancelled: () => cancelRequested.current,
+          onVerdict: (verdict, receipt) => {
+            if (!verdict.mayProceed) {
+              setMessage(`提案未提交人工确认：${receipt.summary}`);
+            }
+          },
+        },
+      );
+      result = driven.result;
 
       assertRunContext(origin, result, true);
       if (cancelRequested.current) throw new Error("自动执行已停止");
@@ -355,8 +367,8 @@ export function AutomaticAgentRunner({
         onStop={stopRun}
       />
       {message ? <div className={`automatic-agent-result ${message.startsWith("生成成功") ? "success" : message.includes("需要确认") ? "warning" : "error"}`}>{message}</div> : null}
-      {pendingApproval ? <div className="automatic-agent-approval"><button type="button" className="confirm" disabled={running} onClick={() => void confirmHighRisk()}>确认并批准工程变更</button><button type="button" disabled={running} onClick={() => setPendingApproval(null)}>放弃</button></div> : null}
-      {trace.length ? <details className="automatic-agent-trace"><summary>执行轨迹 · {trace.length} 次规划</summary><ol>{trace.map((entry) => <li key={entry.planId}><code>attempt {entry.attempt}</code><span>{entry.valid ? "通过" : entry.issueCodes.join(", ") || "未通过"}</span></li>)}</ol></details> : null}
+      {pendingApproval ? <div className="automatic-agent-approval"><ProposalAccounting result={pendingApproval.result} /><button type="button" className="confirm" disabled={running} onClick={() => void confirmHighRisk()}>确认并批准工程变更</button><button type="button" disabled={running} onClick={() => setPendingApproval(null)}>放弃</button></div> : null}
+      {trace.length ? <details className="automatic-agent-trace"><summary>执行轨迹 · {trace.length} 次规划</summary><ol>{trace.map((entry) => <li key={entry.planId}><code>attempt {entry.attempt}</code><span>{entry.summary}{entry.valid && entry.completeness === "complete" ? " · 通过" : entry.issueCodes.length ? ` · ${entry.issueCodes.join(", ")}` : " · 未提交确认"}</span></li>)}</ol></details> : null}
       <p className="group-hint">相同结构化错误再次出现时会提前停止，避免模型在两个错误之间循环。所有工程变更均需通过 Harness Approval Gate；删除、清空等高风险操作会额外标记风险。</p>
     </section>
   );

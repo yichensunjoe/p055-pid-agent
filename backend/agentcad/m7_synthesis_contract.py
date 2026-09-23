@@ -601,6 +601,8 @@ PROPOSAL_EVIDENCE_REQUIRED_FIELDS_PHASE_2A: tuple[str, ...] = (
     "rejected_operations",
     "validity",
     "completeness",
+    "operation_accounting",
+    "global_failure_reason",
     "compiler_version",
     "proposal_payload_digest",
     "assessment_digest",
@@ -616,6 +618,7 @@ PROPOSAL_COUNT_INVARIANTS: tuple[str, ...] = (
     "completeness follows from the counts and is never supplied",
     "a partial proposal has at least one rejection",
     "a complete proposal has none",
+    "a proposal that was not evaluated carries no counts and no completeness verdict",
 )
 
 #: Session completion is gated in the backend, not only in the interface. A partial plan must
@@ -623,6 +626,45 @@ PROPOSAL_COUNT_INVARIANTS: tuple[str, ...] = (
 COMPLETED_SESSION_REQUIRES: tuple[str, ...] = ("valid", "complete")
 COMPLETED_SESSION_IS_REFUSED_IN_BACKEND = True
 COMPLETED_SESSION_REFUSAL_IS_UI_ONLY = False
+
+# --------------------------------------------------------------------------------------
+# §12 Phase-2A closeout. The three closures the review required before the gate may shut:
+# a proposal is accounted for or explicitly unaccounted, the real agent loop asks again on a
+# partial plan, and the completeness arithmetic is visible where a human decides.
+# --------------------------------------------------------------------------------------
+
+#: A proposal is either accounted operation by operation, or it is not accounted at all.
+#: There is no third state in which the counts are unknown but reported as numbers.
+OPERATION_ACCOUNTING_STATES: tuple[str, ...] = ("evaluated", "not_evaluated")
+ACCOUNTING_STATE_IS_DECLARED_NOT_INFERRED = True
+#: Zero is a claim ("nothing survived"); the absence of a claim is ``None``, not ``0``.
+ZERO_IS_A_STAND_IN_FOR_UNKNOWN = False
+#: The six-cell validity x completeness matrix describes evaluated proposals and only those,
+#: which is why a second completeness value was not invented for "unknown".
+SIX_CELL_MATRIX_APPLIES_TO: tuple[str, ...] = ("evaluated",)
+#: An uncounted proposal still has to say why it was never counted.
+NOT_EVALUATED_PROPOSAL_MUST_RECORD_WHY = True
+
+#: Every proposal a caller terminates leaves exactly one durable row, evaluated or not:
+#: "no row" previously meant "no evidence we could inspect", and that is how 77 dropped
+#: operations stayed invisible. One, not zero, and not one per call site.
+EVIDENCE_PER_TERMINAL_ATTEMPT: int = 1
+TERMINAL_PROPOSAL_WITHOUT_EVIDENCE_IS_ALLOWED = False
+
+#: What the confirmation surface must show before a human may approve anything.
+COMPLETENESS_PRESENTATION_FIELDS: tuple[str, ...] = (
+    "proposed_operation_count",
+    "accepted_operation_count",
+    "rejected_operation_count",
+    "completeness",
+)
+#: A partial plan may not be dressed as a passing plan: no "validated" wording and no CTA.
+PARTIAL_PROPOSAL_MAY_RENDER_AS_PASSED_VALIDATION = False
+PARTIAL_PROPOSAL_MAY_OFFER_APPLY = False
+#: The real automatic-agent loop must act on the receipt: valid + partial asks for the next
+#: proposal rather than stopping at "cannot proceed". The existing replan limit is reused.
+PARTIAL_PROPOSAL_REQUESTS_NEXT_ATTEMPT = True
+PARTIAL_REPLAN_USES_EXISTING_LIMIT = True
 
 #: The verdicts the read-only catalogue audit may return, in classification order.
 CATALOGUE_AUDIT_VERDICTS: tuple[str, ...] = (
@@ -862,6 +904,39 @@ def validate_contract() -> list[str]:
         problems.append("a completed session requires a valid and complete proposal")
     if COMPLETED_SESSION_REFUSAL_IS_UI_ONLY or not COMPLETED_SESSION_IS_REFUSED_IN_BACKEND:
         problems.append("session completion must be refused in the backend, not only in the UI")
+
+    # §12: the closeout. An unaccounted proposal must look unaccounted, not empty.
+    if OPERATION_ACCOUNTING_STATES != ("evaluated", "not_evaluated"):
+        problems.append(
+            f"a proposal is accounted for or explicitly not, found {OPERATION_ACCOUNTING_STATES!r}"
+        )
+    if not ACCOUNTING_STATE_IS_DECLARED_NOT_INFERRED:
+        problems.append("the accounting state must be declared rather than inferred from counts")
+    if ZERO_IS_A_STAND_IN_FOR_UNKNOWN:
+        problems.append("zero must not stand in for an unknown count")
+    if SIX_CELL_MATRIX_APPLIES_TO != ("evaluated",):
+        problems.append("the six-cell matrix must apply to evaluated proposals only")
+    if not NOT_EVALUATED_PROPOSAL_MUST_RECORD_WHY:
+        problems.append("an unevaluated proposal must record why it was not evaluated")
+    if EVIDENCE_PER_TERMINAL_ATTEMPT != 1 or TERMINAL_PROPOSAL_WITHOUT_EVIDENCE_IS_ALLOWED:
+        problems.append("every terminal proposal attempt must leave exactly one durable row")
+    for field in ("operation_accounting", "global_failure_reason", "raw_proposed_operations"):
+        if field not in PROPOSAL_EVIDENCE_REQUIRED_FIELDS_PHASE_2A:
+            problems.append(f"a proposal record must carry {field!r}")
+    for field in ("proposed_operation_count", "accepted_operation_count"):
+        if field not in COMPLETENESS_PRESENTATION_FIELDS:
+            problems.append(f"the confirmation surface must show {field!r}")
+    for field in ("rejected_operation_count", "completeness"):
+        if field not in COMPLETENESS_PRESENTATION_FIELDS:
+            problems.append(f"the confirmation surface must show {field!r}")
+    if PARTIAL_PROPOSAL_MAY_RENDER_AS_PASSED_VALIDATION:
+        problems.append("a partial plan must not be rendered as a plan that passed validation")
+    if PARTIAL_PROPOSAL_MAY_OFFER_APPLY:
+        problems.append("a partial plan must not offer an apply button")
+    if not PARTIAL_PROPOSAL_REQUESTS_NEXT_ATTEMPT:
+        problems.append("a partial plan must make the agent ask for the next proposal")
+    if not PARTIAL_REPLAN_USES_EXISTING_LIMIT:
+        problems.append("the partial replan must reuse the existing replan limit")
     if CATALOGUE_AUDIT_VERDICTS[:3] != ("visible", "hidden", "missing"):
         problems.append(
             "the catalogue audit must classify visible, hidden and missing before support"

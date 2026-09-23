@@ -27,6 +27,7 @@ from agentcad.harness import AgentHarnessService, HarnessError
 from agentcad.harness_models import AgentSessionCreateRequest
 from agentcad.m7_synthesis_models import (
     PROPOSAL_EVIDENCE_TABLE,
+    build_not_evaluated_evidence,
     build_proposal_evidence,
     derive_completeness,
 )
@@ -184,7 +185,9 @@ def test_a_whole_plan_reports_complete_with_no_receipts(tmp_path: Path) -> None:
     assert assessment.may_proceed_to_authorisation() is True
 
 
-def test_a_plan_that_compiles_to_nothing_is_empty_rather_than_partial(tmp_path: Path) -> None:
+def test_a_plan_whose_every_operation_is_rejected_says_so_rather_than_reporting_zero(
+    tmp_path: Path,
+) -> None:
     service, _ = _service(tmp_path)
     document_id = _seeded(service)
     current = service.get_document(document_id)
@@ -198,10 +201,59 @@ def test_a_plan_that_compiles_to_nothing_is_empty_rather_than_partial(tmp_path: 
     )
     assessment = compiler.compile(document_id, transaction).assessment
 
-    # Nothing survived, so the strict result stands: invalid, with no accounting invented.
+    # Every operation *was* examined and every one failed. The honest report is
+    # 0 accepted of 3 rejected -- not 0/0, which would be the same fabrication this
+    # milestone removes, only pointing the other way.
     assert assessment.valid is False
+    assert assessment.operation_accounting == "evaluated"
     assert assessment.accepted_operation_count == 0
-    assert assessment.rejected_operation_count == 0
+    assert assessment.rejected_operation_count == 3
+    assert len(assessment.rejected_operations) == 3
+    # ``empty`` is decisive on the accepted side: nothing survived. It is not ``partial``
+    # (which requires retained work) and it is emphatically not ``complete``. The rejection
+    # count says *why* it is empty, which is what the old 0/0 report destroyed.
+    assert assessment.completeness == "empty"
+    assert assessment.may_proceed_to_authorisation() is False
+
+
+def test_an_assessment_may_not_report_counts_it_never_computed() -> None:
+    """``not_evaluated`` is the default, and it forbids the numbers rather than zeroing them."""
+
+    from agentcad.agent_semantic_models import AgentTransactionAssessment
+
+    unevaluated = AgentTransactionAssessment(
+        valid=False,
+        stage="compile",
+        document_id="doc_1",
+        current_revision=1,
+        next_revision=2,
+        semantic_operation_count=77,
+    )
+    assert unevaluated.operation_accounting == "not_evaluated"
+    assert unevaluated.accepted_operation_count is None
+    assert unevaluated.rejected_operation_count is None
+    assert unevaluated.completeness is None
+    assert unevaluated.rejected_operations is None
+    assert unevaluated.accounting_problems() == []
+    # None is not complete, so an unchecked proposal cannot be offered for authorisation.
+    assert unevaluated.is_complete is False
+    assert unevaluated.may_proceed_to_authorisation() is False
+
+    # Inventing a number for a plan that was never examined is refused, zero included.
+    fabricated = unevaluated.model_copy(update={"accepted_operation_count": 0})
+    problems = fabricated.accounting_problems()
+    assert any("accepted_operation_count" in problem for problem in problems)
+
+    # And an evaluated assessment must carry both counts and a verdict.
+    missing_verdict = unevaluated.model_copy(
+        update={
+            "operation_accounting": "evaluated",
+            "accepted_operation_count": 77,
+            "rejected_operation_count": 0,
+            "rejected_operations": [],
+        }
+    )
+    assert any("completeness verdict" in problem for problem in missing_verdict.accounting_problems())
 
 
 def test_completeness_cannot_be_supplied_and_must_follow_from_the_counts() -> None:
@@ -285,7 +337,189 @@ def test_an_incoherent_record_is_refused_before_it_reaches_the_table(tmp_path: P
         store.append_synthesis_proposal_evidence(broken)
 
 
-def test_schema_v8_provides_the_evidence_carrier(tmp_path: Path) -> None:
+def test_an_unevaluated_proposal_is_still_durable_evidence(tmp_path: Path) -> None:
+    """A revision conflict stops before per-operation checking, and still leaves a row.
+
+    This is the case the previous rule silently dropped: nothing was accounted for, so the
+    proposal was not recorded at all -- which is precisely why a plan that lost 39% of its own
+    operations could not be inspected afterwards. The row exists, and it is honest about what
+    it does not know.
+    """
+
+    service, store = _service(tmp_path)
+    document_id = _seeded(service)
+    reason = "revision_conflict: expected revision 9, current revision is 1"
+    evidence = build_not_evaluated_evidence(
+        session_id="session_unaccounted",
+        document_id=document_id,
+        proposal_attempt_index=0,
+        raw_proposed_operations=[_rejected_update(index) for index in range(77)],
+        global_failure_reason=reason,
+        compiler_version="permissive-semantic-compiler/1",
+    )
+
+    assert evidence.problems() == []
+    assert evidence.operation_accounting == "not_evaluated"
+    assert evidence.accepted_operation_count is None
+    assert evidence.rejected_operation_count is None
+    assert evidence.completeness is None
+    assert evidence.is_success_candidate() is False
+
+    store.append_synthesis_proposal_evidence(evidence)
+    latest = store.latest_synthesis_proposal_evidence("session_unaccounted")
+    assert latest is not None
+    # The raw submission survives, which is the whole point of recording it.
+    assert latest.proposed_operation_count == 77
+    assert len(latest.raw_proposed_operations) == 77
+    # And "not evaluated" is not stored as "evaluated to zero".
+    assert latest.operation_accounting == "not_evaluated"
+    assert latest.accepted_operation_count is None
+    assert latest.rejected_operation_count is None
+    assert latest.validity is None
+    assert latest.completeness is None
+    assert latest.global_failure_reason == reason
+
+
+def test_zero_may_not_stand_in_for_a_count_that_was_never_computed(tmp_path: Path) -> None:
+    service, store = _service(tmp_path)
+    document_id = _seeded(service)
+    evidence = build_not_evaluated_evidence(
+        session_id="session_fabricated",
+        document_id=document_id,
+        proposal_attempt_index=0,
+        raw_proposed_operations=[_rejected_update(0)],
+        global_failure_reason="revision_conflict",
+    )
+
+    problems = evidence.model_copy(update={"accepted_operation_count": 0}).problems()
+    assert any("rather than reporting zero" in problem for problem in problems)
+    with pytest.raises(ValueError, match="incoherent"):
+        store.append_synthesis_proposal_evidence(
+            evidence.model_copy(update={"accepted_operation_count": 0})
+        )
+
+    # The same rule on the assessment side: an unchecked proposal may not carry a verdict.
+    fabricated = evidence.model_copy(update={"operation_accounting": "evaluated"})
+    assert fabricated.problems()
+
+
+def test_the_replan_prompt_carries_the_rejected_operations(tmp_path: Path) -> None:
+    """The receipt is not decorative: it is what the next proposal is asked to repair.
+
+    Read on the real planner, with the provider call intercepted, so this asserts the string
+    the model would receive rather than that a helper exists.
+    """
+
+    from agentcad.agent_semantic_models import SemanticAgentPlan, SemanticAgentReplanRequest
+    from agentcad.models import ProviderConfig
+    from agentcad.semantic_planner import SemanticAgentPlanner
+
+    service, _ = _service(tmp_path)
+    document_id = _seeded(service)
+    current = service.get_document(document_id)
+    compiler = PermissiveSemanticTransactionCompiler(service)
+    transaction = _incident_transaction(current.revision)
+    compiled = compiler.compile(document_id, transaction)
+    assessment = compiled.assessment
+    assert assessment.completeness == "partial"
+
+    planner = SemanticAgentPlanner(service=service, symbols=SymbolRegistry())
+    captured: dict[str, str] = {}
+
+    def fake_request_model_json(provider, **kwargs):
+        captured.update(kwargs)
+        return {
+            "explanation": "repaired plan",
+            "transaction": {
+                "expected_revision": current.revision,
+                "operations": [_accepted_text(0)],
+            },
+        }
+
+    planner._request_model_json = fake_request_model_json  # type: ignore[method-assign]
+    planner.replan(
+        document_id,
+        SemanticAgentReplanRequest(
+            prompt="画一张熔盐堆气路系统总图",
+            context="",
+            expected_revision=current.revision,
+            failed_plan=SemanticAgentPlan(explanation="the incident plan", transaction=transaction),
+            attempt=1,
+            provider=ProviderConfig(base_url="http://provider.test/v1", model="test-model"),
+        ),
+        assessment,
+    )
+
+    prompt = captured["user_prompt"]
+    # The arithmetic, so the model is told what is missing rather than that it failed.
+    assert "partial" in prompt
+    assert f"{INCIDENT_ACCEPTED} accepted, {INCIDENT_REJECTED} rejected of {INCIDENT_PROPOSED}" in prompt
+    assert "PARTIAL plan, not an invalid one" in prompt
+    # And each rejected operation arrives with the diagnostic the strict compiler computed.
+    first = assessment.rejected_operations[0]
+    assert first.reason_code in prompt
+    assert f"operation #{first.original_index}" in prompt
+
+
+def test_an_unevaluated_failure_tells_the_model_the_counts_are_unknown(tmp_path: Path) -> None:
+    """Replanning on an unchecked proposal must not be phrased as "you proposed nothing"."""
+
+    from agentcad.agent_semantic_models import AgentTransactionAssessment
+    from agentcad.semantic_planner import SemanticAgentPlanner
+
+    service, _ = _service(tmp_path)
+    document_id = _seeded(service)
+    current = service.get_document(document_id)
+    planner = SemanticAgentPlanner(service=service, symbols=SymbolRegistry())
+    block = planner._completeness_block(
+        AgentTransactionAssessment(
+            valid=False,
+            stage="compile",
+            document_id=document_id,
+            current_revision=current.revision,
+            next_revision=current.revision + 1,
+            semantic_operation_count=77,
+        )
+    )
+
+    assert "not_evaluated" in block
+    assert "unknown rather than zero" in block
+    assert "0 accepted" not in block
+
+
+def test_a_plan_that_lost_everything_is_told_so_rather_than_told_to_keep_its_work(
+    tmp_path: Path,
+) -> None:
+    """``empty`` with rejections must not reuse the partial wording ("keep what was accepted")."""
+
+    from agentcad.semantic_planner import SemanticAgentPlanner
+
+    service, _ = _service(tmp_path)
+    document_id = _seeded(service)
+    current = service.get_document(document_id)
+    compiler = PermissiveSemanticTransactionCompiler(service)
+    transaction = SemanticTransaction.model_validate(
+        {
+            "expected_revision": current.revision,
+            "operations": [_rejected_update(index) for index in range(3)],
+        }
+    )
+    assessment = compiler.compile(document_id, transaction).assessment
+    assert assessment.completeness == "empty"
+
+    planner = SemanticAgentPlanner(service=service, symbols=SymbolRegistry())
+    block = planner._completeness_block(assessment)
+
+    assert "0 accepted, 3 rejected of 3 proposed" in block
+    assert "Nothing survived" in block
+    assert "keeps the accepted work" not in block
+    # The receipts still arrive, which is what makes the next attempt actionable.
+    assert assessment.rejected_operations[0].reason_code in block
+
+
+def test_the_evidence_carrier_exists_at_the_current_schema_version(tmp_path: Path) -> None:
+    from agentcad.database_recovery import CURRENT_SCHEMA_VERSION
+
     _, store = _service(tmp_path)
     connection = store._connect()
     try:
@@ -299,7 +533,7 @@ def test_schema_v8_provides_the_evidence_carrier(tmp_path: Path) -> None:
         connection.close()
 
     assert PROPOSAL_EVIDENCE_TABLE in names
-    assert store.schema_version == 8
+    assert store.schema_version == CURRENT_SCHEMA_VERSION
 
 
 # --------------------------------------------------------------------------------------

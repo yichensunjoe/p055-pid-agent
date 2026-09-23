@@ -223,6 +223,30 @@ export type AgentOperationIssue = {
   suggestions: string[];
 };
 
+/** Why one submitted operation did not make it into the drawing. */
+export type AgentRejectedOperationReceipt = {
+  original_index: number;
+  operation_id: string;
+  operation_kind: string;
+  reason_code: string;
+  message: string;
+  field_path: string;
+  available_values: Record<string, string[]>;
+  suggestions: string[];
+};
+
+/**
+ * How a compiled plan is judged, on two axes rather than one.
+ *
+ * `valid` answers "is each retained operation legal"; `completeness` answers "is the submitted
+ * plan whole". They used to be one field, which is why a plan that lost 39% of its own
+ * operations was reported as passing validation and recorded as a completed session.
+ *
+ * `operation_accounting` says whether the compiler examined the plan operation by operation. It
+ * is the field a consumer must read first: when it is `not_evaluated` the counts and both
+ * verdicts are `null`, because the truth is that no claim was made. Zero is a claim ("nothing
+ * survived") and is never used to mean "unknown".
+ */
 export type AgentTransactionAssessment = {
   valid: boolean;
   stage: "compile" | "validate";
@@ -237,6 +261,11 @@ export type AgentTransactionAssessment = {
   updated_element_ids: string[];
   deleted_element_ids: string[];
   issues: AgentOperationIssue[];
+  operation_accounting?: "evaluated" | "not_evaluated";
+  accepted_operation_count?: number | null;
+  rejected_operation_count?: number | null;
+  completeness?: "complete" | "partial" | "empty" | null;
+  rejected_operations?: AgentRejectedOperationReceipt[] | null;
 };
 
 export type AnnotationQuality = {

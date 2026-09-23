@@ -3,6 +3,8 @@ import { AutomaticAgentRunner } from "./agent/AutomaticAgentRunner";
 import { AgentStreamingViewer } from "./agent/AgentStreamingViewer";
 import { VisionImageInput } from "./agent/VisionImageInput";
 import { shouldRequireVisibleOutput } from "./agent/visibleOutputIntent";
+import { automaticAgentVerdict } from "./agent/automaticAgentLoop";
+import { ProposalAccounting } from "./agent/ProposalAccounting";
 import { toAgentImagePayload, type VisionAttachment } from "./agent/visionImageTypes";
 import { EditorCanvas, type AgentCanvasPreview, type CanvasCommandId, type CanvasCommandRequest, type CanvasFocusRequest, type CanvasViewportRequest } from "./editor/EditorCanvas";
 import { CommandPalette } from "./editor/CommandPalette";
@@ -561,7 +563,9 @@ export default function App() {
   const applyAgentPlan = async () => {
     const document = state.document;
     const compiled = pendingPlan?.compiled_plan;
-    if (!document || !pendingPlan || !compiled || !pendingPlan.assessment.valid) return;
+    if (!document || !pendingPlan || !compiled || !automaticAgentVerdict(pendingPlan).mayProceed) {
+      return;
+    }
     const expectedRevision = compiled.transaction.expected_revision;
     if (expectedRevision !== null && expectedRevision !== undefined && expectedRevision !== document.revision) {
       setAgentError(`预览基于 r${expectedRevision}，当前网页已是 r${document.revision}。请按当前 revision 局部重规划。`);
@@ -676,7 +680,11 @@ export default function App() {
   const busyAgent = planningAgent || repairingAgent || applyingAgent || automaticAgentRunning;
   const agentImages = useMemo(() => toAgentImagePayload(referenceImages), [referenceImages]);
   const requireVisibleOutput = shouldRequireVisibleOutput(prompt, state.document?.elements.length ?? 0);
-  const agentCanvasPreview: AgentCanvasPreview | null = pendingPlan?.assessment.valid && pendingPlan.compiled_plan
+  // A plan may be previewed as a proposal on one axis and still not be offerable: the ghost
+  // preview and the apply button both read the two-axis verdict, not `valid` alone.
+  const pendingPlanVerdict = pendingPlan ? automaticAgentVerdict(pendingPlan) : null;
+  const pendingPlanMayApply = Boolean(pendingPlan && pendingPlanVerdict?.mayProceed);
+  const agentCanvasPreview: AgentCanvasPreview | null = pendingPlanMayApply && pendingPlan?.compiled_plan
     ? {
         planId: pendingPlan.plan.plan_id,
         expectedRevision: pendingPlan.compiled_plan.transaction.expected_revision,
@@ -1181,8 +1189,8 @@ export default function App() {
               <p>{PROVIDER_PRESETS.find((preset) => preset.id === providerPreset)?.note}。预设只填写公开 Base URL。API Key 仅保存在当前页面内存，并随模型列表、测试或生成请求发送，不写入数据库或浏览器存储。</p>
             </details>
 
-            {pendingPlan ? <details className={`agent-result-drawer agent-preview ${pendingPlan.assessment.valid ? "agent-preview-valid" : "agent-preview-invalid"}`} open>
-              <summary><strong>{pendingPlan.assessment.valid ? "待确认语义事务" : "事务需要修复"}</strong><span>plan {pendingPlan.plan.plan_id.slice(0, 8)} · attempt {pendingPlan.attempt}</span></summary>
+            {pendingPlan ? <details className={`agent-result-drawer agent-preview ${pendingPlanMayApply ? "agent-preview-valid" : "agent-preview-invalid"}`} open>
+              <summary><strong>{pendingPlanMayApply ? "待确认语义事务" : pendingPlanVerdict?.completeness === "partial" ? "事务不完整，需继续规划" : "事务需要修复"}</strong><span>plan {pendingPlan.plan.plan_id.slice(0, 8)} · attempt {pendingPlan.attempt}</span></summary>
               <p>{pendingPlan.plan.explanation || "模型未提供说明"}</p>
               <dl>
                 <div><dt>Label</dt><dd>{pendingPlan.plan.transaction.label}</dd></div>
@@ -1191,6 +1199,18 @@ export default function App() {
                 <div><dt>编译操作</dt><dd>{pendingPlan.assessment.compiled_operation_count}</dd></div>
                 <div><dt>结果元素数</dt><dd>{pendingPlan.assessment.resulting_element_count ?? "—"}</dd></div>
               </dl>
+              <ProposalAccounting result={pendingPlan} />
+              {pendingPlan.assessment.rejected_operations?.length ? <section className="agent-rejected-operations">
+                <h3>被拒操作（{pendingPlan.assessment.rejected_operations.length}）</h3>
+                <ol>
+                  {pendingPlan.assessment.rejected_operations.slice(0, 20).map((receipt) => <li key={receipt.operation_id}>
+                    <div><strong>{receipt.reason_code}</strong><code>#{receipt.original_index} {receipt.operation_kind}</code></div>
+                    <p>{receipt.message}</p>
+                    {receipt.suggestions.length ? <ul>{receipt.suggestions.map((suggestion) => <li key={suggestion}>{suggestion}</li>)}</ul> : null}
+                  </li>)}
+                </ol>
+                {pendingPlan.assessment.rejected_operations.length > 20 ? <div className="agent-preview-more">其余 {pendingPlan.assessment.rejected_operations.length - 20} 项未展开</div> : null}
+              </section> : null}
               {pendingPlan.annotation_metrics ? <section className="agent-annotation-metrics">
                 <h3>标签自动润色</h3>
                 <dl>
@@ -1219,11 +1239,13 @@ export default function App() {
                 })}
               </section> : null}
               <div className="agent-preview-actions">
-                <button type="button" className="confirm" disabled={busyAgent || !pendingPlan.assessment.valid || !pendingPlan.compiled_plan} onClick={() => void applyAgentPlan()}>{applyingAgent ? "正在应用…" : "确认应用"}</button>
+                <button type="button" className="confirm" disabled={busyAgent || !pendingPlanMayApply} onClick={() => void applyAgentPlan()}>{applyingAgent ? "正在应用…" : "确认应用"}</button>
                 {repairingAgent ? (
                   <button type="button" className="danger" onClick={stopAgentPlanning}>🛑 停止重规划</button>
                 ) : (
-                  <button type="button" className="repair" disabled={busyAgent || pendingPlan.attempt >= 5 || pendingPlan.assessment.valid} onClick={() => void replanAgent()}>{`按失败原因重规划${pendingPlan.attempt ? `（${pendingPlan.attempt + 1}/5）` : ""}`}</button>
+                  // Enabled for a partial plan: "valid but incomplete" is exactly the case that
+                  // must be repaired, and the old condition disabled this button for it.
+                  <button type="button" className="repair" disabled={busyAgent || pendingPlan.attempt >= 5 || pendingPlanMayApply} onClick={() => void replanAgent()}>{`按回执重规划${pendingPlan.attempt ? `（${pendingPlan.attempt + 1}/5）` : ""}`}</button>
                 )}
                 <button type="button" disabled={busyAgent} onClick={discardAgentPlan}>放弃预览</button>
               </div>

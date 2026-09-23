@@ -349,6 +349,20 @@ def test_the_task_book_names_the_phase_2a_obligations(task_book: str) -> None:
             "PROPOSAL_EVIDENCE_OVERWRITE_ALLOWED",
             "PROPOSAL_EVIDENCE_MAY_LIVE_IN_TOOL_CALL_METADATA",
             "CATALOGUE_AUDIT_CLASSIFIES_EXISTENCE_BEFORE_VISIBILITY",
+            # §12, the closeout: an unaccounted proposal says so, the loop asks again, and
+            # the confirmation surface shows the arithmetic.
+            *contract.OPERATION_ACCOUNTING_STATES,
+            *contract.SIX_CELL_MATRIX_APPLIES_TO,
+            *contract.COMPLETENESS_PRESENTATION_FIELDS,
+            "ACCOUNTING_STATE_IS_DECLARED_NOT_INFERRED",
+            "ZERO_IS_A_STAND_IN_FOR_UNKNOWN",
+            "NOT_EVALUATED_PROPOSAL_MUST_RECORD_WHY",
+            "EVIDENCE_PER_TERMINAL_ATTEMPT",
+            "TERMINAL_PROPOSAL_WITHOUT_EVIDENCE_IS_ALLOWED",
+            "PARTIAL_PROPOSAL_REQUESTS_NEXT_ATTEMPT",
+            "PARTIAL_REPLAN_USES_EXISTING_LIMIT",
+            "PARTIAL_PROPOSAL_MAY_RENDER_AS_PASSED_VALIDATION",
+            "PARTIAL_PROPOSAL_MAY_OFFER_APPLY",
         ),
     )
     assert not missing, missing
@@ -373,8 +387,16 @@ def test_the_declared_evidence_contract_is_the_runtime_one() -> None:
     ]
     assert not missing, missing
 
-    # The schema version the evidence carrier was introduced in.
-    assert CURRENT_SCHEMA_VERSION == 8
+    # The schema version the evidence carrier was introduced in, read as a bound rather than
+    # a literal: the carrier arrived in 8 and the nullable accounting corrected it in 9, and
+    # hardcoding either number would have to be edited every time the schema moves. What must
+    # not drift is the relation -- the declared carrier exists at the version a fresh database
+    # reports.
+    from agentcad.database_recovery import _MIGRATIONS
+
+    assert 8 in _MIGRATIONS, "migration 8 introduced the evidence carrier"
+    assert CURRENT_SCHEMA_VERSION >= 8
+    assert CURRENT_SCHEMA_VERSION in _MIGRATIONS or CURRENT_SCHEMA_VERSION == 8
     assert contract.COMPLETED_SESSION_REQUIRES == ("valid", "complete")
 
 
@@ -742,3 +764,64 @@ def test_the_validator_reports_the_representation_ratio_being_re_admitted(
     monkeypatch.setattr(contract, "FORBIDDEN_FIDELITY_METRICS", ())
     problems = contract.validate_contract()
     assert any("representation-mismatched fidelity ratio" in problem for problem in problems)
+
+
+# --------------------------------------------------------------------------------------
+# §12 closeout: the claim is about the surface a human uses, which lives in another language
+# --------------------------------------------------------------------------------------
+
+FRONTEND_SRC = REPO_ROOT / "frontend" / "src"
+CONFIRMATION_SURFACE = FRONTEND_SRC / "App.tsx"
+AUTOMATIC_AGENT_RUNNER = FRONTEND_SRC / "agent" / "AutomaticAgentRunner.tsx"
+AUTOMATIC_AGENT_LOOP = FRONTEND_SRC / "agent" / "automaticAgentLoop.ts"
+PROPOSAL_ACCOUNTING = FRONTEND_SRC / "agent" / "ProposalAccounting.tsx"
+
+
+def test_the_declared_presentation_is_the_one_that_is_rendered() -> None:
+    """The contract may only claim a surface that exists, in the code that renders it.
+
+    Two ways this could rot while every declaration stayed true: a rename in the component
+    would leave the contract naming fields nobody shows, and a gate that went back to a
+    single axis would leave ``PARTIAL_PROPOSAL_MAY_OFFER_APPLY = False`` describing behaviour
+    that is not there. Both are read out of the frontend sources rather than trusted.
+    """
+
+    sources = {
+        path.name: path.read_text(encoding="utf-8")
+        for path in (
+            CONFIRMATION_SURFACE,
+            AUTOMATIC_AGENT_RUNNER,
+            AUTOMATIC_AGENT_LOOP,
+            PROPOSAL_ACCOUNTING,
+        )
+    }
+    rendered = "\n".join(sources.values())
+    for names in (
+        contract.UI_MUST_DISPLAY_COMPLETENESS_FIELDS,
+        contract.COMPLETENESS_PRESENTATION_FIELDS,
+    ):
+        missing = [name for name in names if name not in rendered]
+        assert not missing, missing
+
+    # The negation is the exact shape of the original defect -- `while (!assessment.valid)` --
+    # so it must not come back anywhere a human is asked to approve, preview or apply.
+    assert "!result.assessment.valid" not in sources["AutomaticAgentRunner.tsx"]
+    assert "assessment.valid" not in sources["App.tsx"]
+    for name in ("AutomaticAgentRunner.tsx", "App.tsx"):
+        assert "mayProceed" in sources[name], f"{name} must decide on the two-axis verdict"
+
+    assert contract.PARTIAL_PROPOSAL_MAY_OFFER_APPLY is False
+    assert contract.PARTIAL_PROPOSAL_MAY_RENDER_AS_PASSED_VALIDATION is False
+    assert contract.PARTIAL_PROPOSAL_REQUESTS_NEXT_ATTEMPT is True
+
+
+def test_the_two_axis_loop_is_covered_by_a_runtime_test() -> None:
+    """The decision the closeout is about must be executable without a browser."""
+
+    package = (REPO_ROOT / "frontend" / "package.json").read_text(encoding="utf-8")
+    assert "tests/*.test.ts" in package, "the frontend test script must pick up the new file"
+    assert automatic_agent_loop_test().exists()
+
+
+def automatic_agent_loop_test() -> Path:
+    return REPO_ROOT / "frontend" / "tests" / "automaticAgentLoop.test.ts"

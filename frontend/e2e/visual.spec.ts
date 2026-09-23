@@ -150,6 +150,13 @@ test("Agent ghost preview", async ({ page, request }) => {
         updated_element_ids: ["tank"],
         deleted_element_ids: [],
         issues: [],
+        // Real server responses carry the two-axis accounting; the ghost preview is gated on
+        // a valid *and* complete proposal, so a fixture without it is not previewable.
+        operation_accounting: "evaluated",
+        accepted_operation_count: 1,
+        rejected_operation_count: 0,
+        completeness: "complete",
+        rejected_operations: [],
       },
       attempt: 1,
       parent_plan_id: null,

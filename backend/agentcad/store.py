@@ -1185,21 +1185,25 @@ class SQLiteDocumentStore:
                 f"""
                 INSERT INTO {PROPOSAL_EVIDENCE_TABLE} (
                     proposal_evidence_id, session_id, document_id, proposal_attempt_index,
-                    validity, completeness, proposed_operation_count, accepted_operation_count,
-                    rejected_operation_count, proposal_payload_digest, assessment_digest,
+                    operation_accounting, validity, completeness, proposed_operation_count,
+                    accepted_operation_count, compiled_operation_count, rejected_operation_count,
+                    global_failure_reason, proposal_payload_digest, assessment_digest,
                     related_tool_call_id, created_at, payload_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     evidence.proposal_evidence_id,
                     evidence.session_id,
                     evidence.document_id,
                     evidence.proposal_attempt_index,
+                    evidence.operation_accounting,
                     evidence.validity,
                     evidence.completeness,
                     evidence.proposed_operation_count,
                     evidence.accepted_operation_count,
+                    evidence.compiled_operation_count,
                     evidence.rejected_operation_count,
+                    evidence.global_failure_reason,
                     evidence.proposal_payload_digest,
                     evidence.assessment_digest,
                     evidence.related_tool_call_id,

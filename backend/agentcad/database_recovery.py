@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, BinaryIO
 from urllib.parse import quote
 
-CURRENT_SCHEMA_VERSION = 8
+CURRENT_SCHEMA_VERSION = 9
 BACKUP_FORMAT = "pid-agent.sqlite-backup"
 BACKUP_VERSION = 1
 BACKUP_DATABASE_MEMBER = "database.sqlite3"
@@ -921,6 +921,70 @@ def _migration_8(connection: sqlite3.Connection) -> None:
     )
 
 
+def _migration_9(connection: sqlite3.Connection) -> None:
+    """M7 phase 2A correction: accounting is explicit, so counts and verdicts may be absent.
+
+    Version 8 required counts and a verdict on every row. That made "no operation was ever
+    evaluated" unrepresentable, so a proposal stopped by a revision conflict would have had
+    to claim zero accepted and zero rejected -- a fabricated number of the same family as the
+    defect this milestone exists to remove. ``operation_accounting`` now says whether the
+    compiler examined the plan operation by operation, and when it did not, the counts and
+    the verdict are NULL rather than zero.
+
+    The table is rebuilt rather than altered because SQLite cannot drop a NOT NULL
+    constraint in place, and the existing rows are carried across -- evidence is not
+    disposable.
+    """
+
+    connection.execute(
+        """
+        CREATE TABLE synthesis_proposal_evidence_v9 (
+            proposal_evidence_id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            document_id TEXT NOT NULL,
+            proposal_attempt_index INTEGER NOT NULL,
+            operation_accounting TEXT NOT NULL DEFAULT 'evaluated',
+            validity TEXT,
+            completeness TEXT,
+            proposed_operation_count INTEGER NOT NULL,
+            accepted_operation_count INTEGER,
+            compiled_operation_count INTEGER,
+            rejected_operation_count INTEGER,
+            global_failure_reason TEXT NOT NULL DEFAULT '',
+            proposal_payload_digest TEXT NOT NULL DEFAULT '',
+            assessment_digest TEXT NOT NULL DEFAULT '',
+            related_tool_call_id TEXT,
+            created_at TEXT NOT NULL,
+            payload_json TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO synthesis_proposal_evidence_v9 (
+            proposal_evidence_id, session_id, document_id, proposal_attempt_index,
+            operation_accounting, validity, completeness, proposed_operation_count,
+            accepted_operation_count, rejected_operation_count, proposal_payload_digest,
+            assessment_digest, related_tool_call_id, created_at, payload_json
+        )
+        SELECT
+            proposal_evidence_id, session_id, document_id, proposal_attempt_index,
+            'evaluated', validity, completeness, proposed_operation_count,
+            accepted_operation_count, rejected_operation_count, proposal_payload_digest,
+            assessment_digest, related_tool_call_id, created_at, payload_json
+        FROM synthesis_proposal_evidence
+        """
+    )
+    connection.execute("DROP TABLE synthesis_proposal_evidence")
+    connection.execute(
+        "ALTER TABLE synthesis_proposal_evidence_v9 RENAME TO synthesis_proposal_evidence"
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_synthesis_proposal_evidence_session "
+        "ON synthesis_proposal_evidence(session_id, proposal_attempt_index DESC, created_at DESC)"
+    )
+
+
 _MIGRATIONS = {
     1: _migration_1,
     2: _migration_2,
@@ -930,6 +994,7 @@ _MIGRATIONS = {
     6: _migration_6,
     7: _migration_7,
     8: _migration_8,
+    9: _migration_9,
 }
 
 

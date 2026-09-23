@@ -7,7 +7,7 @@ from uuid import uuid4
 from pydantic import Field, model_validator
 
 from .diagram_quality_models import DiagramQualityReport
-from .m7_synthesis_models import Completeness, RejectedOperationReceipt
+from .m7_synthesis_models import Completeness, OperationAccounting, RejectedOperationReceipt
 from .models import (
     AddElementOperation,
     AddLayerOperation,
@@ -311,10 +311,19 @@ class AgentTransactionAssessment(StrictModel):
 
     # Phase 2A: the accountability axis. ``semantic_operation_count`` is the proposed count;
     # these carry what survived, what did not, and why.
-    accepted_operation_count: int = Field(default=0, ge=0)
-    rejected_operation_count: int = Field(default=0, ge=0)
-    completeness: Completeness = "complete"
-    rejected_operations: list[RejectedOperationReceipt] = Field(default_factory=list)
+    #
+    # ``operation_accounting`` says whether the compiler examined this plan operation by
+    # operation. It defaults to ``not_evaluated`` because that is the honest default: an
+    # assessment that never ran the permissive path has no per-operation accounting to
+    # report. The counts and both verdicts are then ``None`` rather than zero, because zero is
+    # a claim ("nothing survived") and the truth is that no claim was made. Only
+    # ``operation_accounting == "evaluated"`` carries the six-cell validity x completeness
+    # matrix, and only that state may be offered for authorisation.
+    operation_accounting: OperationAccounting = "not_evaluated"
+    accepted_operation_count: int | None = Field(default=None, ge=0)
+    rejected_operation_count: int | None = Field(default=None, ge=0)
+    completeness: Completeness | None = None
+    rejected_operations: list[RejectedOperationReceipt] | None = None
 
     @property
     def proposed_operation_count(self) -> int:
@@ -324,10 +333,59 @@ class AgentTransactionAssessment(StrictModel):
     def is_complete(self) -> bool:
         return self.completeness == "complete"
 
-    def may_proceed_to_authorisation(self) -> bool:
-        """The only combination that may be offered to a human."""
+    def accounting_problems(self) -> list[str]:
+        """The invariants the two states must satisfy. Empty means coherent.
 
-        return self.valid and self.completeness == "complete"
+        ``not_evaluated`` is not a verdict: it says the compiler stopped before it examined
+        the plan operation by operation, so it may not carry counts, receipts or completeness,
+        and its reason has to be on the record. A consumer that finds ``None`` here is forced
+        to treat the proposal as unknown, which is the point.
+        """
+
+        problems: list[str] = []
+        if self.operation_accounting == "not_evaluated":
+            invented = [
+                name
+                for name, value in (
+                    ("accepted_operation_count", self.accepted_operation_count),
+                    ("rejected_operation_count", self.rejected_operation_count),
+                    ("completeness", self.completeness),
+                    ("rejected_operations", self.rejected_operations),
+                )
+                if value is not None
+            ]
+            if invented:
+                problems.append(
+                    "a not_evaluated assessment must leave "
+                    f"{', '.join(invented)} unset rather than reporting a number"
+                )
+            return problems
+
+        if self.accepted_operation_count is None or self.rejected_operation_count is None:
+            problems.append("an evaluated assessment must carry accepted and rejected counts")
+            return problems
+        if self.completeness is None:
+            problems.append("an evaluated assessment must carry a completeness verdict")
+            return problems
+        if self.rejected_operations is None:
+            problems.append("an evaluated assessment must carry the rejected-operation receipts")
+            return problems
+        if self.rejected_operation_count != len(self.rejected_operations):
+            problems.append("rejected_operation_count must equal len(rejected_operations)")
+        if self.proposed_operation_count != (
+            self.accepted_operation_count + self.rejected_operation_count
+        ):
+            problems.append("proposed_operation_count must equal accepted + rejected")
+        return problems
+
+    def may_proceed_to_authorisation(self) -> bool:
+        """The only combination that may be offered to a human.
+
+        An unevaluated proposal may not proceed either. ``None`` is not ``complete``, and this
+        is the guard that keeps "we did not check" from reading as "we checked and it is fine".
+        """
+
+        return self.operation_accounting == "evaluated" and self.valid and self.is_complete
 
 
 class AnnotationQuality(StrictModel):

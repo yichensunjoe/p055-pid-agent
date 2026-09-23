@@ -121,6 +121,49 @@ class SemanticAgentPlanner:
         )
         return plan
 
+    @staticmethod
+    def _completeness_block(failure: AgentTransactionAssessment) -> str:
+        """Tell the model which of the two problems it is being asked to repair.
+
+        A partial plan is not a hard failure: the retained operations are individually legal
+        and the drawing is simply missing part of what was asked for. Saying so explicitly is
+        the difference between "repair these rejected operations" and "start over", and the
+        rejected operations are listed with the advice the compiler already computed for them.
+        """
+
+        if failure.operation_accounting != "evaluated":
+            return (
+                "Proposal accounting: not_evaluated -- no operation was examined, so the "
+                "counts are unknown rather than zero.\n"
+            )
+        lines = [
+            f"Proposal completeness: {failure.completeness}",
+            f"({failure.accepted_operation_count} accepted, "
+            f"{failure.rejected_operation_count} rejected of "
+            f"{failure.proposed_operation_count} proposed)",
+        ]
+        if failure.completeness == "partial":
+            lines.append(
+                "This is a PARTIAL plan, not an invalid one. The accepted operations are "
+                "legal and stay; the drawing is missing the rejected operations below. "
+                "Return a replacement plan that keeps the accepted work and adds the missing "
+                "part, or explains why an operation cannot be expressed with the catalogue."
+            )
+        elif failure.completeness == "empty" and failure.rejected_operation_count:
+            lines.append(
+                "Nothing survived: every submitted operation was rejected, so there is no "
+                "accepted work to keep. Return a plan that draws the request using only "
+                "catalogue symbols that exist and element ids that are already present."
+            )
+        for receipt in failure.rejected_operations:
+            suggestions = "; ".join(receipt.suggestions) if receipt.suggestions else ""
+            lines.append(
+                f"  - [{receipt.reason_code}] operation #{receipt.original_index} "
+                f"({receipt.operation_kind}) at {receipt.field_path or '(no field)'}: "
+                f"{receipt.message}" + (f" | try: {suggestions}" if suggestions else "")
+            )
+        return "\n".join(lines) + "\n"
+
     def replan(
         self,
         document_id: str,
@@ -141,6 +184,7 @@ class SemanticAgentPlanner:
             f"Original user request:\n{request.prompt}\n\n"
             f"Failed semantic plan:\n{request.failed_plan.model_dump_json(indent=2)}\n\n"
             f"Structured failure analysis:\n{failure.model_dump_json(indent=2)}\n\n"
+            f"{self._completeness_block(failure)}\n"
             f"Repair attempt: {request.attempt}. Return a complete replacement plan, not a patch to the failed JSON."
         )
         plan = self._request_plan(

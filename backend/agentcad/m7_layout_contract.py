@@ -276,11 +276,67 @@ ENGINEERING_SEMANTIC_NOUNS: tuple[str, ...] = (
 # --------------------------------------------------------------------------------------
 
 LAYOUT_IS_DETERMINISTIC = True
+
+#: The digest and the projection carry their own versions, because `layout_engine_version`
+#: and `layout_rules_version` describe the engine that ran, not the shape of what was
+#: digested. Without these, adding a projection field or changing how a number is normalized
+#: would silently give a *different* digest the *same* name -- the identity failure this whole
+#: milestone is about, one layer down.
+LAYOUT_DIGEST_VERSION = "m7-layout-digest/1"
+LAYOUT_PROJECTION_VERSION = "m7-layout-projection/1"
+
+#: Everything the digest is computed over. The versions are inputs, not decoration: a reader
+#: that does not know which projection produced a digest cannot compare two of them.
 LAYOUT_DIGEST_INPUTS: tuple[str, ...] = (
+    "layout_digest_version",
+    "layout_projection_version",
     "diagram_spec_semantic_digest",
     "layout_engine_version",
     "layout_rules_version",
+    "canonical_projection_envelope",
     "canonical_placement_projection",
+)
+
+#: A change to any of these is a new identity and must bump a version explicitly. "The
+#: digest changed but kept its name" is indistinguishable from "the drawing changed".
+PROJECTION_CHANGE_REQUIRES_VERSION_BUMP = True
+NUMERIC_CANONICALIZATION_CHANGE_REQUIRES_VERSION_BUMP = True
+COORDINATE_QUANTUM_CHANGE_REQUIRES_VERSION_BUMP = True
+SORT_KEY_CHANGE_REQUIRES_VERSION_BUMP = True
+VERSION_BUMP_IS_EXPLICIT_NOT_IMPLIED = True
+
+# ------------------------------------------------------------------------------------
+# §5.1 Numerics: equality of floats is not an identity, so the canonicalization is named
+#      and the quantum is a declared constant rather than an implied default.
+# ------------------------------------------------------------------------------------
+
+LAYOUT_NUMERIC_CANONICALIZATION = "finite_fixed_decimal_v1"
+#: Six decimals, matching the rounding the drawing pipeline already uses (`round(..., 6)` in
+#: the drafting geometry). Declared here so that it cannot drift with the grid, the canvas or
+#: whatever the host happens to print.
+LAYOUT_COORDINATE_DECIMALS = 6
+LAYOUT_COORDINATE_QUANTUM = 1e-6
+#: The quantum is a contract constant: deriving it from `grid_size`, the canvas or the runtime
+#: environment would make the digest depend on the document being drawn.
+COORDINATE_QUANTUM_IS_DECLARED_NOT_DERIVED = True
+NUMERIC_CANONICALIZATION_REJECTS_NON_FINITE = True
+NEGATIVE_ZERO_IS_NORMALIZED_TO_ZERO = True
+CANONICAL_SERIALIZATION_IS_REPR_INDEPENDENT = True
+CANONICAL_SERIALIZATION_IS_LOCALE_INDEPENDENT = True
+CANONICAL_SERIALIZATION_IS_TIME_INDEPENDENT = True
+EQUAL_CANONICAL_VALUES_PRODUCE_EQUAL_BYTES = True
+
+#: The rules, spelled out, because "canonical" that is not enumerated is a wish.
+LAYOUT_NUMERIC_CANONICALIZATION_RULES: tuple[str, ...] = (
+    "reject_nan",
+    "reject_positive_infinity",
+    "reject_negative_infinity",
+    "normalize_negative_zero_to_zero",
+    "quantize_to_declared_coordinate_quantum",
+    "format_without_python_repr",
+    "format_without_locale",
+    "no_timing_or_environment_input",
+    "equal_canonical_values_must_produce_equal_bytes",
 )
 
 #: Bookkeeping that must never enter the digest: it differs between two identical runs, so
@@ -333,8 +389,6 @@ CANONICAL_LAYOUT_PROJECTION_FIELDS: tuple[CanonicalProjectionField, ...] = (
         True,
         "Routing output, in traversal order, which is what makes two routings comparable.",
     ),
-    CanonicalProjectionField("content_bounds", True, "Extent of the content."),
-    CanonicalProjectionField("canvas_bounds", True, "Extent of the drawing surface."),
     CanonicalProjectionField(
         "duration_ms",
         False,
@@ -353,12 +407,70 @@ CANONICAL_LAYOUT_PROJECTION_FIELDS: tuple[CanonicalProjectionField, ...] = (
     ),
 )
 
+#: Bounds describe the whole drawing, so they are envelope fields rather than repeated on
+#: every row. Repeating them would make an envelope value depend on the accidental order of
+#: rows -- a global fact re-derived per entity is a global fact with a race in it.
+CANONICAL_PROJECTION_ENVELOPE_FIELDS: tuple[str, ...] = (
+    "content_bounds",
+    "canvas_bounds",
+)
+BOUNDS_ARE_ENVELOPE_FIELDS_NOT_ROWS = True
+
 CANONICAL_PROJECTION_IS_SORTED = True
-CANONICAL_PROJECTION_SORT_KEY = "engineering_id"
+#: A single identity field cannot prove a total order: two different kinds may legitimately
+#: carry the same engineering id, and then the "canonical" ordering depends on insertion
+#: order. The sort key is therefore composite, and the projection must be unique on it.
+CANONICAL_PROJECTION_SORT_KEY: tuple[str, ...] = ("placement_kind", "engineering_id")
+CANONICAL_PROJECTION_SORT_KEY_IS_COMPOSITE = True
+CANONICAL_PROJECTION_SORT_KEY_IS_UNIQUE = True
+DUPLICATE_SORT_KEY_IS_HARD_FAIL = True
+#: If one engineering entity ever yields several presentation rows, this is the field that
+#: completes the key; named now so the extension is a declared change rather than an
+#: accidental duplicate.
+CANONICAL_PROJECTION_PRESENTATION_ROLE_FIELD = "presentation_role"
 CANONICAL_PROJECTION_IS_TOTAL_ORDERED = True
+CANONICAL_PROJECTION_TOTAL_ORDER_IS_PROVEN_BY_UNIQUENESS = True
 #: Two layouts are identical when their projections are identical, field for field and in
 #: order. Anything weaker would let a real difference hide behind a stable digest.
 CANONICAL_PROJECTION_EQUALITY_IS_FIELD_WISE = True
+
+
+@dataclass(frozen=True)
+class DigestVersionContract:
+    """What one digest/projection version version *means*.
+
+    This is the amendment's mechanism: the version string is bound to the rules and field set
+    it names, so changing the numeric canonicalization, the quantum, the projection fields or
+    the sort key without bumping a version is reported instead of silently re-labelling a
+    different digest.
+    """
+
+    digest_version: str
+    projection_version: str
+    numeric_canonicalization: str
+    coordinate_decimals: int
+    projection_field_names: tuple[str, ...]
+    envelope_field_names: tuple[str, ...]
+    sort_key: tuple[str, ...]
+
+
+DIGEST_VERSION_CONTRACT = DigestVersionContract(
+    digest_version="m7-layout-digest/1",
+    projection_version="m7-layout-projection/1",
+    numeric_canonicalization="finite_fixed_decimal_v1",
+    coordinate_decimals=6,
+    projection_field_names=(
+        "engineering_id",
+        "placement_kind",
+        "x",
+        "y",
+        "width",
+        "height",
+        "ordered_waypoints",
+    ),
+    envelope_field_names=("content_bounds", "canvas_bounds"),
+    sort_key=("placement_kind", "engineering_id"),
+)
 
 # --------------------------------------------------------------------------------------
 # §6 Components. The adapter is not a second placer: it converts meaning into the engine's
@@ -670,13 +782,24 @@ def validate_contract() -> list[str]:
     if not LAYOUT_IS_DETERMINISTIC:
         problems.append("layout must be deterministic")
     for digest_input in (
+        "layout_digest_version",
+        "layout_projection_version",
         "diagram_spec_semantic_digest",
         "layout_engine_version",
         "layout_rules_version",
+        "canonical_projection_envelope",
         "canonical_placement_projection",
     ):
         if digest_input not in LAYOUT_DIGEST_INPUTS:
             problems.append(f"the layout digest must be computed from {digest_input!r}")
+    for version in ("layout_digest_version", "layout_projection_version"):
+        if version not in LAYOUT_DIGEST_INPUTS:
+            problems.append(f"the digest envelope must carry {version!r}")
+    if not LAYOUT_DIGEST_VERSION or not LAYOUT_PROJECTION_VERSION:
+        problems.append(
+            "the digest and the projection must have their own versions: the engine version "
+            "describes the engine, not the shape of what was digested"
+        )
     overlap = set(LAYOUT_DIGEST_INPUTS) & set(LAYOUT_DIGEST_EXCLUDES_VOLATILE_BOOKKEEPING)
     if overlap:
         problems.append(
@@ -686,7 +809,7 @@ def validate_contract() -> list[str]:
     excluded = [field.name for field in CANONICAL_LAYOUT_PROJECTION_FIELDS if not field.included]
     if not included or not excluded:
         problems.append("the canonical projection must include and exclude something explicitly")
-    for required in ("engineering_id", "x", "y", "ordered_waypoints", "canvas_bounds"):
+    for required in ("engineering_id", "placement_kind", "x", "y", "ordered_waypoints"):
         if required not in included:
             problems.append(f"the canonical projection must include {required!r}")
     for volatile in ("created_at", "duration_ms", "layout_run_id"):
@@ -694,14 +817,150 @@ def validate_contract() -> list[str]:
             problems.append(f"the canonical projection must exclude the volatile {volatile!r}")
     if set(excluded) - set(LAYOUT_DIGEST_EXCLUDES_VOLATILE_BOOKKEEPING):
         problems.append("a field excluded from the projection must be named as volatile")
+
+    # §6.1 bounds are global, so they live on the envelope rather than on every row.
+    if not CANONICAL_PROJECTION_ENVELOPE_FIELDS:
+        problems.append("the projection envelope must declare the whole-drawing fields")
+    for envelope_field in CANONICAL_PROJECTION_ENVELOPE_FIELDS:
+        if envelope_field in included:
+            problems.append(
+                f"{envelope_field!r} describes the whole drawing and must not be repeated "
+                "on every row"
+            )
+        if envelope_field not in AUTO_LAYOUT_OUTPUT_ADDS:
+            problems.append(f"the envelope field {envelope_field!r} must be a layout output")
+    if not BOUNDS_ARE_ENVELOPE_FIELDS_NOT_ROWS:
+        problems.append("bounds must be envelope fields rather than repeated rows")
+
+    # §6.2 the total order has to be provable, not asserted.
     if not CANONICAL_PROJECTION_IS_SORTED:
         problems.append("the canonical projection must be sorted")
-    if CANONICAL_PROJECTION_SORT_KEY not in included:
-        problems.append("the canonical projection must sort on an included field")
+    if isinstance(CANONICAL_PROJECTION_SORT_KEY, str):
+        # A bare string is iterable, so it would silently become a list of characters and the
+        # order would look composite while proving nothing.
+        problems.append(
+            "the sort key must be a tuple of fields, not a single field name; a single "
+            "identity field cannot prove a total order"
+        )
+    elif len(CANONICAL_PROJECTION_SORT_KEY) < 2:
+        problems.append(
+            "a single identity field cannot prove a total order; the sort key must be "
+            "composite (placement_kind, engineering_id[, presentation_role])"
+        )
+    if not CANONICAL_PROJECTION_SORT_KEY_IS_COMPOSITE:
+        problems.append("the sort key must be declared composite")
+    for key_field in CANONICAL_PROJECTION_SORT_KEY:
+        if key_field not in included:
+            problems.append(f"the sort key field {key_field!r} must be part of the projection")
+    if not CANONICAL_PROJECTION_SORT_KEY_IS_UNIQUE:
+        problems.append("the sort key must be unique within the projection")
+    if not DUPLICATE_SORT_KEY_IS_HARD_FAIL:
+        problems.append("a duplicate canonical sort key must be a hard failure")
     if not CANONICAL_PROJECTION_IS_TOTAL_ORDERED:
         problems.append("the canonical projection must be totally ordered")
+    if not CANONICAL_PROJECTION_TOTAL_ORDER_IS_PROVEN_BY_UNIQUENESS:
+        problems.append(
+            "the total order must be proven by sort-key uniqueness rather than declared"
+        )
     if not CANONICAL_PROJECTION_EQUALITY_IS_FIELD_WISE:
         problems.append("canonical equality must be field-wise, not a summary")
+
+    # §6.3 numerics: float equality is not an identity.
+    if not LAYOUT_NUMERIC_CANONICALIZATION:
+        problems.append("the numeric canonicalization must be named")
+    for rule in (
+        "reject_nan",
+        "reject_positive_infinity",
+        "reject_negative_infinity",
+        "normalize_negative_zero_to_zero",
+        "quantize_to_declared_coordinate_quantum",
+        "format_without_python_repr",
+        "format_without_locale",
+        "equal_canonical_values_must_produce_equal_bytes",
+    ):
+        if rule not in LAYOUT_NUMERIC_CANONICALIZATION_RULES:
+            problems.append(f"the numeric canonicalization must declare {rule!r}")
+    if not NUMERIC_CANONICALIZATION_REJECTS_NON_FINITE:
+        problems.append("NaN and the infinities must be rejected, not ordered")
+    if not NEGATIVE_ZERO_IS_NORMALIZED_TO_ZERO:
+        problems.append("negative zero must be normalized, or one placement has two digests")
+    for flag, message in (
+        (CANONICAL_SERIALIZATION_IS_REPR_INDEPENDENT, "must not depend on Python repr"),
+        (CANONICAL_SERIALIZATION_IS_LOCALE_INDEPENDENT, "must not depend on the locale"),
+        (CANONICAL_SERIALIZATION_IS_TIME_INDEPENDENT, "must not depend on the run's clock"),
+        (
+            EQUAL_CANONICAL_VALUES_PRODUCE_EQUAL_BYTES,
+            "must give equal canonical values equal bytes",
+        ),
+    ):
+        if not flag:
+            problems.append(f"the canonical serialization {message}")
+    if LAYOUT_COORDINATE_DECIMALS <= 0:
+        problems.append("the coordinate decimals must be a positive constant")
+    if LAYOUT_COORDINATE_QUANTUM != 10.0 ** (-LAYOUT_COORDINATE_DECIMALS):
+        problems.append(
+            "the coordinate quantum must be exactly the declared decimals"
+        )
+    if not COORDINATE_QUANTUM_IS_DECLARED_NOT_DERIVED:
+        problems.append(
+            "the coordinate quantum must be a contract constant, not derived from the grid, "
+            "the canvas or the environment"
+        )
+
+    # §6.4 the version is bound to the rules it names: a change without a bump is a
+    #      different digest wearing the same name.
+    if not VERSION_BUMP_IS_EXPLICIT_NOT_IMPLIED:
+        problems.append("a version bump must be explicit")
+    for flag, message in (
+        (PROJECTION_CHANGE_REQUIRES_VERSION_BUMP, "the projection fields"),
+        (NUMERIC_CANONICALIZATION_CHANGE_REQUIRES_VERSION_BUMP, "the numeric canonicalization"),
+        (COORDINATE_QUANTUM_CHANGE_REQUIRES_VERSION_BUMP, "the coordinate quantum"),
+        (SORT_KEY_CHANGE_REQUIRES_VERSION_BUMP, "the sort key"),
+    ):
+        if not flag:
+            problems.append(f"changing {message} must require a version bump")
+    pinned = DIGEST_VERSION_CONTRACT
+    if pinned.digest_version != LAYOUT_DIGEST_VERSION:
+        problems.append(
+            f"{pinned.digest_version!r} describes {LAYOUT_DIGEST_VERSION!r}; changing it needs "
+            "a new digest version"
+        )
+    if pinned.projection_version != LAYOUT_PROJECTION_VERSION:
+        problems.append(
+            f"{pinned.projection_version!r} describes {LAYOUT_PROJECTION_VERSION!r}; changing "
+            "it needs a new projection version"
+        )
+    if pinned.numeric_canonicalization != LAYOUT_NUMERIC_CANONICALIZATION:
+        problems.append(
+            f"{pinned.digest_version!r} pins numeric canonicalization "
+            f"{pinned.numeric_canonicalization!r}, but the contract declares "
+            f"{LAYOUT_NUMERIC_CANONICALIZATION!r}: that is a new digest version, not a "
+            "silent redefinition"
+        )
+    if pinned.coordinate_decimals != LAYOUT_COORDINATE_DECIMALS:
+        problems.append(
+            f"{pinned.projection_version!r} pins {pinned.coordinate_decimals} coordinate "
+            f"decimals, but the contract declares {LAYOUT_COORDINATE_DECIMALS}: changing the "
+            "quantum needs a new projection and digest version"
+        )
+    if tuple(pinned.projection_field_names) != tuple(included):
+        problems.append(
+            f"{pinned.projection_version!r} pins the field set "
+            f"{tuple(pinned.projection_field_names)}; the projection now declares "
+            f"{tuple(included)}: adding or removing a field needs a new projection version"
+        )
+    if tuple(pinned.envelope_field_names) != tuple(CANONICAL_PROJECTION_ENVELOPE_FIELDS):
+        problems.append(
+            f"{pinned.projection_version!r} pins the envelope "
+            f"{tuple(pinned.envelope_field_names)}; the contract declares "
+            f"{tuple(CANONICAL_PROJECTION_ENVELOPE_FIELDS)}: that needs a new projection version"
+        )
+    if tuple(pinned.sort_key) != tuple(CANONICAL_PROJECTION_SORT_KEY):
+        problems.append(
+            f"{pinned.projection_version!r} pins the sort key {tuple(pinned.sort_key)}; the "
+            f"contract declares {tuple(CANONICAL_PROJECTION_SORT_KEY)}: that needs a new "
+            "projection version"
+        )
 
     # §7 components: the adapter must not become a second placer.
     components = [entry.component for entry in LAYOUT_RESPONSIBILITIES]

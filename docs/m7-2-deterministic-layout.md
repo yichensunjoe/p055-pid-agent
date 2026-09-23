@@ -154,32 +154,53 @@ LAYOUT_MAY_CHANGE_PRESENTATION_ONLY = (waypoints, annotation_positions,
 
 ```
 LAYOUT_IS_DETERMINISTIC = True
-LAYOUT_DIGEST_INPUTS = (diagram_spec_semantic_digest, layout_engine_version,
-                        layout_rules_version, canonical_placement_projection)
+LAYOUT_DIGEST_VERSION     = "m7-layout-digest/1"
+LAYOUT_PROJECTION_VERSION = "m7-layout-projection/1"
+LAYOUT_DIGEST_INPUTS = (layout_digest_version, layout_projection_version,
+                        diagram_spec_semantic_digest, layout_engine_version,
+                        layout_rules_version, canonical_projection_envelope,
+                        canonical_placement_projection)
 LAYOUT_DIGEST_EXCLUDES_VOLATILE_BOOKKEEPING = (created_at, duration_ms, iteration_count,
                                                provider, model, session_id, plan_id,
                                                attempt, layout_run_id)
-CANONICAL_PROJECTION_IS_SORTED = True
-CANONICAL_PROJECTION_SORT_KEY = engineering_id
-CANONICAL_PROJECTION_IS_TOTAL_ORDERED = True
-CANONICAL_PROJECTION_EQUALITY_IS_FIELD_WISE = True
+PROJECTION_CHANGE_REQUIRES_VERSION_BUMP = True
+NUMERIC_CANONICALIZATION_CHANGE_REQUIRES_VERSION_BUMP = True
+COORDINATE_QUANTUM_CHANGE_REQUIRES_VERSION_BUMP = True
+SORT_KEY_CHANGE_REQUIRES_VERSION_BUMP = True
+VERSION_BUMP_IS_EXPLICIT_NOT_IMPLIED = True
 ```
+
+**摘要与投影各自版本号**，因为 `layout_engine_version` / `layout_rules_version` 描述的是
+**跑过的引擎**，而不是**被摘要的东西的形状**。没有这两个版本号时，加一个投影字段或换一套数值规范化
+会让**另一份摘要顶着同一个名字**——那正是本里程碑要消除的身份缺陷，只是降了一层。
+`DIGEST_VERSION_CONTRACT` 把"版本号"与它所指的规则绑在一起（字段集、包络、排序键、
+数值规范化、quantum）：**改了其中任何一项而不升版本，校验器直接报错**。
 
 > 同一份 DiagramSpec + 同一 layout engine version + 同一 layout rules version
 > → 同一个 canonical layout digest
 
 摘要**逐字段**定义，因为"canonical"否则只是一个词：`CANONICAL_LAYOUT_PROJECTION_FIELDS`
-把每个字段和它是否进入摘要都写下来。进入摘要的：
+把每个字段和它是否进入摘要都写下来。**行字段**（每个实体一行）：
 
 ```
 engineering_id（稳定工程身份，改名不改摘要）
 placement_kind（设备/标注/走线的放置类别，防止"碰巧相等"）
 x · y · width · height
 ordered_waypoints（按遍历顺序，才可能比较两条走线）
-content_bounds · canvas_bounds
 ```
 
-不进入摘要的（易变记账）：
+**包络字段**（整张图一个，不重复在行上）：
+
+```
+CANONICAL_PROJECTION_ENVELOPE_FIELDS = (content_bounds, canvas_bounds)
+BOUNDS_ARE_ENVELOPE_FIELDS_NOT_ROWS = True
+```
+
+边界是全局事实：把它重复在每一行上，一个全局值就变成了"依赖行的碰巧顺序"的值。
+如果将来一个工程实体确实对应多条呈现行，补上 `CANONICAL_PROJECTION_PRESENTATION_ROLE_FIELD`
+（`presentation_role`），扩展是**声明式**的而不是"不小心重复".
+
+不进入投影的（易变记账）：
 
 ```
 duration_ms · created_at · layout_run_id
@@ -187,6 +208,49 @@ duration_ms · created_at · layout_run_id
 
 把 `duration_ms` 这类字段放进摘要，会让**正确的重放看起来像一次改动**——
 这和 A5 语料身份里"把运行期 volatile 混进身份"是同一个错。
+
+### 6.1 数值规范化：浮点相等不是身份
+
+```
+LAYOUT_NUMERIC_CANONICALIZATION = finite_fixed_decimal_v1
+LAYOUT_COORDINATE_DECIMALS = 6
+LAYOUT_COORDINATE_QUANTUM  = 1e-6
+COORDINATE_QUANTUM_IS_DECLARED_NOT_DERIVED = True
+NUMERIC_CANONICALIZATION_REJECTS_NON_FINITE = True
+NEGATIVE_ZERO_IS_NORMALIZED_TO_ZERO = True
+CANONICAL_SERIALIZATION_IS_REPR_INDEPENDENT = True
+CANONICAL_SERIALIZATION_IS_LOCALE_INDEPENDENT = True
+CANONICAL_SERIALIZATION_IS_TIME_INDEPENDENT = True
+EQUAL_CANONICAL_VALUES_PRODUCE_EQUAL_BYTES = True
+LAYOUT_NUMERIC_CANONICALIZATION_RULES = (reject_nan, reject_positive_infinity,
+    reject_negative_infinity, normalize_negative_zero_to_zero,
+    quantize_to_declared_coordinate_quantum, format_without_python_repr,
+    format_without_locale, no_timing_or_environment_input,
+    equal_canonical_values_must_produce_equal_bytes)
+```
+
+六位小数与绘图管线**已经在用**的精度一致（`round(..., 6)`，见 `drafting_geometry`）。
+关键是它是**契约常量**：从 `grid_size`、画布或运行环境推出来的精度，会让摘要取决于
+**正在画的那张图**。`-0` 必须规范成 `0`，否则同一个位置有两个摘要；
+NaN/±Inf 必须**硬拒绝**而不是参与排序。
+
+### 6.2 total order 必须由数据结构证明
+
+```
+CANONICAL_PROJECTION_IS_SORTED = True
+CANONICAL_PROJECTION_EQUALITY_IS_FIELD_WISE = True
+CANONICAL_PROJECTION_SORT_KEY = (placement_kind, engineering_id)
+CANONICAL_PROJECTION_SORT_KEY_IS_COMPOSITE = True
+CANONICAL_PROJECTION_SORT_KEY_IS_UNIQUE = True
+DUPLICATE_SORT_KEY_IS_HARD_FAIL = True
+CANONICAL_PROJECTION_IS_TOTAL_ORDERED = True
+CANONICAL_PROJECTION_TOTAL_ORDER_IS_PROVEN_BY_UNIQUENESS = True
+```
+
+单字段 `engineering_id` **不能**证明全序：不同类型完全可能携带同一个 engineering id，
+那样"canonical 顺序"就取决于插入顺序。所以排序键是复合的，而且投影必须在它上面**唯一**
+（重复排序键 = hard fail）。关键不是一定要三列，而是 **total order 由数据结构证明，
+不由布尔常量宣称**。
 
 ## 7. 组件职责：适配层不是第二个排版器
 

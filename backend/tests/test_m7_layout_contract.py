@@ -178,9 +178,12 @@ def test_layout_may_not_change_engineering_meaning() -> None:
 def test_the_canonical_projection_decides_what_the_digest_sees() -> None:
     assert contract.LAYOUT_IS_DETERMINISTIC is True
     assert contract.LAYOUT_DIGEST_INPUTS == (
+        "layout_digest_version",
+        "layout_projection_version",
         "diagram_spec_semantic_digest",
         "layout_engine_version",
         "layout_rules_version",
+        "canonical_projection_envelope",
         "canonical_placement_projection",
     )
     included = [field.name for field in contract.CANONICAL_LAYOUT_PROJECTION_FIELDS if field.included]
@@ -195,9 +198,93 @@ def test_the_canonical_projection_decides_what_the_digest_sees() -> None:
         assert volatile not in contract.LAYOUT_DIGEST_INPUTS
         assert volatile in contract.LAYOUT_DIGEST_EXCLUDES_VOLATILE_BOOKKEEPING
     assert contract.CANONICAL_PROJECTION_IS_SORTED is True
-    assert contract.CANONICAL_PROJECTION_SORT_KEY in included
     assert contract.CANONICAL_PROJECTION_IS_TOTAL_ORDERED is True
     assert contract.CANONICAL_PROJECTION_EQUALITY_IS_FIELD_WISE is True
+
+
+def test_bounds_are_envelope_fields_rather_than_repeated_rows() -> None:
+    included = [field.name for field in contract.CANONICAL_LAYOUT_PROJECTION_FIELDS if field.included]
+    assert contract.CANONICAL_PROJECTION_ENVELOPE_FIELDS == ("content_bounds", "canvas_bounds")
+    assert contract.BOUNDS_ARE_ENVELOPE_FIELDS_NOT_ROWS is True
+    for envelope_field in contract.CANONICAL_PROJECTION_ENVELOPE_FIELDS:
+        assert envelope_field not in included, "a global fact must not be re-derived per row"
+        assert envelope_field in contract.AUTO_LAYOUT_OUTPUT_ADDS
+    assert "canonical_projection_envelope" in contract.LAYOUT_DIGEST_INPUTS
+
+
+def test_the_total_order_is_proven_by_a_unique_composite_key() -> None:
+    """A single identity field cannot order a projection that has several kinds of row."""
+
+    included = [field.name for field in contract.CANONICAL_LAYOUT_PROJECTION_FIELDS if field.included]
+    assert contract.CANONICAL_PROJECTION_SORT_KEY == ("placement_kind", "engineering_id")
+    assert len(contract.CANONICAL_PROJECTION_SORT_KEY) >= 2
+    assert contract.CANONICAL_PROJECTION_SORT_KEY_IS_COMPOSITE is True
+    assert contract.CANONICAL_PROJECTION_SORT_KEY_IS_UNIQUE is True
+    assert contract.DUPLICATE_SORT_KEY_IS_HARD_FAIL is True
+    assert contract.CANONICAL_PROJECTION_TOTAL_ORDER_IS_PROVEN_BY_UNIQUENESS is True
+    for key_field in contract.CANONICAL_PROJECTION_SORT_KEY:
+        assert key_field in included
+    # The extension point is named, so a future one-entity-many-rows case is a declared change.
+    assert contract.CANONICAL_PROJECTION_PRESENTATION_ROLE_FIELD == "presentation_role"
+
+
+def test_the_digest_and_projection_carry_their_own_versions() -> None:
+    """The engine version describes the engine, not the shape of what was digested."""
+
+    assert contract.LAYOUT_DIGEST_VERSION == "m7-layout-digest/1"
+    assert contract.LAYOUT_PROJECTION_VERSION == "m7-layout-projection/1"
+    for version in ("layout_digest_version", "layout_projection_version"):
+        assert version in contract.LAYOUT_DIGEST_INPUTS
+    for flag in (
+        contract.PROJECTION_CHANGE_REQUIRES_VERSION_BUMP,
+        contract.NUMERIC_CANONICALIZATION_CHANGE_REQUIRES_VERSION_BUMP,
+        contract.COORDINATE_QUANTUM_CHANGE_REQUIRES_VERSION_BUMP,
+        contract.SORT_KEY_CHANGE_REQUIRES_VERSION_BUMP,
+        contract.VERSION_BUMP_IS_EXPLICIT_NOT_IMPLIED,
+    ):
+        assert flag is True
+
+
+def test_numerics_are_canonicalized_by_a_declared_constant() -> None:
+    """Float equality is not an identity, and the quantum is not the grid's business."""
+
+    assert contract.LAYOUT_NUMERIC_CANONICALIZATION == "finite_fixed_decimal_v1"
+    assert contract.LAYOUT_COORDINATE_DECIMALS == 6
+    assert contract.LAYOUT_COORDINATE_QUANTUM == 10.0 ** (-contract.LAYOUT_COORDINATE_DECIMALS)
+    assert contract.COORDINATE_QUANTUM_IS_DECLARED_NOT_DERIVED is True
+    for rule in (
+        "reject_nan",
+        "reject_positive_infinity",
+        "reject_negative_infinity",
+        "normalize_negative_zero_to_zero",
+        "quantize_to_declared_coordinate_quantum",
+        "format_without_python_repr",
+        "format_without_locale",
+        "equal_canonical_values_must_produce_equal_bytes",
+    ):
+        assert rule in contract.LAYOUT_NUMERIC_CANONICALIZATION_RULES
+    assert contract.NUMERIC_CANONICALIZATION_REJECTS_NON_FINITE is True
+    assert contract.NEGATIVE_ZERO_IS_NORMALIZED_TO_ZERO is True
+    assert contract.CANONICAL_SERIALIZATION_IS_REPR_INDEPENDENT is True
+    assert contract.CANONICAL_SERIALIZATION_IS_LOCALE_INDEPENDENT is True
+    assert contract.CANONICAL_SERIALIZATION_IS_TIME_INDEPENDENT is True
+    assert contract.EQUAL_CANONICAL_VALUES_PRODUCE_EQUAL_BYTES is True
+
+
+def test_the_declared_version_contract_matches_the_live_declarations() -> None:
+    """The mechanism: a version string is bound to the rules it names."""
+
+    pinned = contract.DIGEST_VERSION_CONTRACT
+    included = tuple(
+        field.name for field in contract.CANONICAL_LAYOUT_PROJECTION_FIELDS if field.included
+    )
+    assert pinned.digest_version == contract.LAYOUT_DIGEST_VERSION
+    assert pinned.projection_version == contract.LAYOUT_PROJECTION_VERSION
+    assert pinned.numeric_canonicalization == contract.LAYOUT_NUMERIC_CANONICALIZATION
+    assert pinned.coordinate_decimals == contract.LAYOUT_COORDINATE_DECIMALS
+    assert pinned.projection_field_names == included
+    assert pinned.envelope_field_names == contract.CANONICAL_PROJECTION_ENVELOPE_FIELDS
+    assert pinned.sort_key == contract.CANONICAL_PROJECTION_SORT_KEY
 
 
 def test_the_adapter_is_not_a_second_placer() -> None:
@@ -308,8 +395,34 @@ def test_the_task_book_names_the_semantic_preservation_and_digest_contract(
         *contract.ENGINEERING_SEMANTIC_NOUNS,
         *contract.LAYOUT_DIGEST_EXCLUDES_VOLATILE_BOOKKEEPING,
         *[field.name for field in contract.CANONICAL_LAYOUT_PROJECTION_FIELDS],
+        *contract.CANONICAL_PROJECTION_ENVELOPE_FIELDS,
+        *contract.CANONICAL_PROJECTION_SORT_KEY,
+        *contract.LAYOUT_NUMERIC_CANONICALIZATION_RULES,
         *contract.LAYOUT_COMPONENTS,
-        contract.CANONICAL_PROJECTION_SORT_KEY,
+        contract.CANONICAL_PROJECTION_PRESENTATION_ROLE_FIELD,
+        contract.LAYOUT_DIGEST_VERSION,
+        contract.LAYOUT_PROJECTION_VERSION,
+        contract.LAYOUT_NUMERIC_CANONICALIZATION,
+        "LAYOUT_COORDINATE_DECIMALS",
+        "LAYOUT_COORDINATE_QUANTUM",
+        "COORDINATE_QUANTUM_IS_DECLARED_NOT_DERIVED",
+        "NUMERIC_CANONICALIZATION_REJECTS_NON_FINITE",
+        "NEGATIVE_ZERO_IS_NORMALIZED_TO_ZERO",
+        "CANONICAL_SERIALIZATION_IS_REPR_INDEPENDENT",
+        "CANONICAL_SERIALIZATION_IS_LOCALE_INDEPENDENT",
+        "CANONICAL_SERIALIZATION_IS_TIME_INDEPENDENT",
+        "EQUAL_CANONICAL_VALUES_PRODUCE_EQUAL_BYTES",
+        "PROJECTION_CHANGE_REQUIRES_VERSION_BUMP",
+        "NUMERIC_CANONICALIZATION_CHANGE_REQUIRES_VERSION_BUMP",
+        "COORDINATE_QUANTUM_CHANGE_REQUIRES_VERSION_BUMP",
+        "SORT_KEY_CHANGE_REQUIRES_VERSION_BUMP",
+        "VERSION_BUMP_IS_EXPLICIT_NOT_IMPLIED",
+        "CANONICAL_PROJECTION_SORT_KEY_IS_COMPOSITE",
+        "CANONICAL_PROJECTION_SORT_KEY_IS_UNIQUE",
+        "DUPLICATE_SORT_KEY_IS_HARD_FAIL",
+        "CANONICAL_PROJECTION_TOTAL_ORDER_IS_PROVEN_BY_UNIQUENESS",
+        "BOUNDS_ARE_ENVELOPE_FIELDS_NOT_ROWS",
+        "DIGEST_VERSION_CONTRACT",
         "LAYOUT_MAY_CHANGE_TOPOLOGY",
         "LAYOUT_MAY_CREATE_OR_DELETE_ENGINEERING_EQUIPMENT",
         "LAYOUT_MAY_CHANGE_TAGS",
@@ -500,6 +613,85 @@ def test_the_validator_reports_layout_being_allowed_to_change_meaning(
         "must not list 'connections' as presentation" in problem
         for problem in contract.validate_contract()
     )
+
+
+def test_the_validator_reports_numeric_canonicalization_being_dropped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without it, "the same layout" is a float comparison, which is not an identity."""
+
+    monkeypatch.setattr(contract, "LAYOUT_NUMERIC_CANONICALIZATION", "")
+    problems = contract.validate_contract()
+    assert any("numeric canonicalization must be named" in problem for problem in problems)
+
+
+def test_the_validator_reports_nan_being_allowed_into_the_digest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(contract, "NUMERIC_CANONICALIZATION_REJECTS_NON_FINITE", False)
+    problems = contract.validate_contract()
+    assert any("NaN and the infinities must be rejected" in problem for problem in problems)
+
+
+def test_the_validator_reports_a_quantum_change_without_a_version_bump(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The cheapest way to make two different digests share a name."""
+
+    monkeypatch.setattr(contract, "LAYOUT_COORDINATE_DECIMALS", 4)
+    problems = contract.validate_contract()
+    assert any("coordinate quantum must be exactly" in problem for problem in problems)
+
+    monkeypatch.undo()
+    monkeypatch.setattr(
+        contract,
+        "DIGEST_VERSION_CONTRACT",
+        contract.DigestVersionContract(
+            digest_version=contract.LAYOUT_DIGEST_VERSION,
+            projection_version=contract.LAYOUT_PROJECTION_VERSION,
+            numeric_canonicalization=contract.LAYOUT_NUMERIC_CANONICALIZATION,
+            coordinate_decimals=4,
+            projection_field_names=contract.DIGEST_VERSION_CONTRACT.projection_field_names,
+            envelope_field_names=contract.DIGEST_VERSION_CONTRACT.envelope_field_names,
+            sort_key=contract.DIGEST_VERSION_CONTRACT.sort_key,
+        ),
+    )
+    problems = contract.validate_contract()
+    assert any("coordinate decimals" in problem for problem in problems)
+
+
+def test_the_validator_reports_a_projection_change_without_a_version_bump(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        contract,
+        "CANONICAL_LAYOUT_PROJECTION_FIELDS",
+        (*contract.CANONICAL_LAYOUT_PROJECTION_FIELDS, contract.CanonicalProjectionField("z", True, "new")),
+    )
+    problems = contract.validate_contract()
+    assert any("needs a new projection version" in problem for problem in problems)
+
+
+def test_the_validator_reports_a_single_field_sort_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The exact regression the amendment was written for."""
+
+    monkeypatch.setattr(contract, "CANONICAL_PROJECTION_SORT_KEY", "engineering_id")
+    problems = contract.validate_contract()
+    assert any("single identity field cannot prove a total order" in problem for problem in problems)
+
+
+def test_the_validator_reports_bounds_repeated_on_every_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        contract,
+        "CANONICAL_LAYOUT_PROJECTION_FIELDS",
+        (*contract.CANONICAL_LAYOUT_PROJECTION_FIELDS, contract.CanonicalProjectionField("canvas_bounds", True, "repeated")),
+    )
+    problems = contract.validate_contract()
+    assert any("must not be repeated" in problem for problem in problems)
 
 
 def test_the_validator_reports_volatile_bookkeeping_entering_the_digest(

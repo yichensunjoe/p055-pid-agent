@@ -4,7 +4,9 @@ import { join } from "node:path";
 import test from "node:test";
 
 import {
+  AssessmentContractViolation,
   MAX_REPLANS,
+  assessmentContractViolation,
   automaticAgentReceipt,
   automaticAgentVerdict,
   completenessPresentation,
@@ -78,6 +80,30 @@ function completeAssessment(): AgentTransactionAssessment {
   });
 }
 
+/** A legitimate "the compiler never got to this plan" answer, with the server's own reason. */
+function notEvaluatedAssessment(): AgentTransactionAssessment {
+  return assessment({
+    valid: false,
+    stage: "compile",
+    operation_accounting: "not_evaluated",
+    accepted_operation_count: null,
+    rejected_operation_count: null,
+    rejected_operations: null,
+    global_failure_reason: "revision_conflict: 文档已在规划后被修改",
+    issues: [
+      {
+        operation_index: null,
+        operation: "",
+        code: "revision_conflict",
+        message: "文档已在规划后被修改",
+        field_path: "expected_revision",
+        available_values: {},
+        suggestions: [],
+      },
+    ],
+  });
+}
+
 function planResult(
   attempt: number,
   planAssessment: AgentTransactionAssessment,
@@ -142,35 +168,22 @@ test("the receipt carries the incident arithmetic and the reasons, not just a ve
   assert.match(receipt.summary, /partial/);
 });
 
-test("an unevaluated proposal reports unknown rather than zero, and asks again", async () => {
+test("an explicit not_evaluated answer takes the error-recovery path", async () => {
   // A revision check that stopped compilation before any operation was examined. `0 of 0`
-  // here would be the same family of lie as reporting a dropped plan as complete.
-  const unevaluated = planResult(
-    0,
-    assessment({
-      valid: false,
-      stage: "compile",
-      operation_accounting: "not_evaluated",
-      issues: [
-        {
-          operation_index: null,
-          operation: "",
-          code: "revision_conflict",
-          message: "文档已在规划后被修改",
-          field_path: "expected_revision",
-          available_values: {},
-          suggestions: [],
-        },
-      ],
-    }),
-  );
+  // here would be the same family of lie as reporting a dropped plan as complete, and the
+  // server's own reason is what the recovery uses.
+  const unevaluated = planResult(0, notEvaluatedAssessment());
 
   const verdict = automaticAgentVerdict(unevaluated);
+  assert.equal(verdict.branch, "not_evaluated");
   assert.equal(verdict.accounting, "not_evaluated");
   assert.equal(verdict.completeness, "unknown");
   assert.equal(verdict.accepted, null);
   assert.equal(verdict.rejected, null);
   assert.equal(verdict.mayProceed, false);
+  assert.equal(verdict.mayReplanAutomatically, true);
+  assert.deepEqual(assessmentContractViolation(unevaluated), []);
+  assert.match(verdict.globalFailureReason, /revision_conflict/);
 
   const presentation = completenessPresentation(unevaluated);
   assert.equal(presentation.accepted_operation_count, null);
@@ -181,13 +194,84 @@ test("an unevaluated proposal reports unknown rather than zero, and asks again",
   assert.equal(recorder.requests.length, 1, "an uncounted proposal is asked again, not accepted");
 });
 
-test("a response that omits the accounting axis is treated as unknown", () => {
-  // An older server, or any caller that simply does not set the field. The fallback refuses to
-  // proceed rather than assuming wholeness, because an optimistic default is what caused it.
-  const verdict = automaticAgentVerdict(planResult(0, assessment({})));
-  assert.equal(verdict.accounting, "not_evaluated");
-  assert.equal(verdict.completeness, "unknown");
+test("a response that omits the accounting axis is a contract violation, not a plan to replan", async () => {
+  // An older server, or a caller that simply does not set the field. This is not "unevaluated"
+  // and it is not "unknown": the response does not carry the contract, so it must not be fed
+  // back into the semantic replan loop, where it would spend the run's attempts hiding a
+  // server defect and never fix it.
+  const malformed = planResult(0, assessment({}));
+  const verdict = automaticAgentVerdict(malformed);
+
+  assert.equal(verdict.branch, "assessment_contract_violation");
+  assert.equal(verdict.accounting, "violation");
   assert.equal(verdict.mayProceed, false);
+  assert.equal(verdict.mayReplanAutomatically, false);
+  assert.ok(verdict.contractViolation.some((item) => item.includes("operation_accounting")));
+
+  const recorder = replanRecorder();
+  await assert.rejects(
+    () => driveAutomaticAgentPlan(malformed, recorder.replan),
+    AssessmentContractViolation,
+  );
+  assert.equal(recorder.requests.length, 0, "zero replan attempts may be spent on it");
+
+  const receipt = automaticAgentReceipt(malformed);
+  assert.match(receipt.summary, /响应契约不兼容/);
+  assert.equal(receipt.presentation.completeness, "unknown");
+  assert.equal(receipt.presentation.accepted_operation_count, null);
+});
+
+test("an evaluated envelope missing its counts or verdict is a contract violation", () => {
+  // `evaluated` is a promise that the counts and the verdict are there. Without them this is
+  // not a partial plan and not an empty one -- there is nothing to call it.
+  for (const broken of [
+    assessment({ operation_accounting: "evaluated", rejected_operations: [], completeness: "complete" }),
+    assessment({
+      operation_accounting: "evaluated",
+      accepted_operation_count: 3,
+      rejected_operation_count: 0,
+      rejected_operations: [],
+    }),
+    assessment({
+      operation_accounting: "evaluated",
+      accepted_operation_count: 3,
+      rejected_operation_count: 0,
+      completeness: "complete",
+    }),
+  ]) {
+    const verdict = automaticAgentVerdict(planResult(0, broken));
+    assert.equal(verdict.branch, "assessment_contract_violation");
+    assert.equal(verdict.completeness, "unknown", "it is not partial and not empty");
+    assert.equal(verdict.mayProceed, false);
+    assert.ok(verdict.contractViolation.length > 0);
+  }
+});
+
+test("a not_evaluated envelope that fabricates counts is a contract violation", () => {
+  // The declared invariant, enforced at the boundary: zero is a claim, not a stand-in for an
+  // unknown count, and a reason is required.
+  const fabricated = automaticAgentVerdict(
+    planResult(
+      0,
+      assessment({
+        valid: false,
+        operation_accounting: "not_evaluated",
+        accepted_operation_count: 0,
+        rejected_operation_count: 0,
+        rejected_operations: null,
+        completeness: null,
+        global_failure_reason: "revision_conflict",
+      }),
+    ),
+  );
+  const unexplained = automaticAgentVerdict(
+    planResult(0, assessment({ operation_accounting: "not_evaluated", rejected_operations: null })),
+  );
+
+  assert.equal(fabricated.branch, "assessment_contract_violation");
+  assert.ok(fabricated.contractViolation.some((item) => item.includes("不得给出计数")));
+  assert.equal(unexplained.branch, "assessment_contract_violation");
+  assert.ok(unexplained.contractViolation.some((item) => item.includes("global_failure_reason")));
 });
 
 test("an evaluated, valid, complete proposal proceeds without another attempt", async () => {
@@ -267,4 +351,18 @@ test("the surface names the arithmetic the contract declares", () => {
     assert.ok(component.includes(field), `ProposalAccounting.tsx must render ${field}`);
   }
   assert.ok(surface.includes("ProposalAccounting"), "the confirmation surface must show it");
+
+  // The contract enumerates six routes an assessment may take; the module that decides must
+  // name all six, so a seventh cannot appear by silence and the malformed route cannot be
+  // quietly folded into the unevaluated one.
+  for (const branch of [
+    "evaluated_complete",
+    "evaluated_partial",
+    "evaluated_empty",
+    "evaluated_invalid",
+    "not_evaluated",
+    "assessment_contract_violation",
+  ]) {
+    assert.ok(loop.includes(branch), `automaticAgentLoop.ts must name the ${branch} branch`);
+  }
 });

@@ -133,6 +133,14 @@ ContinuationAction = Literal[
     "existing_error_recovery",
 ]
 
+#: The actions as a value, so "every action names a branch" is checkable rather than asserted.
+CONTINUATION_ACTIONS: tuple[ContinuationAction, ...] = (
+    "proceed_to_human_confirmation",
+    "return_receipt_and_replan",
+    "replan_or_abort",
+    "existing_error_recovery",
+)
+
 
 @dataclass(frozen=True)
 class ContinuationRule:
@@ -666,6 +674,115 @@ PARTIAL_PROPOSAL_MAY_OFFER_APPLY = False
 PARTIAL_PROPOSAL_REQUESTS_NEXT_ATTEMPT = True
 PARTIAL_REPLAN_USES_EXISTING_LIMIT = True
 
+#: A response that does not carry the accounting contract is not a business outcome, it is a
+#: protocol violation, and the two must not share a recovery path. The reason is cost: a
+#: legitimate ``not_evaluated`` answer is a real refusal worth replanning around, while a
+#: malformed response is a server defect -- silently replanning it would spend the model's
+#: attempts hiding a broken contract. The remote gate drew this line; these are its names.
+ASSESSMENT_CONTRACT_VIOLATION_CODE = "assessment_contract_violation"
+ASSESSMENT_CONTRACT_VIOLATION_IS_A_BUSINESS_OUTCOME = False
+CONTRACT_VIOLATION_MAY_APPLY = False
+CONTRACT_VIOLATION_MAY_TRIGGER_AUTOMATIC_SEMANTIC_REPLAN = False
+CONTRACT_VIOLATION_REQUIRES_USER_VISIBLE_MESSAGE = True
+
+#: The axis a consumer reads first. Absent or unrecognised, the response is malformed rather
+#: than merely unevaluated -- absence is not a fourth accounting state.
+ACCOUNTING_AXIS_FIELD = "operation_accounting"
+
+#: What each accounting state must actually carry to be that state. An ``evaluated``
+#: assessment without counts is not a partial result, it is a broken envelope; a
+#: ``not_evaluated`` one without a reason explains nothing.
+EVALUATED_ASSESSMENT_REQUIRED_FIELDS: tuple[str, ...] = (
+    "accepted_operation_count",
+    "rejected_operation_count",
+    "completeness",
+    "rejected_operations",
+)
+NOT_EVALUATED_ASSESSMENT_REQUIRED_FIELDS: tuple[str, ...] = ("global_failure_reason",)
+
+
+@dataclass(frozen=True)
+class AssessmentBranch:
+    """One exhaustive route an assessment may take, and what it may do on that route.
+
+    Declared as data for the same reason the two axes are: the previous defect was a branch
+    that nobody had enumerated ("valid, so stop"), so the fix is to enumerate them and let a
+    test read the runtime against the list.
+    """
+
+    key: str
+    applies_to: str
+    may_apply: bool
+    may_replan_automatically: bool
+    note: str
+
+
+ASSESSMENT_BRANCHES: tuple[AssessmentBranch, ...] = (
+    AssessmentBranch(
+        key="evaluated_complete",
+        applies_to="evaluated",
+        may_apply=True,
+        may_replan_automatically=False,
+        note="Nothing was dropped; this is the only branch that may reach a human.",
+    ),
+    AssessmentBranch(
+        key="evaluated_partial",
+        applies_to="evaluated",
+        may_apply=False,
+        may_replan_automatically=True,
+        note="Legal but not whole: the receipt names what to repair.",
+    ),
+    AssessmentBranch(
+        key="evaluated_empty",
+        applies_to="evaluated",
+        may_apply=False,
+        may_replan_automatically=True,
+        note=(
+            "Nothing survived. Approved as not applyable: if a product ever needs "
+            "'no change required', that must be its own outcome rather than an empty "
+            "transaction dressed as a successful apply."
+        ),
+    ),
+    AssessmentBranch(
+        key="evaluated_invalid",
+        applies_to="evaluated",
+        may_apply=False,
+        may_replan_automatically=True,
+        note="Hard invalidity keeps its precedence over completeness and its existing recovery.",
+    ),
+    AssessmentBranch(
+        key="not_evaluated",
+        applies_to="not_evaluated",
+        may_apply=False,
+        may_replan_automatically=True,
+        note=(
+            "A real answer that the compiler never reached an operation: recover using the "
+            "recorded global failure reason, which may include replanning with new context."
+        ),
+    ),
+    AssessmentBranch(
+        key=ASSESSMENT_CONTRACT_VIOLATION_CODE,
+        applies_to="any_response",
+        may_apply=False,
+        may_replan_automatically=False,
+        note=(
+            "The response does not carry the accounting contract at all. Zero apply, zero "
+            "automatic semantic replan, and a message a human can act on (refresh or "
+            "regenerate) -- because the alternative is spending replan attempts on a defect "
+            "that no proposal can fix."
+        ),
+    ),
+)
+
+#: Which declared branch each continuation action is. The matrix above stays a statement
+#: about the two axes; this is the statement about what the runtime does with each cell.
+CONTINUATION_ACTION_BRANCH: tuple[tuple[ContinuationAction, str], ...] = (
+    ("proceed_to_human_confirmation", "evaluated_complete"),
+    ("return_receipt_and_replan", "evaluated_partial"),
+    ("replan_or_abort", "evaluated_empty"),
+    ("existing_error_recovery", "evaluated_invalid"),
+)
+
 #: The verdicts the read-only catalogue audit may return, in classification order.
 CATALOGUE_AUDIT_VERDICTS: tuple[str, ...] = (
     "visible",
@@ -943,6 +1060,77 @@ def validate_contract() -> list[str]:
         )
     if not CATALOGUE_AUDIT_CLASSIFIES_EXISTENCE_BEFORE_VISIBILITY:
         problems.append("the catalogue audit must ask existence before visibility")
+
+    # §13: malformed is not a business outcome, and the branches are exhaustive.
+    if ACCOUNTING_AXIS_FIELD != "operation_accounting":
+        problems.append("the accounting axis is 'operation_accounting'")
+    if ASSESSMENT_CONTRACT_VIOLATION_IS_A_BUSINESS_OUTCOME:
+        problems.append(
+            "a response missing the accounting contract is a protocol violation, not a "
+            "business outcome that may be replanned like a partial plan"
+        )
+    if CONTRACT_VIOLATION_MAY_APPLY:
+        problems.append("an assessment contract violation must not apply anything")
+    if CONTRACT_VIOLATION_MAY_TRIGGER_AUTOMATIC_SEMANTIC_REPLAN:
+        problems.append(
+            "an assessment contract violation must not trigger an automatic semantic replan"
+        )
+    if not CONTRACT_VIOLATION_REQUIRES_USER_VISIBLE_MESSAGE:
+        problems.append("an assessment contract violation must say so to the user")
+    if not EVALUATED_ASSESSMENT_REQUIRED_FIELDS:
+        problems.append("an evaluated assessment must declare what it must carry")
+    if ACCOUNTING_AXIS_FIELD in EVALUATED_ASSESSMENT_REQUIRED_FIELDS:
+        problems.append("the accounting axis is the premise of being evaluated, not one of its fields")
+    if not NOT_EVALUATED_ASSESSMENT_REQUIRED_FIELDS:
+        problems.append("an unevaluated assessment must declare that it carries a reason")
+
+    keys = [branch.key for branch in ASSESSMENT_BRANCHES]
+    if len(keys) != len(set(keys)):
+        problems.append("assessment branches must have distinct keys")
+    if ASSESSMENT_CONTRACT_VIOLATION_CODE not in keys:
+        problems.append(
+            f"the contract violation branch must be declared as {ASSESSMENT_CONTRACT_VIOLATION_CODE!r}"
+        )
+    violation = [branch for branch in ASSESSMENT_BRANCHES if branch.key == ASSESSMENT_CONTRACT_VIOLATION_CODE]
+    if len(violation) == 1:
+        if violation[0].may_replan_automatically or violation[0].may_apply:
+            problems.append("the contract violation branch may neither apply nor replan")
+        if violation[0].applies_to != "any_response":
+            problems.append("a malformed response can arrive at any accounting state")
+    non_bypassable = [
+        branch.key
+        for branch in ASSESSMENT_BRANCHES
+        if not branch.may_apply and not branch.may_replan_automatically
+    ]
+    if non_bypassable != [ASSESSMENT_CONTRACT_VIOLATION_CODE]:
+        problems.append(
+            "exactly one branch may be neither applied nor replanned: the contract violation"
+        )
+    applyable = [branch.key for branch in ASSESSMENT_BRANCHES if branch.may_apply]
+    if applyable != ["evaluated_complete"]:
+        problems.append("only a valid and complete evaluated proposal may apply")
+
+    declared_actions = {action for action, _ in CONTINUATION_ACTION_BRANCH}
+    if declared_actions != set(CONTINUATION_ACTIONS):
+        problems.append("every continuation action must name the branch it leads to")
+    mapped = {key for _, key in CONTINUATION_ACTION_BRANCH}
+    evaluated_keys = {
+        branch.key for branch in ASSESSMENT_BRANCHES if branch.applies_to == "evaluated"
+    }
+    if mapped != evaluated_keys:
+        problems.append(
+            "the matrix cells must map exactly onto the evaluated branches, no more and no fewer"
+        )
+    for rule in CONTINUATION_MATRIX:
+        branch_key = dict(CONTINUATION_ACTION_BRANCH).get(rule.action)
+        if branch_key is None:
+            problems.append(f"cell ({rule.validity}, {rule.completeness}) names no branch")
+    for branch in ASSESSMENT_BRANCHES:
+        if branch.applies_to == "evaluated" and not any(
+            dict(CONTINUATION_ACTION_BRANCH).get(rule.action) == branch.key
+            for rule in CONTINUATION_MATRIX
+        ):
+            problems.append(f"evaluated branch {branch.key!r} is unreachable from the matrix")
 
     return problems
 

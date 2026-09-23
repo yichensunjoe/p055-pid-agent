@@ -240,11 +240,13 @@ def _record_proposal_evidence(
     else:
         # The proposal still reached a terminal state, so the raw submission is durable
         # evidence in its own right. No count is invented for a plan the compiler never
-        # examined operation by operation; the reason it stopped is recorded instead.
+        # examined operation by operation; the reason it stopped is recorded instead. The
+        # compiler already put that reason on the assessment, so the record and the client
+        # read the same sentence rather than two renderings of it.
         first_issue = assessment.issues[0] if assessment.issues else None
-        reason = first_issue.code if first_issue is not None else "not_evaluated"
-        if first_issue is not None and first_issue.message:
-            reason = f"{reason}: {first_issue.message}"
+        reason = assessment.global_failure_reason or (
+            first_issue.code if first_issue is not None else "not_evaluated"
+        )
         evidence = build_not_evaluated_evidence(
             **common,
             global_failure_reason=reason,

@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, BinaryIO
 from urllib.parse import quote
 
-CURRENT_SCHEMA_VERSION = 9
+CURRENT_SCHEMA_VERSION = 10
 BACKUP_FORMAT = "pid-agent.sqlite-backup"
 BACKUP_VERSION = 1
 BACKUP_DATABASE_MEMBER = "database.sqlite3"
@@ -985,6 +985,24 @@ def _migration_9(connection: sqlite3.Connection) -> None:
     )
 
 
+def _migration_10(connection: sqlite3.Connection) -> None:
+    """M7 phase 2A closeout: the audit order is a key, not a convention.
+
+    ``proposal_attempt_index`` carries the order of proposals within a session, so two rows
+    claiming to be "attempt 2" of the same session is not a duplicate to be tolerated, it is
+    a broken audit trail. Uniqueness is created here rather than folded into migration 9
+    for the same reason migration 9 exists at all: the real database on this machine has
+    already executed version 9, so rewriting that version would leave "test-fresh databases"
+    and "the user's database" with two different shapes. The index is created idempotently so
+    it is harmless on a database that somehow already has it.
+    """
+
+    connection.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_synthesis_proposal_evidence_attempt "
+        "ON synthesis_proposal_evidence(session_id, proposal_attempt_index)"
+    )
+
+
 _MIGRATIONS = {
     1: _migration_1,
     2: _migration_2,
@@ -995,6 +1013,7 @@ _MIGRATIONS = {
     7: _migration_7,
     8: _migration_8,
     9: _migration_9,
+    10: _migration_10,
 }
 
 

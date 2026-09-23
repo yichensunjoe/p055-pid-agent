@@ -363,6 +363,17 @@ def test_the_task_book_names_the_phase_2a_obligations(task_book: str) -> None:
             "PARTIAL_REPLAN_USES_EXISTING_LIMIT",
             "PARTIAL_PROPOSAL_MAY_RENDER_AS_PASSED_VALIDATION",
             "PARTIAL_PROPOSAL_MAY_OFFER_APPLY",
+            # §13.9, the last protocol boundary: malformed and unevaluated are two routes.
+            *contract.CONTINUATION_ACTIONS,
+            contract.ASSESSMENT_CONTRACT_VIOLATION_CODE,
+            contract.ACCOUNTING_AXIS_FIELD,
+            *contract.EVALUATED_ASSESSMENT_REQUIRED_FIELDS,
+            *contract.NOT_EVALUATED_ASSESSMENT_REQUIRED_FIELDS,
+            *[branch.key for branch in contract.ASSESSMENT_BRANCHES],
+            "ASSESSMENT_CONTRACT_VIOLATION_IS_A_BUSINESS_OUTCOME",
+            "CONTRACT_VIOLATION_MAY_APPLY",
+            "CONTRACT_VIOLATION_MAY_TRIGGER_AUTOMATIC_SEMANTIC_REPLAN",
+            "CONTRACT_VIOLATION_REQUIRES_USER_VISIBLE_MESSAGE",
         ),
     )
     assert not missing, missing
@@ -766,6 +777,77 @@ def test_the_validator_reports_the_representation_ratio_being_re_admitted(
     assert any("representation-mismatched fidelity ratio" in problem for problem in problems)
 
 
+def test_the_validator_reports_a_malformed_response_treated_as_a_business_outcome(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(contract, "ASSESSMENT_CONTRACT_VIOLATION_IS_A_BUSINESS_OUTCOME", True)
+    problems = contract.validate_contract()
+    assert any("protocol violation" in problem for problem in problems)
+
+
+def test_the_validator_reports_a_contract_violation_that_may_replan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(contract, "CONTRACT_VIOLATION_MAY_TRIGGER_AUTOMATIC_SEMANTIC_REPLAN", True)
+    problems = contract.validate_contract()
+    assert any("must not trigger an automatic semantic replan" in problem for problem in problems)
+
+
+def test_the_validator_reports_a_matrix_cell_mapped_onto_the_malformed_branch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Folding "malformed" into a canonical failure mode is the tempting relaxation."""
+
+    broken = tuple(
+        (
+            action,
+            contract.ASSESSMENT_CONTRACT_VIOLATION_CODE
+            if action == "existing_error_recovery"
+            else branch,
+        )
+        for action, branch in contract.CONTINUATION_ACTION_BRANCH
+    )
+    monkeypatch.setattr(contract, "CONTINUATION_ACTION_BRANCH", broken)
+    problems = contract.validate_contract()
+    assert any("map exactly onto the evaluated branches" in problem for problem in problems)
+
+
+def test_the_validator_reports_a_second_bypassable_branch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    relaxed = tuple(
+        contract.AssessmentBranch(
+            branch.key,
+            branch.applies_to,
+            branch.may_apply,
+            False if branch.key == "evaluated_partial" else branch.may_replan_automatically,
+            branch.note,
+        )
+        for branch in contract.ASSESSMENT_BRANCHES
+    )
+    monkeypatch.setattr(contract, "ASSESSMENT_BRANCHES", relaxed)
+    problems = contract.validate_contract()
+    assert any("neither applied nor replanned" in problem for problem in problems)
+
+
+def test_the_validator_reports_an_applyable_branch_besides_a_whole_proposal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    relaxed = tuple(
+        contract.AssessmentBranch(
+            branch.key,
+            branch.applies_to,
+            True if branch.key == "evaluated_partial" else branch.may_apply,
+            branch.may_replan_automatically,
+            branch.note,
+        )
+        for branch in contract.ASSESSMENT_BRANCHES
+    )
+    monkeypatch.setattr(contract, "ASSESSMENT_BRANCHES", relaxed)
+    problems = contract.validate_contract()
+    assert any("only a valid and complete evaluated proposal may apply" in problem for problem in problems)
+
+
 # --------------------------------------------------------------------------------------
 # §12 closeout: the claim is about the surface a human uses, which lives in another language
 # --------------------------------------------------------------------------------------
@@ -813,6 +895,56 @@ def test_the_declared_presentation_is_the_one_that_is_rendered() -> None:
     assert contract.PARTIAL_PROPOSAL_MAY_OFFER_APPLY is False
     assert contract.PARTIAL_PROPOSAL_MAY_RENDER_AS_PASSED_VALIDATION is False
     assert contract.PARTIAL_PROPOSAL_REQUESTS_NEXT_ATTEMPT is True
+
+
+def test_the_declared_branches_are_the_ones_the_loop_implements() -> None:
+    """Six routes, named once and read back from the module that decides.
+
+    The defect this guards against is silent: a seventh outcome appearing, or the malformed
+    route being folded into the unevaluated one, would leave every declaration above intact.
+    """
+
+    loop = AUTOMATIC_AGENT_LOOP.read_text(encoding="utf-8")
+    keys = [branch.key for branch in contract.ASSESSMENT_BRANCHES]
+    assert len(keys) == 6
+    missing = [key for key in keys if key not in loop]
+    assert not missing, missing
+
+    # The matrix cells map onto the evaluated branches and nothing else; the two non-matrix
+    # branches are the ones accounting introduces.
+    mapped = dict(contract.CONTINUATION_ACTION_BRANCH)
+    assert set(mapped) == set(contract.CONTINUATION_ACTIONS)
+    assert set(mapped.values()) == {
+        "evaluated_complete",
+        "evaluated_partial",
+        "evaluated_empty",
+        "evaluated_invalid",
+    }
+    for action, branch_key in mapped.items():
+        branch = contract.ASSESSMENT_BRANCHES[keys.index(branch_key)]
+        assert branch.applies_to == "evaluated", action
+        assert branch.key in loop
+    assert contract.ASSESSMENT_CONTRACT_VIOLATION_CODE not in mapped.values()
+
+    # Zero apply and zero automatic replan is exactly this one branch's property, which is why
+    # a caller cannot reach a correct implementation by treating it as another failure mode.
+    violation = keys.index(contract.ASSESSMENT_CONTRACT_VIOLATION_CODE)
+    branch = contract.ASSESSMENT_BRANCHES[violation]
+    assert branch.may_apply is False
+    assert branch.may_replan_automatically is False
+    assert branch.applies_to == "any_response"
+
+
+def test_the_contract_violation_ends_the_run_without_a_replan() -> None:
+    """The runtime property, not just the declaration: no replan request is made."""
+
+    loop = AUTOMATIC_AGENT_LOOP.read_text(encoding="utf-8")
+    assert "mayReplanAutomatically" in loop
+    assert "AssessmentContractViolation" in loop
+    # The guard has to sit before the replan call it is guarding; reading order is the only
+    # static signal available across languages, and it is the one that would regress.
+    guard = loop.index("if (!verdict.mayReplanAutomatically)")
+    assert guard < loop.index("result = await replan({")
 
 
 def test_the_two_axis_loop_is_covered_by_a_runtime_test() -> None:

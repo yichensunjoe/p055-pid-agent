@@ -509,3 +509,57 @@ PARTIAL_PROPOSAL_MAY_OFFER_APPLY = False
 "计划已通过校验"，那么 `197 提案 / 120 接受 / 77 拒绝 / partial` 就必须同屏出现，
 并且 partial 时**不得**出现"通过校验"的措辞、也不得出现正常的确认/应用按钮。
 把 completeness 藏起来而只显示 `valid=true`，正是原始事故在界面上的样子。
+
+### 13.9 「没评估」与「响应违反了契约」是两条路
+
+```
+ACCOUNTING_AXIS_FIELD = "operation_accounting"
+ASSESSMENT_CONTRACT_VIOLATION_CODE = "assessment_contract_violation"
+ASSESSMENT_CONTRACT_VIOLATION_IS_A_BUSINESS_OUTCOME = False
+CONTRACT_VIOLATION_MAY_APPLY = False
+CONTRACT_VIOLATION_MAY_TRIGGER_AUTOMATIC_SEMANTIC_REPLAN = False
+CONTRACT_VIOLATION_REQUIRES_USER_VISIBLE_MESSAGE = True
+
+EVALUATED_ASSESSMENT_REQUIRED_FIELDS     = (accepted_operation_count, rejected_operation_count,
+                                            completeness, rejected_operations)
+NOT_EVALUATED_ASSESSMENT_REQUIRED_FIELDS = (global_failure_reason,)
+
+ASSESSMENT_BRANCHES = (evaluated_complete · evaluated_partial · evaluated_empty ·
+                       evaluated_invalid · not_evaluated · assessment_contract_violation)
+CONTINUATION_ACTION_BRANCH = (proceed_to_human_confirmation → evaluated_complete ·
+                              return_receipt_and_replan → evaluated_partial ·
+                              replan_or_abort → evaluated_empty ·
+                              existing_error_recovery → evaluated_invalid)
+```
+
+这是最容易"顺手合并"的一处，而合并的代价是不对称的：
+
+```
+evaluated + valid + complete   → 人工确认
+evaluated + valid + partial/empty → 带回执的语义重规划
+evaluated + invalid            → 既有错误恢复
+not_evaluated                  → 既有错误恢复，用 global_failure_reason（可换上下文后重新规划）
+缺 operation_accounting / evaluated 却缺 counts·completeness
+                               → assessment_contract_violation：不 apply、不自动语义重规划、给人可见提示
+```
+
+**`not_evaluated` 是服务端的一个真实回答**（"没走到逐项评估"），它带 `global_failure_reason`，
+按它恢复是合理的；**缺字段或自相矛盾是响应坏了**，那不是能靠再要一份提案修好的东西——
+把它当 `not_evaluated` 吞掉，等于用 5 次模型请求去掩盖一个契约缺陷。所以最后一条**既不 apply，
+也不允许自动语义重规划**，只给"响应契约不兼容，请刷新或重新生成"这一类可执行的提示。
+
+"缺字段"不是第四种 accounting 状态：`ACCOUNTING_AXIS_FIELD` 缺失即契约违规。同理，
+`evaluated` 却缺计数/完整性、或 `not_evaluated` 却带着计数，都属于同一类违规，都不得被
+当成 `partial`/`empty` 继续走下去。六个分支是穷尽的，且**恰好一个分支既不可 apply 也不可重规划**
+（就是那一支），这些都由 `validate_contract()` 与绑定测试逐条钉住。
+
+`(session_id, proposal_attempt_index)` 的唯一约束是同一件事的存储侧：`proposal_attempt_index`
+承担审计顺序，就不该允许同一个 session 出现两个"第 2 次提案"（schema v10 加唯一索引；
+v9 的定义一个字不改，因为这台机器的真实库已经执行过 v9）。
+
+**`global_failure_reason` 必须随 `assessment` 一起上线，而不是只写在证据行里。**
+这不是实现细节，是上面那条分支能不能成立的前提：客户端要区分"服务端说没评估、并给了原因"
+与"响应压根没带契约"，就只能从响应本身读到原因。我是写这条边界测试时才发现它缺失的——
+`/agent/plan-v2` 的响应里没有这个字段，于是真实的 `not_evaluated`（revision conflict）
+会被新前端误判为契约违规。所以它现在是 assessment 上的一等字段，且
+`not_evaluated` 而原因为空本身就是一条可报错的违规。

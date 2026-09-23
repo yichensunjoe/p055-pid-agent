@@ -684,6 +684,9 @@ export default function App() {
   // preview and the apply button both read the two-axis verdict, not `valid` alone.
   const pendingPlanVerdict = pendingPlan ? automaticAgentVerdict(pendingPlan) : null;
   const pendingPlanMayApply = Boolean(pendingPlan && pendingPlanVerdict?.mayProceed);
+  // A response that does not carry the accounting contract is neither approvable nor a
+  // repairable proposal: the fix is a fresh response, not another model round on this one.
+  const pendingPlanViolatesContract = pendingPlanVerdict?.branch === "assessment_contract_violation";
   const agentCanvasPreview: AgentCanvasPreview | null = pendingPlanMayApply && pendingPlan?.compiled_plan
     ? {
         planId: pendingPlan.plan.plan_id,
@@ -1190,7 +1193,7 @@ export default function App() {
             </details>
 
             {pendingPlan ? <details className={`agent-result-drawer agent-preview ${pendingPlanMayApply ? "agent-preview-valid" : "agent-preview-invalid"}`} open>
-              <summary><strong>{pendingPlanMayApply ? "待确认语义事务" : pendingPlanVerdict?.completeness === "partial" ? "事务不完整，需继续规划" : "事务需要修复"}</strong><span>plan {pendingPlan.plan.plan_id.slice(0, 8)} · attempt {pendingPlan.attempt}</span></summary>
+              <summary><strong>{pendingPlanViolatesContract ? "响应契约不兼容，请刷新或重新生成" : pendingPlanMayApply ? "待确认语义事务" : pendingPlanVerdict?.completeness === "partial" ? "事务不完整，需继续规划" : "事务需要修复"}</strong><span>plan {pendingPlan.plan.plan_id.slice(0, 8)} · attempt {pendingPlan.attempt}</span></summary>
               <p>{pendingPlan.plan.explanation || "模型未提供说明"}</p>
               <dl>
                 <div><dt>Label</dt><dd>{pendingPlan.plan.transaction.label}</dd></div>
@@ -1244,8 +1247,9 @@ export default function App() {
                   <button type="button" className="danger" onClick={stopAgentPlanning}>🛑 停止重规划</button>
                 ) : (
                   // Enabled for a partial plan: "valid but incomplete" is exactly the case that
-                  // must be repaired, and the old condition disabled this button for it.
-                  <button type="button" className="repair" disabled={busyAgent || pendingPlan.attempt >= 5 || pendingPlanMayApply} onClick={() => void replanAgent()}>{`按回执重规划${pendingPlan.attempt ? `（${pendingPlan.attempt + 1}/5）` : ""}`}</button>
+                  // must be repaired, and the old condition disabled this button for it. Disabled
+                  // for a contract violation, whose fix is a fresh response rather than a replan.
+                  <button type="button" className="repair" disabled={busyAgent || pendingPlan.attempt >= 5 || pendingPlanMayApply || pendingPlanViolatesContract} onClick={() => void replanAgent()}>{`按回执重规划${pendingPlan.attempt ? `（${pendingPlan.attempt + 1}/5）` : ""}`}</button>
                 )}
                 <button type="button" disabled={busyAgent} onClick={discardAgentPlan}>放弃预览</button>
               </div>

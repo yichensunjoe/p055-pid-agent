@@ -325,6 +325,13 @@ class AgentTransactionAssessment(StrictModel):
     completeness: Completeness | None = None
     rejected_operations: list[RejectedOperationReceipt] | None = None
 
+    # Why the compiler stopped before examining the plan operation by operation, when it did.
+    # It travels on the assessment and not only on the evidence row because the client has to
+    # tell a legitimate ``not_evaluated`` answer apart from a response that does not carry the
+    # accounting contract: the first has a reason and is recoverable, the second is a defect
+    # that no amount of replanning repairs.
+    global_failure_reason: str = ""
+
     @property
     def proposed_operation_count(self) -> int:
         return self.semantic_operation_count
@@ -359,6 +366,8 @@ class AgentTransactionAssessment(StrictModel):
                     "a not_evaluated assessment must leave "
                     f"{', '.join(invented)} unset rather than reporting a number"
                 )
+            if not self.global_failure_reason:
+                problems.append("a not_evaluated assessment must record why it stopped")
             return problems
 
         if self.accepted_operation_count is None or self.rejected_operation_count is None:

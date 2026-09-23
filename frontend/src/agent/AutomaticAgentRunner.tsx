@@ -9,6 +9,7 @@ import {
   type AutomaticAgentRunOrigin,
 } from "./automaticAgentRunGuard";
 import {
+  AssessmentContractViolation,
   MAX_REPLANS,
   automaticAgentReceipt,
   automaticAgentVerdict,
@@ -310,6 +311,12 @@ export function AutomaticAgentRunner({
     } catch (error) {
       if (cancelRequested.current) {
         setMessage("自动执行已手动停止。");
+      } else if (error instanceof AssessmentContractViolation) {
+        // Deliberately not phrased as a model failure: the proposal was never the problem. The
+        // automatic path stops instead of spending the run's replans on a broken contract.
+        setMessage(
+          `响应契约不兼容（${error.violations.join("；")}）：已拒绝应用，也不会自动消耗重规划次数；请刷新或重新生成。`,
+        );
       } else {
         const text = error instanceof ApiError ? error.message : String(error instanceof Error ? error.message : error);
         setMessage(`生成失败：${text}`);

@@ -1181,6 +1181,20 @@ class SQLiteDocumentStore:
                     f"proposal evidence {evidence.proposal_evidence_id} already exists; "
                     "the table is append-only"
                 )
+            clashing = connection.execute(
+                f"SELECT 1 FROM {PROPOSAL_EVIDENCE_TABLE} "
+                "WHERE session_id = ? AND proposal_attempt_index = ?",
+                (evidence.session_id, evidence.proposal_attempt_index),
+            ).fetchone()
+            if clashing is not None:
+                # The attempt index is the audit order, so two "attempt 2" rows in one session
+                # is a broken trail rather than a row to append. The unique index is the
+                # cross-process guard; this is the same refusal with a readable reason.
+                raise ValueError(
+                    f"session {evidence.session_id} already has an evidence row for attempt "
+                    f"{evidence.proposal_attempt_index}; proposal_attempt_index must be unique "
+                    "within a session"
+                )
             connection.execute(
                 f"""
                 INSERT INTO {PROPOSAL_EVIDENCE_TABLE} (

@@ -53,7 +53,25 @@ class PermissiveSemanticTransactionCompiler(StrictSemanticTransactionCompiler):
         if any(issue.code == "revision_conflict" for issue in strict_result.assessment.issues):
             # The plan was never evaluated operation by operation, so there is no per-operation
             # accounting to report and none is invented. The existing recovery path handles it.
-            return strict_result
+            #
+            # The state is stated rather than left to the model's default, and the reason is
+            # carried: a client has to distinguish "we never got to this plan, here is why"
+            # from "this response does not carry the accounting contract at all", and only the
+            # first of those is worth recovering from.
+            first = strict_result.assessment.issues[0]
+            reason = first.code if first is not None else "not_evaluated"
+            if first is not None and first.message:
+                reason = f"{reason}: {first.message}"
+            return strict_result.model_copy(
+                update={
+                    "assessment": strict_result.assessment.model_copy(
+                        update={
+                            "operation_accounting": "not_evaluated",
+                            "global_failure_reason": reason,
+                        }
+                    )
+                }
+            )
 
         current = self.service.get_document(document_id)
         accepted: list[SemanticOperation] = []

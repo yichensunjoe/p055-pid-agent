@@ -228,6 +228,7 @@ def test_an_assessment_may_not_report_counts_it_never_computed() -> None:
         current_revision=1,
         next_revision=2,
         semantic_operation_count=77,
+        global_failure_reason="revision_conflict: expected revision 9",
     )
     assert unevaluated.operation_accounting == "not_evaluated"
     assert unevaluated.accepted_operation_count is None
@@ -244,6 +245,11 @@ def test_an_assessment_may_not_report_counts_it_never_computed() -> None:
     problems = fabricated.accounting_problems()
     assert any("accepted_operation_count" in problem for problem in problems)
 
+    # "We did not evaluate it" without saying why explains nothing, and the client cannot tell
+    # it apart from a response that simply forgot to carry the contract.
+    unexplained = unevaluated.model_copy(update={"global_failure_reason": ""})
+    assert any("must record why" in problem for problem in unexplained.accounting_problems())
+
     # And an evaluated assessment must carry both counts and a verdict.
     missing_verdict = unevaluated.model_copy(
         update={
@@ -254,6 +260,55 @@ def test_an_assessment_may_not_report_counts_it_never_computed() -> None:
         }
     )
     assert any("completeness verdict" in problem for problem in missing_verdict.accounting_problems())
+
+
+def test_every_assessment_the_plan_path_returns_is_coherent(tmp_path: Path) -> None:
+    """The runtime invariant, on the compiler the agent actually goes through.
+
+    Three outcomes, and each must state its own accounting: a plan that is whole, a plan whose
+    every operation was refused, and a plan the compiler never reached. The third is the one
+    that used to be indistinguishable from a broken envelope.
+    """
+
+    service, _ = _service(tmp_path)
+    document_id = _seeded(service)
+    compiler = PermissiveSemanticTransactionCompiler(service)
+    current = service.get_document(document_id)
+
+    partial = compiler.compile(document_id, _incident_transaction(current.revision)).assessment
+    assert partial.operation_accounting == "evaluated"
+    assert partial.completeness == "partial"
+    assert partial.accounting_problems() == []
+
+    empty = compiler.compile(
+        document_id,
+        SemanticTransaction.model_validate(
+            {
+                "expected_revision": current.revision,
+                "operations": [_rejected_update(index) for index in range(5)],
+            }
+        ),
+    ).assessment
+    assert empty.operation_accounting == "evaluated"
+    assert empty.accepted_operation_count == 0
+    assert empty.rejected_operation_count == 5
+    assert empty.completeness == "empty"
+    assert empty.accounting_problems() == []
+
+    stale = compiler.compile(
+        document_id,
+        SemanticTransaction.model_validate(
+            {
+                "expected_revision": current.revision + 42,
+                "operations": [_accepted_text(0)],
+            }
+        ),
+    ).assessment
+    assert stale.operation_accounting == "not_evaluated"
+    assert stale.accepted_operation_count is None
+    # The reason travels with the answer, which is what separates it from a malformed one.
+    assert stale.global_failure_reason.startswith("revision_conflict")
+    assert stale.accounting_problems() == []
 
 
 def test_completeness_cannot_be_supplied_and_must_follow_from_the_counts() -> None:
@@ -321,6 +376,66 @@ def test_evidence_is_append_only_and_a_replan_adds_a_row(tmp_path: Path) -> None
     # Re-appending the same record is refused rather than silently overwriting it.
     with pytest.raises(ValueError, match="append-only"):
         store.append_synthesis_proposal_evidence(first)
+
+
+def test_the_attempt_index_is_unique_within_a_session(tmp_path: Path) -> None:
+    """``proposal_attempt_index`` carries the audit order, so two "attempt 2"s are a defect.
+
+    Refused twice over: by the store with a readable reason, and by a unique index for the
+    cross-process case the store's own lock cannot see.
+    """
+
+    service, store = _service(tmp_path)
+    document_id = _seeded(service)
+    store.append_synthesis_proposal_evidence(
+        _evidence(service, store, document_id, "session_unique", attempt=0)
+    )
+    second = _evidence(service, store, document_id, "session_unique", attempt=1)
+    store.append_synthesis_proposal_evidence(second)
+
+    # A different row id claiming to be "attempt 1" of the same session. The store computes the
+    # next index from the previous row, so this can only be reached by a caller that sets it.
+    clash = second.model_copy(update={"proposal_evidence_id": "m7ev_other"})
+    with pytest.raises(ValueError, match="must be unique within a session"):
+        store.append_synthesis_proposal_evidence(clash)
+
+    connection = store._connect()
+    try:
+        indexes = {
+            row[1]: row[2]
+            for row in connection.execute(
+                f"PRAGMA index_list({PROPOSAL_EVIDENCE_TABLE})"
+            ).fetchall()
+        }
+    finally:
+        connection.close()
+    assert indexes.get("uq_synthesis_proposal_evidence_attempt") == 1, (
+        "the audit order must be enforced by a unique index, not only by the store's check"
+    )
+
+    # The database refuses it even if a caller bypasses the store's pre-check.
+    import sqlite3
+
+    connection = store._connect()
+    try:
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                f"INSERT INTO {PROPOSAL_EVIDENCE_TABLE} "
+                "(proposal_evidence_id, session_id, document_id, proposal_attempt_index, "
+                "proposed_operation_count, payload_json, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    "m7ev_raw",
+                    "session_unique",
+                    document_id,
+                    1,
+                    0,
+                    "{}",
+                    "2026-09-23T00:00:00+00:00",
+                ),
+            )
+    finally:
+        connection.close()
 
 
 def test_an_incoherent_record_is_refused_before_it_reaches_the_table(tmp_path: Path) -> None:
@@ -517,6 +632,50 @@ def test_a_plan_that_lost_everything_is_told_so_rather_than_told_to_keep_its_wor
     assert assessment.rejected_operations[0].reason_code in block
 
 
+def test_a_database_that_already_ran_version_nine_gains_the_unique_index(tmp_path: Path) -> None:
+    """The constraint arrives in its own migration, so an already-migrated database is fixed.
+
+    This is the reason version 10 exists at all: the real database on this machine had already
+    executed version 9, so folding the index into version 9's body would have left it with the
+    old shape while every freshly created test database had the new one.
+    """
+
+    import sqlite3
+
+    from agentcad import database_recovery
+
+    path = tmp_path / "m7-v9.db"
+    SQLiteDocumentStore(path)
+    connection = sqlite3.connect(path)
+    try:
+        connection.execute("DROP INDEX uq_synthesis_proposal_evidence_attempt")
+        connection.execute("PRAGMA user_version = 9")
+        connection.commit()
+        database_recovery._migrate(connection)
+        connection.commit()
+        assert database_recovery._schema_version(connection) == (
+            database_recovery.CURRENT_SCHEMA_VERSION
+        )
+        indexes = {
+            row[1]: row[2]
+            for row in connection.execute(
+                f"PRAGMA index_list({PROPOSAL_EVIDENCE_TABLE})"
+            ).fetchall()
+        }
+    finally:
+        connection.close()
+    assert indexes.get("uq_synthesis_proposal_evidence_attempt") == 1
+
+    # And the repaired database is usable, not just structurally current.
+    store = SQLiteDocumentStore(path)
+    service = DocumentService(store=store, symbols=SymbolRegistry())
+    document_id = _seeded(service)
+    store.append_synthesis_proposal_evidence(
+        _evidence(service, store, document_id, "session_repaired", attempt=0)
+    )
+    assert store.latest_synthesis_proposal_evidence("session_repaired") is not None
+
+
 def test_the_evidence_carrier_exists_at_the_current_schema_version(tmp_path: Path) -> None:
     from agentcad.database_recovery import CURRENT_SCHEMA_VERSION
 
@@ -534,6 +693,139 @@ def test_the_evidence_carrier_exists_at_the_current_schema_version(tmp_path: Pat
 
     assert PROPOSAL_EVIDENCE_TABLE in names
     assert store.schema_version == CURRENT_SCHEMA_VERSION
+
+
+# --------------------------------------------------------------------------------------
+# What the client actually receives: the accounting contract on the wire
+# --------------------------------------------------------------------------------------
+
+
+def _api_client(tmp_path: Path):
+    from fastapi.testclient import TestClient
+
+    from agentcad.config import Settings
+    from agentcad.main import create_app
+
+    return TestClient(
+        create_app(
+            Settings(
+                database_path=tmp_path / "m7-contract.db",
+                cors_origins=["http://localhost:5173"],
+                frontend_dist=tmp_path / "missing-dist",
+                diagnostics_path=tmp_path / "m7-contract.diagnostics.jsonl",
+            )
+        )
+    )
+
+
+def test_a_stale_revision_reaches_the_client_as_not_evaluated_with_its_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The one legitimate route to ``not_evaluated``, read off the response envelope.
+
+    A caller has to be able to tell this apart from a malformed response, which is why the
+    reason travels with it and why no count is fabricated: the frontend recovers from this
+    answer and refuses to recover from a missing contract.
+    """
+
+    from agentcad.agent_semantic_models import SemanticAgentPlan
+    from agentcad.semantic_planner import SemanticAgentPlanner
+
+    def fake_plan(self, document_id, request):
+        # A revision the document never had, so the strict compiler refuses before any
+        # operation is examined.
+        return SemanticAgentPlan.model_validate(
+            {
+                "explanation": "stale revision",
+                "transaction": {
+                    "expected_revision": (request.expected_revision or 0) + 99,
+                    "label": "stale",
+                    "operations": [_accepted_text(0)],
+                },
+            }
+        )
+
+    monkeypatch.setattr(SemanticAgentPlanner, "plan", fake_plan)
+    client = _api_client(tmp_path)
+    service = client.app.state.service
+    document = service.create_document(CreateDocumentRequest(name="Envelope"))
+
+    response = client.post(
+        f"/api/v2/documents/{document.id}/agent/plan-v2",
+        json={
+            "prompt": "draw one text element",
+            "dry_run": True,
+            "expected_revision": document.revision,
+        },
+    )
+    assert response.status_code == 200
+    assessment = response.json()["assessment"]
+
+    assert assessment["operation_accounting"] == "not_evaluated"
+    assert assessment["accepted_operation_count"] is None
+    assert assessment["rejected_operation_count"] is None
+    assert assessment["completeness"] is None
+    assert assessment["rejected_operations"] is None
+    # The invariant the frontend reads: unevaluated says why, and does not claim zero.
+    assert assessment["global_failure_reason"]
+    assert assessment["issues"]
+
+    store = SQLiteDocumentStore(tmp_path / "m7-contract.db")
+    session_id = response.json()["session_id"]
+    evidence = store.latest_synthesis_proposal_evidence(session_id)
+    assert evidence is not None, "an unevaluated proposal still leaves a durable row"
+    assert evidence.operation_accounting == "not_evaluated"
+    assert evidence.global_failure_reason
+    assert evidence.accepted_operation_count is None
+
+
+def test_a_plan_whose_every_operation_is_refused_reaches_the_client_as_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The other end of the same decision: 0 accepted is a claim, not an absence."""
+
+    from agentcad.agent_semantic_models import SemanticAgentPlan
+    from agentcad.semantic_planner import SemanticAgentPlanner
+
+    def fake_plan(self, document_id, request):
+        return SemanticAgentPlan.model_validate(
+            {
+                "explanation": "nothing survives",
+                "transaction": {
+                    "expected_revision": request.expected_revision,
+                    "label": "all refused",
+                    "operations": [_rejected_update(index) for index in range(7)],
+                },
+            }
+        )
+
+    monkeypatch.setattr(SemanticAgentPlanner, "plan", fake_plan)
+    client = _api_client(tmp_path)
+    service = client.app.state.service
+    document = service.create_document(CreateDocumentRequest(name="Envelope"))
+
+    response = client.post(
+        f"/api/v2/documents/{document.id}/agent/plan-v2",
+        json={
+            "prompt": "update elements that do not exist",
+            "dry_run": True,
+            "expected_revision": document.revision,
+        },
+    )
+    assert response.status_code == 200
+    assessment = response.json()["assessment"]
+
+    assert assessment["operation_accounting"] == "evaluated"
+    assert assessment["accepted_operation_count"] == 0
+    assert assessment["rejected_operation_count"] == 7
+    assert assessment["completeness"] == "empty"
+    assert len(assessment["rejected_operations"]) == 7
+    # An evaluated-envelope invariant, checked where the client will check it.
+    assert assessment["semantic_operation_count"] == 7
+    assert (
+        assessment["accepted_operation_count"] + assessment["rejected_operation_count"]
+        == assessment["semantic_operation_count"]
+    )
 
 
 # --------------------------------------------------------------------------------------

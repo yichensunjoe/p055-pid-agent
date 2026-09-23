@@ -246,6 +246,11 @@ export type AgentRejectedOperationReceipt = {
  * is the field a consumer must read first: when it is `not_evaluated` the counts and both
  * verdicts are `null`, because the truth is that no claim was made. Zero is a claim ("nothing
  * survived") and is never used to mean "unknown".
+ *
+ * The field is also the contract's own boundary: absent, or present with the counts or verdict
+ * a state requires missing, the response is not a partial result but a response that does not
+ * carry the contract at all. That distinction is why `global_failure_reason` exists -- an
+ * unevaluated proposal says why it stopped instead of reporting numbers it never computed.
  */
 export type AgentTransactionAssessment = {
   valid: boolean;
@@ -266,6 +271,8 @@ export type AgentTransactionAssessment = {
   rejected_operation_count?: number | null;
   completeness?: "complete" | "partial" | "empty" | null;
   rejected_operations?: AgentRejectedOperationReceipt[] | null;
+  /** Why an unevaluated proposal stopped, required when `operation_accounting` is not evaluated. */
+  global_failure_reason?: string | null;
 };
 
 export type AnnotationQuality = {

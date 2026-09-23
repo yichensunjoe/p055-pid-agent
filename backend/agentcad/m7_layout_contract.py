@@ -883,6 +883,76 @@ ENGINE_MAY_TAKE_CANVAS_DIMENSIONS_AS_INPUT = False
 PHASE_2B_WIRES_THE_INGRESS_TO_ANY_SURFACE = False
 PHASE_2B_MAY_IMPORT_THE_CONTRACT: tuple[str, ...] = ("auto_layout_semantic.py",)
 
+# ------------------------------------------------------------------------------------
+# §8.3 Phase-2B step 2: deterministic partition, rank and absolute placement. The model
+#      chooses a density *class*; the numbers it maps to are versioned engine rules.
+# ------------------------------------------------------------------------------------
+
+#: The temptation this forbids: letting intent carry numbers. `node_gap = 80` is a layout
+#: fact, and a model that can state one has coordinate authority again through the intent.
+MODEL_MAY_DECLARE_GAP_NUMBERS = False
+DENSITY_SPACING_POLICY_IS_ENGINE_RULES = True
+DENSITY_POLICY_CHANGE_REQUIRES_THE_LAYOUT_RULES_VERSION_BUMP = True
+#: One rules version, not two: a spacing policy with its own lifecycle is a second source of
+#: truth about the same drawing until the rules are big enough to need one.
+SEPARATE_SPACING_POLICY_VERSION_ALLOWED_IN_V1 = False
+UNKNOWN_DENSITY_IS_A_HARD_FAILURE = True
+GROUPING_IS_INTENT_ONLY = True
+
+#: Grouping *classes* mean something to the model; how they become ranks, gaps and in-group
+#: order is engine rules. A class the specification cannot yet express is a declared fallback,
+#: not a silent substitution.
+GROUPING_FALLBACKS: tuple[tuple[str, str, str], ...] = (
+    (
+        "grouped_by_zone",
+        "grouped_by_system",
+        "the specification models no zones yet, so a zone grouping falls back to system bands "
+        "by declaration",
+    ),
+)
+
+#: What a placement row may say it is. Routing and annotations are named now so that "the
+#: entity was placed as equipment" stays distinguishable from "the entity was routed through"
+#: once later steps exist.
+PLACEMENT_KINDS: tuple[str, ...] = ("equipment", "instrument", "annotation", "routing")
+STEP_2_PLACEMENT_KINDS: tuple[str, ...] = ("equipment", "instrument")
+
+#: The placement projection is a prefix of the canonical layout projection: the same field
+#: names, minus the routing output that step 3 produces and the envelope that step 4 derives.
+#: A prefix cannot drift into a second, differently-named projection.
+PLACEMENT_PROJECTION_FIELDS: tuple[str, ...] = (
+    "placement_kind",
+    "engineering_id",
+    "x",
+    "y",
+    "width",
+    "height",
+)
+PLACEMENT_PROJECTION_VERSION = "m7-placement-projection/1"
+PLACEMENT_PROJECTION_IS_A_PREFIX_OF_THE_CANONICAL_PROJECTION = True
+PLACEMENT_PROJECTION_IS_NOT_THE_CANONICAL_LAYOUT_DIGEST = True
+
+#: Placement is a separate projection *beside* the topology, never a coordinate written back
+#: into it. That is what lets the semantic digest be compared before and after placement.
+PLACEMENT_NEVER_WRITES_INTO_THE_TOPOLOGY = True
+SEMANTIC_DIGEST_IS_UNCHANGED_BY_PLACEMENT = True
+NODE_SIZE_IS_DECLARED_BY_ENGINE_RULES_UNTIL_ROUTING = True
+
+PLACEMENT_INVARIANTS: tuple[str, ...] = (
+    "every node that needs a placement has exactly one",
+    "no placement names an engineering id the topology does not declare",
+    "no declared node is left unplaced",
+    "placement modifies no node, tag, system membership or edge",
+    "the same topology, intent and rules version produce the same placement",
+    "no two placed nodes overlap",
+    "every coordinate is finite and quantized to the declared coordinate quantum",
+)
+
+#: The deferral's trigger, written as a rule rather than as a milestone: what makes field-scoped
+#: scanning mandatory is a schema change, not a phase boundary.
+GEOMETRY_SCAN_SCOPE_TRIGGER = "the_diagram_specification_gains_a_prose_bearing_field"
+FIELD_SCOPED_SCAN_IS_MANDATORY_BEFORE_SUCH_A_SCHEMA_SHIPS = True
+
 PHASE_1_FORBIDDEN_SURFACES: tuple[str, ...] = (
     "new_http_route",
     "new_mcp_tool",
@@ -1541,6 +1611,73 @@ def validate_contract() -> list[str]:
         problems.append("the anchor scan scope change must name its successor")
     if not PHASE_2B_MAY_IMPORT_THE_CONTRACT:
         problems.append("phase 2B must name the module that will read this contract")
+
+    # §8.3 step 2: intent stays discrete, and placement stays a projection beside the topology.
+    if MODEL_MAY_DECLARE_GAP_NUMBERS:
+        problems.append("layout intent carries classes; a gap number is a layout fact")
+    if not DENSITY_SPACING_POLICY_IS_ENGINE_RULES:
+        problems.append("the density class is mapped to numbers by versioned engine rules")
+    if not DENSITY_POLICY_CHANGE_REQUIRES_THE_LAYOUT_RULES_VERSION_BUMP:
+        problems.append("changing the density policy must bump the layout rules version")
+    if SEPARATE_SPACING_POLICY_VERSION_ALLOWED_IN_V1:
+        problems.append("one rules version in v1: a second policy version is a second truth")
+    if not UNKNOWN_DENSITY_IS_A_HARD_FAILURE:
+        problems.append("an unknown density class must fail rather than default")
+    if not GROUPING_IS_INTENT_ONLY:
+        problems.append("grouping is intent; how it becomes ranks and gaps is engine rules")
+    grouping_classes = set(layout_intent_dimension("grouping").values)
+    for source, target, reason in GROUPING_FALLBACKS:
+        if source not in grouping_classes:
+            problems.append(f"the grouping fallback {source!r} is not a declared grouping class")
+        if target not in grouping_classes:
+            problems.append(f"the grouping fallback {target!r} is not a declared grouping class")
+        if not reason.strip():
+            problems.append(f"the grouping fallback {source!r} must say why it falls back")
+    canonical_included = tuple(
+        field.name for field in CANONICAL_LAYOUT_PROJECTION_FIELDS if field.included
+    )
+    for field_name in PLACEMENT_PROJECTION_FIELDS:
+        if field_name not in canonical_included:
+            problems.append(
+                f"the placement projection field {field_name!r} is not a canonical layout "
+                "projection field: the projection is a prefix, not a second vocabulary"
+            )
+    for required_field in CANONICAL_PROJECTION_SORT_KEY:
+        if required_field not in PLACEMENT_PROJECTION_FIELDS:
+            problems.append(
+                f"the placement projection must carry the canonical sort key field "
+                f"{required_field!r}"
+            )
+    if "ordered_waypoints" in PLACEMENT_PROJECTION_FIELDS:
+        problems.append("routing output belongs to step 3, not to the placement projection")
+    if not PLACEMENT_NEVER_WRITES_INTO_THE_TOPOLOGY:
+        problems.append("placement must not write coordinates back into the topology")
+    if not SEMANTIC_DIGEST_IS_UNCHANGED_BY_PLACEMENT:
+        problems.append("placement changes presentation, never engineering semantics")
+    if not PLACEMENT_PROJECTION_IS_A_PREFIX_OF_THE_CANONICAL_PROJECTION:
+        problems.append("the placement projection must be a prefix of the canonical projection")
+    if not PLACEMENT_INVARIANTS:
+        problems.append("the placement invariants must be declared")
+    for kind in STEP_2_PLACEMENT_KINDS:
+        if kind not in PLACEMENT_KINDS:
+            problems.append(f"the step-2 placement kind {kind!r} is not a declared placement kind")
+    for kind in ("annotation", "routing"):
+        if kind in STEP_2_PLACEMENT_KINDS:
+            problems.append(
+                f"{kind!r} rows are produced by a later step than the placement step"
+            )
+    if CANONICAL_PROJECTION_SORT_KEY[0] != "placement_kind":
+        problems.append("the placement projection must be sorted on the placement kind first")
+    if not NODE_SIZE_IS_DECLARED_BY_ENGINE_RULES_UNTIL_ROUTING:
+        problems.append(
+            "node sizes come from versioned engine rules until routing needs real bounds"
+        )
+    if not GEOMETRY_SCAN_SCOPE_TRIGGER:
+        problems.append("the geometry scan deferral must name its trigger")
+    if not FIELD_SCOPED_SCAN_IS_MANDATORY_BEFORE_SUCH_A_SCHEMA_SHIPS:
+        problems.append(
+            "a prose-bearing schema may not ship before the scan becomes field-scoped"
+        )
     for token in PHASE_1_FORBIDDEN_SURFACE_TOKENS:
         clashing = [name for name in PRE_EXISTING_LAYOUT_SURFACES if token in name]
         if clashing:

@@ -582,3 +582,123 @@ GEOMETRY_SCAN_SCOPE_DEFERRAL = 当 DiagramSpec 出现真正的工程备注/annot
 ```
 
 今天"扫所有字符串值"是**当前状态**，不是永久性质；将来收窄扫描范围时，替换动作是可见的。
+
+### 11.7 Phase-2B Step 2 — deterministic partition / rank / absolute placement
+
+链：
+
+```
+SemanticLayoutPlan → deterministic partition/rank → deterministic absolute node placement → placement projection
+```
+
+**只消费**：`primary_flow_direction`、`system_order`、`grouping`、`density`。
+**仍不做**：routing、waypoints、避障、标注、`content_bounds`、`canvas_bounds`、最终 `canonical_layout_digest`。
+
+#### density：离散类别 → 引擎规则，模型不携带数值
+
+```
+MODEL_MAY_DECLARE_GAP_NUMBERS            = False
+DENSITY_SPACING_POLICY_IS_ENGINE_RULES   = True
+DENSITY_POLICY_CHANGE_REQUIRES_THE_LAYOUT_RULES_VERSION_BUMP = True
+SEPARATE_SPACING_POLICY_VERSION_ALLOWED_IN_V1 = False
+UNKNOWN_DENSITY_IS_A_HARD_FAILURE        = True
+```
+
+模型只能说 `density = compact | comfortable`；**绝不能输出** `node_gap = 80` / `component_gap = 120`。
+`DENSITY_SPACING_POLICY` 是引擎的机器数据（`compact` / `comfortable` → `rank_gap`、`node_gap`、
+`system_gap`、`component_gap`），完全受 `layout_rules_version` 管辖：
+
+```
+改变 compact 对应的 node_gap  →  必须 bump layout_rules_version  →  layout digest 自然改变
+```
+
+因此 **v1 不引入独立的 `spacing_policy_version`**：一个规则版本源更好，digest 也不需要把每个
+gap 数值新增成 `LAYOUT_DIGEST_INPUTS` 的独立字段。三条钉住：每个 density 枚举恰有一套 policy；
+未知 density **hard fail**；policy 中任何数值变化属于 layout-rules semantic change。
+
+#### grouping：意图是类别，实现是版本化引擎规则
+
+```
+GROUPING_IS_INTENT_ONLY = True
+GROUPING_FALLBACKS = ((grouped_by_zone → grouped_by_system, 原因：模型尚未表达 zone),)
+```
+
+怎么划 rank、留多少 system gap、组内怎么排序、跨组 edge 怎么处理——全部是引擎规则。
+模型**不得**输出具体 group bounds。
+
+当前引擎规则（`auto_layout_semantic.py`）：
+
+| grouping | 排布 |
+|---|---|
+| `grouped_by_system` / `grouped_by_zone`（fallback） | 每个系统沿**横轴**占一条带，带间为 `system_gap` |
+| `flat` | 单带，各系统沿**流向轴**首尾相接，接缝为 `component_gap` |
+
+fallback **必须自报**：`plan.honoured_grouping` / `plan.grouping_fallback_from` 记录"实际兑现的是
+哪个类别、替换掉了哪个类别"，所以"我们做了别的事"是可见的，而不是只能从图里反推。
+
+rank 规则（同样是引擎规则，两条是**选择**而非推论）：
+
+1. **环被排序，不被拒绝，也不塌成一堆**：环内成员按 `engineering_id` 占连续 rank（`_ranks` 用
+   SCC condensation 上的最长路，Tarjan 迭代实现，邻接表排序保证确定性）。
+2. **只有系统内部的边影响该系统 rank**：跨系统连接是 Step 3 的走线问题；让它合并两条带的
+   rank 结构，分区就不再意味着任何东西。
+
+#### placement 不得影响 topology identity
+
+```
+PLACEMENT_NEVER_WRITES_INTO_THE_TOPOLOGY = True
+SEMANTIC_DIGEST_IS_UNCHANGED_BY_PLACEMENT = True
+PLACEMENT_PROJECTION_FIELDS = (placement_kind, engineering_id, x, y, width, height)
+PLACEMENT_PROJECTION_VERSION = m7-placement-projection/1
+PLACEMENT_PROJECTION_IS_A_PREFIX_OF_THE_CANONICAL_PROJECTION = True
+PLACEMENT_KINDS = (equipment, instrument, annotation, routing)
+STEP_2_PLACEMENT_KINDS = (equipment, instrument)
+```
+
+放置结果是**拓扑旁边的一个投影**，不是写回 node 的 x/y。于是下面这条等式是**机器可证的**：
+
+```
+semantic digest before Step 2 == semantic digest after Step 2
+```
+
+`placement projection` 是 `canonical layout projection` 的**前缀**（同一批字段名，但少掉 Step 3 的
+`ordered_waypoints` 与 Step 4 的包络），所以它不会漂成第二套字段词汇。placement row 的字段集
+**双向精确对拍**，排序键沿用 canonical 复合键 `(placement_kind, engineering_id)` 且必须唯一（全序）。
+
+`PLACEMENT_INVARIANTS`（Step 2 的核心验收）：
+
+```
+每个需要 placement 的 node 恰有一个 placement
+没有额外 engineering_id
+没有缺失 engineering_id
+placement 不修改 node / tag / system membership / edge
+相同 topology + intent + rules → 相同 placement
+没有两个被放置的 node 重叠
+每个坐标有限且量化到声明的 coordinate quantum（1e-6）
+```
+
+节点尺寸在 routing 之前由引擎规则声明（`NODE_SIZE_POLICY`），并**显式记名**：
+
+```
+NODE_SIZE_IS_DECLARED_BY_ENGINE_RULES_UNTIL_ROUTING = True
+```
+
+真正的 symbol 尺寸属于 Step 3（第一个必须为走线留出空间的一步）。
+
+#### 还有一个身份需要 bump
+
+Step 2 给 `SemanticLayoutPlan` 增加了 `node_kinds` 与 `flow_edges`（几何自由的图事实）——
+**v1 的字段集变了，所以 plan digest 版本必须升到 `m7-semantic-layout-plan-digest/2`**。
+字段集是版本语义的一部分：在 v1 下加字段，就是"不同的 plan 顶着同一个名字"，
+这正是本里程碑要消灭的那种失败，只是低了一层。
+
+#### 散文扫描延期的触发条件（机器规则，不挂 milestone）
+
+```
+GEOMETRY_SCAN_SCOPE_TRIGGER = the_diagram_specification_gains_a_prose_bearing_field
+FIELD_SCOPED_SCAN_IS_MANDATORY_BEFORE_SUCH_A_SCHEMA_SHIPS = True
+```
+
+触发它的不是"走到了 M7 某阶段"，而是**`DiagramSpec` 第一次新增允许自由工程散文/annotation 的字段**。
+届时：结构化几何键**仍然全局递归 hard reject**；相对锚点语言扫描**只作用于声明为
+"可承载布局指令"的字段**，普通工程散文不扫描。**不提前实现，也不弱化已有结构化硬拒绝。**

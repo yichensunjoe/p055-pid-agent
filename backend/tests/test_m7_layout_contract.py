@@ -1091,3 +1091,165 @@ def test_the_validator_reports_engine_versions_the_digest_cannot_read(
     )
     problems = contract.validate_contract()
     assert any("must be a published constant" in problem for problem in problems), problems
+
+
+# --------------------------------------------------------------------------------------
+# §8.3 step 2: intent stays discrete, placement stays a projection beside the topology
+# --------------------------------------------------------------------------------------
+
+
+def test_the_task_book_declares_the_step_2_rules() -> None:
+    task_book = (
+        Path(__file__).resolve().parents[2] / "docs" / "m7-2-deterministic-layout.md"
+    ).read_text(encoding="utf-8")
+    names = (
+        *contract.PLACEMENT_PROJECTION_FIELDS,
+        *contract.PLACEMENT_KINDS,
+        *contract.STEP_2_PLACEMENT_KINDS,
+        contract.PLACEMENT_PROJECTION_VERSION,
+        contract.GEOMETRY_SCAN_SCOPE_TRIGGER,
+        "MODEL_MAY_DECLARE_GAP_NUMBERS",
+        "DENSITY_SPACING_POLICY_IS_ENGINE_RULES",
+        "DENSITY_POLICY_CHANGE_REQUIRES_THE_LAYOUT_RULES_VERSION_BUMP",
+        "SEPARATE_SPACING_POLICY_VERSION_ALLOWED_IN_V1",
+        "UNKNOWN_DENSITY_IS_A_HARD_FAILURE",
+        "GROUPING_IS_INTENT_ONLY",
+        "GROUPING_FALLBACKS",
+        "PLACEMENT_NEVER_WRITES_INTO_THE_TOPOLOGY",
+        "SEMANTIC_DIGEST_IS_UNCHANGED_BY_PLACEMENT",
+        "PLACEMENT_PROJECTION_IS_A_PREFIX_OF_THE_CANONICAL_PROJECTION",
+        "NODE_SIZE_IS_DECLARED_BY_ENGINE_RULES_UNTIL_ROUTING",
+        "FIELD_SCOPED_SCAN_IS_MANDATORY_BEFORE_SUCH_A_SCHEMA_SHIPS",
+        "DENSITY_SPACING_POLICY",
+        "NODE_SIZE_POLICY",
+        "SemanticLayoutPlan",
+    )
+    missing = [name for name in names if name not in task_book]
+    assert not missing, missing
+
+    # The invariants are written in the task book's own language, so the binding is the count:
+    # an invariant removed from the contract has to be removed from the book, or the count
+    # stops matching.
+    section = task_book.split("Step 2 的核心验收")[1].split("```")[1]
+    listed = [line for line in section.splitlines() if line.strip()]
+    assert len(listed) == len(contract.PLACEMENT_INVARIANTS), listed
+
+
+def test_the_placement_projection_is_a_prefix_of_the_canonical_projection() -> None:
+    canonical = tuple(
+        field.name for field in contract.CANONICAL_LAYOUT_PROJECTION_FIELDS if field.included
+    )
+
+    assert set(contract.PLACEMENT_PROJECTION_FIELDS) <= set(canonical)
+    assert "ordered_waypoints" in canonical
+    assert "ordered_waypoints" not in contract.PLACEMENT_PROJECTION_FIELDS
+    for field in contract.CANONICAL_PROJECTION_SORT_KEY:
+        assert field in contract.PLACEMENT_PROJECTION_FIELDS
+
+
+@pytest.mark.parametrize(
+    ("attribute", "value", "expected"),
+    [
+        ("MODEL_MAY_DECLARE_GAP_NUMBERS", True, "a gap number is a layout fact"),
+        ("DENSITY_SPACING_POLICY_IS_ENGINE_RULES", False, "versioned engine rules"),
+        (
+            "DENSITY_POLICY_CHANGE_REQUIRES_THE_LAYOUT_RULES_VERSION_BUMP",
+            False,
+            "must bump the layout rules version",
+        ),
+        ("SEPARATE_SPACING_POLICY_VERSION_ALLOWED_IN_V1", True, "one rules version in v1"),
+        ("UNKNOWN_DENSITY_IS_A_HARD_FAILURE", False, "must fail rather than default"),
+        ("GROUPING_IS_INTENT_ONLY", False, "grouping is intent"),
+        ("PLACEMENT_NEVER_WRITES_INTO_THE_TOPOLOGY", False, "must not write coordinates back"),
+        ("SEMANTIC_DIGEST_IS_UNCHANGED_BY_PLACEMENT", False, "never engineering semantics"),
+        (
+            "PLACEMENT_PROJECTION_IS_A_PREFIX_OF_THE_CANONICAL_PROJECTION",
+            False,
+            "must be a prefix of the canonical projection",
+        ),
+        (
+            "NODE_SIZE_IS_DECLARED_BY_ENGINE_RULES_UNTIL_ROUTING",
+            False,
+            "versioned engine rules until routing",
+        ),
+        (
+            "FIELD_SCOPED_SCAN_IS_MANDATORY_BEFORE_SUCH_A_SCHEMA_SHIPS",
+            False,
+            "may not ship before the scan becomes field-scoped",
+        ),
+        ("GEOMETRY_SCAN_SCOPE_TRIGGER", "", "must name its trigger"),
+        ("PLACEMENT_INVARIANTS", (), "invariants must be declared"),
+    ],
+)
+def test_the_validator_reports_a_relaxed_step_2_rule(
+    monkeypatch: pytest.MonkeyPatch, attribute: str, value: object, expected: str
+) -> None:
+    monkeypatch.setattr(contract, attribute, value)
+    problems = contract.validate_contract()
+    assert any(expected in problem for problem in problems), problems
+
+
+def test_the_validator_reports_a_placement_field_the_canonical_projection_does_not_know(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        contract,
+        "PLACEMENT_PROJECTION_FIELDS",
+        (*contract.PLACEMENT_PROJECTION_FIELDS, "layer_id"),
+    )
+    problems = contract.validate_contract()
+    assert any("not a canonical layout projection field" in problem for problem in problems)
+
+
+def test_the_validator_reports_routing_output_moved_into_the_placement_projection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        contract,
+        "PLACEMENT_PROJECTION_FIELDS",
+        (*contract.PLACEMENT_PROJECTION_FIELDS, "ordered_waypoints"),
+    )
+    problems = contract.validate_contract()
+    assert any("belongs to step 3" in problem for problem in problems)
+
+
+def test_the_validator_reports_a_placement_projection_without_the_sort_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        contract,
+        "PLACEMENT_PROJECTION_FIELDS",
+        tuple(field for field in contract.PLACEMENT_PROJECTION_FIELDS if field != "placement_kind"),
+    )
+    problems = contract.validate_contract()
+    assert any("must carry the canonical sort key" in problem for problem in problems)
+
+
+def test_the_validator_reports_an_undeclared_grouping_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        contract,
+        "GROUPING_FALLBACKS",
+        (("grouped_by_continent", "grouped_by_system", "reason"),),
+    )
+    problems = contract.validate_contract()
+    assert any("is not a declared grouping class" in problem for problem in problems), problems
+
+
+def test_the_validator_reports_a_grouping_fallback_with_no_reason(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        contract, "GROUPING_FALLBACKS", (("grouped_by_zone", "grouped_by_system", ""),)
+    )
+    problems = contract.validate_contract()
+    assert any("must say why it falls back" in problem for problem in problems), problems
+
+
+def test_the_validator_reports_a_step_2_kind_that_belongs_to_a_later_step(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(contract, "STEP_2_PLACEMENT_KINDS", ("equipment", "routing"))
+    problems = contract.validate_contract()
+    assert any("produced by a later step" in problem for problem in problems)

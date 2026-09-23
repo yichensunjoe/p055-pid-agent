@@ -899,6 +899,8 @@ PHASE_2B_WIRES_THE_INGRESS_TO_ANY_SURFACE = False
 PHASE_2B_MAY_IMPORT_THE_CONTRACT: tuple[str, ...] = (
     "auto_layout_semantic.py",
     "m7_symbol_geometry.py",
+    "m7_endpoint_binding.py",
+    "auto_layout_geometry.py",
 )
 
 # ------------------------------------------------------------------------------------
@@ -1244,6 +1246,17 @@ REFLOW_IS_DETERMINISTIC = True
 REFLOW_MAY_CHANGE_ENGINEERING_SEMANTICS = False
 PLACEMENT_MUST_BE_REVALIDATED_AGAINST_MATERIALIZED_GEOMETRY = True
 
+#: What "valid" means at each of the two moments, named separately because they are different
+#: questions. Step 2 spaced *origins* by the density policy for assumed sizes; step 3 asks
+#: whether real sizes now overlap, and a reflow -- whose own rule is clear separation -- must
+#: satisfy the stronger set. Applying the stronger set to step 2's coordinates would report every
+#: drawing as broken, and applying only the weaker one to a reflow would let the reflow's rule
+#: go unchecked.
+MATERIALIZED_PLACEMENT_MUST_NOT_OVERLAP = True
+STEP_2_ORIGIN_SPACING_IS_INHERITED_NOT_RECHECKED = True
+REFLOWED_PLACEMENT_MUST_SATISFY_DECLARED_CLEAR_SEPARATION = True
+REFLOW_RULE_IS_CLEAR_SEPARATION_NOT_ORIGIN_SPACING = True
+
 #: Routing. Every semantic connection is routed exactly once; routing adds waypoints and removes
 #: nothing, because a drawing that quietly loses a connection is a drawing of something else.
 ROUTING_RULES: tuple[str, ...] = (
@@ -1256,6 +1269,11 @@ ROUTING_RULES: tuple[str, ...] = (
 )
 ROUTING_MAY_ADD_WAYPOINTS = True
 ROUTING_MAY_ADD_OR_DELETE_SEMANTIC_CONNECTIONS = False
+#: The rule forbids crossing a node the route does not serve, so crossing its own ends is
+#: permitted -- an anchor inside a symbol can only be reached that way. A shape that avoids even
+#: those is the better drawing, so it is preferred, not required.
+ROUTE_MAY_CROSS_THE_NODE_IT_SERVES = True
+ROUTE_PREFERS_A_SHAPE_THAT_AVOIDS_EVEN_THE_NODES_IT_SERVES = True
 ROUTE_ENDPOINTS_COME_FROM_FROZEN_PORT_GEOMETRY = True
 ROUTING_IS_ORTHOGONAL_ONLY = True
 PROTECTED_NODE_BOUNDS_ARE_OBSTACLES = True
@@ -2172,6 +2190,30 @@ def validate_contract() -> list[str]:
         problems.append("a reflow that is not deterministic is a new drawing every run")
     if REFLOW_MAY_CHANGE_ENGINEERING_SEMANTICS:
         problems.append("a reflow changes positions, never engineering semantics")
+    if not MATERIALIZED_PLACEMENT_MUST_NOT_OVERLAP:
+        problems.append("real geometry makes overlap possible, so it must be checked")
+    if not STEP_2_ORIGIN_SPACING_IS_INHERITED_NOT_RECHECKED:
+        problems.append(
+            "step 2 spaced origins: re-checking clear separation against its coordinates would "
+            "report every drawing as broken"
+        )
+    if not REFLOWED_PLACEMENT_MUST_SATISFY_DECLARED_CLEAR_SEPARATION:
+        problems.append("a reflow whose rule is clear separation must be checked by that rule")
+    if not REFLOW_RULE_IS_CLEAR_SEPARATION_NOT_ORIGIN_SPACING:
+        problems.append(
+            "the reflow exists to separate nodes that no longer fit: it cannot reuse the "
+            "spacing that failed"
+        )
+    if not ROUTE_MAY_CROSS_THE_NODE_IT_SERVES:
+        problems.append(
+            "a route may reach a port on its own node: forbidding that would make some ports "
+            "unreachable"
+        )
+    if not ROUTE_PREFERS_A_SHAPE_THAT_AVOIDS_EVEN_THE_NODES_IT_SERVES:
+        problems.append(
+            "when a shape exists that avoids both ends, it is the better drawing and is chosen "
+            "by preference"
+        )
     if not ROUTING_RULES:
         problems.append("the routing rules must be declared")
     if not ROUTING_MAY_ADD_WAYPOINTS:

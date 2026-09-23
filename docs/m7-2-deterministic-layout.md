@@ -740,8 +740,17 @@ Step 2 用的 Node 尺寸是**引擎规则**（`NODE_SIZE_POLICY`）。Step 3 �
 包围几何改了，就**可以合法地**画出不同的图——所以「这张图是用哪份 symbol geometry 摆的」
 必须成为布局身份的一部分。
 
-落实的文件：契约 `m7_layout_contract.py`、快照运行时段落 `agentcad/m7_symbol_geometry.py`
-（声明在 `PHASE_2B_MAY_IMPORT_THE_CONTRACT` 里，不在测试里），测试 `tests/test_m7_symbol_geometry.py`。
+落实的文件：契约 `m7_layout_contract.py`；运行时分三段却是同一权威：
+
+```
+agentcad/m7_symbol_geometry.py     冻结快照（事实）
+agentcad/m7_endpoint_binding.py    端点端口绑定（explicit / inferred_unique）
+agentcad/auto_layout_geometry.py   几何物化 + 确定性重排 + 正交路由 + 标注
+```
+
+三者都声明在 `PHASE_2B_MAY_IMPORT_THE_CONTRACT` 里（不在测试里），并作为 mixin 落在
+**同一个** `AutoLayoutEngine` 上：`layout_semantic_topology`（step 1/2）→
+`layout_semantic_geometry`（step 3）。引擎旁边另起一个"placer/router"就是第二个几何权威。
 
 ### 12.1 两侧的边界（谁是事实、谁是决定）
 
@@ -959,3 +968,37 @@ routing 开始前**必须**已经满足（否则 hard fail，不得退回 Step 2
 每个 renderable node      → exactly one symbol geometry fact
 每个 connection endpoint  → exactly one resolved port binding
 ```
+
+### 12.9 「valid」在两个时刻是两个问题（实测出来的差别）
+
+Step 2 按 **origin 间距** = density policy 摆位（已签署的事实）；Step 3 问的是**真实尺寸下会不会重叠**。
+两者不是同一个量：拿 Step 2 的坐标去要求"清晰间距 ≥ policy"，**每一张图都会被判为坏图**
+（origin 间距 220 减掉 120 宽 = 100 清晰间距）。所以契约把两个时刻分开记名：
+
+```
+MATERIALIZED_PLACEMENT_MUST_NOT_OVERLAP                = True   （step 2 继承的坐标：只要求不重叠）
+STEP_2_ORIGIN_SPACING_IS_INHERITED_NOT_RECHECKED       = True
+REFLOWED_PLACEMENT_MUST_SATISFY_DECLARED_CLEAR_SEPARATION = True （重排后的行：按清晰间距校验）
+REFLOW_RULE_IS_CLEAR_SEPARATION_NOT_ORIGIN_SPACING     = True
+```
+
+结果：fixture A 的真实尺寸恰好放得下 → **保留 Step 2 的坐标**（`placement_reflowed = False`），
+`reflow_payload`（同 rank 两个 90×140 储罐）放不下 → **确定性重排**（`placement_reflowed = True`）。
+两条路径都有测试，不是死分支。
+
+### 12.10 routing 的"可以穿自己"与"优选不穿"
+
+```
+ROUTE_MAY_CROSS_THE_NODE_IT_SERVES = True                        （端口在符号内部时只能如此）
+ROUTE_PREFERS_A_SHAPE_THAT_AVOIDS_EVEN_THE_NODES_IT_SERVES = True（更体面的画法优先，非强制）
+```
+
+候选形状固定为 4 种（两种单拐弯 + 两种走廊中段），按声明顺序取第一个通过碰撞检测的；
+两遍：先要求**避开所有节点**，都不行再退回"只避开不服务的节点"。两遍都是确定的；
+全都不通过 → `UnroutableEdgeError`（`no_orthogonal_route`），绝不画穿设备的直线。
+
+路由用到的 stub 长度、实例缩放、标注间距都是**声明的引擎规则**（`ROUTE_STUB_LENGTH`、
+`INSTANCE_SCALE_FACTOR = 1.0`、`ANNOTATION_LABEL_GAP` / `ANNOTATION_CLEARANCE` /
+`ANNOTATION_PLACEMENT_ATTEMPTS`），改任何一个都是 rules 版本变更；`INSTANCE_SCALE_FACTOR`
+v1 取 1.0（用目录标称尺寸），因为"实例缩放"是有排版后果的真特性，现在编一个系数等于把
+一个没人选过的数字写进每一张图。

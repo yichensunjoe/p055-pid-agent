@@ -35,6 +35,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 from .m7_diagram_adapter import SemanticTopology
+from .m7_endpoint_binding import ResolvedEndpointBinding
 from .m7_layout_contract import (
     INTENT_DIMENSIONS_ARE_RECEIVED_AT_STEP,
     LAYOUT_COORDINATE_DECIMALS,
@@ -67,7 +68,12 @@ LAYOUT_RULES_VERSION = "deterministic-layout-rules/1"
 #: v4: the plan gained ``node_symbols``. The renderer binding is layout input -- step 3 places
 #: against the symbol's real geometry -- while it is not engineering semantics, which is why the
 #: adapter's *topology* identity moved with it and the semantic digest did not.
-SEMANTIC_LAYOUT_PLAN_DIGEST_VERSION = "m7-semantic-layout-plan-digest/4"
+#:
+#: v5: the plan gained ``connections`` -- the connection identities and the ports they name,
+#: which step 3 needs to resolve an endpoint binding per connection. Adding the field without a
+#: new version would be a different plan under the same name, and an unpublished intermediate
+#: version is not exempt from that: the version names a field set, not a release.
+SEMANTIC_LAYOUT_PLAN_DIGEST_VERSION = "m7-semantic-layout-plan-digest/5"
 
 #: One rules version governs the spacing policy, the node sizes and the rank rules. A separate
 #: spacing-policy version would be a second source of truth about the same drawing, which is
@@ -134,6 +140,11 @@ INGRESS_STEP = next(
 #: Step 2, by the name the contract gives it.
 STEP_2 = next(
     key for key, value in PHASE_2B_STEPS if value == "deterministic_rank_and_absolute_placement"
+)
+
+#: Step 3, by the name the contract gives it.
+STEP_3 = next(
+    key for key, value in PHASE_2B_STEPS if value == "orthogonal_routing_and_annotation_placement"
 )
 
 
@@ -218,6 +229,32 @@ class SemanticIntentConstraints:
 
 
 @dataclass(frozen=True)
+class PlanConnection:
+    """One connection as an identity plus what it named: the input a binding is resolved from.
+
+    ``medium`` is carried because a route's own label is a fact about the connection, not
+    something to look up again later from a graph that may have moved on.
+    """
+
+    connection_id: str
+    source_engineering_id: str
+    target_engineering_id: str
+    source_port_id: str
+    target_port_id: str
+    medium: str
+
+    def to_projection(self) -> dict[str, Any]:
+        return {
+            "connection_id": self.connection_id,
+            "source_engineering_id": self.source_engineering_id,
+            "target_engineering_id": self.target_engineering_id,
+            "source_port_id": self.source_port_id,
+            "target_port_id": self.target_port_id,
+            "medium": self.medium,
+        }
+
+
+@dataclass(frozen=True)
 class SemanticLayoutPlan:
     """What the engine knows after receiving a topology, before it places anything.
 
@@ -238,6 +275,9 @@ class SemanticLayoutPlan:
     #: Which catalogue symbol expresses each node. Read from the specification through the
     #: adapter, never inferred from the engineering class: the two facts are allowed to differ.
     node_symbols: tuple[tuple[str, str], ...] = field(default=())
+    #: The connections as identities, not only as arrows: routing must produce exactly one route
+    #: per connection, which is impossible to check if the plan only kept (source, target) pairs.
+    connections: tuple[PlanConnection, ...] = field(default=())
     flow_edges: tuple[tuple[str, str], ...] = field(default=())
     produced_at_step: str = INGRESS_STEP
     engine_version: str = LAYOUT_ENGINE_VERSION
@@ -254,6 +294,17 @@ class SemanticLayoutPlan:
     #: own -- an intent the engine cannot honour is refused before a plan is placed, so
     #: ``intent.grouping`` is always the class that was honoured.
     spacing: SpacingPolicy | None = None
+    #: Step 3: which symbol geometry the drawing was placed against, and what the real sizes
+    #: made of the step-2 placement.
+    symbol_geometry_catalog_digest: str = ""
+    symbol_geometry_closure: tuple[str, ...] = ()
+    placement_reflowed: bool = False
+    #: Step 3: one binding per connection endpoint, resolved before routing and never re-guessed.
+    endpoint_bindings: tuple[ResolvedEndpointBinding, ...] = ()
+    #: Step 3: the routed connections, and the annotation rows. Both carry the canonical
+    #: projection fields, because they are the same projection later steps and the digest read.
+    routing: tuple[dict[str, Any], ...] = field(default=())
+    annotations: tuple[dict[str, Any], ...] = field(default=())
 
     def to_projection(self) -> dict[str, Any]:
         return {
@@ -273,10 +324,17 @@ class SemanticLayoutPlan:
             ],
             "node_kinds": [[node_id, kind] for node_id, kind in self.node_kinds],
             "node_symbols": [[node_id, symbol_key] for node_id, symbol_key in self.node_symbols],
+            "connections": [connection.to_projection() for connection in self.connections],
             "flow_edges": [[source, target] for source, target in self.flow_edges],
             "placement": list(self.placement),
             "canvas_bounds": self.canvas_bounds,
             "spacing": self.spacing.to_projection() if self.spacing else None,
+            "symbol_geometry_catalog_digest": self.symbol_geometry_catalog_digest,
+            "symbol_geometry_closure": list(self.symbol_geometry_closure),
+            "placement_reflowed": self.placement_reflowed,
+            "endpoint_bindings": [binding.to_projection() for binding in self.endpoint_bindings],
+            "routing": list(self.routing),
+            "annotations": list(self.annotations),
         }
 
     @property
@@ -406,6 +464,17 @@ def plan_semantic_layout(topology: SemanticTopology) -> SemanticLayoutPlan:
         node_symbols=tuple(
             (node.engineering_id, node.symbol_key)
             for node in sorted(topology.nodes, key=lambda item: item.engineering_id)
+        ),
+        connections=tuple(
+            PlanConnection(
+                connection_id=edge.engineering_id,
+                source_engineering_id=edge.source_engineering_id,
+                target_engineering_id=edge.target_engineering_id,
+                source_port_id=edge.source_port_id,
+                target_port_id=edge.target_port_id,
+                medium=edge.medium,
+            )
+            for edge in sorted(topology.edges, key=lambda item: item.engineering_id)
         ),
         flow_edges=tuple(
             sorted(
@@ -587,19 +656,35 @@ def _quantize(value: float) -> float:
     return 0.0 if rounded == 0 else rounded
 
 
-def _system_geometry(
-    node_ids: tuple[str, ...], edges: tuple[tuple[str, str], ...], policy: SpacingPolicy
-) -> dict[str, tuple[float, float]]:
-    """Where each node of one system sits relative to that system's own origin."""
+def system_rank_lanes(
+    node_ids: tuple[str, ...], edges: tuple[tuple[str, str], ...]
+) -> tuple[tuple[str, int, int], ...]:
+    """``(node_id, rank, lane)`` for one system's subgraph, in canonical node-id order.
+
+    Exposed because step 3 has to ask the same question again: when real symbol geometry
+    arrives, "are these two still in the same lane" is how the placement is re-validated, and
+    re-deriving the decomposition there would be a second answer to one question.
+    """
 
     ranks = _ranks(node_ids, edges)
     lanes: dict[int, list[str]] = {}
     for node_id in sorted(node_ids):
         lanes.setdefault(ranks[node_id], []).append(node_id)
+    rows: list[tuple[str, int, int]] = []
+    for rank, members in sorted(lanes.items()):
+        for lane, node_id in enumerate(members):
+            rows.append((node_id, rank, lane))
+    return tuple(sorted(rows, key=lambda row: row[0]))
+
+
+def _system_geometry(
+    node_ids: tuple[str, ...], edges: tuple[tuple[str, str], ...], policy: SpacingPolicy
+) -> dict[str, tuple[float, float]]:
+    """Where each node of one system sits relative to that system's own origin."""
+
     return {
         node_id: (_quantize(rank * policy.rank_gap), _quantize(lane * policy.node_gap))
-        for rank, members in lanes.items()
-        for lane, node_id in enumerate(members)
+        for node_id, rank, lane in system_rank_lanes(node_ids, edges)
     }
 
 

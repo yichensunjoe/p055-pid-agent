@@ -7,6 +7,7 @@ from heapq import heappop, heappush
 from math import hypot
 from typing import Literal
 
+from .auto_layout_geometry import SemanticLayoutGeometry
 from .auto_layout_semantic import SemanticTopologyIngress
 from .diagram_quality import port_outward_normal
 from .layout_models import (
@@ -90,7 +91,7 @@ class LayoutNode:
     rank: int = 0
 
 
-class AutoLayoutEngine(SemanticTopologyIngress):
+class AutoLayoutEngine(SemanticLayoutGeometry, SemanticTopologyIngress):
     """The one layout authority.
 
     It gains a second way in for M7-2: :meth:`layout_semantic_topology` takes the
@@ -100,6 +101,10 @@ class AutoLayoutEngine(SemanticTopologyIngress):
     algorithm, which is why this is a mixin on this class rather than a second engine beside
     it. Step 1 places nothing; placement, routing and the derived canvas arrive in the later
     phase-2B steps from the plan the ingress returns.
+
+    :meth:`layout_semantic_geometry` continues that chain with step 3: real symbol geometry,
+    endpoint bindings, orthogonal routing and annotations. It is a second mixin for the same
+    reason as the first -- a router beside the engine would be a second geometry authority.
     """
 
     def __init__(self, service: DocumentService):

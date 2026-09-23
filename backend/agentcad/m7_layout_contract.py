@@ -1805,6 +1805,12 @@ MATERIALIZATION_PROVENANCE_CHAIN: tuple[str, ...] = (
 )
 MATERIALIZATION_PROVENANCE_IS_RECORDED_ON_THE_WRITE = True
 MATERIALIZATION_PROVENANCE_ENDS_AT_THE_COMMITTED_REVISION = True
+#: The revision half of the chain is read from the commit, never predicted by the materializer: a
+#: predicted revision is a claim about what the *next* revision will be, which two writers can
+#: both make. The five identities travel with the write; the revision closes the record afterwards.
+MATERIALIZATION_PROVENANCE_PREDICTS_THE_REVISION = False
+MATERIALIZATION_PROVENANCE_READS_THE_REVISION_FROM_THE_COMMITTED_RESULT = True
+MATERIALIZATION_PROVENANCE_IDENTITIES_ARE_KNOWN_BEFORE_THE_WRITE = True
 
 
 # --------------------------------------------------------------------------------------
@@ -3397,6 +3403,19 @@ def validate_contract() -> list[str]:
         problems.append("provenance is recorded in the same write as the revision")
     if not MATERIALIZATION_PROVENANCE_ENDS_AT_THE_COMMITTED_REVISION:
         problems.append("provenance that stops before the revision does not reach the drawing")
+    if MATERIALIZATION_PROVENANCE_PREDICTS_THE_REVISION:
+        problems.append(
+            "the materializer must not predict the resulting revision: two writers can make the "
+            "same prediction, and a prediction is not a fact about the drawing"
+        )
+    if not MATERIALIZATION_PROVENANCE_READS_THE_REVISION_FROM_THE_COMMITTED_RESULT:
+        problems.append(
+            "the resulting revision is read from the writer's committed result"
+        )
+    if not MATERIALIZATION_PROVENANCE_IDENTITIES_ARE_KNOWN_BEFORE_THE_WRITE:
+        problems.append(
+            "the five input identities are the half of the chain that travels with the write"
+        )
     if not PHASE_3_MAY_IMPORT_THE_CONTRACT:
         problems.append("phase 3 must name the module that reads this contract")
     overlap = set(PHASE_2B_MAY_IMPORT_THE_CONTRACT) & set(PHASE_3_MAY_IMPORT_THE_CONTRACT)

@@ -44,6 +44,7 @@ from agentcad.m7_layout_materialization import (
     materialization_matches_document,
     materialization_payload,
     materialization_provenance,
+    materialization_record,
     materialize_canonical_layout,
     materialized_element_id,
     materialized_transaction,
@@ -57,6 +58,7 @@ from agentcad.models import (
     Point,
     SystemGroup,
     TransactionRequest,
+    UpdateLayerOperation,
 )
 from agentcad.service import DocumentService, RevisionConflictError
 from agentcad.store import SQLiteDocumentStore
@@ -119,13 +121,14 @@ def test_a_finalized_layout_becomes_a_committed_revision(tmp_path: Path) -> None
     document_id = seed_document(service, layout)
     assert document_id == layout.document_id or document_id != ""  # the id comes from creation
 
-    chain = materialization_provenance(plan, layout, result_revision=1)
+    identities = materialization_provenance(plan, layout)
+    assert "resulting_revision" not in identities  # a prediction is not part of the write
     audit = AuditContext(
         actor="m7-materializer",
         surface="internal",
         tool_name="m7_materialize_layout",
         validation_status="valid",
-        metadata=dict(chain),
+        metadata=dict(identities),
     )
     result = apply_materialized_layout(
         service, replace(layout, document_id=document_id), expected_revision=0, audit=audit
@@ -133,6 +136,10 @@ def test_a_finalized_layout_becomes_a_committed_revision(tmp_path: Path) -> None
     assert result.applied_operations == len(layout.operations)
     document = service.get_document(document_id)
     assert document.revision == 1
+    # The record is closed with the revision the writer committed, not with a number supplied
+    # before the write -- and it is that revision, not "the one we expected".
+    record = materialization_record(plan, layout, result)
+    assert record["resulting_revision"] == str(document.revision)
     assert materialization_matches_document(layout, document) == []
     assert len(document.elements) == len(layout.rows)
     assert {element.system_id for element in document.elements} == {"S_supply", "S_cover"}
@@ -826,24 +833,91 @@ def test_element_ids_are_distinct_per_role_and_survive_normalization_clashes() -
 # ---------------------------------------------------------------------------------------
 
 
-def test_the_provenance_chain_reaches_the_committed_revision() -> None:
+def test_the_provenance_chain_reaches_the_committed_revision(tmp_path: Path) -> None:
+    """Five identities known before the write, plus the revision the writer committed."""
+
     layout, plan, topology = materialized()
-    chain = materialization_provenance(plan, layout, result_revision=3)
+    service = make_service(tmp_path)
+    document_id = seed_document(service, layout)
+    identities = materialization_provenance(plan, layout)
+    result = apply_materialized_layout(
+        service,
+        replace(layout, document_id=document_id),
+        expected_revision=0,
+        audit=AuditContext(
+            actor="m7-materializer",
+            surface="internal",
+            tool_name="m7_materialize_layout",
+            validation_status="valid",
+            metadata=dict(identities),
+        ),
+    )
+    record = materialization_record(plan, layout, result)
     for link in contract.MATERIALIZATION_PROVENANCE_CHAIN:
-        assert link in chain
-    assert chain["resulting_revision"] == "3"
-    assert chain["adapter_topology_digest"] == topology.digest
-    assert chain["canonical_layout_digest"] == plan.canonical_layout_digest
-    assert chain["symbol_geometry_catalog_digest"] == plan.symbol_geometry_catalog_digest
-    assert chain["materialization_digest"] == layout.materialization_digest
-    assert chain["diagram_spec_semantic_digest"]
+        assert link in record, link
+    assert record["resulting_revision"] == str(result.document.revision)
+    assert record["adapter_topology_digest"] == topology.digest
+    assert record["canonical_layout_digest"] == plan.canonical_layout_digest
+    assert record["symbol_geometry_catalog_digest"] == plan.symbol_geometry_catalog_digest
+    assert record["materialization_digest"] == layout.materialization_digest
+    assert record["diagram_spec_semantic_digest"]
+    # The revision half cannot be produced before the write: there is nothing to read it from.
+    with pytest.raises(MaterializationError):
+        materialization_record(plan, layout, object())
 
 
-def test_the_board_records_the_chain_as_an_audit_metadata_dict() -> None:
+def test_the_record_takes_no_caller_supplied_revision() -> None:
+    """Same shape as the label channel: the boundary is the signature, not a validation.
+
+    A parameter that accepted a revision would let the caller write down the number it hoped for,
+    and the assertion that the record matches the commit would then be comparing the code with a
+    copy of itself.
+    """
+
+    parameters = inspect.signature(materialization_record).parameters
+    assert set(parameters) == {"plan", "layout", "result"}
+    assert not {"revision", "result_revision", "predicted_revision", "predicted"} & set(parameters)
+    assert '"revision"' in inspect.getsource(materialization_record)
+
+
+def test_the_record_closes_on_the_committed_revision_not_on_a_prediction(tmp_path: Path) -> None:
+    """A revision supplied before the write would be a claim about the *next* revision.
+
+    Two writers can both make that claim. So the identity half is asserted to carry no revision at
+    all, and the same code path is then run against a document that is not at revision 1 -- the
+    record follows the commit rather than the expectation.
+    """
+
+    layout, plan, _topology = materialized()
+    assert not contract.MATERIALIZATION_PROVENANCE_PREDICTS_THE_REVISION
+    assert contract.MATERIALIZATION_PROVENANCE_READS_THE_REVISION_FROM_THE_COMMITTED_RESULT
+    assert "resulting_revision" not in materialization_provenance(plan, layout)
+    service = make_service(tmp_path)
+    document_id = seed_document(service, layout)
+    # A revision that is not 1, reached without putting anything engineered in the target: the
+    # baseline is about the drawing, not about the revision counter.
+    service.apply_transaction(
+        document_id,
+        TransactionRequest(
+            operations=[
+                UpdateLayerOperation(layer_id=MATERIALIZATION_LAYER_ID, patch={"name": "Sheet 1"})
+            ],
+            expected_revision=0,
+        ),
+    )
+    assert service.get_document(document_id).revision == 1
+    result = apply_materialized_layout(
+        service, replace(layout, document_id=document_id), expected_revision=1
+    )
+    assert result.document.revision == 2
+    assert materialization_record(plan, layout, result)["resulting_revision"] == "2"
+
+
+def test_the_board_records_the_identities_as_an_audit_metadata_dict(tmp_path: Path) -> None:
     """A dict of strings is what the existing audit path persists, so that is the shape checked."""
 
     layout, plan, _topology = materialized()
-    chain = materialization_provenance(plan, layout, result_revision=1)
+    chain = materialization_provenance(plan, layout)
     assert all(isinstance(key, str) and isinstance(value, str) for key, value in chain.items())
     context = AuditContext(
         actor="m7-materializer",

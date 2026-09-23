@@ -1643,3 +1643,37 @@ MATERIALIZATION_MAY_CONTINUE_AFTER_A_REVISION_CONFLICT = False
 | 回读不再比对 `text`/`label` | 2 红 | 写后改文案 / 写后塞 `symbol.label` |
 | 不再证明"盒子就是该文本的盒子" | 2 红 | 盒子被拉宽 / tag 变长 |
 | 去掉 `require_empty_target` | 3 红 | 非空 target 会被提交，revision 前进 |
+
+### 15.10 Gate 裁决三：`resulting_revision` 不许由 materializer 预测
+
+Gate 批准了"provenance 放 audit、不新增 operation kind"，但补了一条：`resulting_revision` **必须是写者真正提交得到的那个 revision**，
+不能由 materializer 在调用前自行预测。我原来的写法正是预测 —— 调用方传一个 `result_revision=1` 进去，
+在写之前就把它拼进 chain 里。两个写者可以做出同一个预测，所以那不是关于这张图的事实。
+
+拆成两半：
+
+```python
+def materialization_provenance(plan, layout) -> dict[str, str]:
+    """随写一起走的那一半：五个身份 + 各自的版本号。故意不含 revision。"""
+
+def materialization_record(plan, layout, result) -> dict[str, str]:
+    """完整审计关系：上面那五个身份 + 写者实际提交的 revision（从 result.document.revision 读）。"""
+```
+
+```
+MATERIALIZATION_PROVENANCE_PREDICTS_THE_REVISION = False
+MATERIALIZATION_PROVENANCE_READS_THE_REVISION_FROM_THE_COMMITTED_RESULT = True
+MATERIALIZATION_PROVENANCE_IDENTITIES_ARE_KNOWN_BEFORE_THE_WRITE = True
+```
+
+`materialization_record()` **没有** revision 参数（签名就是边界，与 label 同一个理由），
+并且拿不到提交结果时直接报错而不是退化成"猜一个"。用例用一个**非 1** 的目标 revision 证明它跟的是提交而不是预期：
+先给目标文档做一次只改图层名的 `update_layer`（revision 0 → 1，且 baseline 仍然是"空的"——
+这正是 §15.8 里"空指的是没有工程内容，不是没有行"的意义），再 materialize（→ 2），记录里就是 `"2"`。
+
+新增 mutation（实测真红）：
+
+| mutation | 结果 |
+| --- | --- |
+| 五个身份里塞进一个预测的 revision | 2 红 |
+| `materialization_record` 多一个 caller 传 revision 的参数 | 1 红（签名用例） |

@@ -976,18 +976,44 @@ def apply_materialized_layout(
 
 
 def materialization_provenance(
-    plan: SemanticLayoutPlan, layout: MaterializedLayout, *, result_revision: int
+    plan: SemanticLayoutPlan, layout: MaterializedLayout
 ) -> dict[str, str]:
-    """The whole chain, from the specification's semantics to the committed revision."""
+    """The identities that go *with* the write: what this drawing is compiled from.
 
-    chain = layout.provenance(
+    Deliberately without a revision. A revision supplied here would be a prediction, and a
+    prediction of the next revision number is not a fact about this drawing -- two writers could
+    both predict N+1. The revision this record belongs to is whatever the writer actually
+    committed, recorded by the writer, and read back through :func:`materialization_record`.
+    """
+
+    return layout.provenance(
         diagram_spec_semantic_digest=plan_engineering_digest(plan),
         adapter_topology_digest=plan.topology_digest,
         symbol_geometry_catalog_digest=plan.symbol_geometry_catalog_digest,
         canonical_layout_digest=plan.canonical_layout_digest,
     )
-    chain["resulting_revision"] = str(result_revision)
-    return chain
+
+
+def materialization_record(
+    plan: SemanticLayoutPlan, layout: MaterializedLayout, result: Any
+) -> dict[str, str]:
+    """The complete audit relation, closed with the revision the writer *did* commit.
+
+    Reads ``result.document.revision`` rather than accepting a number: the chain means "these
+    identities produced this successfully committed revision", so the revision half has to come
+    from the commit. Nothing here can be assembled before the write.
+    """
+
+    committed = getattr(result, "document", None)
+    revision = getattr(committed, "revision", None)
+    if revision is None:
+        raise MaterializationError(
+            "the provenance record is closed with the revision the writer committed, so it "
+            "cannot be built from a result that carries no committed document"
+        )
+    record = materialization_provenance(plan, layout)
+    record["resulting_revision"] = str(revision)
+    return record
 
 
 __all__ = [
@@ -1010,6 +1036,7 @@ __all__ = [
     "materialization_matches_document",
     "materialization_payload",
     "materialization_provenance",
+    "materialization_record",
     "materialize_canonical_layout",
     "label_text_for",
     "materialized_element_id",

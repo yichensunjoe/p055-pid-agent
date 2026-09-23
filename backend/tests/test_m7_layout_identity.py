@@ -20,21 +20,26 @@ from agentcad.auto_layout_geometry import route_semantic_layout
 from agentcad.auto_layout_identity import (
     CANONICAL_PROJECTION_FIELD_NAMES,
     ENGINEERING_ROW_PARTS,
+    ENGINEERING_SEMANTIC_ROW_PARTS,
     CanonicalProjectionError,
+    EngineeringSemanticPreservationError,
     GeometryCoverageError,
     LayoutIdentityError,
+    LayoutInputPreservationError,
     ReplayIdentityMismatchError,
-    SemanticPreservationError,
     canonical_layout_digest_for_payload,
     canonical_layout_payload,
     canonical_projection_envelope,
     canonical_projection_rows,
     deterministic_replay_problems,
+    engineering_semantic_preservation_problems,
+    engineering_semantic_rows,
     finalize_semantic_layout,
     geometry_coverage_problems,
+    layout_input_preservation_problems,
     payload_problems,
     plan_engineering_rows,
-    semantic_preservation_problems,
+    plan_engineering_semantic_digest,
 )
 from agentcad.auto_layout_semantic import (
     LAYOUT_ENGINE_VERSION,
@@ -66,6 +71,18 @@ def fixture_a_step_four():
     plan = derive_semantic_canvas(annotated_fixture_a())
     assert plan.produced_at_step == STEP_4
     return plan
+
+
+def swapped_symbol_plan():
+    """The same drawing with one node bound to a different, equally valid catalogue symbol."""
+
+    plan = fixture_a_step_four()
+    symbols = dict(plan.node_symbols)
+    symbols["el_purifier"] = "gas_tank"  # equipment -> equipment, so the swap is legal and real
+    assert symbols != dict(plan.node_symbols)
+    return replace(
+        plan, node_symbols=tuple((node_id, symbols[node_id]) for node_id, _ in plan.node_symbols)
+    )
 
 
 def fixture_a_identity():
@@ -105,7 +122,7 @@ def test_the_reconstruction_carries_every_declared_part() -> None:
 
 def test_a_clean_layout_reports_no_preservation_problem() -> None:
     topology = fixture_a_topology()
-    assert semantic_preservation_problems(fixture_a_step_four(), topology) == []
+    assert engineering_semantic_preservation_problems(fixture_a_step_four(), topology) == []
 
 
 @pytest.mark.parametrize(
@@ -201,29 +218,107 @@ def test_a_clean_layout_reports_no_preservation_problem() -> None:
 )
 def test_the_gate_catches_a_layout_that_changed_the_plant(mutate, expected: str) -> None:
     plan = mutate(fixture_a_step_four())
-    problems = semantic_preservation_problems(plan, fixture_a_topology())
+    problems = engineering_semantic_preservation_problems(plan, fixture_a_topology())
     assert problems, "a changed plant must be reported"
     assert expected in problems[0]
 
 
-def test_the_gate_catches_a_layout_that_changed_the_intent() -> None:
+# ---------------------------------------------------------------------------------------
+# Proof A and proof B are two names for two things, and each must be blind to the other
+# ---------------------------------------------------------------------------------------
+
+
+def test_the_engineering_subset_is_a_subset_of_the_upstream_row_shape() -> None:
+    """The layout-layer digest is the engineering part of the upstream one, not the same value."""
+
+    plan = plan_semantic_layout(fixture_a_topology())
+    rows = plan_engineering_rows(plan)
+    assert ENGINEERING_SEMANTIC_ROW_PARTS == (
+        "spec_schema",
+        "systems",
+        "entities",
+        "connections",
+        "required_loops",
+    )
+    assert set(ENGINEERING_SEMANTIC_ROW_PARTS) < set(ENGINEERING_ROW_PARTS)
+    assert "layout_intent" not in ENGINEERING_SEMANTIC_ROW_PARTS
+    assert "layout_intent" in ENGINEERING_ROW_PARTS
+    assert tuple(engineering_semantic_rows(rows)) == ENGINEERING_SEMANTIC_ROW_PARTS
+    assert plan_engineering_semantic_digest(plan) != engineering_digest(rows)
+
+
+def test_the_engineering_gate_does_not_own_the_layout_intent() -> None:
+    """A changed intent is real and must be red -- but under proof B's name, not proof A's."""
+
     plan = fixture_a_step_four()
     assert plan.intent.density == "compact", "the fixture's density is what this test negates"
-    plan = replace(plan, intent=replace(plan.intent, density="standard"))
-    problems = semantic_preservation_problems(plan, fixture_a_topology())
+    changed = replace(plan, intent=replace(plan.intent, density="standard"))
+    assert engineering_semantic_preservation_problems(changed, fixture_a_topology()) == []
+    problems = layout_input_preservation_problems(changed, fixture_a_topology())
     assert problems
-    assert "layout_intent" in problems[0]
+    assert "layout intent" in problems[0]
 
 
-def test_the_gate_catches_a_layout_that_reordered_the_reading_order() -> None:
-    plan = fixture_a_step_four()
+def test_the_engineering_gate_does_not_own_the_symbol_binding() -> None:
+    """A renderer swap is not a change to the plant: the engineering digest was signed to
+    exclude ``symbol_key``, and folding it back in here would undo that separation."""
+
+    swapped = swapped_symbol_plan()
+    assert engineering_semantic_preservation_problems(swapped, fixture_a_topology()) == []
+    problems = layout_input_preservation_problems(swapped, fixture_a_topology())
+    assert problems
+    assert "symbol binding" in problems[0]
+
+
+def test_the_layout_input_gate_does_not_own_the_tag() -> None:
+    """And the other direction: a rewritten tag is proof A's business, not proof B's."""
+
     plan = replace(
-        plan,
-        intent=replace(plan.intent, system_order=tuple(reversed(plan.intent.system_order))),
+        fixture_a_step_four(),
+        engineering_entities=tuple(
+            replace(fact, tag="V-999") for fact in fixture_a_step_four().engineering_entities
+        ),
     )
-    problems = semantic_preservation_problems(plan, fixture_a_topology())
-    assert problems
-    assert "layout_intent" in problems[0]
+    assert layout_input_preservation_problems(plan, fixture_a_topology()) == []
+    assert engineering_semantic_preservation_problems(plan, fixture_a_topology())
+
+
+def test_the_layout_input_gate_catches_node_kinds_and_the_topology_identity() -> None:
+    topology = fixture_a_topology()
+    plan = fixture_a_step_four()
+    kinds = replace(plan, node_kinds=tuple((node_id, "instrument") for node_id, _ in plan.node_kinds))
+    assert any(
+        "node kind" in problem for problem in layout_input_preservation_problems(kinds, topology)
+    )
+    other = adapt(
+        {
+            **fixture_a_payload(),
+            "systems": [
+                *fixture_a_payload()["systems"],
+                {"system_id": "S_extra", "name": "备用", "order": 2},
+            ],
+            "layout_intent": {
+                **fixture_a_payload()["layout_intent"],
+                "system_order": [*fixture_a_payload()["layout_intent"]["system_order"], "S_extra"],
+            },
+        }
+    )
+    assert other.digest != topology.digest
+    problems = layout_input_preservation_problems(plan, other)
+    assert any("topology" in problem for problem in problems)
+
+
+def test_finalize_refuses_a_swapped_symbol_binding() -> None:
+    with pytest.raises(LayoutInputPreservationError):
+        finalize_semantic_layout(swapped_symbol_plan(), fixture_a_topology())
+
+
+def test_finalize_refuses_a_changed_intent() -> None:
+    plan = replace(
+        fixture_a_step_four(), intent=replace(fixture_a_step_four().intent, density="standard")
+    )
+    with pytest.raises(LayoutInputPreservationError):
+        finalize_semantic_layout(plan, fixture_a_topology())
 
 
 def test_the_gate_names_the_other_topology() -> None:
@@ -252,9 +347,12 @@ def test_the_gate_names_the_other_topology() -> None:
         }
     )
     plan = finalize_semantic_layout(fixture_a_step_four(), topology)
-    problems = semantic_preservation_problems(plan, other)
-    assert problems
-    assert any("topology" in problem for problem in problems)
+    # The plant itself differs, and so does the topology the plan names: each gate reports what
+    # it owns rather than one gate reporting everything.
+    assert engineering_semantic_preservation_problems(plan, other)
+    assert any(
+        "topology" in problem for problem in layout_input_preservation_problems(plan, other)
+    )
 
 
 def test_finalize_refuses_a_layout_that_changed_the_plant() -> None:
@@ -264,7 +362,7 @@ def test_finalize_refuses_a_layout_that_changed_the_plant() -> None:
             replace(fact, tag="X-000") for fact in fixture_a_step_four().engineering_entities
         ),
     )
-    with pytest.raises(SemanticPreservationError):
+    with pytest.raises(EngineeringSemanticPreservationError):
         finalize_semantic_layout(plan, fixture_a_topology())
 
 
@@ -348,6 +446,36 @@ def test_the_projection_is_sorted_over_exactly_the_declared_fields() -> None:
     assert len(rows) == 3 * 0 + len(fixture_a_step_four().placement) + len(
         fixture_a_step_four().routing
     ) + len(fixture_a_step_four().annotations)
+
+
+def test_a_tag_change_leaves_the_projection_equal_and_moves_the_digest() -> None:
+    """The wording the gate corrected: the *projection* is geometry, so ``P-201 -> P-301`` is
+    invisible to it; the *layout digest* binds the semantic input identity, so it must move even
+    though every coordinate is unchanged. Saying "the layout digest only identifies position"
+    would have been too strong a claim."""
+
+    topology = fixture_a_topology()
+    before = fixture_a_step_four()
+    retagged = replace(
+        before,
+        engineering_entities=tuple(
+            replace(fact, tag="P-301") if fact.engineering_id == "el_ar_tank" else fact
+            for fact in before.engineering_entities
+        ),
+    )
+    assert canonical_projection_rows(retagged) == canonical_projection_rows(before)
+    assert canonical_projection_envelope(retagged) == canonical_projection_envelope(before)
+    # ``finalize`` refuses a retag -- that is proof A doing its job -- so the digest scope is
+    # shown on the payload itself, which is where the difference lives.
+    with pytest.raises(EngineeringSemanticPreservationError):
+        finalize_semantic_layout(retagged, topology)
+    first = canonical_layout_payload(before)
+    second = canonical_layout_payload(retagged)
+    assert first["canonical_placement_projection"] == second["canonical_placement_projection"]
+    assert first["canonical_projection_envelope"] == second["canonical_projection_envelope"]
+    assert first["diagram_spec_semantic_digest"] != second["diagram_spec_semantic_digest"]
+    assert canonical_layout_digest_for_payload(first) != canonical_layout_digest_for_payload(second)
+    assert contract.TAG_CHANGE_WITHOUT_A_GEOMETRY_CHANGE_CHANGES_THE_CANONICAL_LAYOUT_DIGEST
 
 
 def test_the_projection_carries_no_label_text_and_no_tags() -> None:
@@ -670,7 +798,7 @@ def test_a_plan_without_a_record_cannot_pass_the_gate() -> None:
         engineering_entities=(),
         engineering_systems=(),
     )
-    problems = semantic_preservation_problems(plan, fixture_a_topology())
+    problems = engineering_semantic_preservation_problems(plan, fixture_a_topology())
     assert any("no engineering record" in problem for problem in problems)
 
 

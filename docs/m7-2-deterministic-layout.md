@@ -1225,16 +1225,48 @@ path 只读端点不读控制点 → **1 条红**；相对命令按绝对处理 
 
 Step 1–4 产出一张图；Step 5 说的是"**这是哪一张图**"。两条否定性闸门，都不关于"图好不好看"：
 
-### 14.1 闸门一：布局不能改工程语义（两侧独立重建，不是自己比自己）
+### 14.1 闸门一：**两道**保持证明（不是一道叫 "semantic" 的闸门）
+
+Gate 明确指出：把 `symbol_binding` 与 `layout_intent` 放进同一道叫 `semantic_digest_before_layout` 的证明里，
+等于把先前好不容易分开的三层身份（工程事实 / renderer 绑定 / 布局意图）又合回一个 identity。已拆成两道，
+各自命名、各自归位：
+
+**证明 A — engineering semantics**（图上的厂没变）：
 
 ```
-LAYOUT_SEMANTIC_PRESERVATION_GATE =
-    "semantic_digest_before_layout_equals_the_semantic_digest_reconstructed_after_layout"
+ENGINEERING_SEMANTIC_PRESERVATION_GATE =
+    "engineering_semantic_digest_before_layout_equals_the_digest_reconstructed_after_layout"
 SEMANTIC_DIGEST_BEFORE_LAYOUT_IS_COMPUTED_AT_INGRESS = True
 SEMANTIC_DIGEST_AFTER_LAYOUT_IS_RECONSTRUCTED_FROM_THE_FINALIZED_PLAN = True
-SEMANTIC_PRESERVATION_IS_VERIFIED_AT_THE_LAYOUT_IDENTITY_STEP = True
-SEMANTIC_PRESERVATION_FAILURE_IS_A_HARD_FAILURE = True
+ENGINEERING_SEMANTIC_PRESERVATION_COVERS = (
+    equipment_identity, instrument_identity, tag, equipment_class, instrument_type,
+    measurement, connection_identity, connection_endpoints, connection_ports,
+    connection_medium, flow_direction, system_membership, system_order,
+    required_loop_membership)
+ENGINEERING_SEMANTIC_PRESERVATION_EXCLUDES = (
+    symbol_binding, layout_intent, placement, routing, canvas)
+ENGINEERING_SEMANTIC_DIGEST_IS_A_SUBSET_OF_THE_UPSTREAM_SEMANTIC_DIGEST = True
 ```
+
+注意最后一行的语义：上游 `spec_semantic_digest` **包含** `layout_intent`（它是 spec 的一部分），
+而这一层是它的**工程子集**（`ENGINEERING_SEMANTIC_ROW_PARTS` 五行：spec_schema / systems / entities /
+connections / required_loops），所以"同一个名字"不会指两个不同的值。
+
+**证明 B — layout input**（引擎没有偷换符号或意图）：
+
+```
+LAYOUT_INPUT_PRESERVATION_GATE =
+    "layout_input_rows_are_structurally_equal_before_and_after_layout"
+LAYOUT_INPUT_PRESERVATION_COVERS = (
+    symbol_binding, node_kind_for_rendering, layout_intent_classes, adapter_topology_identity)
+LAYOUT_INPUT_PRESERVATION_IS_STRUCTURAL_EQUALITY = True
+LAYOUT_INPUT_PRESERVATION_INTRODUCES_NO_NEW_IDENTITY_AXIS = True
+ONE_PRESERVATION_GATE_REPLACES_THE_TWO = False
+```
+
+证明 B **不新增身份轴**：它是与"引擎收到的 topology"逐项结构相等的比较（`node_symbols` / `node_kinds` /
+`intent` / `topology_digest`）。双向盲区也各自有用例：改 intent → A 绿 B 红；改 symbol → A 绿 B 红；
+改 tag → A 红 B 绿；任一方向绿/红互换即说明分层失败。
 
 "前"是 `adapt()` 产出的 topology 的工程 digest（与 spec 的 `spec_semantic_digest` 相等，这条上游无损闸门已签）；
 "后"是**从 plan 自己的 live 字段重建**的同一个 digest。两者由**两条不同的代码路径、两份不同的输入**生成：
@@ -1262,9 +1294,8 @@ LAYOUT_SEMANTIC_PRESERVATION_DOES_NOT_COVER_PROSE_FACTS = True
 PROSE_FACTS_ARE_COVERED_BY_THE_UPSTREAM_ADAPTER_LOSSLESSNESS_GATE = True
 ```
 
-标的是**结构**。plan 只承载引擎消费到的语义（`engineering_entities` 的 tag/name/class/type/measurement
-是"收到的记录"，不是新的事实来源），而对"整份 spec 无损"的断言由上游
-`spec_semantic_digest == topology_semantic_digest` 负责 —— 这里不重复声称。
+证明 A 的覆盖里包含 tag/class/type/measurement，它们进的是"引擎收到的工程记录"而不是"新的事实来源"；
+对"整份 spec（含自由文案）无损"的断言仍由上游 `spec_semantic_digest == topology_semantic_digest` 负责。
 
 **digest 看不见"少了一行"**，所以同一个闸门的另一半是纯几何覆盖，与任何 digest 无关：
 
@@ -1280,14 +1311,27 @@ A_DROPPED_ENTITY_OR_CONNECTION_IS_A_HARD_FAILURE = True
 `geometry_coverage_problems()` 逐条报出：某 device 从未被放置、被放置两次、放置成了别的 kind、
 某 connection 没有 route、route 出现在没人声明的 id 上、annotation 挂在一个不存在（或未放置）的实体上。
 
-### 14.2 canonical projection：**digest 覆盖的是"东西在哪"，不是"写了什么"**
+### 14.2 canonical projection 是几何投影；canonical layout digest 比它宽
+
+Gate 抓到一句过强的措辞：我原来写"布局 digest 标识东西在哪、不标识写了什么"。这对 **projection** 成立，
+对整个 **digest** 过强——digest 的信封已经绑定了语义输入身份，所以 `P-201 → P-301` 而坐标完全不变时：
+projection 相同，**digest 必须不同**。这正是正确行为，口径已改成：
+
+> canonical projection 表示"怎么画、放在哪里"；canonical layout digest 表示"这份语义输入在这些布局规则与符号几何下得到的 canonical layout"。
 
 ```
 CANONICAL_PROJECTION_EXCLUDES_LABEL_TEXT = True
 CANONICAL_PROJECTION_EXCLUDES_TAGS = True
+CANONICAL_PROJECTION_AND_CANONICAL_LAYOUT_DIGEST_HAVE_DIFFERENT_SCOPES = True
+TAG_CHANGE_WITHOUT_A_GEOMETRY_CHANGE_CHANGES_THE_CANONICAL_LAYOUT_DIGEST = True
+CANONICAL_LAYOUT_DIGEST_IS_NOT_MERELY_A_GEOMETRY_DIGEST = True
 CANONICAL_PROJECTION_SORT_KEY = ("placement_kind", "engineering_id")
 DUPLICATE_SORT_KEY_IS_HARD_FAIL = True
 ```
+
+措辞修正不要求改 projection 字段（`m7-layout-projection/1` 不动），也不要求升 `m7-layout-digest/2`
+（`LAYOUT_DIGEST_INPUTS` 已含 semantic digest）。有用例同时钉住两侧：改 tag → projection 与 envelope
+**逐字相同**、payload 的 `diagram_spec_semantic_digest` 与 digest **必须不同**（而 `finalize` 会先以证明 A 拒掉它）。
 
 placement/routing/annotation 三张表合成**一个**投影（读者比较的是两张图，不是三条流水线），每行只保留声明的
 7 个字段（`engineering_id`/`placement_kind`/`x`/`y`/`width`/`height`/`ordered_waypoints`），坐标按
@@ -1352,8 +1396,10 @@ placement+routing+envelope+工程身份。把后者塞进前者会让"同一张�
 | --- | --- |
 | 两侧行相等 | `plan_engineering_rows(plan) == topology_engineering_rows(topology)`（Step 1 就成立） |
 | 干净布局 | 无 preservation problem、无 coverage problem、payload 闭集 |
-| 改工程语义 ×7 | kind / tag / system_id / connection 目标 / 方向翻转 / system 记录 / loop 成员 —— 各自必须红并点名哪一部分 |
-| 改意图 | density 换档、reading order 反转 → `layout_intent` 红 |
+| 证明 A：改工程语义 ×7 | kind / tag / system_id / connection 目标 / 方向翻转 / system 记录 / loop 成员 —— 各自必须红并点名哪一部分 |
+| 证明 A/B 的分工 | 改 intent 或 symbol → A 绿、B 红；改 tag → A 红、B 绿；`ENGINEERING_SEMANTIC_ROW_PARTS` 是 `ENGINEERING_ROW_PARTS` 的真子集 |
+| 证明 B：改意图 | density 换档、reading order 反转 → B 报 "layout intent"；`finalize` 抛 `LayoutInputPreservationError` |
+| 证明 B：换符号 | 合法等价符号（purifier → gas_tank）→ B 报 "symbol binding"，而 A 保持绿 |
 | 换了 topology | plan 与另一张图的 topology 配对 → 报 "no longer names the topology" |
 | 几何覆盖 ×6 | 丢 device、丢 connection、凭空多一个 id、kind 不符、放置两次、给未放置实体加标注 |
 | 投影 | 排序/字段集/无文本无 tag/重复 sort key/NaN/`-0.0`/未声明行字段 |

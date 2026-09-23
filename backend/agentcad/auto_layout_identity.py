@@ -77,8 +77,12 @@ class LayoutIdentityError(SemanticTopologyIngressError):
     """The identity could not be produced, or a gate about it failed."""
 
 
-class SemanticPreservationError(LayoutIdentityError):
+class EngineeringSemanticPreservationError(LayoutIdentityError):
     """The layout changed the plant it was asked to draw."""
+
+
+class LayoutInputPreservationError(LayoutIdentityError):
+    """The layout swapped a symbol binding or a layout intent class on its own."""
 
 
 class GeometryCoverageError(LayoutIdentityError):
@@ -158,19 +162,37 @@ def plan_engineering_digest(plan: SemanticLayoutPlan) -> str:
     return engineering_digest(plan_engineering_rows(plan))
 
 
-def semantic_preservation_problems(
+def engineering_semantic_rows(rows: Mapping[str, Any]) -> dict[str, Any]:
+    """The engineering subset of the rows: the plant, without the layout request.
+
+    The upstream semantic digest does include the layout intent -- it is part of the
+    specification -- but this gate is the engineering subset, because the layout intent is a
+    request about presentation rather than a fact about the plant. Sharing the row *shape* while
+    selecting fewer parts is what keeps "the same words" from meaning two different things.
+    """
+
+    return {part: rows.get(part) for part in ENGINEERING_SEMANTIC_ROW_PARTS}
+
+
+def plan_engineering_semantic_digest(plan: SemanticLayoutPlan) -> str:
+    """The engineering digest of the finalized plan, restricted to the plant."""
+
+    return engineering_digest(engineering_semantic_rows(plan_engineering_rows(plan)))
+
+
+def engineering_semantic_preservation_problems(
     plan: SemanticLayoutPlan, topology: SemanticTopology
 ) -> list[str]:
-    """The engineering digest before the layout against the one reconstructed after it.
+    """Proof A: the plant before the layout against the plant reconstructed after it.
 
-    The comparison is over the *rows*, not only the digests, so a failure names the row that
+    The comparison is over the *rows*, not only the digests, so a failure names the part that
     differs. A digest mismatch with no explanation is a report a reader cannot act on.
     """
 
-    before = topology_engineering_rows(topology)
-    after = plan_engineering_rows(plan)
+    before = engineering_semantic_rows(topology_engineering_rows(topology))
+    after = engineering_semantic_rows(plan_engineering_rows(plan))
     problems: list[str] = []
-    for part in ENGINEERING_ROW_PARTS:
+    for part in ENGINEERING_SEMANTIC_ROW_PARTS:
         if before.get(part) != after.get(part):
             problems.append(
                 f"the layout changed the {part!r} it was given: "
@@ -181,11 +203,6 @@ def semantic_preservation_problems(
             "the engineering digests differ although every declared part matches: the row shape "
             "is not the one the digest is computed over"
         )
-    if plan.topology_digest != topology.digest:
-        problems.append(
-            "the plan no longer names the topology it was built from: a gate over the wrong "
-            "input proves nothing about the layout"
-        )
     if not plan.engineering_entities or not plan.engineering_systems:
         problems.append(
             "the plan carries no engineering record to reconstruct from: an empty record would "
@@ -194,14 +211,67 @@ def semantic_preservation_problems(
     return problems
 
 
-ENGINEERING_ROW_PARTS: tuple[str, ...] = (
+def layout_input_preservation_problems(
+    plan: SemanticLayoutPlan, topology: SemanticTopology
+) -> list[str]:
+    """Proof B: the engine did not swap a symbol or change the intent it was handed.
+
+    Structural equality against the topology the engine received, in its own name: there is no
+    second identity axis for it, and it is deliberately *not* part of the engineering digest --
+    a renderer binding and a presentation request are not facts about the plant.
+    """
+
+    problems: list[str] = []
+    if plan.topology_digest != topology.digest:
+        problems.append(
+            "the plan no longer names the topology it was built from: a gate over the wrong "
+            "input proves nothing about the layout"
+        )
+    expected_symbols = tuple(
+        (node.engineering_id, node.symbol_key)
+        for node in sorted(topology.nodes, key=lambda item: item.engineering_id)
+    )
+    if plan.node_symbols != expected_symbols:
+        problems.append(
+            "the layout engine changed the symbol binding it was given: "
+            f"received {_summarize(expected_symbols)}, holds {_summarize(plan.node_symbols)}"
+        )
+    expected_kinds = tuple(
+        (node.engineering_id, node.kind)
+        for node in sorted(topology.nodes, key=lambda item: item.engineering_id)
+    )
+    if plan.node_kinds != expected_kinds:
+        problems.append(
+            "the layout engine changed a node kind used for rendering: "
+            f"received {_summarize(expected_kinds)}, holds {_summarize(plan.node_kinds)}"
+        )
+    expected_intent = {
+        "orientation": topology.intent.orientation,
+        "preferred_aspect_class": topology.intent.preferred_aspect_class,
+        "primary_flow_direction": topology.intent.primary_flow_direction,
+        "grouping": topology.intent.grouping,
+        "density": topology.intent.density,
+        "system_order": list(topology.intent.system_order),
+    }
+    held_intent = plan.intent.to_projection()
+    if held_intent != expected_intent:
+        problems.append(
+            "the layout engine changed the layout intent it was given: "
+            f"received {_summarize(expected_intent)}, holds {_summarize(held_intent)}"
+        )
+    return problems
+
+
+ENGINEERING_SEMANTIC_ROW_PARTS: tuple[str, ...] = (
     "spec_schema",
     "systems",
     "entities",
     "connections",
     "required_loops",
-    "layout_intent",
 )
+#: The shape the upstream semantic digest is computed over: the engineering parts plus the layout
+#: request. Kept as one list so the subset above is visibly a subset rather than a second shape.
+ENGINEERING_ROW_PARTS: tuple[str, ...] = (*ENGINEERING_SEMANTIC_ROW_PARTS, "layout_intent")
 
 
 def _summarize(value: Any) -> str:
@@ -479,10 +549,17 @@ def finalize_semantic_layout(
             f"step 5 takes the finalized step-4 plan, not one produced at "
             f"{plan.produced_at_step!r}"
         )
-    preservation = semantic_preservation_problems(plan, topology)
-    if preservation:
-        raise SemanticPreservationError(
-            "the layout changed the plant it was asked to draw: " + "; ".join(preservation)
+    # Proof A, then proof B, then coverage, then the name -- the order is the rule: an identity
+    # computed for a drawing that changed the plant would be a stable name for the wrong picture.
+    engineering = engineering_semantic_preservation_problems(plan, topology)
+    if engineering:
+        raise EngineeringSemanticPreservationError(
+            "the layout changed the plant it was asked to draw: " + "; ".join(engineering)
+        )
+    layout_input = layout_input_preservation_problems(plan, topology)
+    if layout_input:
+        raise LayoutInputPreservationError(
+            "the layout changed its own input: " + "; ".join(layout_input)
         )
     coverage = geometry_coverage_problems(plan)
     if coverage:
@@ -532,24 +609,29 @@ __all__ = [
     "CANONICAL_PROJECTION_FIELD_NAMES",
     "ENGINEERING_DIGEST_BEFORE_LAYOUT",
     "ENGINEERING_ROW_PARTS",
+    "ENGINEERING_SEMANTIC_ROW_PARTS",
     "REPLAY_COMPARES_ACROSS_VERSIONS",
     "CanonicalProjectionError",
+    "EngineeringSemanticPreservationError",
     "GeometryCoverageError",
     "LayoutIdentityError",
+    "LayoutInputPreservationError",
     "ReplayIdentityMismatchError",
     "SemanticLayoutIdentity",
-    "SemanticPreservationError",
     "canonical_layout_digest",
     "canonical_layout_digest_for_payload",
     "canonical_layout_payload",
     "canonical_projection_envelope",
     "canonical_projection_rows",
     "deterministic_replay_problems",
+    "engineering_semantic_preservation_problems",
+    "engineering_semantic_rows",
     "finalize_semantic_layout",
     "geometry_coverage_problems",
+    "layout_input_preservation_problems",
     "payload_problems",
     "plan_engineering_digest",
     "plan_engineering_rows",
+    "plan_engineering_semantic_digest",
     "replay_verifies_identity_but_not_semantics",
-    "semantic_preservation_problems",
 ]

@@ -1529,27 +1529,31 @@ CANONICAL_LAYOUT_DIGEST_IS_PRODUCED_BY_THE_LAYOUT_ENGINE = True
 CANONICAL_LAYOUT_DIGEST_REQUIRES_THE_STEP_4_PLAN = True
 
 # --- Negative gate 1: layout may not change semantics ------------------------------------
-#: The two sides are computed by different code from different inputs -- the engineering digest
-#: is reconstructed from the topology that was received, the structure digest from the plan's own
-#: live fields -- and a layout that reclassifies a device, re-points a connection, moves a node to
-#: another system or drops a loop member makes them differ. Same digest function on both sides
-#: would only prove the function is deterministic.
-LAYOUT_SEMANTIC_PRESERVATION_GATE = (
-    "semantic_digest_before_layout_equals_the_semantic_digest_reconstructed_after_layout"
+#
+# This is *two* proofs, not one, and the split is the point. The identity boundary the earlier
+# steps were signed under separates three things -- engineering facts, the renderer binding, and
+# the layout intent -- and a single gate named "semantic preservation" that digested all three
+# would put them back into one identity, which is the defect this milestone exists to remove.
+#
+# Proof A: the plant did not change. Its two sides are computed by different code from different
+# inputs -- the engineering rows are read from the topology that was received, then rebuilt from
+# the plan's own live fields -- so a layout that reclassifies a device, rewrites a tag, re-points
+# a connection, moves a node to another system or drops a loop member makes them differ. Calling
+# one digest function twice on one input would only prove the function is deterministic.
+ENGINEERING_SEMANTIC_PRESERVATION_GATE = (
+    "engineering_semantic_digest_before_layout_equals_the_digest_reconstructed_after_layout"
 )
 SEMANTIC_DIGEST_BEFORE_LAYOUT_IS_COMPUTED_AT_INGRESS = True
 SEMANTIC_DIGEST_AFTER_LAYOUT_IS_RECONSTRUCTED_FROM_THE_FINALIZED_PLAN = True
-SEMANTIC_PRESERVATION_IS_VERIFIED_AT_THE_LAYOUT_IDENTITY_STEP = True
-SEMANTIC_PRESERVATION_FAILURE_IS_A_HARD_FAILURE = True
-#: What the gate covers at the layout layer. Structural, because that is what the engine
-#: consumes and what the plan carries; a device's tag and name are covered a layer up, where
-#: they exist, and are deliberately *not* copied into the plan to be re-checked here:
-#: ``spec_semantic_digest`` == ``topology_semantic_digest`` is the gate that owns them.
-LAYOUT_SEMANTIC_PRESERVATION_COVERS: tuple[str, ...] = (
+ENGINEERING_SEMANTIC_PRESERVATION_IS_VERIFIED_AT_THE_LAYOUT_IDENTITY_STEP = True
+ENGINEERING_SEMANTIC_PRESERVATION_FAILURE_IS_A_HARD_FAILURE = True
+ENGINEERING_SEMANTIC_PRESERVATION_COVERS: tuple[str, ...] = (
     "equipment_identity",
     "instrument_identity",
-    "node_kind",
-    "symbol_binding",
+    "tag",
+    "equipment_class",
+    "instrument_type",
+    "measurement",
     "connection_identity",
     "connection_endpoints",
     "connection_ports",
@@ -1558,13 +1562,39 @@ LAYOUT_SEMANTIC_PRESERVATION_COVERS: tuple[str, ...] = (
     "system_membership",
     "system_order",
     "required_loop_membership",
-    "layout_intent_classes",
 )
-#: Named as an explicit boundary rather than left to a reader's assumption: the layout layer's
-#: gate is structural, and prose facts are covered upstream where they are carried.
-LAYOUT_SEMANTIC_PRESERVATION_DOES_NOT_COVER_PROSE_FACTS = True
-PROSE_FACTS_ARE_COVERED_BY_THE_UPSTREAM_ADAPTER_LOSSLESSNESS_GATE = True
-# And the second half of the same gate, which no digest can express: the geometry has to cover
+#: Excluded on purpose, and each for its own reason: a symbol binding is a renderer decision that
+#: the engineering digest was already signed to exclude, and a layout intent class is a request
+#: about presentation. Both are real, and both are checked -- by proof B, under their own name.
+ENGINEERING_SEMANTIC_PRESERVATION_EXCLUDES: tuple[str, ...] = (
+    "symbol_binding",
+    "layout_intent",
+    "placement",
+    "routing",
+    "canvas",
+)
+#: The upstream digest does carry the layout intent -- it is part of the specification. This gate
+#: is the engineering *subset*, so "the same words" of the two digests cannot be confused.
+ENGINEERING_SEMANTIC_DIGEST_IS_A_SUBSET_OF_THE_UPSTREAM_SEMANTIC_DIGEST = True
+
+# Proof B: the layout engine did not silently swap a symbol or change the intent it was given.
+# No new identity axis: it is a structural equality against the topology the engine received.
+LAYOUT_INPUT_PRESERVATION_GATE = "layout_input_rows_are_structurally_equal_before_and_after_layout"
+LAYOUT_INPUT_PRESERVATION_IS_VERIFIED_AT_THE_LAYOUT_IDENTITY_STEP = True
+LAYOUT_INPUT_PRESERVATION_FAILURE_IS_A_HARD_FAILURE = True
+LAYOUT_INPUT_PRESERVATION_COVERS: tuple[str, ...] = (
+    "symbol_binding",
+    "node_kind_for_rendering",
+    "layout_intent_classes",
+    "adapter_topology_identity",
+)
+LAYOUT_INPUT_PRESERVATION_IS_STRUCTURAL_EQUALITY = True
+LAYOUT_INPUT_PRESERVATION_INTRODUCES_NO_NEW_IDENTITY_AXIS = True
+#: Neither proof may be folded into the other: a gate that covered both would be the single
+#: "semantic" identity this split removes.
+ONE_PRESERVATION_GATE_REPLACES_THE_TWO = False
+
+# And the second half of proof A, which no digest can express: the geometry has to cover
 # the semantics exactly -- one placement per device, one route per connection, nothing placed
 # that nobody declared.
 LAYOUT_GEOMETRY_MUST_COVER_EVERY_SEMANTIC_ENTITY = True
@@ -1592,11 +1622,18 @@ CANONICAL_LAYOUT_DIGEST_ENVELOPE_IS_CLOSED = True
 CANONICAL_LAYOUT_DIGEST_CARRIES_ITS_VERSION = True
 REPLAY_MAY_COMPARE_TWO_DIGESTS_FROM_DIFFERENT_VERSIONS = False
 
-#: The canonical projection is a *layout* projection: it identifies where things are, never what
-#: they say. Label text is placed but not digested -- the same ruling §12 already made for
-#: annotations, restated here because the digest is the place someone would be tempted to add it.
+#: Two scopes, and conflating them was a real wording error caught at the gate. The canonical
+#: *projection* is a geometry projection: it identifies where things are, so it carries no label
+#: text and no tag -- the same ruling §12 already made for annotations. The canonical *layout
+#: digest* is wider than its projection: its envelope binds the semantic input identity, so
+#: ``P-201 -> P-301`` with every coordinate unchanged leaves the projection equal and moves the
+#: digest. That is correct: the digest names "this semantic input under these layout rules and this
+#: symbol geometry", not "these pixels".
 CANONICAL_PROJECTION_EXCLUDES_LABEL_TEXT = True
 CANONICAL_PROJECTION_EXCLUDES_TAGS = True
+CANONICAL_PROJECTION_AND_CANONICAL_LAYOUT_DIGEST_HAVE_DIFFERENT_SCOPES = True
+TAG_CHANGE_WITHOUT_A_GEOMETRY_CHANGE_CHANGES_THE_CANONICAL_LAYOUT_DIGEST = True
+CANONICAL_LAYOUT_DIGEST_IS_NOT_MERELY_A_GEOMETRY_DIGEST = True
 
 #: Fields the step-5 plan carries that stay out of ``SemanticLayoutPlan.to_projection``: the
 #: canonical projection, its envelope and its digest. The two identities stay independent on
@@ -2917,27 +2954,79 @@ def validate_contract() -> list[str]:
             "the semantic preservation gate runs before the identity is computed: a digest of "
             "a layout that changed the plant would be an identity for the wrong drawing"
         )
-    if not LAYOUT_SEMANTIC_PRESERVATION_GATE:
-        problems.append("the layout must state its semantic preservation gate")
-    if not SEMANTIC_PRESERVATION_IS_VERIFIED_AT_THE_LAYOUT_IDENTITY_STEP:
-        problems.append("semantic preservation is verified at the identity step")
+    if not ENGINEERING_SEMANTIC_PRESERVATION_GATE:
+        problems.append("the layout must state its engineering semantic preservation gate")
+    if not LAYOUT_INPUT_PRESERVATION_GATE:
+        problems.append("the layout must state its layout-input preservation gate")
+    if ONE_PRESERVATION_GATE_REPLACES_THE_TWO:
+        problems.append(
+            "engineering semantics and the renderer binding may not share one preservation gate: "
+            "the three identity layers were separated on purpose"
+        )
+    for flag, what in (
+        (ENGINEERING_SEMANTIC_PRESERVATION_IS_VERIFIED_AT_THE_LAYOUT_IDENTITY_STEP, "engineering"),
+        (LAYOUT_INPUT_PRESERVATION_IS_VERIFIED_AT_THE_LAYOUT_IDENTITY_STEP, "layout-input"),
+    ):
+        if not flag:
+            problems.append(f"{what} preservation is verified at the identity step")
     if not SEMANTIC_DIGEST_BEFORE_LAYOUT_IS_COMPUTED_AT_INGRESS:
         problems.append("the before-layout digest is computed at ingress")
     if not SEMANTIC_DIGEST_AFTER_LAYOUT_IS_RECONSTRUCTED_FROM_THE_FINALIZED_PLAN:
         problems.append("the after-layout digest is reconstructed from the finalized plan")
-    if not SEMANTIC_PRESERVATION_FAILURE_IS_A_HARD_FAILURE:
+    if not ENGINEERING_SEMANTIC_PRESERVATION_FAILURE_IS_A_HARD_FAILURE:
         problems.append("a layout that changed the plant is a hard failure")
-    preserved = set(LAYOUT_SEMANTIC_PRESERVATION_COVERS)
+    if not LAYOUT_INPUT_PRESERVATION_FAILURE_IS_A_HARD_FAILURE:
+        problems.append("a layout that swapped a symbol or an intent class is a hard failure")
+    preserved = set(ENGINEERING_SEMANTIC_PRESERVATION_COVERS)
+    excluded = set(ENGINEERING_SEMANTIC_PRESERVATION_EXCLUDES)
     for noun in (
         "equipment_identity",
         "instrument_identity",
+        "tag",
+        "equipment_class",
+        "instrument_type",
+        "measurement",
         "connection_identity",
         "connection_endpoints",
+        "connection_ports",
+        "connection_medium",
         "system_membership",
+        "system_order",
         "flow_direction",
+        "required_loop_membership",
     ):
         if noun not in preserved:
-            problems.append(f"the preservation gate must cover {noun!r}")
+            problems.append(f"the engineering preservation gate must cover {noun!r}")
+    for noun in ("symbol_binding", "layout_intent"):
+        if noun in preserved:
+            problems.append(
+                f"{noun!r} is not an engineering semantic fact: folding it into the engineering "
+                "gate puts the renderer binding and the layout intent back into the identity the "
+                "earlier steps separated"
+            )
+        if noun not in excluded:
+            problems.append(f"{noun!r} must be named as excluded from the engineering gate")
+    if not ENGINEERING_SEMANTIC_DIGEST_IS_A_SUBSET_OF_THE_UPSTREAM_SEMANTIC_DIGEST:
+        problems.append(
+            "the layout-layer engineering digest is a subset of the upstream semantic digest: it "
+            "may not claim to be the same wider value"
+        )
+    layout_input = set(LAYOUT_INPUT_PRESERVATION_COVERS)
+    for noun in (
+        "symbol_binding",
+        "node_kind_for_rendering",
+        "layout_intent_classes",
+        "adapter_topology_identity",
+    ):
+        if noun not in layout_input:
+            problems.append(f"the layout-input gate must cover {noun!r}")
+    if not LAYOUT_INPUT_PRESERVATION_IS_STRUCTURAL_EQUALITY:
+        problems.append("layout-input preservation is a structural equality, not a new digest")
+    if not LAYOUT_INPUT_PRESERVATION_INTRODUCES_NO_NEW_IDENTITY_AXIS:
+        problems.append(
+            "the layout-input gate must not introduce a new identity axis: three identity "
+            "concepts are the budget"
+        )
     for noun, flag in (
         ("equipment_and_instrument_identity", LAYOUT_GEOMETRY_MUST_COVER_EVERY_SEMANTIC_ENTITY),
         ("route_per_connection", LAYOUT_GEOMETRY_MUST_COVER_EVERY_SEMANTIC_CONNECTION),
@@ -2950,18 +3039,11 @@ def validate_contract() -> list[str]:
         problems.append("geometry may not reference an entity nobody declared")
     if not A_DROPPED_ENTITY_OR_CONNECTION_IS_A_HARD_FAILURE:
         problems.append("a dropped entity or connection is a hard failure")
-    if not LAYOUT_SEMANTIC_PRESERVATION_DOES_NOT_COVER_PROSE_FACTS:
-        problems.append(
-            "the layout layer's gate is structural and must say so: prose facts are covered "
-            "where they are carried"
-        )
-    if not PROSE_FACTS_ARE_COVERED_BY_THE_UPSTREAM_ADAPTER_LOSSLESSNESS_GATE:
-        problems.append(
-            "if the layout gate does not cover prose facts, nothing would: name the gate that "
-            "does"
-        )
     if not ADAPTER_SEMANTIC_DIGEST_BEFORE_EQUALS_AFTER:
-        problems.append("the upstream losslessness gate is what covers the prose facts")
+        problems.append(
+            "the upstream losslessness gate is what covers the specification as a whole, "
+            "including the prose fields the layout layer does not carry"
+        )
     if not REPLAY_COMPARES_CANONICAL_IDENTITY_NOT_PYTHON_OBJECTS:
         problems.append("replay compares canonical identity, not Python objects")
     if not REPLAY_COMPARES_DIGESTS_NOT_SERIALIZED_OBJECTS:
@@ -2984,7 +3066,19 @@ def validate_contract() -> list[str]:
     if not CANONICAL_PROJECTION_EXCLUDES_LABEL_TEXT:
         problems.append("the canonical projection identifies where things are, not what they say")
     if not CANONICAL_PROJECTION_EXCLUDES_TAGS:
-        problems.append("a layout digest is not a tag digest")
+        problems.append("a geometry projection is not a tag projection")
+    if not CANONICAL_PROJECTION_AND_CANONICAL_LAYOUT_DIGEST_HAVE_DIFFERENT_SCOPES:
+        problems.append(
+            "the projection and the digest have different scopes: the digest binds the semantic "
+            "input identity, the projection carries geometry"
+        )
+    if not TAG_CHANGE_WITHOUT_A_GEOMETRY_CHANGE_CHANGES_THE_CANONICAL_LAYOUT_DIGEST:
+        problems.append(
+            "a tag change with no geometry change must move the canonical layout digest: the "
+            "digest names the semantic input under these rules, not these pixels"
+        )
+    if not CANONICAL_LAYOUT_DIGEST_IS_NOT_MERELY_A_GEOMETRY_DIGEST:
+        problems.append("the canonical layout digest is not merely a geometry digest")
     if not PLAN_DIGEST_AND_LAYOUT_DIGEST_ARE_INDEPENDENT:
         problems.append(
             "the plan digest and the canonical layout digest must be independent: one containing "

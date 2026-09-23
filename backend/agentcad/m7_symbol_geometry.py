@@ -120,10 +120,10 @@ class SymbolNotRenderableError(SymbolGeometryError):
 class SymbolShapeOutOfBoundsError(SymbolGeometryError):
     """A shape whose unstroked geometry leaves the symbol's own declared box.
 
-    The canvas inflates the declared box by the stroke envelope, which is only the right answer
-    while this invariant holds. A shape that overflows makes the rendered bounds an approximation
-    of something nobody drew, so it is refused where the geometry freezes -- with the symbol and
-    the shape named, because a catalogue defect nobody can locate is a catalogue defect that stays.
+    The canvas inflates the declared box by the stroke envelope, and containment is what makes
+    that envelope *safe* -- nothing the renderer draws can leave it. A shape that overflows breaks
+    the proof, so it is refused where the geometry freezes, with the symbol and the shape named,
+    because a catalogue defect nobody can locate is a catalogue defect that stays.
     """
 
     code = "symbol_shape_outside_intrinsic_box"
@@ -352,13 +352,13 @@ def symbol_shape_overflow(symbol: Any) -> tuple[str, ...]:
 
 
 def require_shapes_fit_the_intrinsic_box(symbol: Any) -> None:
-    """The invariant the rendered-bounds rule rests on, enforced where geometry is frozen."""
+    """The invariant the presentation-envelope rule rests on, enforced where geometry freezes."""
 
     problems = symbol_shape_overflow(symbol)
     if problems:
         raise SymbolShapeOutOfBoundsError(
-            f"symbol {symbol.key!r} draws outside its own declared box, so its rendered bounds "
-            "cannot be derived by inflating that box: " + "; ".join(problems),
+            f"symbol {symbol.key!r} draws outside its own declared box, so inflating that box "
+            "cannot be proved to contain the drawing: " + "; ".join(problems),
             symbol_key=symbol.key,
             shape_index=0,
         )

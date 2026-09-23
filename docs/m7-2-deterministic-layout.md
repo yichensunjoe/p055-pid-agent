@@ -1116,9 +1116,10 @@ plan 字段集增加 `content_bounds`，因此 `m7-semantic-layout-plan-digest` 
 修正后的形状（**每个 kind 的 stroke 都归 presentation bounds**）：
 
 ```
-PRESENTATION_BOUNDS_ARE_RENDERED_EXTENTS = True
-CONTENT_BOUNDS_INPUTS_ARE_RENDERED_EXTENTS = True
-CONTENT_BOUNDS_MAY_USE_A_CENTERLINE_INSTEAD_OF_A_RENDERED_EXTENT = False
+PRESENTATION_BOUNDS_ARE_CONSERVATIVE_RENDER_ENVELOPES = True
+PRESENTATION_BOUNDS_MAY_OVERAPPROXIMATE_ACTUAL_RENDERED_EXTENTS = True
+CONTENT_BOUNDS_INPUTS_ARE_DECLARED_PRESENTATION_ENVELOPES = True
+CONTENT_BOUNDS_MAY_USE_A_CENTERLINE_INSTEAD_OF_A_PRESENTATION_ENVELOPE = False
 ROUTE_STROKE_CONTRIBUTES_TO_PRESENTATION_BOUNDS = True
 LEADER_STROKE_CONTRIBUTES_TO_PRESENTATION_BOUNDS = True
 SYMBOL_OUTLINE_STROKE_CONTRIBUTES_TO_PRESENTATION_BOUNDS = True
@@ -1129,7 +1130,7 @@ PRESENTATION_STROKE_ENVELOPE_RULE =
 PRESENTATION_STROKE_POLICY_IS_UNDER_THE_LAYOUT_RULES_VERSION = True
 PRESENTATION_STROKE_POLICY_CHANGE_REQUIRES_LAYOUT_RULES_VERSION_BUMP = True
 PRESENTATION_STROKE_IS_NOT_A_SEPARATE_DIGEST_INPUT = True
-SYMBOL_BOX_IS_NOT_THE_SYMBOL_RENDERED_EXTENT = True
+SYMBOL_BOX_IS_NOT_THE_SYMBOL_PRESENTATION_ENVELOPE = True
 LEADER_LINE_ROWS_EXIST_IN_THE_PLAN = False        （policy 覆盖引线，但当前还没有引线行）
 ```
 
@@ -1152,7 +1153,7 @@ annotation_text stroke 0    allowance 0     → reach 0   （文本框本身就�
    reach(1.75)，派生出来的画布永远不会裁自己的 stroke。这正是这个校验存在的理由：它面向的是**来自别处**的画布
    （旧默认、调用方、更小的包络）。fixture 因此取"中心线包络外扩 1 个单位"，使中心线判定与渲染判定给出
    不同答案；测试同时断言"每个中心线都在里面"（旧的判定会全绿）与"确实有 stroke 越界"。
-2. 引线同类：`presentation_stroke_envelope("leader_line").reach > 0` 且 `rendered_extent` 对引线中心线生效。
+2. 引线同类：`presentation_stroke_envelope("leader_line").reach > 0` 且 `presentation_envelope` 对引线中心线生效。
    当前 plan 不产生引线行，这一点作为**声明的事实**（`LEADER_LINE_ROWS_EXIST_IN_THE_PLAN = False`）写下来，
    免得"策略覆盖引线"被读成"已经有引线要覆盖"。
 3. mutation：**去掉 stroke 膨胀 → 上述 fixture 必须红**（实测 2 条红）；只去掉符号轮廓膨胀也红（1 条红）。
@@ -1168,16 +1169,24 @@ margin 是关于派生的属性；先报前者，读者看到的才是自己能�
 
 ### 13.9 symbol 的「未描边几何 ⊆ intrinsic box」：把近似变成可证明的
 
-上一节说 `rendered symbol bounds = 声明盒 inflate stroke envelope`。这句话**只在**"所有未描边 shape 都在
-声明盒内"成立时才精确——否则对符号仍然是近似，而 `PRESENTATION_BOUNDS_ARE_RENDERED_EXTENTS = True` 是更强的声明。
-所以这条前提不能留成隐含假设，它在**冻结几何的地方**被验证：
+上一节说 `symbol presentation envelope = 声明盒 inflate stroke envelope`。这条规则的价值在于**安全**：
+只要"所有未描边 shape 都在声明盒内"，包络就**一定包含**渲染出的图形。它不声称**精确**——盒是保守的，
+未占满盒的符号会被量成整个盒——所以这里证明的是包含性，不是等号。上一版的合同文字写了"exact rendered extent"，
+而同一段里的"允许量"又承认了近似，两句互相矛盾，已删除（退役名列入 `FAILED_EXACTNESS_CLAIM_NAMES`，由 validator 检查其不存在）。
+这条前提不能留成隐含假设，它在**冻结几何的地方**被验证：
 
 ```
 SYMBOL_UNSTROKED_SHAPES_MUST_FIT_THE_INTRINSIC_BOX = True
 SYMBOL_SHAPE_OVERFLOW_IS_A_HARD_FAILURE_AT_FREEZE = True
 SYMBOL_SHAPE_OVERFLOW_NAMES_THE_SYMBOL_AND_THE_SHAPE = True
-SYMBOL_RENDERED_BOUNDS_RULE = "declared_intrinsic_box_inflated_by_the_declared_stroke_envelope_v1"
-SYMBOL_RENDERED_BOUNDS_ARE_EXACT_GIVEN_THE_CONTAINMENT_INVARIANT = True
+SYMBOL_PRESENTATION_ENVELOPE_RULE =
+    "declared_intrinsic_box_inflated_by_the_declared_stroke_envelope_v1"
+# 包含性 —— 证明包络安全；不证明它与像素相等
+SYMBOL_SHAPE_CONTAINMENT_PROVES_ENVELOPE_SAFETY = True
+FAILED_EXACTNESS_CLAIM_NAMES = (
+    "PRESENTATION_BOUNDS_ARE_RENDERED_EXTENTS",
+    "SYMBOL_RENDERED_BOUNDS_ARE_EXACT_GIVEN_THE_CONTAINMENT_INVARIANT",
+)
 SYMBOL_SHAPE_BOUNDS_ARE_CONSERVATIVE_FOR_CURVES = True
 SYMBOL_SHAPE_BOUNDS_USE_CONTROL_POINTS_NOT_SAMPLED_CURVES = True
 SYMBOL_SHAPE_KINDS = (line, polyline, rect, circle, path, text)

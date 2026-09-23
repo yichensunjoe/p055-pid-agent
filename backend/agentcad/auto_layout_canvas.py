@@ -159,8 +159,12 @@ def presentation_stroke_envelope(kind: str) -> PresentationStrokeEnvelope:
     )
 
 
-def rendered_extent(kind: str, box: Rect) -> Rect:
-    """A kind's rendered extent: its geometry inflated by the declared stroke envelope."""
+def presentation_envelope(kind: str, box: Rect) -> Rect:
+    """A kind's presentation envelope: its geometry inflated by the declared stroke envelope.
+
+    An envelope, not a measurement: it is guaranteed to contain what the renderer draws, and it is
+    allowed to be larger than the pixels.
+    """
 
     return box.expanded(presentation_stroke_envelope(kind).reach)
 
@@ -188,7 +192,7 @@ def aspect_class_ratio(preferred_aspect_class: str) -> float:
 
 @dataclass(frozen=True)
 class PresentationBoxes:
-    """Everything the canvas has to contain, as rendered extents.
+    """Everything the canvas has to contain, as declared presentation envelopes.
 
     A route is kept as its centerline points plus the stroke reach that applies to them: the
     centerline is what the router produced and the reach is what the renderer adds, and a check
@@ -224,7 +228,7 @@ def _route_points(row: Mapping[str, Any]) -> tuple[tuple[float, float], ...]:
 
 
 def presentation_boxes(plan: SemanticLayoutPlan) -> PresentationBoxes:
-    """Read the drawing back out of the plan as *rendered* extents.
+    """Read the drawing back out of the plan as conservative *presentation envelopes*.
 
     A symbol's declared box is not its drawn box -- catalogue shapes reach the box edges, so a
     stroked outline lands half a stroke outside it -- and a connector's waypoints are its
@@ -265,7 +269,7 @@ def presentation_boxes(plan: SemanticLayoutPlan) -> PresentationBoxes:
 
 
 def content_bounds_of(plan: SemanticLayoutPlan) -> Rect:
-    """The envelope of everything the layout drew -- nodes, routes and annotations together."""
+    """The smallest box containing every declared presentation envelope -- and no claim beyond."""
 
     boxes = presentation_boxes(plan).boxes()
     if not boxes:
@@ -348,20 +352,20 @@ def clipping_problems(plan: SemanticLayoutPlan, canvas: Rect) -> list[str]:
     for name, box in boxes.nodes:
         if not _inside(box, canvas):
             problems.append(
-                f"node {name!r} rendered bounds {box} are outside the canvas {canvas}"
+                f"node {name!r} presentation envelope {box} is outside the canvas {canvas}"
             )
     for name, points, reach in boxes.routes:
         for point in points:
             rendered = _point_box(point).expanded(reach)
             if not _inside(rendered, canvas):
                 problems.append(
-                    f"route {name!r} waypoint {point} has rendered bounds {rendered} outside "
-                    f"the canvas {canvas}"
+                    f"route {name!r} waypoint {point} has presentation envelope {rendered} "
+                    f"outside the canvas {canvas}"
                 )
     for name, box in boxes.annotations:
         if not _inside(box, canvas):
             problems.append(
-                f"annotation {name!r} rendered bounds {box} are outside the canvas {canvas}"
+                f"annotation {name!r} presentation envelope {box} is outside the canvas {canvas}"
             )
     return problems
 
@@ -552,6 +556,6 @@ __all__ = [
     "margin_is_preserved",
     "presentation_boxes",
     "presentation_stroke_envelope",
-    "rendered_extent",
+    "presentation_envelope",
     "route_node_intersection_problems",
 ]

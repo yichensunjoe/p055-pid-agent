@@ -1359,17 +1359,30 @@ CONTENT_BOUNDS_INPUTS: tuple[str, ...] = (
 CONTENT_BOUNDS_IS_A_CLOSED_LIST = True
 CONTENT_BOUNDS_MUST_COVER_EVERY_PRESENTATION_ROW = True
 CONTENT_BOUNDS_MAY_EXCLUDE_A_PRESENTATION_ROW = False
-#: Each covered input contributes its **rendered** extent, not its centerline or its nominal box.
-#: "All presentation geometry fits the canvas" and "a stroke has no width" are two claims that
-#: cannot both hold, and the canvas is the one that would be wrong.
-CONTENT_BOUNDS_INPUTS_ARE_RENDERED_EXTENTS = True
-CONTENT_BOUNDS_MAY_USE_A_CENTERLINE_INSTEAD_OF_A_RENDERED_EXTENT = False
+#: Each covered input contributes its **declared presentation envelope**, not its centerline and not
+#: its nominal box. "All presentation geometry fits the canvas" and "a stroke has no width" are two
+#: claims that cannot both hold, and the canvas is the one that would be wrong.
+CONTENT_BOUNDS_INPUTS_ARE_DECLARED_PRESENTATION_ENVELOPES = True
+CONTENT_BOUNDS_MAY_USE_A_CENTERLINE_INSTEAD_OF_A_PRESENTATION_ENVELOPE = False
+#: Tight *over the declared envelopes*: the envelope of them is the smallest box containing all of
+#: them. It is not a claim about pixels -- see the conservative-envelope pair below.
+CONTENT_BOUNDS_ARE_TIGHT_OVER_DECLARED_PRESENTATION_ENVELOPES = True
+CANVAS_CLIPS_NO_DECLARED_PRESENTATION_ENVELOPE = True
 
-#: The stroke rule, as data. A stroked path is drawn *around* its centerline, so its rendered
-#: extent is the geometry inflated by a declared envelope; the catalogue's own shapes make this
-#: concrete -- a port stub ends exactly at ``x = 0``, so a 1.5px outline reaches 0.75px outside
-#: the declared box. Named per kind because the kinds do not share a width.
-PRESENTATION_BOUNDS_ARE_RENDERED_EXTENTS = True
+#: The stroke rule, as data. A stroked path is drawn *around* its centerline, so what the canvas
+#: must hold is the geometry inflated by a declared envelope; the catalogue's own shapes make this
+#: concrete -- a port stub ends exactly at ``x = 0``, so a 1.5px outline reaches 0.75px outside the
+#: declared box. Named per kind because the kinds do not share a width.
+#:
+#: What this is *not*: an exact rendered extent. Both halves are conservative -- a symbol whose
+#: shapes occupy the middle of its box is measured as its whole box, and the cap/join allowance is
+#: a declared allowance rather than a renderer query -- so the envelope is guaranteed to contain the
+#: drawing and is allowed to be larger than the pixels. Claiming exactness would be a promise the
+#: engine cannot keep, and the goal here is that nothing is clipped, not that no pixel of margin is
+#: wasted. A pixel-tight canvas would mean computing the shapes' own geometry bounds instead of
+#: inflating the box, which is a quality upgrade with its own gate.
+PRESENTATION_BOUNDS_ARE_CONSERVATIVE_RENDER_ENVELOPES = True
+PRESENTATION_BOUNDS_MAY_OVERAPPROXIMATE_ACTUAL_RENDERED_EXTENTS = True
 ROUTE_STROKE_CONTRIBUTES_TO_PRESENTATION_BOUNDS = True
 LEADER_STROKE_CONTRIBUTES_TO_PRESENTATION_BOUNDS = True
 SYMBOL_OUTLINE_STROKE_CONTRIBUTES_TO_PRESENTATION_BOUNDS = True
@@ -1391,8 +1404,9 @@ PRESENTATION_STROKE_POLICY_IS_UNDER_THE_LAYOUT_RULES_VERSION = True
 PRESENTATION_STROKE_POLICY_CHANGE_REQUIRES_LAYOUT_RULES_VERSION_BUMP = True
 PRESENTATION_STROKE_IS_NOT_A_SEPARATE_DIGEST_INPUT = True
 #: The fact that motivated inflating symbol bounds rather than only route bounds: the catalogue
-#: box is the geometry, not the drawn box.
-SYMBOL_BOX_IS_NOT_THE_SYMBOL_RENDERED_EXTENT = True
+#: box is the geometry, not the drawn box, so the drawn box has to be derived rather than assumed.
+#: The derived box is an envelope that contains the drawing, not a measurement of it.
+SYMBOL_BOX_IS_NOT_THE_SYMBOL_PRESENTATION_ENVELOPE = True
 #: No step produces leader-line geometry yet. Named rather than left to a reader to notice, because
 #: "the policy covers leaders" and "there are leaders to cover" are different facts.
 LEADER_LINE_ROWS_EXIST_IN_THE_PLAN = False
@@ -1405,10 +1419,19 @@ LEADER_LINE_ROWS_EXIST_IN_THE_PLAN = False
 SYMBOL_UNSTROKED_SHAPES_MUST_FIT_THE_INTRINSIC_BOX = True
 SYMBOL_SHAPE_OVERFLOW_IS_A_HARD_FAILURE_AT_FREEZE = True
 SYMBOL_SHAPE_OVERFLOW_NAMES_THE_SYMBOL_AND_THE_SHAPE = True
-SYMBOL_RENDERED_BOUNDS_RULE = (
+SYMBOL_PRESENTATION_ENVELOPE_RULE = (
     "declared_intrinsic_box_inflated_by_the_declared_stroke_envelope_v1"
 )
-SYMBOL_RENDERED_BOUNDS_ARE_EXACT_GIVEN_THE_CONTAINMENT_INVARIANT = True
+#: Containment is what makes the envelope **safe** -- nothing the renderer draws can leave it. It
+#: does not make it exact, and the contract does not say so: the previous wording claimed an exact
+#: rendered extent, which the same paragraph's own allowance contradicted.
+SYMBOL_SHAPE_CONTAINMENT_PROVES_ENVELOPE_SAFETY = True
+#: The two names an earlier revision used to claim exactness. Listed so their absence is checked
+#: rather than remembered.
+FAILED_EXACTNESS_CLAIM_NAMES: tuple[str, ...] = (
+    "PRESENTATION_BOUNDS_ARE_RENDERED_EXTENTS",
+    "SYMBOL_RENDERED_BOUNDS_ARE_EXACT_GIVEN_THE_CONTAINMENT_INVARIANT",
+)
 SYMBOL_SHAPE_BOUNDS_ARE_CONSERVATIVE_FOR_CURVES = True
 SYMBOL_SHAPE_BOUNDS_USE_CONTROL_POINTS_NOT_SAMPLED_CURVES = True
 SYMBOL_SHAPE_KINDS: tuple[str, ...] = ("line", "polyline", "rect", "circle", "path", "text")
@@ -2517,18 +2540,33 @@ def validate_contract() -> list[str]:
         problems.append("a bounds computed over a subset is a canvas that crops")
     if CONTENT_BOUNDS_MAY_EXCLUDE_A_PRESENTATION_ROW:
         problems.append("no presentation row may be left out of the content envelope")
-    if not CONTENT_BOUNDS_INPUTS_ARE_RENDERED_EXTENTS:
+    if not CONTENT_BOUNDS_INPUTS_ARE_DECLARED_PRESENTATION_ENVELOPES:
         problems.append(
-            "each covered input contributes its rendered extent: a canvas fitted to centerlines "
-            "clips the strokes drawn around them"
+            "each covered input contributes its declared presentation envelope: a canvas fitted "
+            "to centerlines clips the strokes drawn around them"
         )
-    if CONTENT_BOUNDS_MAY_USE_A_CENTERLINE_INSTEAD_OF_A_RENDERED_EXTENT:
+    if CONTENT_BOUNDS_MAY_USE_A_CENTERLINE_INSTEAD_OF_A_PRESENTATION_ENVELOPE:
         problems.append(
-            "a centerline is not a presentation extent: 'all presentation geometry fits the "
+            "a centerline is not a presentation envelope: 'all presentation geometry fits the "
             "canvas' and 'a stroke has no width' cannot both hold"
         )
-    if not PRESENTATION_BOUNDS_ARE_RENDERED_EXTENTS:
-        problems.append("presentation bounds are rendered extents, not nominal geometry")
+    if not PRESENTATION_BOUNDS_ARE_CONSERVATIVE_RENDER_ENVELOPES:
+        problems.append("presentation bounds are conservative render envelopes, not nominal geometry")
+    if not PRESENTATION_BOUNDS_MAY_OVERAPPROXIMATE_ACTUAL_RENDERED_EXTENTS:
+        problems.append(
+            "a conservative envelope is allowed to be larger than the pixels: forbidding that "
+            "makes 'nothing is clipped' depend on a promise the engine cannot keep"
+        )
+    for retired in FAILED_EXACTNESS_CLAIM_NAMES:
+        if retired in globals():
+            problems.append(
+                f"the contract may not claim {retired!r}: containment proves the envelope is safe, "
+                "not that it equals the rendered extent"
+            )
+    if not CONTENT_BOUNDS_ARE_TIGHT_OVER_DECLARED_PRESENTATION_ENVELOPES:
+        problems.append("the content envelope must be tight over the declared presentation envelopes")
+    if not CANVAS_CLIPS_NO_DECLARED_PRESENTATION_ENVELOPE:
+        problems.append("the canvas must clip none of the declared presentation envelopes")
     for stroke_flag, stroke_sentence in (
         (
             ROUTE_STROKE_CONTRIBUTES_TO_PRESENTATION_BOUNDS,
@@ -2563,7 +2601,7 @@ def validate_contract() -> list[str]:
     stroke_inputs = [name for name in LAYOUT_DIGEST_INPUTS if "stroke" in name]
     if stroke_inputs:
         problems.append(f"the stroke must not become a digest input on its own: {stroke_inputs}")
-    if not SYMBOL_BOX_IS_NOT_THE_SYMBOL_RENDERED_EXTENT:
+    if not SYMBOL_BOX_IS_NOT_THE_SYMBOL_PRESENTATION_ENVELOPE:
         problems.append(
             "the catalogue box is the symbol's geometry, not its drawn box: an outline reaches "
             "outside it"
@@ -2582,11 +2620,12 @@ def validate_contract() -> list[str]:
             "an overflow refusal must name the symbol and the shape: a catalogue defect nobody "
             "can find is a catalogue defect that stays"
         )
-    if not SYMBOL_RENDERED_BOUNDS_RULE.strip():
-        problems.append("the symbol rendered-bounds rule must be named")
-    if not SYMBOL_RENDERED_BOUNDS_ARE_EXACT_GIVEN_THE_CONTAINMENT_INVARIANT:
+    if not SYMBOL_PRESENTATION_ENVELOPE_RULE.strip():
+        problems.append("the symbol presentation-envelope rule must be named")
+    if not SYMBOL_SHAPE_CONTAINMENT_PROVES_ENVELOPE_SAFETY:
         problems.append(
-            "inflating the declared box is only exact while the containment invariant holds"
+            "shape containment is what proves the envelope is safe: it must be stated as a safety "
+            "proof, not as an exactness claim"
         )
     if not SYMBOL_SHAPE_BOUNDS_ARE_CONSERVATIVE_FOR_CURVES:
         problems.append("shape bounds must be conservative for curves, not optimistic")

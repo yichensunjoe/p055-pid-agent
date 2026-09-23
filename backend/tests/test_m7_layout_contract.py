@@ -1505,12 +1505,12 @@ def test_the_validator_reports_presentation_bounds_measured_at_the_centerline(
 ) -> None:
     """The gate's blocker, as a check: a canvas fitted to centerlines clips the strokes."""
 
-    monkeypatch.setattr(contract, "CONTENT_BOUNDS_INPUTS_ARE_RENDERED_EXTENTS", False)
+    monkeypatch.setattr(contract, "CONTENT_BOUNDS_INPUTS_ARE_DECLARED_PRESENTATION_ENVELOPES", False)
     problems = contract.validate_contract()
-    assert any("rendered extent" in problem for problem in problems), problems
+    assert any("declared presentation envelope" in problem for problem in problems), problems
     monkeypatch.undo()
     monkeypatch.setattr(
-        contract, "CONTENT_BOUNDS_MAY_USE_A_CENTERLINE_INSTEAD_OF_A_RENDERED_EXTENT", True
+        contract, "CONTENT_BOUNDS_MAY_USE_A_CENTERLINE_INSTEAD_OF_A_PRESENTATION_ENVELOPE", True
     )
     problems = contract.validate_contract()
     assert any("cannot both hold" in problem for problem in problems), problems
@@ -1568,7 +1568,7 @@ def test_the_validator_reports_the_catalogue_box_read_as_the_drawn_box(
 ) -> None:
     """Catalogue shapes reach the box edges, so this is a fact, not a convention."""
 
-    monkeypatch.setattr(contract, "SYMBOL_BOX_IS_NOT_THE_SYMBOL_RENDERED_EXTENT", False)
+    monkeypatch.setattr(contract, "SYMBOL_BOX_IS_NOT_THE_SYMBOL_PRESENTATION_ENVELOPE", False)
     problems = contract.validate_contract()
     assert any("not its drawn box" in problem for problem in problems), problems
 
@@ -1576,17 +1576,15 @@ def test_the_validator_reports_the_catalogue_box_read_as_the_drawn_box(
 def test_the_validator_reports_symbol_bounds_assumed_rather_than_proven(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Inflating the declared box is exact only while the containment invariant holds."""
+    """Inflating the declared box is safe only while the containment invariant holds."""
 
     monkeypatch.setattr(contract, "SYMBOL_UNSTROKED_SHAPES_MUST_FIT_THE_INTRINSIC_BOX", False)
     problems = contract.validate_contract()
     assert any("must fit its intrinsic box" in problem for problem in problems), problems
     monkeypatch.undo()
-    monkeypatch.setattr(
-        contract, "SYMBOL_RENDERED_BOUNDS_ARE_EXACT_GIVEN_THE_CONTAINMENT_INVARIANT", False
-    )
+    monkeypatch.setattr(contract, "SYMBOL_SHAPE_CONTAINMENT_PROVES_ENVELOPE_SAFETY", False)
     problems = contract.validate_contract()
-    assert any("only exact while the containment invariant holds" in problem for problem in problems)
+    assert any("safety proof" in problem for problem in problems), problems
     monkeypatch.undo()
     monkeypatch.setattr(contract, "SYMBOL_SHAPE_OVERFLOW_IS_A_HARD_FAILURE_AT_FREEZE", False)
     problems = contract.validate_contract()
@@ -1599,6 +1597,75 @@ def test_the_validator_reports_an_overflow_that_nobody_can_locate(
     monkeypatch.setattr(contract, "SYMBOL_SHAPE_OVERFLOW_NAMES_THE_SYMBOL_AND_THE_SHAPE", False)
     problems = contract.validate_contract()
     assert any("must name the symbol and the shape" in problem for problem in problems), problems
+
+
+def test_containment_proves_a_safe_envelope_never_an_exact_rendered_extent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The gate's blocker, pinned both ways.
+
+    Containment plus stroke inflation proves *nothing the renderer draws leaves the envelope*. It
+    cannot prove the envelope equals the pixels: a symbol whose shapes occupy the middle of its box
+    is still measured as the whole box, and the cap/join allowance is a declared allowance rather
+    than a renderer query. Claiming exactness would be a promise the engine cannot keep -- and the
+    promise is only dangerous because the same paragraph already admitted the over-approximation.
+    """
+
+    assert contract.validate_contract() == []
+    assert contract.PRESENTATION_BOUNDS_ARE_CONSERVATIVE_RENDER_ENVELOPES is True
+    assert contract.PRESENTATION_BOUNDS_MAY_OVERAPPROXIMATE_ACTUAL_RENDERED_EXTENTS is True
+    assert contract.SYMBOL_SHAPE_CONTAINMENT_PROVES_ENVELOPE_SAFETY is True
+    # The retired names are gone from the module, and the contract names them so their absence is
+    # *checked* rather than remembered.
+    for retired in contract.FAILED_EXACTNESS_CLAIM_NAMES:
+        assert not hasattr(contract, retired), retired
+    # And if one comes back, the validator refuses it -- the name existing is the defect.
+    monkeypatch.setattr(contract, "PRESENTATION_BOUNDS_ARE_RENDERED_EXTENTS", True, raising=False)
+    problems = contract.validate_contract()
+    assert any("may not claim" in problem for problem in problems), problems
+    monkeypatch.undo()
+    monkeypatch.setattr(
+        contract,
+        "SYMBOL_RENDERED_BOUNDS_ARE_EXACT_GIVEN_THE_CONTAINMENT_INVARIANT",
+        True,
+        raising=False,
+    )
+    problems = contract.validate_contract()
+    assert any("may not claim" in problem for problem in problems), problems
+    monkeypatch.undo()
+    # The two properties that *are* claims about the envelope itself, and do hold.
+    for flag, sentence in (
+        (
+            "PRESENTATION_BOUNDS_ARE_CONSERVATIVE_RENDER_ENVELOPES",
+            "conservative render envelopes",
+        ),
+        ("PRESENTATION_BOUNDS_MAY_OVERAPPROXIMATE_ACTUAL_RENDERED_EXTENTS", "allowed to be larger"),
+    ):
+        monkeypatch.setattr(contract, flag, False)
+        problems = contract.validate_contract()
+        assert any(sentence in problem for problem in problems), (flag, problems)
+        monkeypatch.undo()
+
+
+def test_the_content_bounds_are_tight_over_the_declared_envelopes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tightness is a claim about the envelopes, and the pair must be stated together.
+
+    "Tight over the declared envelopes" and "allowed to over-approximate the pixels" only make
+    sense side by side: alone, the first reads as a pixel-tightness promise the second denies.
+    """
+
+    assert contract.CONTENT_BOUNDS_ARE_TIGHT_OVER_DECLARED_PRESENTATION_ENVELOPES is True
+    assert contract.CANVAS_CLIPS_NO_DECLARED_PRESENTATION_ENVELOPE is True
+    monkeypatch.setattr(contract, "CONTENT_BOUNDS_ARE_TIGHT_OVER_DECLARED_PRESENTATION_ENVELOPES", False)
+    problems = contract.validate_contract()
+    assert any("tight over the declared" in problem for problem in problems), problems
+    monkeypatch.undo()
+    monkeypatch.setattr(contract, "CANVAS_CLIPS_NO_DECLARED_PRESENTATION_ENVELOPE", False)
+    problems = contract.validate_contract()
+    assert any("must clip none of the declared" in problem for problem in problems), problems
+    monkeypatch.undo()
 
 
 def test_the_validator_reports_curve_bounds_that_are_optimistic_or_sampled(

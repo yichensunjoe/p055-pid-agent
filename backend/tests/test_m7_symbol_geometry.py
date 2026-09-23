@@ -605,12 +605,14 @@ def test_a_relative_path_measures_the_same_as_its_absolute_twin() -> None:
     assert unstroked_shape_bounds(relative) == unstroked_shape_bounds(absolute)
 
 
-def test_the_containment_rule_is_declared_and_is_what_makes_inflation_exact() -> None:
+def test_the_containment_rule_is_declared_and_proves_the_envelope_is_safe() -> None:
     assert contract.validate_contract() == []
     assert contract.SYMBOL_UNSTROKED_SHAPES_MUST_FIT_THE_INTRINSIC_BOX is True
     assert contract.SYMBOL_SHAPE_OVERFLOW_IS_A_HARD_FAILURE_AT_FREEZE is True
     assert contract.SYMBOL_SHAPE_OVERFLOW_NAMES_THE_SYMBOL_AND_THE_SHAPE is True
-    assert contract.SYMBOL_RENDERED_BOUNDS_ARE_EXACT_GIVEN_THE_CONTAINMENT_INVARIANT is True
+    assert contract.SYMBOL_SHAPE_CONTAINMENT_PROVES_ENVELOPE_SAFETY is True
+    assert contract.PRESENTATION_BOUNDS_ARE_CONSERVATIVE_RENDER_ENVELOPES is True
+    assert contract.PRESENTATION_BOUNDS_MAY_OVERAPPROXIMATE_ACTUAL_RENDERED_EXTENTS is True
     assert contract.SYMBOL_SHAPE_BOUNDS_ARE_CONSERVATIVE_FOR_CURVES is True
     assert contract.UNKNOWN_SYMBOL_SHAPE_KIND_IS_A_HARD_FAILURE is True
-    assert "intrinsic_box_inflated_by" in contract.SYMBOL_RENDERED_BOUNDS_RULE
+    assert "intrinsic_box_inflated_by" in contract.SYMBOL_PRESENTATION_ENVELOPE_RULE

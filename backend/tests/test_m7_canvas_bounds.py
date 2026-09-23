@@ -35,8 +35,8 @@ from agentcad.auto_layout_canvas import (
     derive_semantic_canvas,
     margin_is_preserved,
     presentation_boxes,
+    presentation_envelope,
     presentation_stroke_envelope,
-    rendered_extent,
     route_node_intersection_problems,
 )
 from agentcad.auto_layout_geometry import (
@@ -105,8 +105,8 @@ def test_the_content_envelope_is_the_union_of_nodes_routes_and_annotations() -> 
     boxes = presentation_boxes(plan)
     content = content_bounds_of(plan)
     assert content == _union(boxes.boxes())
-    # Every covered input contributes a *rendered* extent: a waypoint contributes its point box
-    # inflated by the connector stroke, never the bare point.
+    # Every covered input contributes its declared presentation envelope: a waypoint contributes
+    # its point box inflated by the connector stroke, never the bare point.
     for _name, points, reach in boxes.routes:
         assert reach > 0.0
         for point in points:
@@ -515,7 +515,7 @@ def test_every_presentation_kind_names_its_stroke_envelope() -> None:
     assert contract.ROUTE_STROKE_CONTRIBUTES_TO_PRESENTATION_BOUNDS is True
     assert contract.LEADER_STROKE_CONTRIBUTES_TO_PRESENTATION_BOUNDS is True
     assert contract.SYMBOL_OUTLINE_STROKE_CONTRIBUTES_TO_PRESENTATION_BOUNDS is True
-    assert contract.CONTENT_BOUNDS_MAY_USE_A_CENTERLINE_INSTEAD_OF_A_RENDERED_EXTENT is False
+    assert contract.CONTENT_BOUNDS_MAY_USE_A_CENTERLINE_INSTEAD_OF_A_PRESENTATION_ENVELOPE is False
     assert not [name for name in contract.LAYOUT_DIGEST_INPUTS if "stroke" in name]
 
 
@@ -525,10 +525,10 @@ def test_the_envelope_reaches_outside_both_the_geometry_and_its_nominal_box() ->
     symbol = presentation_stroke_envelope("symbol_outline").reach
     connector = presentation_stroke_envelope("connector").reach
     box = Rect(100.0, 100.0, 90.0, 140.0)
-    assert rendered_extent("symbol_outline", box) == Rect(
+    assert presentation_envelope("symbol_outline", box) == Rect(
         100.0 - symbol, 100.0 - symbol, 90.0 + symbol * 2, 140.0 + symbol * 2
     )
-    assert rendered_extent("annotation_text", box) == box
+    assert presentation_envelope("annotation_text", box) == box
     assert connector > 0.0
 
 
@@ -548,7 +548,7 @@ def test_the_content_envelope_grows_by_the_stroke_it_used_to_ignore() -> None:
     for name, box in rendered_nodes:
         row = next(row for row in plan.placement if row["engineering_id"] == name)
         nominal = Rect(row["x"], row["y"], row["width"], row["height"])
-        assert box == rendered_extent("symbol_outline", nominal)
+        assert box == presentation_envelope("symbol_outline", nominal)
         assert box == nominal.expanded(symbol)
         assert box.width > nominal.width and box.height > nominal.height
         assert _contains(content, box)
@@ -602,10 +602,10 @@ def test_a_route_whose_centerline_fits_but_whose_stroke_does_not_is_reported() -
     assert any(strokes_outside), "the fixture must push at least one stroke past the edge"
 
     problems = clipping_problems(plan, canvas)
-    assert any("route" in problem and "rendered bounds" in problem for problem in problems), problems
+    assert any("route" in problem and "presentation envelope" in problem for problem in problems), problems
     # The centerline-only answer is the one that used to pass: every waypoint is inside, so a
     # check that measured points would report nothing at all.
-    assert any("rendered bounds" in problem for problem in problems)
+    assert any("presentation envelope" in problem for problem in problems)
     with pytest.raises(CanvasClippingError) as raised:
         _derive_with_a_foreign_canvas(plan, canvas)
     assert raised.value.code == "canvas_clips_content"
@@ -642,4 +642,4 @@ def test_a_leader_line_stroke_is_part_of_its_presentation_bounds() -> None:
     leader = presentation_stroke_envelope("leader_line")
     assert leader.reach > 0.0
     centerline = Rect(10.0, 20.0, 40.0, 0.0)
-    assert rendered_extent("leader_line", centerline).height == leader.reach * 2
+    assert presentation_envelope("leader_line", centerline).height == leader.reach * 2

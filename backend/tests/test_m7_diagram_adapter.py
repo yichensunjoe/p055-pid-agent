@@ -67,7 +67,7 @@ def fixture_a_payload() -> dict:
                 "kind": "instrument",
                 "system_id": "S_supply",
                 "tag": "PT-101",
-                "instrument_type": "pressure_transmitter",
+                "instrument_type": "pressure_indicator",
                 "measurement": "pressure",
             },
             {
@@ -100,7 +100,9 @@ def fixture_a_payload() -> dict:
                 "engineering_id": "cn_3",
                 "source_engineering_id": "el_purifier",
                 "target_engineering_id": "el_pt_101",
-                "source_port_id": "tap",
+                # `purifier` declares `in` and `out`. A port the symbol does not define is a
+                # reference to geometry that does not exist, so the fixture names a real one.
+                "source_port_id": "out",
                 "target_port_id": "process",
                 "medium": "argon",
             },

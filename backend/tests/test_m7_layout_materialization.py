@@ -49,6 +49,7 @@ from agentcad.m7_layout_materialization import (
     materialize_canonical_layout,
     materialized_element_id,
     materialized_transaction,
+    provenance_version_values,
     require_empty_target,
     with_materialization_provenance,
 )
@@ -1019,6 +1020,71 @@ def test_attribution_is_still_the_callers_to_give(tmp_path: Path) -> None:
     )
     # The caller's own context is untouched: the materializer built a copy.
     assert contract.M7_PROVENANCE_METADATA_KEY not in audit.metadata
+
+
+def test_every_identity_carries_the_version_that_defines_it(tmp_path: Path) -> None:
+    """"Each digest has a version" is a different invariant from "the record has a version".
+
+    The weaker one is satisfied by any single version field for the whole record, and it would let a
+    stored digest be uninterpretable on its own. So the binding table is read here and each identity
+    is asserted to carry *its own* versions -- the persisted record, not the object handed in.
+    """
+
+    service = make_service(tmp_path)
+    layout, _plan, _topology = materialized()
+    document_id = seed_document(service, layout)
+    result = apply_materialized_layout(
+        service, replace(layout, document_id=document_id), expected_revision=0
+    )
+    recorded = _persisted_audit(service, document_id, result.document.revision).evidence[
+        "metadata"
+    ][contract.M7_PROVENANCE_METADATA_KEY]
+
+    bindings = dict(contract.PROVENANCE_IDENTITY_VERSION_BINDINGS)
+    assert set(bindings) == set(contract.M7_PROVENANCE_REQUIRED_IDENTITIES)
+    for identity, versions in contract.PROVENANCE_IDENTITY_VERSION_BINDINGS:
+        assert recorded[identity], identity
+        assert versions, identity
+        for version_field in versions:
+            assert recorded[version_field], (identity, version_field)
+    # No version without an identity to interpret: the record's version set is exactly the bindings'.
+    assert {key for key in recorded if key.endswith("_version")} == set(
+        contract.MATERIALIZATION_PROVENANCE_VERSION_FIELDS
+    )
+    assert set(recorded) == set(contract.M7_PROVENANCE_REQUIRED_IDENTITIES) | {
+        key for key in recorded if key.endswith("_version")
+    }
+
+
+def test_the_version_bindings_and_the_identities_cannot_drift_apart() -> None:
+    """The relation is data, so the validator can check it in both directions."""
+
+    bound = dict(contract.PROVENANCE_IDENTITY_VERSION_BINDINGS)
+    assert set(bound) == set(contract.M7_PROVENANCE_REQUIRED_IDENTITIES)
+    assert len(bound) == len(contract.PROVENANCE_IDENTITY_VERSION_BINDINGS)
+    derived = tuple(
+        dict.fromkeys(version for _identity, versions in bound.items() for version in versions)
+    )
+    assert contract.MATERIALIZATION_PROVENANCE_VERSION_FIELDS == derived
+    # The values are declared, and none of them is a digest: a version is not an identity.
+    values = provenance_version_values()
+    assert set(values) == set(contract.MATERIALIZATION_PROVENANCE_VERSION_FIELDS)
+    assert all(value and not value.startswith("m7-0") for value in values.values())
+    assert not set(values) & set(contract.M7_PROVENANCE_REQUIRED_IDENTITIES)
+
+
+def test_a_declared_version_that_is_not_persisted_is_reported(monkeypatch) -> None:
+    """A binding that points at a field nobody writes would be a promise, not a record."""
+
+    from agentcad import m7_layout_contract as module
+
+    monkeypatch.setattr(
+        module,
+        "PROVENANCE_IDENTITY_VERSION_BINDINGS",
+        (*list(module.PROVENANCE_IDENTITY_VERSION_BINDINGS), ("ghost_identity", ("x",))),
+    )
+    problems = module.validate_contract()
+    assert any("version binding" in problem for problem in problems)
 
 
 def test_a_layout_with_no_identity_chain_may_not_be_written() -> None:

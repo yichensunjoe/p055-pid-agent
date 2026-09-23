@@ -60,13 +60,16 @@ from .auto_layout_identity import (
     plan_engineering_digest,
 )
 from .auto_layout_semantic import STEP_5, SemanticLayoutPlan
+from .m7_diagram_spec import SPEC_SCHEMA
 from .m7_layout_contract import (
+    ADAPTER_TOPOLOGY_DIGEST_VERSION,
     LAYOUT_DIGEST_VERSION,
     LAYOUT_PROJECTION_VERSION,
     M7_PROVENANCE_METADATA_KEY,
     M7_PROVENANCE_REQUIRED_IDENTITIES,
     MATERIALIZATION_DIGEST_VERSION,
     MATERIALIZER_VERSION,
+    SYMBOL_GEOMETRY_CATALOG_DIGEST_VERSION,
 )
 from .models import (
     AddElementOperation,
@@ -102,6 +105,31 @@ DEFAULT_SYSTEM_GROUP_ID = "system_default"
 #: The reserved metadata namespace and the identities the write requires: declared in the contract,
 #: because "which revision can be traced back to what" is a governance claim rather than an
 #: implementation detail. Re-exported so call sites read one name.
+#
+#: The version each digest is defined by. Three of them pin the *upstream* definitions the digest
+#: was computed with (spec schema, adapter digest, symbol geometry catalog) and four pin the layout
+#: and materialization definitions, so the record says which definitions each digest is a digest
+#: under -- one version for the whole record would not.
+PROVENANCE_VERSION_VALUES: tuple[tuple[str, str], ...] = (
+    ("diagram_spec_schema_version", SPEC_SCHEMA),
+    ("adapter_topology_digest_version", ADAPTER_TOPOLOGY_DIGEST_VERSION),
+    ("symbol_geometry_catalog_digest_version", SYMBOL_GEOMETRY_CATALOG_DIGEST_VERSION),
+    ("layout_digest_version", LAYOUT_DIGEST_VERSION),
+    ("layout_projection_version", LAYOUT_PROJECTION_VERSION),
+    ("materializer_version", MATERIALIZER_VERSION),
+    ("materialization_digest_version", MATERIALIZATION_DIGEST_VERSION),
+)
+
+
+def provenance_version_values() -> dict[str, str]:
+    """The declared version of every field the binding table asks for, in its order.
+
+    Read from the declarations rather than from a live run: these pin *which definition* a digest is
+    a digest under, and the whole point of recording them is that a later reader can interpret a
+    stored digest without re-running anything.
+    """
+
+    return dict(PROVENANCE_VERSION_VALUES)
 
 
 
@@ -782,17 +810,14 @@ def materialize_canonical_layout(
             rows=digest_rows,
         )
     )
-    provenance = {
+    identities = {
         "diagram_spec_semantic_digest": plan_engineering_digest(plan),
         "adapter_topology_digest": plan.topology_digest,
         "symbol_geometry_catalog_digest": plan.symbol_geometry_catalog_digest,
         "canonical_layout_digest": plan.canonical_layout_digest,
-        "layout_digest_version": LAYOUT_DIGEST_VERSION,
-        "layout_projection_version": LAYOUT_PROJECTION_VERSION,
-        "materializer_version": MATERIALIZER_VERSION,
-        "materialization_digest_version": MATERIALIZATION_DIGEST_VERSION,
         "materialization_digest": digest,
     }
+    provenance = {**identities, **provenance_version_values()}
     return MaterializedLayout(
         document_id=document_id,
         operations=operations,

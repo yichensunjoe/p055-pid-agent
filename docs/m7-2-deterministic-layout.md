@@ -1753,3 +1753,55 @@ MATERIALIZATION_PROVENANCE_VERSION_FIELDS = (layout_digest_version, layout_proje
 | `apply_materialized_layout` 不再注入身份链（`context = audit`） | 3 红 |
 | caller 提供的同名 key 改为合并/覆盖 | 1 红 |
 | 只记 digest、不记版本 | 1 红 |
+
+### 15.12 Gate 第五轮：每个 digest 都要有「定义它的那个版本」，不只是「有个版本」
+
+Gate 指出我上一轮证明的是**较弱的那个不变量**：
+
+> 我证明的是「provenance 不能一个版本都没有」；要证明的是「**每一个 digest 都有定义它自己的 version binding**」。
+
+这两者不是同一件事：前者只要整个记录里有一个版本字段就满足了，而那样存下来的某个 digest 单独拿出来仍然无法解释。
+而且我把它写成了**两个平行的 tuple**（identity 一个、version 一个），它们没有结构上的约束关系，正是会漂移的形状。
+
+**改成把关系声明成数据**（合同）：
+
+```python
+PROVENANCE_IDENTITY_VERSION_BINDINGS = (
+    ("diagram_spec_semantic_digest",      ("diagram_spec_schema_version",)),
+    ("adapter_topology_digest",           ("adapter_topology_digest_version",)),
+    ("symbol_geometry_catalog_digest",    ("symbol_geometry_catalog_digest_version",)),
+    ("canonical_layout_digest",           ("layout_digest_version", "layout_projection_version")),
+    ("materialization_digest",            ("materializer_version", "materialization_digest_version")),
+)
+MATERIALIZATION_PROVENANCE_VERSION_FIELDS = <上面所有 version 的去重并集，按声明顺序>   # 派生，不手写
+```
+
+于是持久化命名空间现在是**十二个键**：五个 identity + 七个 version。新加的三个是上游定义：
+
+```
+diagram_spec_schema_version              = m7-diagram-spec/2
+adapter_topology_digest_version          = m7-adapter-topology-digest/2
+symbol_geometry_catalog_digest_version   = m7-symbol-geometry-catalog-digest/1
+```
+
+（其余四个：`layout_digest_version` / `layout_projection_version` / `materializer_version` / `materialization_digest_version`。）
+
+`validate_contract()` 现在检查：绑定表的身份集合**恰好等于** `M7_PROVENANCE_REQUIRED_IDENTITIES`（两个方向各查一次）；
+每个绑定非空；version 字段不得与身份同名；`MATERIALIZATION_PROVENANCE_VERSION_FIELDS` 必须**等于**绑定表的并集（含顺序）；
+不得出现重复绑定。
+
+**参数化 mutation（实跑，逐条都红）** —— 逐个 identity、逐个它自己的 version：
+
+| 被删掉的绑定 | 结果 |
+| --- | --- |
+| `diagram_spec_semantic_digest` → `diagram_spec_schema_version` | 3 红 |
+| `adapter_topology_digest` → `adapter_topology_digest_version` | 3 红 |
+| `symbol_geometry_catalog_digest` → `symbol_geometry_catalog_digest_version` | 3 红 |
+| `canonical_layout_digest` → `layout_digest_version` | 3 红 |
+| `canonical_layout_digest` → `layout_projection_version` | 3 红 |
+| `materialization_digest` → `materializer_version` | 3 红 |
+| `materialization_digest` → `materialization_digest_version` | 3 红 |
+
+七条全红，是靠**参数化遍历绑定表**跑出来的（不是手写七条用例）—— 绑定表新增一项时，下一轮的遍历自动覆盖它。
+用例仍读**持久化**的 `audit_record`，并额外断言「记录里所有 `*_version` 键的集合恰好等于声明的 version 集合」，
+即「没有不属于任何 identity 的版本，也没有缺失的版本」。

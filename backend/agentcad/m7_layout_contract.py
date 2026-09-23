@@ -1824,15 +1824,27 @@ M7_PROVENANCE_REQUIRED_IDENTITIES: tuple[str, ...] = (
     "canonical_layout_digest",
     "materialization_digest",
 )
-#: The versions travel with the digests, because a digest without the version that defines it is
-#: not traceable: two versions of one digest describe different things. Named here so the record's
-#: key set is a declaration rather than whatever the implementation happened to write.
+#: Which version *defines* each identity, as data rather than as two lists that could drift apart.
+#: "Every digest is recorded with its version" is not the same invariant as "each digest has exactly
+#: the version that defines it": the first is satisfied by one version for the whole record, and the
+#: second is what makes each digest independently interpretable. So the relation is declared here
+#: and the version-field list below is derived from it.
+PROVENANCE_IDENTITY_VERSION_BINDINGS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("diagram_spec_semantic_digest", ("diagram_spec_schema_version",)),
+    ("adapter_topology_digest", ("adapter_topology_digest_version",)),
+    ("symbol_geometry_catalog_digest", ("symbol_geometry_catalog_digest_version",)),
+    ("canonical_layout_digest", ("layout_digest_version", "layout_projection_version")),
+    ("materialization_digest", ("materializer_version", "materialization_digest_version")),
+)
+#: Derived, not maintained: the versions above are the only versions a record may carry, and the
+#: validator rejects both a missing one and an undeclared extra one.
 MATERIALIZATION_PROVENANCE_RECORDS_THE_VERSIONS = True
-MATERIALIZATION_PROVENANCE_VERSION_FIELDS: tuple[str, ...] = (
-    "layout_digest_version",
-    "layout_projection_version",
-    "materializer_version",
-    "materialization_digest_version",
+MATERIALIZATION_PROVENANCE_VERSION_FIELDS: tuple[str, ...] = tuple(
+    dict.fromkeys(
+        version
+        for _identity, versions in PROVENANCE_IDENTITY_VERSION_BINDINGS
+        for version in versions
+    )
 )
 #: The revision half of the chain is read from the commit, never predicted by the materializer: a
 #: predicted revision is a claim about what the *next* revision will be, which two writers can
@@ -3485,12 +3497,38 @@ def validate_contract() -> list[str]:
         )
     if not MATERIALIZATION_PROVENANCE_VERSION_FIELDS:
         problems.append("the version fields the record carries must be named")
-    for version_field in MATERIALIZATION_PROVENANCE_VERSION_FIELDS:
-        if version_field in M7_PROVENANCE_REQUIRED_IDENTITIES:
+    bound = dict(PROVENANCE_IDENTITY_VERSION_BINDINGS)
+    if len(bound) != len(PROVENANCE_IDENTITY_VERSION_BINDINGS):
+        problems.append("an identity may have exactly one version binding, not several")
+    if set(bound) != set(M7_PROVENANCE_REQUIRED_IDENTITIES):
+        problems.append(
+            "every required identity needs a version binding and no other identity may have "
+            f"one (missing={sorted(set(M7_PROVENANCE_REQUIRED_IDENTITIES) - set(bound))}, "
+            f"unexpected={sorted(set(bound) - set(M7_PROVENANCE_REQUIRED_IDENTITIES))})"
+        )
+    for identity, versions in PROVENANCE_IDENTITY_VERSION_BINDINGS:
+        if not versions:
             problems.append(
-                f"{version_field!r} is a version, not an identity: the required set is the "
-                "identity chain a revision must be traceable through"
+                f"{identity!r} must name the version(s) that define it: a digest without its "
+                "version is not interpretable"
             )
+        for version_field in versions:
+            if version_field in M7_PROVENANCE_REQUIRED_IDENTITIES:
+                problems.append(
+                    f"{version_field!r} is a version, not an identity: the required set is the "
+                    "identity chain a revision must be traceable through"
+                )
+    declared_versions = tuple(
+        dict.fromkeys(
+            version
+            for _identity, versions in PROVENANCE_IDENTITY_VERSION_BINDINGS
+            for version in versions
+        )
+    )
+    if MATERIALIZATION_PROVENANCE_VERSION_FIELDS != declared_versions:
+        problems.append(
+            "the version-field list must be exactly the union of the bindings, in binding order"
+        )
     overlap = set(MATERIALIZATION_PROVENANCE_VERSION_FIELDS) & set(
         M7_PROVENANCE_REQUIRED_IDENTITIES
     )

@@ -1563,3 +1563,83 @@ Phase-3 只加了一个版本对：`materializer_version` + `materialization_dig
 `MATERIALIZATION_DIGEST_IS_NOT_THE_LAYOUT_DIGEST = True` —— 它们是"这次编译"与"这次布局"的区别，
 不是第四个身份轴。整个 M7-2 的身份最终收敛为三层：**engineering semantic**（这份语义是什么）、
 **layout input**（引擎收到了什么）、**render artifact**（画出来了什么）；materialization digest 属于第三层。
+
+### 15.7 Gate 收口一：label 文本不是输入，是推导出来的
+
+Gate 第一版报告里抓到一句我自己都信了的错话："唯一输入是 finalized canonical layout"。签名其实是
+
+```python
+materialize_canonical_layout(plan, *, document_id: str, labels: Mapping[str, str] | None = None)
+```
+
+`document_id` 是落点，不影响"画什么"；但 `labels` 让**同一个 finalized plan、同一个 canonical_layout_digest**
+可以产出两张不同的图 —— "finalized layout → drawing" 就不再是函数关系。而我当时的回读比对字段里也**没有**
+`text`/`label`，所以"几何、tag、connector 全对但图上文字错了"是可以 PASS 的。
+
+**现在 `labels` 参数不存在了。** 标签文本从布局里已经被上游身份闸绑定的东西推导：
+
+```
+MATERIALIZATION_LABEL_TEXT_SOURCE = "the engineering identity's tag, from the finalized layout"
+MATERIALIZATION_LABEL_TEXT_IS_DERIVED_FROM_THE_FINALIZED_LAYOUT = True
+MATERIALIZATION_ACCEPTS_CALLER_SUPPLIED_LABEL_TEXT = False
+MATERIALIZATION_PROVES_THE_LABEL_BOX_MATCHES_THE_DERIVED_TEXT = True
+A_LABEL_BOX_THAT_DOES_NOT_FIT_ITS_TEXT_IS_A_HARD_FAILURE = True
+MATERIALIZATION_WRITES_THE_SYMBOL_LABEL_FIELD_EMPTY = True
+MATERIALIZATION_RECONCILIATION_COVERS = (kind, engineering_id, tag, symbol_key, system_id,
+                                         text, label, x, y, width, height, waypoints)
+MATERIALIZATION_RECONCILIATION_DOES_NOT_COVER_THE_DRAWN_TEXT = False
+```
+
+`MATERIALIZATION_RECONCILIATION_DOES_NOT_COVER_THE_DRAWN_TEXT` 写成 `False` 是刻意的：它是一条
+"以后不许翻案"的声明，`validate_contract()` 会在有人把它改成 `True` 时报出来。
+
+**两处独立的落实：**
+
+1. **文本推导 + 盒子反证。** 布局放的 annotation 行只有一个**盒子**；盒子的宽度本来就编码了文本长度
+   （`text_bounds` 用 `len(text) * font_size * 0.6`）。所以 `label_text_for()` 从工程行取 tag，
+   再用**同一个纯函数**证明这个盒子就是该文本量出来的盒子 —— 不另写一个宽度公式（两套实现就是盒子与文本漂移的开始）。
+   长度不同的改 tag（`V-101` → `V-1011`）在这里就被拒；**长度相同**的改 tag（`V-101` → `V-102`）
+   盒子完全一样，这一层**看不见**，它由 Step 5 的工程语义闸拦（更早）。两个闸各管一段，用例分别钉住。
+2. **`symbol.label` 显式写空并被回读检查。** 本仓库的 polish 早就定下"一个符号只有一个可编辑文本，
+   不保留第二份不可编辑的副本"，所以标签走 `symbol_label` annotation，`label` 留空；
+   回读**读**这个字段而不是假设它空着 —— 它正是写后被人塞字的第二个文本面。
+   另外把 `element_id_for` 的键从"kind"改成"role"：一个工程行有 symbol 与 label **两个**元素，
+   按 kind 取会把 label 取成 annotation 而取不到（这个不一致在补用例时被真正暴露出来）。
+
+### 15.8 Gate 收口二：target baseline 必须在写之前冻结
+
+`add`-only + 写后回读有一个明确的失败模式：目标文档里已经有一个无关元素 X，materializer 把整张图 add 进去 →
+**transaction 提交、revision +1、audit 写下** → 回读才发现"多了一行 X"。错误发现了，但它已经进入历史。
+
+所以 `apply_materialized_layout` 变成 **读 → 校验 baseline → 绑定 revision → 提交**：
+
+```
+MATERIALIZATION_PREFLIGHTS_THE_TARGET_BEFORE_IT_WRITES = True
+MATERIALIZATION_TARGET_BASELINE_IS_EMPTY = True
+MATERIALIZATION_TARGET_BASELINE_REPORT =
+    "no element, and no system group other than the default one every created document carries"
+MATERIALIZATION_TARGET_PERMITTED_SYSTEM_GROUP_ID = "system_default"
+MATERIALIZATION_MAY_APPEND_TO_A_TARGET_THAT_ALREADY_HOLDS_ENGINEERED_CONTENT = False
+MATERIALIZATION_COMMITS_AGAINST_THE_PREFLIGHTED_REVISION = True
+MATERIALIZATION_RECONCILIATION_IS_NOT_THE_ONLY_COMPLETENESS_PROTECTION = True
+MATERIALIZATION_MAY_CONTINUE_AFTER_A_REVISION_CONFLICT = False
+```
+
+"空"的定义是 **"没有任何工程内容"，不是"没有任何行"**：新建文档本来就带一个默认图层和一个默认系统组
+（`system_default`），它们属于**空文档**而不属于任何图纸；被拒的是元素，以及**任何非默认**的系统组。
+`require_empty_target()` 就是这条规则，`MaterializationTargetNotEmptyError` 点名那个多出来的元素/系统组。
+
+并发保护用的是**已有**的原子机制：preflight 读到的 revision 写进 `TransactionRequest.expected_revision`，
+写者自己比对当前 revision 并抛 `RevisionConflictError`。冲突是**终态**，不会在 N+1 上重试 ——
+被校验的那张图属于 N。
+
+用例不只是断言"抛了异常"，而是断言 **revision 没动、元素没进去、history 里没有一条声称写了图的记录**。
+
+### 15.9 本步新增 mutation（逐条实跑，全部真红）
+
+| mutation | 结果 | 被哪条用例咬住 |
+| --- | --- | --- |
+| 把 `labels` 参数加回来 | 1 红 | `test_there_is_no_label_override_channel`（签名就是边界） |
+| 回读不再比对 `text`/`label` | 2 红 | 写后改文案 / 写后塞 `symbol.label` |
+| 不再证明"盒子就是该文本的盒子" | 2 红 | 盒子被拉宽 / tag 变长 |
+| 去掉 `require_empty_target` | 3 红 | 非空 target 会被提交，revision 前进 |

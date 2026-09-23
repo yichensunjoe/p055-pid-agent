@@ -22,6 +22,16 @@ Four rules shape the code, and each one is a decision someone would otherwise ma
   materializer was given, so "every placed, routed and annotated row appears exactly once" is a
   check on the committed drawing rather than on the intent.
 
+Two things that are *not* inputs, because taking them would break the function relationship above:
+
+* **The label text.** The layout places a label *box*, measured against one specific string; that
+  string is the engineering identity's tag. Accepting labels from the caller would let one
+  finalized layout, under one canonical digest, produce two different drawings -- and the box
+  would then be text nobody measured. The materializer derives the text and proves the box fits it.
+* **The target's baseline.** ``add``-only operations plus a post-write reconciliation would commit
+  an unrelated element that was already in the target and only *then* report it, so the target is
+  preflighted before the write and the commit is bound to the revision the preflight read.
+
 Two consequences worth naming, because both look like details and are not:
 
 * Connectors are emitted as ``routing="manual"`` carrying the layout's own waypoints. The writer
@@ -81,6 +91,11 @@ ANNOTATION_SUBJECT_FIELD = "parent_element_id"
 #: so nothing has to be created for it and no drawing depends on a layer id a caller invented.
 MATERIALIZATION_LAYER_ID = "layer_default"
 
+#: The system group every created document carries. It belongs to an *empty* document rather than
+#: to any drawing, so the baseline permits it while refusing every other group. Named here and
+#: asserted against the model in the test module, so it cannot drift away from the default.
+DEFAULT_SYSTEM_GROUP_ID = "system_default"
+
 
 class MaterializationError(ValueError):
     """The canonical layout could not be turned into a drawing."""
@@ -91,11 +106,15 @@ class LayoutIsNotFinalizedError(MaterializationError):
 
 
 class MaterializationLabelError(MaterializationError):
-    """The labels do not match the text the layout placed."""
+    """The label box the layout placed does not fit the text its entity implies."""
 
 
 class MaterializationCanvasError(MaterializationError):
     """The target document's canvas cannot hold the derived canvas."""
+
+
+class MaterializationTargetNotEmptyError(MaterializationError):
+    """The target holds content the layout did not decide, so appending would be a merge."""
 
 
 class MaterializationDocumentError(MaterializationError):
@@ -162,6 +181,43 @@ LABEL_ELEMENT_ROLE = "label"
 #: binds to, so symbols are written first or the writer looks up an element that does not exist
 #: yet. Systems come before everything for the same reason -- an element names its system.
 MATERIALIZATION_ROW_ORDER: tuple[str, ...] = ("symbol", "connector", "annotation")
+
+#: The reconciliation's field groups, split by *kind of comparison* rather than by element kind.
+#: The drawn words are their own group because they are what a geometry-only comparison silently
+#: misses: a same-length substitution leaves the box identical.
+RECONCILED_IDENTITY_FIELDS: tuple[str, ...] = (
+    "kind",
+    "engineering_id",
+    "tag",
+    "symbol_key",
+    "system_id",
+)
+RECONCILED_TEXT_FIELDS: tuple[str, ...] = (
+    "text",
+    "label",
+)
+RECONCILED_GEOMETRY_FIELDS: tuple[str, ...] = ("x", "y", "width", "height")
+
+#: The non-geometric row fields the digest sees. The drawn words are in here (``text`` for an
+#: annotation, ``label`` for a symbol): matching geometry with the wrong words on the drawing is
+#: not the same drawing.
+DIGEST_ROW_FIELDS: frozenset[str] = frozenset(
+    {
+        "kind",
+        "engineering_id",
+        "element_id",
+        "system_id",
+        "tag",
+        "symbol_key",
+        "label",
+        "text",
+        "medium",
+        "flow_direction",
+        "subject_element_id",
+        "source",
+        "target",
+    }
+)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -265,6 +321,10 @@ def document_rows(document: Document) -> tuple[dict[str, Any], ...]:
                     "tag": str((element.properties or {}).get("tag", "")),
                     "symbol_key": element.symbol_key,
                     "system_id": element.system_id,
+                    # The symbol's own label field, read rather than assumed empty: it is the
+                    # second surface a post-write edit could have written text into.
+                    "label": element.label,
+                    "text": "",
                     "x": _quantize(element.position.x),
                     "y": _quantize(element.position.y),
                     "width": _quantize(element.width),
@@ -280,6 +340,8 @@ def document_rows(document: Document) -> tuple[dict[str, Any], ...]:
                     "engineering_id": str((element.metadata or {}).get("engineering_id", "")),
                     "tag": element.process_tag,
                     "symbol_key": "",
+                    "label": "",
+                    "text": "",
                     "system_id": element.system_id,
                     "x": _quantize(element.points[0].x),
                     "y": _quantize(element.points[0].y),
@@ -302,6 +364,11 @@ def document_rows(document: Document) -> tuple[dict[str, Any], ...]:
                     "engineering_id": str((element.metadata or {}).get("engineering_id", "")),
                     "tag": "",
                     "symbol_key": "",
+                    "label": "",
+                    # The words on the drawing. Compared, because a drawing whose geometry,
+                    # tags and bindings all match while its text says something else is a
+                    # different drawing wearing the same layout.
+                    "text": element.text,
                     "system_id": element.system_id,
                     "x": _quantize(box.x1),
                     "y": _quantize(box.y1),
@@ -330,7 +397,53 @@ def _symbol_element_id(rows: Sequence[Mapping[str, Any]], node_id: str) -> str:
     )
 
 
-def _plan_rows(plan: SemanticLayoutPlan, labels: Mapping[str, str]) -> tuple[dict[str, Any], ...]:
+def label_text_for(plan: SemanticLayoutPlan, node_id: str) -> str:
+    """The one string the layout's label box for ``node_id`` was measured against.
+
+    Derived, never supplied: the annotation row carries a box, and the box's own width already
+    encodes the text length (``text_bounds`` measures ``len(text) * font_size * 0.6``). A caller
+    could therefore hand over any text of the right *length* while the drawing said something
+    else, which is exactly the failure a geometry-only reconciliation cannot see.
+    """
+
+    for fact in plan.engineering_entities:
+        if fact.engineering_id == node_id:
+            text = str(fact.tag).strip()
+            if not text:
+                raise MaterializationLabelError(
+                    f"the layout placed a label box for {node_id!r} and its engineering row "
+                    "carries no tag: the box was measured against a string the plan does not hold"
+                )
+            return text
+    raise MaterializationLabelError(
+        f"the layout annotated {node_id!r}, which the plan does not declare as an entity"
+    )
+
+
+def _label_box_matches_text(box: Mapping[str, Any], text: str) -> bool:
+    """Whether the placed box is the box ``text`` measures to, exactly.
+
+    Compared through the same pure rule the layout measured with, rather than by re-deriving a
+    width here: two implementations of the same rule is how a box and its text drift apart.
+    """
+
+    element = TextElement(
+        id="measure",
+        layer_id=MATERIALIZATION_LAYER_ID,
+        position=Point(x=float(box["x"]), y=float(box["y"]) + ANNOTATION_FONT_SIZE),
+        text=text,
+        font_size=ANNOTATION_FONT_SIZE,
+        anchor="start",
+    )
+    measured = text_bounds(element)
+    return (
+        _quantize(measured.x1) == _quantize(float(box["x"]))
+        and _quantize(measured.x2 - measured.x1) == _quantize(float(box["width"]))
+        and _quantize(measured.y2 - measured.y1) == _quantize(float(box["height"]))
+    )
+
+
+def _plan_rows(plan: SemanticLayoutPlan) -> tuple[dict[str, Any], ...]:
     """The layout as materialization rows, before any element is constructed.
 
     Verification and construction read the same rows, so "what was checked" and "what was built"
@@ -365,6 +478,10 @@ def _plan_rows(plan: SemanticLayoutPlan, labels: Mapping[str, str]) -> tuple[dic
                 "system_id": fact.system_id,
                 "tag": fact.tag,
                 "symbol_key": symbols.get(node_id, ""),
+                # Written empty on purpose: the repository's polish already established that a
+                # symbol has one editable text (the ``symbol_label`` annotation) and not a second,
+                # uneditable copy of the same string in ``label``.
+                "label": "",
                 "x": _quantize(row["x"]),
                 "y": _quantize(row["y"]),
                 "width": _quantize(row["width"]),
@@ -401,6 +518,7 @@ def _plan_rows(plan: SemanticLayoutPlan, labels: Mapping[str, str]) -> tuple[dic
                 "system_id": facts[source.node_id].system_id,
                 "tag": connection.tag,
                 "symbol_key": "",
+                "label": "",
                 "medium": connection.medium,
                 "source": {
                     "node_id": source.node_id,
@@ -427,13 +545,18 @@ def _plan_rows(plan: SemanticLayoutPlan, labels: Mapping[str, str]) -> tuple[dic
             raise MaterializationError(
                 f"the layout annotated {node_id!r}, which the plan does not declare"
             )
-        text = str(labels.get(node_id, "") or "").strip()
-        if not text:
-            raise MaterializationLabelError(
-                f"the layout placed a label box for {node_id!r} and no text was given for it: a "
-                "box without text is a drawing with an empty label"
-            )
+        # Derived, and then *proved* to fit the box: the layout measured that box against one
+        # specific string, so a box that does not fit the derived text means the drawing would
+        # carry words nothing was measured for.
+        text = label_text_for(plan, node_id)
         box = next(row for row in plan.annotations if str(row["engineering_id"]) == node_id)
+        if not _label_box_matches_text(box, text):
+            raise MaterializationLabelError(
+                f"the label box the layout placed for {node_id!r} is "
+                f"{box['width']}x{box['height']} at ({box['x']}, {box['y']}) and does not measure "
+                f"to the {text!r} its engineering row carries: the box and the text came from two "
+                "different runs"
+            )
         rows.append(
             {
                 "kind": "annotation",
@@ -442,6 +565,7 @@ def _plan_rows(plan: SemanticLayoutPlan, labels: Mapping[str, str]) -> tuple[dic
                 "system_id": facts[node_id].system_id,
                 "tag": "",
                 "symbol_key": "",
+                "label": "",
                 "text": text,
                 "x": _quantize(box["x"]),
                 "y": _quantize(box["y"]),
@@ -458,13 +582,6 @@ def _plan_rows(plan: SemanticLayoutPlan, labels: Mapping[str, str]) -> tuple[dic
             row["target"]["element_id"] = _symbol_element_id(rows, str(row["target"]["node_id"]))
         elif row["kind"] == "annotation":
             row["subject_element_id"] = _symbol_element_id(rows, str(row["engineering_id"]))
-
-    extra_labels = sorted(set(labels) - annotated)
-    if extra_labels:
-        raise MaterializationLabelError(
-            f"labels were given for {extra_labels}, which the layout did not place: the text and "
-            "the geometry came from two different runs"
-        )
 
     for row in rows:
         if row["system_id"] not in systems:
@@ -512,6 +629,10 @@ def _operations(
                         layer_id=MATERIALIZATION_LAYER_ID,
                         system_id=system_id,
                         symbol_key=str(row["symbol_key"]),
+                        # Left empty on purpose, and asserted empty on the way back: the
+                        # repository's polish established that a symbol has one editable text,
+                        # so writing the tag here too would draw it twice.
+                        label="",
                         position=Point(
                             x=_quantize(float(row["x"]) - origin_x),
                             y=_quantize(float(row["y"]) - origin_y),
@@ -599,13 +720,17 @@ def materialize_canonical_layout(
     plan: SemanticLayoutPlan,
     *,
     document_id: str,
-    labels: Mapping[str, str] | None = None,
 ) -> MaterializedLayout:
     """Phase 3: compile a finalized canonical layout into the production writer's input.
 
     The plan must be at step 5 with its identity computed: materializing an unfinished layout
     would write geometry that no identity names, which is the state this whole milestone exists to
     remove.
+
+    There is no ``labels`` argument, and that is the point: the label text is derived here from the
+    engineering identity the layout already binds, and the box the layout placed is proven to be
+    the box that text measures to. A caller-supplied label would make ``finalized layout ->
+    drawing`` a relation instead of a function, under one canonical digest.
     """
 
     if plan.produced_at_step != STEP_5 or not plan.canonical_layout_digest:
@@ -620,7 +745,7 @@ def materialize_canonical_layout(
     except LayoutIdentityError as exc:  # pragma: no cover - defensive: the gate already ran
         raise MaterializationError(str(exc)) from exc
 
-    rows = _plan_rows(plan, labels or {})
+    rows = _plan_rows(plan)
     canvas = plan.canonical_projection_envelope["canvas_bounds"]
     origin_x = _quantize(float(canvas["x"]))
     origin_y = _quantize(float(canvas["y"]))
@@ -649,8 +774,12 @@ def materialize_canonical_layout(
         canvas_height=height,
         origin_x=origin_x,
         origin_y=origin_y,
+        # Keyed by the row's *role*, not its kind: a node and its label are two elements of one
+        # engineering row, so "which element is this row in that role" needs the role to be asked
+        # for. (For a symbol and a connector the two strings coincide; for a label they do not.)
         element_ids=tuple(
-            (str(row["engineering_id"]), str(row["kind"]), str(row["element_id"])) for row in rows
+            (str(row["engineering_id"]), str(row["element_id_role"]), str(row["element_id"]))
+            for row in rows
         ),
         materialization_digest=digest,
     )
@@ -666,21 +795,7 @@ def _digest_row(row: Mapping[str, Any], origin_x: float, origin_y: float) -> dic
     digest = {
         key: value
         for key, value in row.items()
-        if key
-        in {
-            "kind",
-            "engineering_id",
-            "element_id",
-            "system_id",
-            "tag",
-            "symbol_key",
-            "medium",
-            "text",
-            "flow_direction",
-            "subject_element_id",
-            "source",
-            "target",
-        }
+        if key in DIGEST_ROW_FIELDS
     }
     digest["x"] = _quantize(float(row["x"]) - origin_x)
     digest["y"] = _quantize(float(row["y"]) - origin_y)
@@ -718,6 +833,7 @@ def materialization_matches_document(
             f"the document is missing {row['kind']} {row['engineering_id']!r} "
             f"({element_id}): the layout decided it and it was never written"
         )
+
     for element_id in sorted(set(actual) - set(expected)):
         row = actual[element_id]
         problems.append(
@@ -726,13 +842,22 @@ def materialization_matches_document(
         )
     for element_id in sorted(set(expected) & set(actual)):
         left, right = expected[element_id], actual[element_id]
-        for field in ("kind", "engineering_id", "tag", "symbol_key", "system_id"):
+        for field in RECONCILED_IDENTITY_FIELDS:
             if str(left.get(field, "")) != str(right.get(field, "")):
                 problems.append(
                     f"{element_id} has {field} {right.get(field)!r} in the document and "
                     f"{left.get(field)!r} in the layout"
                 )
-        for field in ("x", "y", "width", "height"):
+        for field in RECONCILED_TEXT_FIELDS:
+            # The drawn words. A drawing whose geometry, tags and bindings all match while its
+            # text says something else is a different drawing wearing the same layout -- and a
+            # geometry-only comparison cannot see it, because the box is the same size.
+            if str(left.get(field, "")) != str(right.get(field, "")):
+                problems.append(
+                    f"{element_id} says {right.get(field)!r} in {field} and the layout decided "
+                    f"{left.get(field)!r}"
+                )
+        for field in RECONCILED_GEOMETRY_FIELDS:
             if _quantize(float(left[field])) != _quantize(float(right[field])):
                 problems.append(
                     f"{element_id} has {field} {right[field]!r} in the document and "
@@ -758,6 +883,39 @@ def require_document_canvas(document: Document, layout: MaterializedLayout) -> N
             f"the derived canvas is {layout.canvas_width}x{layout.canvas_height} and document "
             f"{document.id!r} is {document.canvas.width}x{document.canvas.height}: the canvas "
             "belongs to the layout and may not be spent to keep a smaller document"
+        )
+
+
+def require_empty_target(document: Document) -> None:
+    """The pre-write baseline: v1 appends a drawing to a document that holds nothing else.
+
+    ``add``-only operations plus a post-write reconciliation are not enough on their own. An
+    unrelated element already in the target would be committed -- revision advanced, audit written
+    -- and only *then* reported as an extra row, so the failure would live in the history of a
+    drawing that is wrong. Reconciliation stays as the second check; this is the boundary in front
+    of the write.
+
+    The rule is "holds nothing engineered", not "is empty": a created document already has a
+    default layer and a default system group, and those belong to the empty document rather than
+    to any drawing. What is refused is content the layout did not decide -- elements, and any
+    system group other than the default one.
+    """
+
+    if document.elements:
+        offenders = ", ".join(sorted(f"{element.type} {element.id}" for element in document.elements))
+        raise MaterializationTargetNotEmptyError(
+            f"document {document.id!r} already holds {len(document.elements)} element(s) "
+            f"({offenders}) and this layout did not decide them: an add-only materialization "
+            "appends a whole drawing, so a non-empty target would be a merge that only shows up "
+            "in the committed revision"
+        )
+    stray = sorted(
+        system.id for system in document.systems if system.id != DEFAULT_SYSTEM_GROUP_ID
+    )
+    if stray:
+        raise MaterializationTargetNotEmptyError(
+            f"document {document.id!r} already holds system group(s) {stray}, which this layout "
+            "did not decide: systems are part of the drawing's reconciliation universe"
         )
 
 
@@ -787,6 +945,11 @@ def apply_materialized_layout(
     The provenance chain travels as audit metadata, because that is where this codebase records
     *why* a revision exists, and the document metadata is not writable through the operation
     vocabulary the writer accepts -- inventing an operation for it would be a new write surface.
+
+    Read, verify, then commit against the revision that was read: the preflight is what keeps a
+    wrong drawing out of the history, and ``expected_revision`` is what keeps another writer's
+    revision from being landed on top of. A conflict is terminal -- this never retries at N+1,
+    because the drawing it verified belongs to N.
     """
 
     current = service.get_document(layout.document_id)
@@ -795,6 +958,7 @@ def apply_materialized_layout(
             f"expected revision {expected_revision}, document {layout.document_id!r} is at "
             f"{current.revision}"
         )
+    require_empty_target(current)
     require_document_canvas(current, layout)
     request = materialized_transaction(layout, expected_revision=expected_revision, label=label)
     result = service.apply_transaction(
@@ -838,6 +1002,7 @@ __all__ = [
     "MaterializationDocumentError",
     "MaterializationError",
     "MaterializationLabelError",
+    "MaterializationTargetNotEmptyError",
     "MaterializedLayout",
     "apply_materialized_layout",
     "document_rows",
@@ -846,7 +1011,9 @@ __all__ = [
     "materialization_payload",
     "materialization_provenance",
     "materialize_canonical_layout",
+    "label_text_for",
     "materialized_element_id",
     "materialized_transaction",
     "require_document_canvas",
+    "require_empty_target",
 ]

@@ -8,6 +8,7 @@ can be traced back to the specification it came from.
 
 from __future__ import annotations
 
+import inspect
 from dataclasses import replace
 from pathlib import Path
 
@@ -26,14 +27,19 @@ from agentcad.auto_layout_semantic import STEP_4, STEP_5
 from agentcad.diagram_quality import analyze_diagram_quality
 from agentcad.m7_diagram_adapter import adapt
 from agentcad.m7_layout_materialization import (
+    DEFAULT_SYSTEM_GROUP_ID,
+    LABEL_ELEMENT_ROLE,
     MATERIALIZATION_LAYER_ID,
     SYMBOL_LABEL_ANNOTATION_ROLE,
     LayoutIsNotFinalizedError,
     MaterializationCanvasError,
     MaterializationError,
     MaterializationLabelError,
+    MaterializationTargetNotEmptyError,
+    _label_box_matches_text,
     apply_materialized_layout,
     document_rows,
+    label_text_for,
     materialization_digest,
     materialization_matches_document,
     materialization_payload,
@@ -41,14 +47,25 @@ from agentcad.m7_layout_materialization import (
     materialize_canonical_layout,
     materialized_element_id,
     materialized_transaction,
+    require_empty_target,
 )
-from agentcad.models import CreateDocumentRequest, Point, TransactionRequest
-from agentcad.service import DocumentService
+from agentcad.models import (
+    AddElementOperation,
+    AddSystemOperation,
+    CreateDocumentRequest,
+    Document,
+    Point,
+    SystemGroup,
+    TransactionRequest,
+)
+from agentcad.service import DocumentService, RevisionConflictError
 from agentcad.store import SQLiteDocumentStore
 from agentcad.symbols import SymbolRegistry
 from agentcad.tag_resolver import resolve_symbol_tag
 
-LABELS = {
+#: The tags the fixture's engineering rows carry. Not a labels input -- it is what the
+#: materializer is expected to *derive*, so the tests read it as the expected drawing text.
+TAGS = {
     "el_ar_tank": "V-101",
     "el_purifier": "X-201",
     "el_pt_101": "PT-101",
@@ -67,9 +84,15 @@ def finalized_layout():
     return plan, topology
 
 
-def materialized(labels: dict | None = None):
+def materialized():
     plan, topology = finalized_layout()
-    return materialize_canonical_layout(plan, document_id="doc_m7", labels=labels or LABELS), plan, topology
+    return materialize_canonical_layout(plan, document_id="doc_m7"), plan, topology
+
+
+def materialized_from(plan):
+    """Materialize a plan that a test has deliberately perturbed, for the refusal cases."""
+
+    return materialize_canonical_layout(plan, document_id="doc_m7")
 
 
 def seed_document(service: DocumentService, layout) -> str:
@@ -302,20 +325,66 @@ def test_a_re_origined_canvas_is_a_different_drawing() -> None:
             "canvas_bounds": {**bounds, "x": float(bounds["x"]) + 10.0},
         },
     )
-    first = materialize_canonical_layout(plan, document_id="doc_m7", labels=LABELS)
-    second = materialize_canonical_layout(shifted, document_id="doc_m7", labels=LABELS)
+    first = materialize_canonical_layout(plan, document_id="doc_m7")
+    second = materialize_canonical_layout(shifted, document_id="doc_m7")
     assert second.origin_x == first.origin_x + 10.0
     assert second.materialization_digest != first.materialization_digest
     assert [row["x"] for row in second.rows] != [row["x"] for row in first.rows]
 
 
-def test_a_changed_label_changes_the_drawing_identity() -> None:
-    """Label text is content: it is in the materialization digest even though it is not geometry."""
+def test_a_drawing_cannot_carry_words_its_geometry_was_not_measured_for() -> None:
+    """A re-tagged plan is refused *here* too, independently of the layout's own gate.
 
-    first, _plan, _topology = materialized()
-    second, _plan, _topology = materialized({**LABELS, "el_ar_tank": "V-102"})
-    assert first.materialization_digest != second.materialization_digest
-    assert [row for row in first.rows] != [row for row in second.rows]
+    Two cases, and they are refused by different guards, which is worth naming:
+
+    * A tag of a **different length** changes the box the text measures to, so this module refuses
+      it -- the box the layout placed is evidence about the string, and that evidence is checked.
+    * A tag of the **same length** leaves the box identical, so nothing here can see it; step 5's
+      engineering preservation gate is what refuses that one, and it refuses it earlier.
+    """
+
+    plan, _topology = finalized_layout()
+
+    def retagged(tag: str):
+        return replace(
+            plan,
+            engineering_entities=tuple(
+                replace(fact, tag=tag) if fact.engineering_id == "el_ar_tank" else fact
+                for fact in plan.engineering_entities
+            ),
+        )
+
+    with pytest.raises(MaterializationLabelError) as raised:
+        materialized_from(retagged("V-1011"))
+    assert "does not measure" in str(raised.value)
+    same_length = retagged("V-102")
+    assert len(label_text_for(same_length, "el_ar_tank")) == len(TAGS["el_ar_tank"])
+    assert _label_box_matches_text(
+        next(
+            row for row in same_length.annotations if str(row["engineering_id"]) == "el_ar_tank"
+        ),
+        "V-102",
+    )
+
+
+def test_the_drawn_text_is_inside_the_digest() -> None:
+    """A same-length text substitution leaves the box identical, so only the text can reveal it."""
+
+    layout, _plan, _topology = materialized()
+    payload = materialization_payload(
+        document_canvas=(layout.canvas_width, layout.canvas_height),
+        origin=(layout.origin_x, layout.origin_y),
+        rows=layout.rows,
+    )
+    rewritten = [
+        {**row, "text": "V-999"}
+        if row["kind"] == "annotation" and row["engineering_id"] == "el_ar_tank"
+        else row
+        for row in layout.rows
+    ]
+    assert materialization_digest(payload) != materialization_digest(
+        {**payload, "rows": rewritten}
+    )
 
 
 def test_the_materialization_digest_is_not_the_layout_digest() -> None:
@@ -337,25 +406,104 @@ def test_an_unfinalized_layout_has_no_drawing_to_materialize() -> None:
     unfinished = derive_semantic_canvas(annotated_fixture_a())
     assert unfinished.produced_at_step == STEP_4
     with pytest.raises(LayoutIsNotFinalizedError) as raised:
-        materialize_canonical_layout(unfinished, document_id="doc_m7", labels=LABELS)
+        materialize_canonical_layout(unfinished, document_id="doc_m7")
     assert STEP_4 in str(raised.value) and "finalized canonical layout" in str(raised.value)
     named = replace(unfinished, produced_at_step=STEP_5)
     assert named.canonical_layout_digest == ""
     with pytest.raises(LayoutIsNotFinalizedError) as named_raised:
-        materialize_canonical_layout(named, document_id="doc_m7", labels=LABELS)
+        materialize_canonical_layout(named, document_id="doc_m7")
     assert "finalized canonical layout" in str(named_raised.value)
 
 
-def test_a_missing_label_is_refused() -> None:
+# ---------------------------------------------------------------------------------------
+# The label text is derived, and the box has to fit it
+# ---------------------------------------------------------------------------------------
+
+
+def test_there_is_no_label_override_channel() -> None:
+    """The first half of the fix: the free input does not exist, rather than being validated.
+
+    A validated override would still be a caller deciding what the drawing says under an
+    unchanged canonical layout digest. The signature is the boundary, so the signature is what
+    this asserts.
+    """
+
+    parameters = inspect.signature(materialize_canonical_layout).parameters
+    assert "labels" not in parameters
+    assert set(parameters) == {"plan", "document_id"}
+
+
+def test_the_label_text_is_derived_from_the_engineering_row() -> None:
+    plan, _topology = finalized_layout()
+    for node_id, tag in TAGS.items():
+        assert label_text_for(plan, node_id) == tag
     with pytest.raises(MaterializationLabelError):
-        materialized({key: value for key, value in LABELS.items() if key != "el_ar_tank"})
+        label_text_for(plan, "el_ghost")
 
 
-def test_an_extra_label_is_refused() -> None:
-    """Text for a node the layout never placed means geometry and text came from two runs."""
+def test_the_materialized_text_is_the_tag_its_geometry_was_measured_for() -> None:
+    layout, _plan, _topology = materialized()
+    texts = {row["engineering_id"]: row["text"] for row in layout.rows if row["kind"] == "annotation"}
+    assert texts == TAGS
+    for row in layout.rows:
+        if row["kind"] != "annotation":
+            continue
+        # The box the layout placed is exactly the box this text measures to: the width was
+        # already the text length, which is why a same-length substitution would pass a
+        # geometry-only check.
+        assert _label_box_matches_text(
+            {"x": row["x"], "y": row["y"], "width": row["width"], "height": row["height"]},
+            str(row["text"]),
+        )
 
-    with pytest.raises(MaterializationLabelError):
-        materialized({**LABELS, "el_ghost": "G-1"})
+
+def test_a_label_box_that_does_not_fit_the_tag_is_refused() -> None:
+    """A box measured for other text would put words on the drawing nothing was measured for."""
+
+    plan, _topology = finalized_layout()
+    node_id = "el_ar_tank"
+    stretched = replace(
+        plan,
+        annotations=tuple(
+            {**row, "width": float(row["width"]) + 30.0}
+            if str(row["engineering_id"]) == node_id
+            else row
+            for row in plan.annotations
+        ),
+    )
+    with pytest.raises(MaterializationLabelError) as raised:
+        materialized_from(stretched)
+    assert node_id in str(raised.value) and "does not measure" in str(raised.value)
+
+
+def test_an_entity_without_a_tag_has_no_label_to_write() -> None:
+    """An annotated node whose engineering row carries no tag has no text the box was for."""
+
+    plan, _topology = finalized_layout()
+    node_id = "el_ar_tank"
+    untagged = replace(
+        plan,
+        engineering_entities=tuple(
+            replace(fact, tag="") if fact.engineering_id == node_id else fact
+            for fact in plan.engineering_entities
+        ),
+    )
+    with pytest.raises(MaterializationLabelError) as raised:
+        materialized_from(untagged)
+    assert "carries no tag" in str(raised.value)
+
+
+def test_the_symbol_label_field_is_left_empty(tmp_path: Path) -> None:
+    """One editable text per symbol: the tag lives in the annotation, not in ``label``."""
+
+    service = make_service(tmp_path)
+    layout, _plan, _topology = materialized()
+    _document_id, document = _committed(service, layout)
+    symbols = [element for element in document.elements if element.type == "symbol"]
+    assert symbols and all(element.label == "" for element in symbols)
+    assert resolve_symbol_tag(document, symbols[0]) == TAGS[
+        str((symbols[0].properties or {}).get("engineering_id"))
+    ]
 
 
 def test_the_operations_are_adds_only() -> None:
@@ -388,6 +536,175 @@ def test_a_wrong_expected_revision_is_refused(tmp_path: Path) -> None:
         apply_materialized_layout(
             service, replace(layout, document_id=document_id), expected_revision=7
         )
+
+
+# ---------------------------------------------------------------------------------------
+# The pre-write boundary: a target holding content the layout did not decide
+# ---------------------------------------------------------------------------------------
+
+
+def _an_unrelated_element() -> object:
+    from agentcad.models import SymbolElement
+
+    return SymbolElement(
+        id="el_unrelated",
+        symbol_key="gas_tank",
+        position=Point(x=40, y=40),
+        width=120,
+        height=90,
+        system_id=DEFAULT_SYSTEM_GROUP_ID,
+        metadata={"engineering_id": "el_unrelated"},
+    )
+
+
+def test_a_target_that_already_holds_an_element_is_refused_before_the_write(
+    tmp_path: Path,
+) -> None:
+    """Reconciliation alone would commit the merge first and report it second.
+
+    So the assertion is not only "it raised": it is that the revision did not move, the element
+    is not in the drawing, and there is no history entry claiming a drawing was written.
+    """
+
+    service = make_service(tmp_path)
+    layout, _plan, _topology = materialized()
+    document_id = seed_document(service, layout)
+    service.apply_transaction(
+        document_id,
+        TransactionRequest(
+            operations=[AddElementOperation(element=_an_unrelated_element())],
+            expected_revision=0,
+        ),
+    )
+    before = service.get_document(document_id)
+    assert before.revision == 1
+
+    with pytest.raises(MaterializationTargetNotEmptyError) as raised:
+        apply_materialized_layout(
+            service, replace(layout, document_id=document_id), expected_revision=before.revision
+        )
+    assert "el_unrelated" in str(raised.value)
+    after = service.get_document(document_id)
+    assert after.revision == before.revision
+    assert [element.id for element in after.elements] == ["el_unrelated"]
+    assert not [
+        element
+        for element in after.elements
+        if str((element.metadata or {}).get("engineering_id", "")) == "el_ar_tank"
+    ]
+    history = service.get_history(document_id)
+    assert not [entry for entry in history if "materialization" in (entry.label or "")]
+
+
+def test_a_target_that_already_holds_a_foreign_system_group_is_refused(tmp_path: Path) -> None:
+    """Systems are in the drawing's reconciliation universe, so a stray one is not a baseline."""
+
+    service = make_service(tmp_path)
+    layout, _plan, _topology = materialized()
+    document_id = seed_document(service, layout)
+    service.apply_transaction(
+        document_id,
+        TransactionRequest(
+            operations=[AddSystemOperation(system=SystemGroup(id="S_unrelated", name="Other"))],
+            expected_revision=0,
+        ),
+    )
+    with pytest.raises(MaterializationTargetNotEmptyError) as raised:
+        apply_materialized_layout(
+            service, replace(layout, document_id=document_id), expected_revision=1
+        )
+    assert "S_unrelated" in str(raised.value)
+    assert service.get_document(document_id).revision == 1
+
+
+def test_an_empty_target_is_permitted_including_the_default_system_group() -> None:
+    """The baseline is "nothing engineered", not "no rows": a created document already has these."""
+
+    document = Document(name="Empty")
+    assert [system.id for system in document.systems] == [DEFAULT_SYSTEM_GROUP_ID]
+    assert contract.MATERIALIZATION_TARGET_PERMITTED_SYSTEM_GROUP_ID == DEFAULT_SYSTEM_GROUP_ID
+    require_empty_target(document)
+    assert document.elements == []
+
+
+def test_a_revision_that_moved_after_the_preflight_is_refused_atomically(tmp_path: Path) -> None:
+    """The revision the preflight read is the revision the commit is bound to.
+
+    Another writer landing N+1 between the read and the write must not be appended on top of: the
+    drawing that was verified belongs to N, and the writer's own atomic expected_revision is what
+    refuses it.
+    """
+
+    service = make_service(tmp_path)
+    layout, _plan, _topology = materialized()
+    document_id = seed_document(service, layout)
+    preflighted = service.get_document(document_id).revision
+    service.apply_transaction(
+        document_id,
+        TransactionRequest(
+            operations=[AddElementOperation(element=_an_unrelated_element())],
+            expected_revision=preflighted,
+        ),
+    )
+    raced = service.get_document(document_id)
+    assert raced.revision == preflighted + 1
+
+    # The preflight itself now refuses, and if it were bypassed the writer still would.
+    with pytest.raises(MaterializationError):
+        apply_materialized_layout(
+            service, replace(layout, document_id=document_id), expected_revision=preflighted
+        )
+    with pytest.raises(RevisionConflictError):
+        service.apply_transaction(
+            document_id,
+            materialized_transaction(layout, expected_revision=preflighted),
+            source="system",
+        )
+    settled = service.get_document(document_id)
+    assert settled.revision == preflighted + 1
+    assert [element.id for element in settled.elements] == ["el_unrelated"]
+
+
+def test_the_preflight_is_not_the_only_completeness_protection() -> None:
+    """Both halves stay declared: the pre-write boundary and the post-write reconciliation."""
+
+    assert contract.MATERIALIZATION_PREFLIGHTS_THE_TARGET_BEFORE_IT_WRITES
+    assert contract.MATERIALIZATION_COMMITS_AGAINST_THE_PREFLIGHTED_REVISION
+    assert contract.MATERIALIZATION_RECONCILIATION_IS_NOT_THE_ONLY_COMPLETENESS_PROTECTION
+    assert contract.MATERIALIZATION_MAY_CONTINUE_AFTER_A_REVISION_CONFLICT is False
+    assert "apply_transaction" in inspect.getsource(apply_materialized_layout)
+    assert "require_empty_target" in inspect.getsource(apply_materialized_layout)
+
+
+def test_a_row_whose_written_text_was_edited_is_reported(tmp_path: Path) -> None:
+    """A same-length text swap leaves the box identical, so nothing but the text can see it."""
+
+    service = make_service(tmp_path)
+    layout, _plan, _topology = materialized()
+    _document_id, document = _committed(service, layout)
+    assert materialization_matches_document(layout, document) == []
+    label_id = layout.element_id_for("el_ar_tank", LABEL_ELEMENT_ROLE)
+    for element in document.elements:
+        if element.id == label_id:
+            assert len(element.text) == len(TAGS["el_ar_tank"])
+            element.text = "V-999"
+    problems = materialization_matches_document(layout, document)
+    assert any("V-999" in problem for problem in problems), problems
+
+
+def test_a_symbol_label_written_after_the_commit_is_reported(tmp_path: Path) -> None:
+    """``symbol.label`` is the second text surface, so reconciliation reads it rather than assumes it."""
+
+    service = make_service(tmp_path)
+    layout, _plan, _topology = materialized()
+    _document_id, document = _committed(service, layout)
+    assert materialization_matches_document(layout, document) == []
+    symbol_id = layout.element_id_for("el_ar_tank", "symbol")
+    for element in document.elements:
+        if element.id == symbol_id:
+            element.label = "V-999"
+    problems = materialization_matches_document(layout, document)
+    assert any("label" in problem and "V-999" in problem for problem in problems), problems
 
 
 def test_a_document_that_lost_a_row_is_reported(tmp_path: Path) -> None:

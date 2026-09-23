@@ -1710,6 +1710,57 @@ MATERIALIZATION_EXCLUDES_VOLATILE_BOOKKEEPING: tuple[str, ...] = (
 )
 MATERIALIZATION_DOES_NOT_READ_A_CLOCK = True
 
+#: The label text is not an input. The layout places a label *box*; that box was measured
+#: against one specific string, so the materializer derives the string from the engineering
+#: identity's tag and refuses unless the box the layout placed is exactly the box that text
+#: measures to. A caller-supplied label would make "one finalized layout -> one drawing" stop
+#: being a function: the same canonical_layout_digest could name two drawings.
+MATERIALIZATION_LABEL_TEXT_SOURCE = "the engineering identity's tag, from the finalized layout"
+MATERIALIZATION_LABEL_TEXT_IS_DERIVED_FROM_THE_FINALIZED_LAYOUT = True
+MATERIALIZATION_ACCEPTS_CALLER_SUPPLIED_LABEL_TEXT = False
+MATERIALIZATION_PROVES_THE_LABEL_BOX_MATCHES_THE_DERIVED_TEXT = True
+A_LABEL_BOX_THAT_DOES_NOT_FIT_ITS_TEXT_IS_A_HARD_FAILURE = True
+#: A symbol's own ``label`` is written empty, because the repository's polish already made "a
+#: symbol has one editable text and no second, uneditable copy of the same string" the drawing's
+#: rule. The second surface is asserted to have stayed empty rather than left unexamined.
+MATERIALIZATION_WRITES_THE_SYMBOL_LABEL_FIELD_EMPTY = True
+#: What reconciliation compares, field by field, in both directions. The drawn text is in here:
+#: a drawing whose geometry, tags and bindings all match while the words on it are wrong is not
+#: the drawing the layout decided.
+MATERIALIZATION_RECONCILIATION_COVERS: tuple[str, ...] = (
+    "kind",
+    "engineering_id",
+    "tag",
+    "symbol_key",
+    "system_id",
+    "text",
+    "label",
+    "x",
+    "y",
+    "width",
+    "height",
+    "waypoints",
+)
+MATERIALIZATION_RECONCILIATION_DOES_NOT_COVER_THE_DRAWN_TEXT = False
+
+#: The target's baseline. ``add``-only operations plus a post-write reconciliation is not enough
+#: on its own: an unrelated element already in the target would be committed and only *then*
+#: reported, so the target is preflighted before the write and the commit is bound to the
+#: revision it was preflighted at. Reconciliation stays, as the second check.
+MATERIALIZATION_PREFLIGHTS_THE_TARGET_BEFORE_IT_WRITES = True
+MATERIALIZATION_TARGET_BASELINE_IS_EMPTY = True
+#: "Empty" means "holds nothing engineered", not "holds no rows": a created document already has
+#: a default layer and a default system group, and those belong to the empty document rather than
+#: to any drawing. What the baseline refuses is content the layout did not decide.
+MATERIALIZATION_TARGET_BASELINE_REPORT = (
+    "no element, and no system group other than the default one every created document carries"
+)
+MATERIALIZATION_TARGET_PERMITTED_SYSTEM_GROUP_ID = "system_default"
+MATERIALIZATION_MAY_APPEND_TO_A_TARGET_THAT_ALREADY_HOLDS_ENGINEERED_CONTENT = False
+MATERIALIZATION_COMMITS_AGAINST_THE_PREFLIGHTED_REVISION = True
+MATERIALIZATION_RECONCILIATION_IS_NOT_THE_ONLY_COMPLETENESS_PROTECTION = True
+MATERIALIZATION_MAY_CONTINUE_AFTER_A_REVISION_CONFLICT = False
+
 #: What the materializer may emit. Adds only: a drawing that deletes or updates would be the
 #: layout changing a document that already existed rather than producing one.
 MATERIALIZATION_OPERATION_KINDS: tuple[str, ...] = ("add_system", "add_element")
@@ -3274,6 +3325,62 @@ def validate_contract() -> list[str]:
         problems.append("the drawing is translated by the derived canvas origin")
     if not MATERIALIZATION_RECORDS_THE_ORIGIN:
         problems.append("the origin is recorded, so absolute layout coordinates stay recoverable")
+    if MATERIALIZATION_ACCEPTS_CALLER_SUPPLIED_LABEL_TEXT:
+        problems.append(
+            "label text is not an input: a caller-supplied override would give one finalized "
+            "layout two drawings under one canonical digest"
+        )
+    if not MATERIALIZATION_LABEL_TEXT_IS_DERIVED_FROM_THE_FINALIZED_LAYOUT:
+        problems.append("the label text is derived from the finalized layout")
+    if not MATERIALIZATION_PROVES_THE_LABEL_BOX_MATCHES_THE_DERIVED_TEXT:
+        problems.append(
+            "the label box the layout placed must be proven to be the box the derived text "
+            "measures to"
+        )
+    if not A_LABEL_BOX_THAT_DOES_NOT_FIT_ITS_TEXT_IS_A_HARD_FAILURE:
+        problems.append("a label box that does not fit its text is a hard failure")
+    if not MATERIALIZATION_WRITES_THE_SYMBOL_LABEL_FIELD_EMPTY:
+        problems.append(
+            "a symbol keeps one editable text: its own label field is written empty, as the "
+            "repository's polish already requires"
+        )
+    if MATERIALIZATION_RECONCILIATION_DOES_NOT_COVER_THE_DRAWN_TEXT:
+        problems.append(
+            "reconciliation must compare the drawn text: matching geometry, tags and bindings "
+            "with the wrong words on the drawing is not the drawing the layout decided"
+        )
+    if "text" not in MATERIALIZATION_RECONCILIATION_COVERS:
+        problems.append("reconciliation compares the annotation text")
+    if "label" not in MATERIALIZATION_RECONCILIATION_COVERS:
+        problems.append("reconciliation compares a symbol's own label field")
+    if not MATERIALIZATION_PREFLIGHTS_THE_TARGET_BEFORE_IT_WRITES:
+        problems.append(
+            "the target is preflighted: an unrelated element already in it would otherwise be "
+            "committed and only then reported"
+        )
+    if MATERIALIZATION_MAY_APPEND_TO_A_TARGET_THAT_ALREADY_HOLDS_ENGINEERED_CONTENT:
+        problems.append(
+            "an add-only materialization may not append to a target that already holds "
+            "engineered content"
+        )
+    if not MATERIALIZATION_TARGET_BASELINE_IS_EMPTY:
+        problems.append("the v1 target baseline is an empty document")
+    if not MATERIALIZATION_TARGET_BASELINE_REPORT.strip():
+        problems.append("the permitted target baseline has to be stated in words")
+    if not MATERIALIZATION_TARGET_PERMITTED_SYSTEM_GROUP_ID:
+        problems.append(
+            "the one system group an empty document is permitted to carry must be named, so "
+            "'empty' is a statement about the drawing rather than about the row count"
+        )
+    if not MATERIALIZATION_COMMITS_AGAINST_THE_PREFLIGHTED_REVISION:
+        problems.append("the commit is bound to the revision the preflight read")
+    if not MATERIALIZATION_RECONCILIATION_IS_NOT_THE_ONLY_COMPLETENESS_PROTECTION:
+        problems.append(
+            "reconciliation is a post-write proof; the preflight and the atomic "
+            "expected_revision are the pre-write boundary"
+        )
+    if MATERIALIZATION_MAY_CONTINUE_AFTER_A_REVISION_CONFLICT:
+        problems.append("a revision conflict is terminal: the materializer never appends on top")
     for link in (
         "diagram_spec_semantic_digest",
         "adapter_topology_digest",

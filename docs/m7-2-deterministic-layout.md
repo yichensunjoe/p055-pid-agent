@@ -1677,3 +1677,79 @@ MATERIALIZATION_PROVENANCE_IDENTITIES_ARE_KNOWN_BEFORE_THE_WRITE = True
 | --- | --- |
 | 五个身份里塞进一个预测的 revision | 2 红 |
 | `materialization_record` 多一个 caller 传 revision 的参数 | 1 红（签名用例） |
+
+### 15.11 Gate 第四轮：provenance 必须是写者强制的，不是调用方可选的
+
+Gate 复核远端 `1f6bbd6` 后只留一个 blocker：合同写着
+
+```
+MATERIALIZATION_PROVENANCE_IS_RECORDED_ON_THE_WRITE = True
+MATERIALIZATION_PROVENANCE_ENDS_AT_THE_COMMITTED_REVISION = True
+```
+
+而运行时是 `apply_materialized_layout(..., audit=None)`，然后把这个**可选**的 audit 直接交给
+`DocumentService.apply_transaction()`。于是存在一条合法路径：`audit=None` → 图照样提交，writer 自建一个普通
+`AuditContext`，里面有真正的 `result_revision`，**但没有那五个 M7 identity**。这不是理论路径 —— 我自己的测试辅助
+`_committed()` 就是这么调用的。
+
+**修法与边界（不新增表、不新增 writer、不新增 surface，也不把 revision 塞回写前预测）：**
+
+```
+m7_layout_materialization.MaterializedLayout
+    provenance_identities: tuple[tuple[str, str], ...]   # 编译时算好，随 layout 走
+        ↓
+with_materialization_provenance(layout, audit) -> AuditContext
+    caller 的 attribution（actor/surface/tool/session/validation）保留
+    metadata["m7_materialization"] = 九个身份（五个 digest + 各自版本）
+    caller 若已带这个 key → 写前 MaterializationProvenanceError，不覆盖、不合并
+        ↓
+DocumentService.apply_transaction(...)   # 同一次 SQLite 写，原子
+        ↓
+audit_record.metadata["m7_materialization"]（五个 identity + 版本）
+    ＋ audit_record.result_revision（writer 从 after.revision 写）
+    == 完整的 chain
+```
+
+```
+MATERIALIZATION_PROVENANCE_IS_SUPPLIED_BY_THE_CALLER = False
+MATERIALIZATION_ATTRIBUTION_IS_SUPPLIED_BY_THE_CALLER = True
+MATERIALIZATION_ISSUES_THE_IDENTITY_CHAIN_ITSELF = True
+MATERIALIZATION_REFUSES_A_CALLER_SUPPLIED_PROVENANCE = True
+MATERIALIZATION_MAY_OVERWRITE_A_CALLER_SUPPLIED_PROVENANCE = False
+M7_PROVENANCE_METADATA_KEY = "m7_materialization"
+M7_PROVENANCE_REQUIRED_IDENTITIES = (diagram_spec_semantic_digest, adapter_topology_digest,
+                                    symbol_geometry_catalog_digest, canonical_layout_digest,
+                                    materialization_digest)
+MATERIALIZATION_PROVENANCE_RECORDS_THE_VERSIONS = True
+MATERIALIZATION_PROVENANCE_VERSION_FIELDS = (layout_digest_version, layout_projection_version,
+                                             materializer_version, materialization_digest_version)
+```
+
+一句话概括边界：**attribution 是调用方的，provenance 是编译的。**
+
+三个设计点：
+
+1. **身份链随 `MaterializedLayout` 走**，不在调用点现算。写时才算会让两个调用点对"这张图来自哪条链"给出不同答案；
+   让调用方传则可以让调用方**省略**它。
+2. **一个保留命名空间，而不是五个散键。** 散键允许调用方只提供其中一个、其余留空，而"这个 revision 是否来自
+   M7 链"就变成了五个各自独立的问题。同名 key 出现时**硬失败**而不是覆盖 —— 覆盖会让调用方以为自己那条链被记录了。
+3. **version 与 digest 一起记。** 一个 digest 不带定义它的版本就不可追溯（同一 digest 的两个版本描述不同的事）。
+   这一点是我自己加的，所以也补了一条不依赖实现的断言：记录的 key 集合必须**恰好**等于
+   `REQUIRED_IDENTITIES ∪ VERSION_FIELDS`（不拿同一个函数的两侧互相比 —— 那样两边会一起变）。
+
+用例（读**持久化**的 audit，不是读传进去的 context）：
+
+| 用例 | 断言 |
+| --- | --- |
+| `audit=None` 仍必须留下完整链 | 提交成功后 `audit_record.metadata["m7_materialization"]` 含五个 identity（且 key 集合恰为声明的那九个）；`result_revision` 等于实际 revision；`{**recorded, resulting_revision}` == `materialization_record(layout, result)` |
+| caller 自带同名 key | **写前** `MaterializationProvenanceError`；revision 不变、元素没进去、history 只有 `create` |
+| caller 的 attribution 仍生效 | 持久化的 audit 里 `actor=web-user`、自定义 metadata 保留，且 caller 的 context 对象**未被改动** |
+| 链不完整 | `with_materialization_provenance` 对空链直接报错、点名缺哪个 identity |
+
+新增 mutation（**逐条实跑**，全部真红）：
+
+| mutation | 结果 |
+| --- | --- |
+| `apply_materialized_layout` 不再注入身份链（`context = audit`） | 3 红 |
+| caller 提供的同名 key 改为合并/覆盖 | 1 红 |
+| 只记 digest、不记版本 | 1 红 |

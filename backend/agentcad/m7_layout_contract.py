@@ -1805,6 +1805,35 @@ MATERIALIZATION_PROVENANCE_CHAIN: tuple[str, ...] = (
 )
 MATERIALIZATION_PROVENANCE_IS_RECORDED_ON_THE_WRITE = True
 MATERIALIZATION_PROVENANCE_ENDS_AT_THE_COMMITTED_REVISION = True
+#: The chain is the materializer's to record and the caller's only to *read*. Optional caller
+#: provenance would make "this revision traces back to its specification" a property of how the
+#: caller chose to call, and a caller that omits it would still commit a drawing -- which is the
+#: failure this declaration removes. Attribution is a different thing and stays the caller's.
+MATERIALIZATION_PROVENANCE_IS_SUPPLIED_BY_THE_CALLER = False
+MATERIALIZATION_ATTRIBUTION_IS_SUPPLIED_BY_THE_CALLER = True
+MATERIALIZATION_ISSUES_THE_IDENTITY_CHAIN_ITSELF = True
+MATERIALIZATION_REFUSES_A_CALLER_SUPPLIED_PROVENANCE = True
+MATERIALIZATION_MAY_OVERWRITE_A_CALLER_SUPPLIED_PROVENANCE = False
+#: One reserved namespace rather than five loose keys: "did this revision come from the M7 chain"
+#: is then one question with one answer, and a caller cannot supply one identity and omit the rest.
+M7_PROVENANCE_METADATA_KEY = "m7_materialization"
+M7_PROVENANCE_REQUIRED_IDENTITIES: tuple[str, ...] = (
+    "diagram_spec_semantic_digest",
+    "adapter_topology_digest",
+    "symbol_geometry_catalog_digest",
+    "canonical_layout_digest",
+    "materialization_digest",
+)
+#: The versions travel with the digests, because a digest without the version that defines it is
+#: not traceable: two versions of one digest describe different things. Named here so the record's
+#: key set is a declaration rather than whatever the implementation happened to write.
+MATERIALIZATION_PROVENANCE_RECORDS_THE_VERSIONS = True
+MATERIALIZATION_PROVENANCE_VERSION_FIELDS: tuple[str, ...] = (
+    "layout_digest_version",
+    "layout_projection_version",
+    "materializer_version",
+    "materialization_digest_version",
+)
 #: The revision half of the chain is read from the commit, never predicted by the materializer: a
 #: predicted revision is a claim about what the *next* revision will be, which two writers can
 #: both make. The five identities travel with the write; the revision closes the record afterwards.
@@ -3416,6 +3445,57 @@ def validate_contract() -> list[str]:
         problems.append(
             "the five input identities are the half of the chain that travels with the write"
         )
+    if MATERIALIZATION_PROVENANCE_IS_SUPPLIED_BY_THE_CALLER:
+        problems.append(
+            "optional caller-supplied provenance makes traceability a property of how the "
+            "caller called: the materializer records the chain itself"
+        )
+    if not MATERIALIZATION_ISSUES_THE_IDENTITY_CHAIN_ITSELF:
+        problems.append("the materializer issues the identity chain rather than accepting one")
+    if not MATERIALIZATION_REFUSES_A_CALLER_SUPPLIED_PROVENANCE:
+        problems.append(
+            "a caller-supplied chain is refused before the write, not merged or overwritten"
+        )
+    if MATERIALIZATION_MAY_OVERWRITE_A_CALLER_SUPPLIED_PROVENANCE:
+        problems.append(
+            "overwriting would leave the caller believing its own chain was recorded"
+        )
+    if not MATERIALIZATION_ATTRIBUTION_IS_SUPPLIED_BY_THE_CALLER:
+        problems.append("attribution stays the caller's to give: actor, surface, tool, session")
+    if not M7_PROVENANCE_METADATA_KEY:
+        problems.append("the identity chain needs a reserved metadata namespace")
+    else:
+        for loose in M7_PROVENANCE_REQUIRED_IDENTITIES:
+            if loose == M7_PROVENANCE_METADATA_KEY:
+                problems.append(
+                    f"the reserved key {loose!r} is also an identity name: the namespace would "
+                    "collide with what it holds"
+                )
+    for identity in MATERIALIZATION_PROVENANCE_CHAIN:
+        if identity == "resulting_revision":
+            continue
+        if identity not in M7_PROVENANCE_REQUIRED_IDENTITIES:
+            problems.append(
+                f"the chain's link {identity!r} is not among the identities the write requires"
+            )
+    if not MATERIALIZATION_PROVENANCE_RECORDS_THE_VERSIONS:
+        problems.append(
+            "each digest is recorded with the version that defines it, or the chain is not "
+            "traceable"
+        )
+    if not MATERIALIZATION_PROVENANCE_VERSION_FIELDS:
+        problems.append("the version fields the record carries must be named")
+    for version_field in MATERIALIZATION_PROVENANCE_VERSION_FIELDS:
+        if version_field in M7_PROVENANCE_REQUIRED_IDENTITIES:
+            problems.append(
+                f"{version_field!r} is a version, not an identity: the required set is the "
+                "identity chain a revision must be traceable through"
+            )
+    overlap = set(MATERIALIZATION_PROVENANCE_VERSION_FIELDS) & set(
+        M7_PROVENANCE_REQUIRED_IDENTITIES
+    )
+    if overlap:
+        problems.append(f"a field cannot be both an identity and a version: {sorted(overlap)}")
     if not PHASE_3_MAY_IMPORT_THE_CONTRACT:
         problems.append("phase 3 must name the module that reads this contract")
     overlap = set(PHASE_2B_MAY_IMPORT_THE_CONTRACT) & set(PHASE_3_MAY_IMPORT_THE_CONTRACT)

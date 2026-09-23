@@ -52,6 +52,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .annotation_layout import text_bounds
+from .audit_models import AuditContext
 from .auto_layout_geometry import ANNOTATION_FONT_SIZE
 from .auto_layout_identity import (
     LayoutIdentityError,
@@ -62,6 +63,8 @@ from .auto_layout_semantic import STEP_5, SemanticLayoutPlan
 from .m7_layout_contract import (
     LAYOUT_DIGEST_VERSION,
     LAYOUT_PROJECTION_VERSION,
+    M7_PROVENANCE_METADATA_KEY,
+    M7_PROVENANCE_REQUIRED_IDENTITIES,
     MATERIALIZATION_DIGEST_VERSION,
     MATERIALIZER_VERSION,
 )
@@ -96,6 +99,11 @@ MATERIALIZATION_LAYER_ID = "layer_default"
 #: asserted against the model in the test module, so it cannot drift away from the default.
 DEFAULT_SYSTEM_GROUP_ID = "system_default"
 
+#: The reserved metadata namespace and the identities the write requires: declared in the contract,
+#: because "which revision can be traced back to what" is a governance claim rather than an
+#: implementation detail. Re-exported so call sites read one name.
+
+
 
 class MaterializationError(ValueError):
     """The canonical layout could not be turned into a drawing."""
@@ -115,6 +123,16 @@ class MaterializationCanvasError(MaterializationError):
 
 class MaterializationTargetNotEmptyError(MaterializationError):
     """The target holds content the layout did not decide, so appending would be a merge."""
+
+
+class MaterializationProvenanceError(MaterializationError):
+    """The caller tried to speak for the materializer's own provenance.
+
+    Attribution is the caller's to give -- who asked, from which surface, under which session. The
+    engineering identity chain is not: it is a property of the compilation, and a caller able to
+    omit or overwrite it could commit a drawing whose revision cannot be traced back to the
+    specification it came from.
+    """
 
 
 class MaterializationDocumentError(MaterializationError):
@@ -245,6 +263,11 @@ class MaterializedLayout:
     materialization_digest: str
     materializer_version: str = MATERIALIZER_VERSION
     digest_version: str = MATERIALIZATION_DIGEST_VERSION
+    #: The identity chain this drawing was compiled from, as pairs rather than a mapping so a frozen
+    #: dataclass stays hashable. It travels *with* the layout because it is a fact about the
+    #: compilation: computing it at write time would let two call sites disagree about it, and
+    #: letting the caller pass it would let a caller omit it.
+    provenance_identities: tuple[tuple[str, str], ...] = ()
 
     @property
     def digest(self) -> str:
@@ -256,21 +279,14 @@ class MaterializedLayout:
                 return element_id
         raise KeyError(f"no materialized element for {engineering_id!r} as {role!r}")
 
-    def provenance(self, *, diagram_spec_semantic_digest: str, adapter_topology_digest: str,
-                   symbol_geometry_catalog_digest: str, canonical_layout_digest: str) -> dict[str, str]:
-        """The chain a committed revision has to be traceable through, as plain strings."""
+    def provenance(self) -> dict[str, str]:
+        """The chain a committed revision has to be traceable through, as plain strings.
 
-        return {
-            "diagram_spec_semantic_digest": diagram_spec_semantic_digest,
-            "adapter_topology_digest": adapter_topology_digest,
-            "symbol_geometry_catalog_digest": symbol_geometry_catalog_digest,
-            "canonical_layout_digest": canonical_layout_digest,
-            "layout_digest_version": LAYOUT_DIGEST_VERSION,
-            "layout_projection_version": LAYOUT_PROJECTION_VERSION,
-            "materializer_version": self.materializer_version,
-            "materialization_digest_version": self.digest_version,
-            "materialization_digest": self.materialization_digest,
-        }
+        Every digest travels with the version that defines it: a digest without its version is not
+        traceable, because two versions of the same digest describe different things.
+        """
+
+        return dict(self.provenance_identities)
 
 
 def materialization_payload(
@@ -766,6 +782,17 @@ def materialize_canonical_layout(
             rows=digest_rows,
         )
     )
+    provenance = {
+        "diagram_spec_semantic_digest": plan_engineering_digest(plan),
+        "adapter_topology_digest": plan.topology_digest,
+        "symbol_geometry_catalog_digest": plan.symbol_geometry_catalog_digest,
+        "canonical_layout_digest": plan.canonical_layout_digest,
+        "layout_digest_version": LAYOUT_DIGEST_VERSION,
+        "layout_projection_version": LAYOUT_PROJECTION_VERSION,
+        "materializer_version": MATERIALIZER_VERSION,
+        "materialization_digest_version": MATERIALIZATION_DIGEST_VERSION,
+        "materialization_digest": digest,
+    }
     return MaterializedLayout(
         document_id=document_id,
         operations=operations,
@@ -782,6 +809,7 @@ def materialize_canonical_layout(
             for row in rows
         ),
         materialization_digest=digest,
+        provenance_identities=tuple(sorted(provenance.items())),
     )
 
 
@@ -886,6 +914,44 @@ def require_document_canvas(document: Document, layout: MaterializedLayout) -> N
         )
 
 
+def with_materialization_provenance(layout: MaterializedLayout, audit: Any = None) -> AuditContext:
+    """The audit context the write actually uses: the caller's attribution plus this chain.
+
+    Attribution is the caller's to give (actor, surface, tool, session, validation status). The
+    engineering identity chain is not: it is a property of the compilation, so it is attached here
+    and a caller that supplies it is refused rather than merged. Refusing is the point -- silently
+    overriding would leave a caller believing its own chain was recorded.
+    """
+
+    provenance = layout.provenance()
+    missing = [name for name in M7_PROVENANCE_REQUIRED_IDENTITIES if not provenance.get(name)]
+    if missing:
+        raise MaterializationProvenanceError(
+            f"this layout carries no {missing}: a drawing whose revision cannot be traced back to "
+            "the specification it came from may not be committed"
+        )
+    if audit is None:
+        context = AuditContext(
+            actor="m7-materializer",
+            surface="internal",
+            tool_name="m7_materialize_layout",
+            validation_status="valid",
+        )
+    else:
+        context = (
+            audit if isinstance(audit, AuditContext) else AuditContext.model_validate(audit)
+        )
+    metadata = dict(context.metadata)
+    if M7_PROVENANCE_METADATA_KEY in metadata:
+        raise MaterializationProvenanceError(
+            f"the audit metadata already carries {M7_PROVENANCE_METADATA_KEY!r}: the engineering "
+            "identity chain is the materializer's to record, not the caller's to supply or to "
+            "overwrite -- attribution is yours, provenance is the compilation's"
+        )
+    metadata[M7_PROVENANCE_METADATA_KEY] = provenance
+    return context.model_copy(update={"metadata": metadata})
+
+
 def require_empty_target(document: Document) -> None:
     """The pre-write baseline: v1 appends a drawing to a document that holds nothing else.
 
@@ -960,12 +1026,16 @@ def apply_materialized_layout(
         )
     require_empty_target(current)
     require_document_canvas(current, layout)
+    # The identity chain is attached here rather than accepted from the caller: a caller-supplied
+    # chain could be omitted, and an omitted chain is a committed revision nobody can trace back to
+    # the specification it came from. Refused before the write, so nothing is committed.
+    context = with_materialization_provenance(layout, audit)
     request = materialized_transaction(layout, expected_revision=expected_revision, label=label)
     result = service.apply_transaction(
         layout.document_id,
         request,
         source="system",
-        audit=audit,
+        audit=context,
     )
     problems = materialization_matches_document(layout, result.document)
     if problems:
@@ -975,10 +1045,11 @@ def apply_materialized_layout(
     return result
 
 
-def materialization_provenance(
-    plan: SemanticLayoutPlan, layout: MaterializedLayout
-) -> dict[str, str]:
+def materialization_provenance(layout: MaterializedLayout) -> dict[str, str]:
     """The identities that go *with* the write: what this drawing is compiled from.
+
+    Read from the layout rather than recomputed here, so "which chain did this drawing come from"
+    has one answer rather than one answer per call site.
 
     Deliberately without a revision. A revision supplied here would be a prediction, and a
     prediction of the next revision number is not a fact about this drawing -- two writers could
@@ -986,17 +1057,10 @@ def materialization_provenance(
     committed, recorded by the writer, and read back through :func:`materialization_record`.
     """
 
-    return layout.provenance(
-        diagram_spec_semantic_digest=plan_engineering_digest(plan),
-        adapter_topology_digest=plan.topology_digest,
-        symbol_geometry_catalog_digest=plan.symbol_geometry_catalog_digest,
-        canonical_layout_digest=plan.canonical_layout_digest,
-    )
+    return layout.provenance()
 
 
-def materialization_record(
-    plan: SemanticLayoutPlan, layout: MaterializedLayout, result: Any
-) -> dict[str, str]:
+def materialization_record(layout: MaterializedLayout, result: Any) -> dict[str, str]:
     """The complete audit relation, closed with the revision the writer *did* commit.
 
     Reads ``result.document.revision`` rather than accepting a number: the chain means "these
@@ -1011,7 +1075,7 @@ def materialization_record(
             "the provenance record is closed with the revision the writer committed, so it "
             "cannot be built from a result that carries no committed document"
         )
-    record = materialization_provenance(plan, layout)
+    record = materialization_provenance(layout)
     record["resulting_revision"] = str(revision)
     return record
 
@@ -1027,7 +1091,10 @@ __all__ = [
     "MaterializationCanvasError",
     "MaterializationDocumentError",
     "MaterializationError",
+    "M7_PROVENANCE_METADATA_KEY",
+    "M7_PROVENANCE_REQUIRED_IDENTITIES",
     "MaterializationLabelError",
+    "MaterializationProvenanceError",
     "MaterializationTargetNotEmptyError",
     "MaterializedLayout",
     "apply_materialized_layout",
@@ -1043,4 +1110,5 @@ __all__ = [
     "materialized_transaction",
     "require_document_canvas",
     "require_empty_target",
+    "with_materialization_provenance",
 ]

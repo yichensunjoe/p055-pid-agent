@@ -35,6 +35,7 @@ from agentcad.m7_layout_materialization import (
     MaterializationCanvasError,
     MaterializationError,
     MaterializationLabelError,
+    MaterializationProvenanceError,
     MaterializationTargetNotEmptyError,
     _label_box_matches_text,
     apply_materialized_layout,
@@ -49,6 +50,7 @@ from agentcad.m7_layout_materialization import (
     materialized_element_id,
     materialized_transaction,
     require_empty_target,
+    with_materialization_provenance,
 )
 from agentcad.models import (
     AddElementOperation,
@@ -121,7 +123,7 @@ def test_a_finalized_layout_becomes_a_committed_revision(tmp_path: Path) -> None
     document_id = seed_document(service, layout)
     assert document_id == layout.document_id or document_id != ""  # the id comes from creation
 
-    identities = materialization_provenance(plan, layout)
+    identities = materialization_provenance(layout)
     assert "resulting_revision" not in identities  # a prediction is not part of the write
     audit = AuditContext(
         actor="m7-materializer",
@@ -138,7 +140,7 @@ def test_a_finalized_layout_becomes_a_committed_revision(tmp_path: Path) -> None
     assert document.revision == 1
     # The record is closed with the revision the writer committed, not with a number supplied
     # before the write -- and it is that revision, not "the one we expected".
-    record = materialization_record(plan, layout, result)
+    record = materialization_record(layout, result)
     assert record["resulting_revision"] == str(document.revision)
     assert materialization_matches_document(layout, document) == []
     assert len(document.elements) == len(layout.rows)
@@ -839,7 +841,7 @@ def test_the_provenance_chain_reaches_the_committed_revision(tmp_path: Path) -> 
     layout, plan, topology = materialized()
     service = make_service(tmp_path)
     document_id = seed_document(service, layout)
-    identities = materialization_provenance(plan, layout)
+    identities = materialization_provenance(layout)
     result = apply_materialized_layout(
         service,
         replace(layout, document_id=document_id),
@@ -852,7 +854,7 @@ def test_the_provenance_chain_reaches_the_committed_revision(tmp_path: Path) -> 
             metadata=dict(identities),
         ),
     )
-    record = materialization_record(plan, layout, result)
+    record = materialization_record(layout, result)
     for link in contract.MATERIALIZATION_PROVENANCE_CHAIN:
         assert link in record, link
     assert record["resulting_revision"] == str(result.document.revision)
@@ -863,7 +865,7 @@ def test_the_provenance_chain_reaches_the_committed_revision(tmp_path: Path) -> 
     assert record["diagram_spec_semantic_digest"]
     # The revision half cannot be produced before the write: there is nothing to read it from.
     with pytest.raises(MaterializationError):
-        materialization_record(plan, layout, object())
+        materialization_record(layout, object())
 
 
 def test_the_record_takes_no_caller_supplied_revision() -> None:
@@ -875,7 +877,9 @@ def test_the_record_takes_no_caller_supplied_revision() -> None:
     """
 
     parameters = inspect.signature(materialization_record).parameters
-    assert set(parameters) == {"plan", "layout", "result"}
+    # The layout, and the write's own result. Nothing else -- in particular no plan, because a
+    # caller able to pass a different plan could ask for one drawing's record and get another's.
+    assert set(parameters) == {"layout", "result"}
     assert not {"revision", "result_revision", "predicted_revision", "predicted"} & set(parameters)
     assert '"revision"' in inspect.getsource(materialization_record)
 
@@ -891,7 +895,7 @@ def test_the_record_closes_on_the_committed_revision_not_on_a_prediction(tmp_pat
     layout, plan, _topology = materialized()
     assert not contract.MATERIALIZATION_PROVENANCE_PREDICTS_THE_REVISION
     assert contract.MATERIALIZATION_PROVENANCE_READS_THE_REVISION_FROM_THE_COMMITTED_RESULT
-    assert "resulting_revision" not in materialization_provenance(plan, layout)
+    assert "resulting_revision" not in materialization_provenance(layout)
     service = make_service(tmp_path)
     document_id = seed_document(service, layout)
     # A revision that is not 1, reached without putting anything engineered in the target: the
@@ -910,23 +914,125 @@ def test_the_record_closes_on_the_committed_revision_not_on_a_prediction(tmp_pat
         service, replace(layout, document_id=document_id), expected_revision=1
     )
     assert result.document.revision == 2
-    assert materialization_record(plan, layout, result)["resulting_revision"] == "2"
+    assert materialization_record(layout, result)["resulting_revision"] == "2"
 
 
-def test_the_board_records_the_identities_as_an_audit_metadata_dict(tmp_path: Path) -> None:
+def test_the_board_records_the_identities_as_an_audit_metadata_dict() -> None:
     """A dict of strings is what the existing audit path persists, so that is the shape checked."""
 
     layout, plan, _topology = materialized()
-    chain = materialization_provenance(plan, layout)
-    assert all(isinstance(key, str) and isinstance(value, str) for key, value in chain.items())
-    context = AuditContext(
+    context = with_materialization_provenance(layout)
+    recorded = context.metadata[contract.M7_PROVENANCE_METADATA_KEY]
+    assert all(isinstance(key, str) and isinstance(value, str) for key, value in recorded.items())
+    assert recorded["canonical_layout_digest"] == plan.canonical_layout_digest
+
+
+# ---------------------------------------------------------------------------------------
+# Provenance is the materializer's to record, not the caller's to omit or to overwrite
+# ---------------------------------------------------------------------------------------
+
+
+def _persisted_audit(service: DocumentService, document_id: str, revision: int):
+    return service.audit.revision_evidence(document_id, revision).audit_record
+
+
+def test_a_caller_that_passes_no_audit_still_gets_the_full_identity_chain(tmp_path: Path) -> None:
+    """The write cannot be the way to get a revision without a traceable chain.
+
+    ``audit`` is optional attribution, not optional provenance: when it is absent the materializer
+    builds the context itself, and the persisted record is read back rather than trusted -- the
+    claim is about what is in the database, not about what was passed in.
+    """
+
+    service = make_service(tmp_path)
+    layout, _plan, _topology = materialized()
+    document_id = seed_document(service, layout)
+    result = apply_materialized_layout(
+        service, replace(layout, document_id=document_id), expected_revision=0
+    )
+
+    record = _persisted_audit(service, document_id, result.document.revision)
+    assert record is not None
+    recorded = record.evidence["metadata"][contract.M7_PROVENANCE_METADATA_KEY]
+    # The key set is asserted against the declarations, not against what the same call would return:
+    # a comparison that derived both sides from one function would agree with itself if the record
+    # quietly stopped carrying the versions that make its digests traceable.
+    assert set(recorded) == set(contract.M7_PROVENANCE_REQUIRED_IDENTITIES) | set(
+        contract.MATERIALIZATION_PROVENANCE_VERSION_FIELDS
+    )
+    for name in contract.M7_PROVENANCE_REQUIRED_IDENTITIES:
+        assert recorded[name], name
+    assert record.result_revision == result.document.revision
+    # The complete relation: the five identities + the revision the writer committed.
+    assert {**recorded, "resulting_revision": str(record.result_revision)} == (
+        materialization_record(layout, result)
+    )
+
+
+def test_a_caller_cannot_supply_the_identity_chain(tmp_path: Path) -> None:
+    """Refused before the write: silently overwriting would leave the caller believing its chain ran."""
+
+    service = make_service(tmp_path)
+    layout, _plan, _topology = materialized()
+    document_id = seed_document(service, layout)
+    forged = AuditContext(
         actor="m7-materializer",
         surface="internal",
         tool_name="m7_materialize_layout",
         validation_status="valid",
-        metadata=dict(chain),
+        metadata={contract.M7_PROVENANCE_METADATA_KEY: {"canonical_layout_digest": "forged"}},
     )
-    assert context.metadata["canonical_layout_digest"] == plan.canonical_layout_digest
+    with pytest.raises(MaterializationProvenanceError) as raised:
+        apply_materialized_layout(
+            service, replace(layout, document_id=document_id), expected_revision=0, audit=forged
+        )
+    assert contract.M7_PROVENANCE_METADATA_KEY in str(raised.value)
+    after = service.get_document(document_id)
+    assert after.revision == 0
+    assert after.elements == []
+    # Only the creation entry: no transaction was applied, so nothing claims a drawing was written.
+    assert [entry.action for entry in service.get_history(document_id)] == ["create"]
+
+
+def test_attribution_is_still_the_callers_to_give(tmp_path: Path) -> None:
+    """The refusal is about the chain, not about the caller's context: attribution survives."""
+
+    service = make_service(tmp_path)
+    layout, _plan, _topology = materialized()
+    document_id = seed_document(service, layout)
+    audit = AuditContext(
+        actor="web-user",
+        surface="rest",
+        tool_name="m7_nl_draw",
+        validation_status="valid",
+        metadata={"prompt_kind": "natural-language"},
+    )
+    result = apply_materialized_layout(
+        service, replace(layout, document_id=document_id), expected_revision=0, audit=audit
+    )
+    record = _persisted_audit(service, document_id, result.document.revision)
+    assert record.actor == "web-user"
+    metadata = record.evidence["metadata"]
+    assert metadata["prompt_kind"] == "natural-language"
+    assert metadata[contract.M7_PROVENANCE_METADATA_KEY]["materialization_digest"] == (
+        layout.materialization_digest
+    )
+    # The caller's own context is untouched: the materializer built a copy.
+    assert contract.M7_PROVENANCE_METADATA_KEY not in audit.metadata
+
+
+def test_a_layout_with_no_identity_chain_may_not_be_written() -> None:
+    """The chain is refused when it is incomplete, not written and reported afterwards."""
+
+    layout, _plan, _topology = materialized()
+    with pytest.raises(MaterializationProvenanceError) as raised:
+        with_materialization_provenance(replace(layout, provenance_identities=()))
+    assert "diagram_spec_semantic_digest" in str(raised.value)
+    # The five required identities are a subset of what is recorded: the versions travel with them.
+    recorded = with_materialization_provenance(layout).metadata[
+        contract.M7_PROVENANCE_METADATA_KEY
+    ]
+    assert set(contract.M7_PROVENANCE_REQUIRED_IDENTITIES) <= set(recorded)
 
 
 # ---------------------------------------------------------------------------------------

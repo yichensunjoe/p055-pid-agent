@@ -30,6 +30,14 @@ from .agent_semantic_models import (
     SemanticAgentPlan,
     SemanticTransaction,
 )
+from .device_phrases import (
+    MAX_CONNECTION_CANDIDATES,
+    Clause,
+    SymbolCandidate,
+    candidate_symbols,
+    split_clauses,
+)
+from .device_phrases import normalise as _normalise
 from .models import ConnectorElement, Point, SymbolElement
 from .service import DocumentService
 from .symbols import SymbolRegistry
@@ -40,114 +48,22 @@ from .typesafe import (
     choice_probabilities,
 )
 
-#: Phrase -> catalogue hint. The map is *code*, not a model decision, because it is a lookup: when a
-#: clause says 「泵」 the candidate set is the pump symbols, and asking a model to find that would be
-#: a slower way to spell a dictionary. The judgment is used where a lookup cannot decide.
-SYMBOL_HINTS: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
-    (("泵", "pump", "blower", "压缩机", "风机"), ("pump", "blower", "compressor", "fan")),
-    (("阀", "valve", "fcv", "pcv"), ("valve",)),
-    (("罐", "tank", "vessel", "容器", "槽"), ("tank", "vessel", "drum")),
-    (("塔", "column", "tower"), ("column", "tower")),
-    (("换热", "冷却", "加热", "exchanger", "cooler", "heater"), ("exchanger", "cooler", "heater")),
-    (("流量", "flow"), ("flow",)),
-    (("仪表", "变送", "transmitter", "instrument"), ("instrument", "transmitter", "sensor")),
-    (("过滤", "filter", "床"), ("filter", "bed")),
-)
-
-ADD_VERBS = ("添加", "新增", "加一个", "加个", "放置", "放一个", "画一个", "画个", "建立", "新建",
-             "add", "place", "draw", "create")
-CONNECT_VERBS = ("接到", "连到", "连接到", "连接", "接入", "接到", "管线", "管道", "连线",
-                 "connect", "pipe", "line to")
-CLAUSE_BREAK = re.compile(r"[，,;；。\n]+")
-
-#: How many candidates go into one judgment. System One compares options *inside* one question, and a
-#: list of two dozen near-synonyms makes the distribution meaningless rather than more precise.
-MAX_CANDIDATES = 24
-MAX_CONNECTION_CANDIDATES = 12
-
-
-@dataclass(frozen=True)
-class Clause:
-    text: str
-    kind: str  # "add" | "connect" | "unknown"
-
-
-@dataclass(frozen=True)
-class SymbolCandidate:
-    key: str
-    name: str
-    category: str
-    description: str
-
 
 @dataclass(frozen=True)
 class ConnectionCandidate:
+    """A pair of *already drawn* elements and a free port on each.
+
+    Element ids, not engineering identities: this planner edits a drawing that exists, so its
+    candidates are things on the canvas. (The vocabulary in :mod:`device_phrases` is the half the
+    two planners share; a drawn element is not part of it.)
+    """
+
     source_element_id: str
     source_label: str
     source_port_id: str
     target_element_id: str
     target_label: str
     target_port_id: str
-
-
-def _normalise(text: str) -> str:
-    return text.casefold().strip()
-
-
-def split_clauses(prompt: str) -> list[Clause]:
-    """Split the sentence and classify each clause by verb -- a string test, not a model call."""
-
-    clauses: list[Clause] = []
-    for raw in CLAUSE_BREAK.split(prompt or ""):
-        text = raw.strip()
-        if not text:
-            continue
-        lowered = _normalise(text)
-        if any(verb in lowered for verb in CONNECT_VERBS):
-            clauses.append(Clause(text=text, kind="connect"))
-        elif any(verb in lowered for verb in ADD_VERBS):
-            clauses.append(Clause(text=text, kind="add"))
-        else:
-            clauses.append(Clause(text=text, kind="unknown"))
-    return clauses
-
-
-def candidate_symbols(
-    registry: SymbolRegistry, clause: str, *, limit: int = MAX_CANDIDATES
-) -> list[SymbolCandidate]:
-    """The symbols the clause could mean, narrowed by the hint table and then by name."""
-
-    lowered = _normalise(clause)
-    wanted: list[str] = []
-    for phrases, hints in SYMBOL_HINTS:
-        if any(phrase in lowered for phrase in phrases):
-            wanted.extend(hints)
-    rows: list[SymbolCandidate] = []
-    for definition in registry.list():
-        haystack = _normalise(f"{definition.key} {definition.name} {definition.category}")
-        if wanted and not any(hint in haystack for hint in wanted):
-            continue
-        rows.append(
-            SymbolCandidate(
-                key=definition.key,
-                name=definition.name,
-                category=definition.category,
-                description=definition.description,
-            )
-        )
-    if wanted and not rows:
-        # The hint matched a phrase but no symbol carries it: the judgement would have nothing to
-        # choose between, so the whole catalogue is offered instead of an empty question.
-        return [
-            SymbolCandidate(
-                key=definition.key,
-                name=definition.name,
-                category=definition.category,
-                description=definition.description,
-            )
-            for definition in registry.list()[:limit]
-        ]
-    return rows[:limit]
 
 
 def _placed_symbols(service: DocumentService, document_id: str) -> list[SymbolElement]:

@@ -63,7 +63,11 @@ LAYOUT_RULES_VERSION = "deterministic-layout-rules/1"
 #: field set a version names is part of what the version means -- adding fields under v1 would
 #: have been a different plan wearing the same name, which is the failure this milestone is
 #: about, one layer down.
-SEMANTIC_LAYOUT_PLAN_DIGEST_VERSION = "m7-semantic-layout-plan-digest/3"
+#:
+#: v4: the plan gained ``node_symbols``. The renderer binding is layout input -- step 3 places
+#: against the symbol's real geometry -- while it is not engineering semantics, which is why the
+#: adapter's *topology* identity moved with it and the semantic digest did not.
+SEMANTIC_LAYOUT_PLAN_DIGEST_VERSION = "m7-semantic-layout-plan-digest/4"
 
 #: One rules version governs the spacing policy, the node sizes and the rank rules. A separate
 #: spacing-policy version would be a second source of truth about the same drawing, which is
@@ -231,6 +235,9 @@ class SemanticLayoutPlan:
     #: The graph as the engine needs it, geometry-free: who is what kind, and which direction
     #: each connection runs. Step 2 places from these and the topology is never written to.
     node_kinds: tuple[tuple[str, str], ...] = field(default=())
+    #: Which catalogue symbol expresses each node. Read from the specification through the
+    #: adapter, never inferred from the engineering class: the two facts are allowed to differ.
+    node_symbols: tuple[tuple[str, str], ...] = field(default=())
     flow_edges: tuple[tuple[str, str], ...] = field(default=())
     produced_at_step: str = INGRESS_STEP
     engine_version: str = LAYOUT_ENGINE_VERSION
@@ -265,6 +272,7 @@ class SemanticLayoutPlan:
                 [loop_id, list(engineering_ids)] for loop_id, engineering_ids in self.required_loops
             ],
             "node_kinds": [[node_id, kind] for node_id, kind in self.node_kinds],
+            "node_symbols": [[node_id, symbol_key] for node_id, symbol_key in self.node_symbols],
             "flow_edges": [[source, target] for source, target in self.flow_edges],
             "placement": list(self.placement),
             "canvas_bounds": self.canvas_bounds,
@@ -393,6 +401,10 @@ def plan_semantic_layout(topology: SemanticTopology) -> SemanticLayoutPlan:
         ),
         node_kinds=tuple(
             (node.engineering_id, node.kind)
+            for node in sorted(topology.nodes, key=lambda item: item.engineering_id)
+        ),
+        node_symbols=tuple(
+            (node.engineering_id, node.symbol_key)
             for node in sorted(topology.nodes, key=lambda item: item.engineering_id)
         ),
         flow_edges=tuple(

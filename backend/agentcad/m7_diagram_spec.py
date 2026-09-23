@@ -31,7 +31,12 @@ from pydantic import ConfigDict, Field
 from .m7_layout_contract import FORBIDDEN_MODEL_GEOMETRY_FIELDS
 from .models import StrictModel
 
-SPEC_SCHEMA = "m7-diagram-spec/1"
+#:
+#: v2: every entity names the catalogue symbol that expresses it. The engineering class says
+#: *what* the device is; the symbol key says *how it is drawn*, and those are two facts that
+#: happen to coincide today. Keeping them separate is what lets one class have several legal
+#: graphics later, and what keeps a renderer-only change out of the engineering digest.
+SPEC_SCHEMA = "m7-diagram-spec/2"
 
 EntityKind = Literal["equipment", "instrument"]
 Orientation = Literal["landscape", "portrait"]
@@ -143,6 +148,9 @@ class DiagramEntity(StrictModel):
     equipment_class: str = ""
     instrument_type: str = ""
     measurement: str = ""
+    #: Required, and required to be *something*: an empty value would let a node reach the
+    #: engine with no renderer binding at all, which step 3 would then have to refuse anyway.
+    symbol_key: str = Field(min_length=1)
 
 
 class DiagramConnection(StrictModel):

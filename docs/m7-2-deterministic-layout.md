@@ -732,3 +732,230 @@ FIELD_SCOPED_SCAN_IS_MANDATORY_BEFORE_SUCH_A_SCHEMA_SHIPS = True
 触发它的不是"走到了 M7 某阶段"，而是**`DiagramSpec` 第一次新增允许自由工程散文/annotation 的字段**。
 届时：结构化几何键**仍然全局递归 hard reject**；相对锚点语言扫描**只作用于声明为
 "可承载布局指令"的字段**，普通工程散文不扫描。**不提前实现，也不弱化已有结构化硬拒绝。**
+
+## 12. M7-2 Phase-2B Step 3 — 冻结的 symbol geometry（几何物化、路由、标注）
+
+Step 2 用的 Node 尺寸是**引擎规则**（`NODE_SIZE_POLICY`）。Step 3 第一次拿真实符号几何，
+于是出现一个新的变化源：**目录本身**。同一个 topology、同一个 rules 版本，只因为某个符号的
+包围几何改了，就**可以合法地**画出不同的图——所以「这张图是用哪份 symbol geometry 摆的」
+必须成为布局身份的一部分。
+
+落实的文件：契约 `m7_layout_contract.py`、快照运行时段落 `agentcad/m7_symbol_geometry.py`
+（声明在 `PHASE_2B_MAY_IMPORT_THE_CONTRACT` 里，不在测试里），测试 `tests/test_m7_symbol_geometry.py`。
+
+### 12.1 两侧的边界（谁是事实、谁是决定）
+
+```
+SymbolGeometryCatalogSnapshot 只提供事实/约束：
+  symbol_key · renderer_geometry_identity · intrinsic_width/height ·
+  scale_constraint · ports(port_id, direction, medium, normalized_x, normalized_y)
+
+AutoLayoutEngine 仍然独占实例决定：
+  instance width/height · x/y · rank · system_band · route · canvas
+```
+
+对应契约数据：
+
+```
+SYMBOL_CATALOG_OWNS                 = (symbol_key, renderer_geometry, intrinsic_bounds,
+                                       scale_constraint, port_identities, port_anchors, port_directions)
+LAYOUT_ENGINE_OWNS_FOR_SYMBOLS      = (instance_width, instance_height, instance_x, instance_y,
+                                       rank, system_band, route, canvas)
+SYMBOL_GEOMETRY_FACT_EXCLUSIONS     = (x, y, rank, system_band, route, waypoints, canvas,
+                                       runtime_timings, document_revision)
+SNAPSHOT_CARRIES_INSTANCE_GEOMETRY  = False
+SNAPSHOT_CARRIES_LAYOUT_DECISIONS   = False
+```
+
+- 每个事实字段都在契约里**声明来源**（`SYMBOL_GEOMETRY_FACT_SOURCES`），校验器**双向**检查：
+  声明的事实必须有来源，目录声称拥有的东西必须真的被读（否则就是一句注释，不是边界）。
+- **端口锚点是归一化的**（占 intrinsic 尺寸的比例）：引擎可以把实例画得比目录标称尺寸大或小，
+  绝对锚点只在目录自己的尺寸下才对。
+- 目录**没有**「最小尺寸」这个概念，所以契约显式声明
+  `SYMBOL_GEOMETRY_HAS_A_SEPARATE_MINIMUM_BOUND = False`——不去编一个最小值出来。
+- 缩放约束来自目录 metadata（`scale_constraint`），默认 `scalable_preserving_aspect`；
+  声明了**词表外**的值是硬拒绝（`unknown_symbol_scale_constraint`），不静默取默认。
+
+### 12.2 closure 身份：digest 覆盖的是「这张图用到的符号」，不是整个目录
+
+```
+SYMBOL_GEOMETRY_CATALOG_DIGEST_VERSION   = m7-symbol-geometry-catalog-digest/1
+SYMBOL_GEOMETRY_DIGEST_INPUT_IS_THE_LAYOUT_CLOSURE = True
+SYMBOL_GEOMETRY_CLOSURE_IS_COMPLETE      = True
+MISSING_SYMBOL_GEOMETRY_IS_A_HARD_FAILURE_BEFORE_ROUTING = True
+MISSING_SYMBOL_GEOMETRY_FALLS_BACK_TO_RULE_SIZES         = False
+```
+
+- 一张图用了 17 个 symbol key → digest 只覆盖这 17 个。**新增一个无关符号定义不得改变**
+  一张没动过的图的身份（否则身份噪声与真实变化无法区分）。
+- 反方向必须完整：**每个需要 renderer geometry 的 node 都要有且只有一条已解析的几何记录**；
+  目录里查不到的 key **在 routing 之前**硬失败，**不得退回 Step 2 的规则尺寸继续画**。
+- 「事实相同 → digest 相同」；事实顺序不影响 digest（按 `symbol_key` 排序计算）。
+
+### 12.3 身份级联：symbol geometry 进入最终 layout digest
+
+```
+LAYOUT_DIGEST_VERSION      = m7-layout-digest/2      （v1 → v2：新增输入）
+LAYOUT_DIGEST_INPUTS      += symbol_geometry_catalog_digest
+LAYOUT_PROJECTION_VERSION  = m7-layout-projection/1   （字段集未变 → 不动）
+```
+
+不把 symbol catalog 偷塞进 `layout_rules_version`：**符号定义改了**与**间距规则改了**是两个
+独立变化源，合成一个版本号就再也答不出「这张图为什么变了」。
+snapshot 自己的 digest 版本单独存在（`m7-symbol-geometry-catalog-digest/1`），
+且**不得与 layout digest 共用版本串**。
+
+### 12.4 node 的 symbol key 是**显式字段**（spec v2），不与工程类别混用
+
+```
+SYMBOL_KEY_FIELD                              = symbol_key          （必填，非空）
+SYMBOL_KEY_IS_EXPLICIT                        = True
+ENTITY_SYMBOL_KEY_FALLS_BACK_TO_THE_ENGINEERING_CLASS = False
+SYMBOL_KEY_MUST_EQUAL_THE_ENGINEERING_CLASS   = False
+SYMBOL_KEY_REQUIREMENTS = (exists_in_the_frozen_catalogue,
+                           renderer_supported,
+                           entity_kind_compatible)
+```
+
+分工（两个事实，今天碰巧相同，**不允许永久绑定**）：
+
+```
+equipment_class / instrument_type  = 工程语义：这个对象是什么
+symbol_key                         = renderer/catalogue binding：用哪个标准符号表达它
+```
+
+将来同一个工程类别可以有多个合法图形变体，renderer 目录也可以重构而工程类别不变，
+所以 `symbol_key` 必须显式。三个要求全部在**冻结快照**上检查（不是活 registry）：
+
+- `exists_in_the_frozen_catalogue`；
+- `renderer_supported`：目录没有声明任何 shapes 的符号"可列举不可绘制"，是硬拒绝；
+- `entity_kind_compatible`：仪表节点只能用 `仪表` 类符号，设备节点不能用 `仪表`；
+  把压力指示仪画成容器是**错误的图**，尽管两者都可渲染。
+
+两个 digest 各自回答各自的问题：
+
+```
+engineering semantic digest   ← symbol_key 不变（换等价图形不改工程事实）
+adapter/topology/plan identity ← symbol_key 必须在内（排版输入确实变了）
+ENGINEERING_SEMANTIC_DIGEST_IS_UNCHANGED_BY_SYMBOL_KEY = True
+```
+
+级联升版（已批准）：`m7-diagram-spec/1→/2`、`m7-adapter-topology-digest/1→/2`、
+`m7-semantic-layout-plan-digest/3→/4`。Phase-2A 的历史 commit **不重写**；
+夹具的错引用以 **独立 erratum commit** 修在 Step 3 range 内（`pressure_transmitter →
+pressure_indicator`、`purifier.tap → purifier.out`）。
+
+### 12.5 Step 2 的 placement 是**初解**，不是终局
+
+```
+STEP_2_PLACEMENT_IS_THE_INITIAL_RANK_SOLUTION                 = True
+PLACEMENT_MUST_BE_REVALIDATED_AGAINST_MATERIALIZED_GEOMETRY   = True
+MATERIALIZED_GEOMETRY_MAY_TRIGGER_DETERMINISTIC_REFLOW        = True
+REFLOW_IS_DETERMINISTIC                                       = True
+REFLOW_MAY_CHANGE_ENGINEERING_SEMANTICS                       = False
+```
+
+真实尺寸进来后：materialize → 校验间距/无重叠；不满足则**确定性重排**。
+保证：`same plan + same snapshot + same rules → same materialized placement`；
+symbol geometry 变化 → 要么结果合法地相同，要么 **digest 不同**，
+**绝不出现看不见的身份漂移**。
+
+### 12.6 routing
+
+```
+ROUTING_RULES = (
+  every semantic connection produces exactly one routed connection projection,
+  routing may add waypoints and may not add or delete semantic connections,
+  route endpoints are derived from the frozen symbol port geometry,
+  every waypoint is finite and quantized to the declared coordinate quantum,
+  the same plan, snapshot and rules produce the same route,
+  a route never crosses the bounds of a node it does not serve,
+)
+UNROUTABLE_EDGE_IS_A_HARD_DIAGNOSTIC = True
+UNROUTABLE_EDGE_FALLS_BACK_TO_A_STRAIGHT_LINE_THROUGH_EQUIPMENT = False
+DEGRADED_ROUTING_POLICY_IS_DEFINED = False
+```
+
+T 不了的正交路由是**硬诊断**，不是"画条直线穿设备"的兜底：兜底路线以后要单独定义
+degraded-routing policy 才算数。
+
+端口绑定（routing 之前就解析成不可变结果，routing 只消费、不再猜第二次）：
+
+```
+ResolvedEndpointBinding(node_id, symbol_key, port_id, resolution = explicit | inferred_unique)
+
+显式填写非空 port_id：
+  必须命中冻结 symbol 的真实端口，且方向兼容
+    不存在            → port_not_found
+    方向不兼容        → port_direction_mismatch（不得自动换端口）
+
+未填写：
+  source → out / bidirectional 兼容端口；target → in / bidirectional 兼容端口
+    候选 = 1  → 合法自动绑定，resolution = inferred_unique
+    候选 = 0  → hard fail: no_compatible_port
+    候选 > 1  → hard fail: ambiguous_port_binding（诊断列出候选）
+
+SORTED_PORT_IDS_ARE_NOT_AN_INFERENCE_RULE = True   （"排序后取第一个"只是确定性的任意选择，不是工程推导）
+CATALOGUE_DEFAULT_PORT_IS_NOT_INVENTED_IN_V1        = True
+ROUTING_CONSUMES_RESOLVED_BINDINGS_ONLY             = True
+ROUTING_MAY_RE_GUESS_A_PORT                         = False
+```
+
+### 12.7 标注：text extent 是纯代码，机器不进布局身份
+
+```
+ANNOTATION_TEXT_EXTENT_IS_DETERMINISTIC = True
+ANNOTATION_TEXT_EXTENT_RULE_SOURCE      = agentcad.annotation_layout.text_bounds
+ANNOTATION_TEXT_EXTENT_CHARACTER_FACTOR = 0.6
+ANNOTATION_PLACEMENT_READS_BROWSER_FONT_METRICS = False
+ANNOTATION_PLACEMENT_READS_OS_FONTS             = False
+ANNOTATION_PLACEMENT_USES_CANVAS_MEASURE_TEXT   = False
+```
+
+现有规则（`width = max(font_size, len(text) * font_size * 0.6)`）是纯函数、无浏览器字体测量、
+无 OS 字体依赖，全仓无 `measureText`/`getContext`，所以**复用**而不是新造一个 text-metrics
+contract：算法一字不改，只把它归入 **layout rules 身份轴**：
+
+```
+ANNOTATION_TEXT_METRICS_POLICY = "deterministic_codepoint_extent_v1"
+ANNOTATION_TEXT_METRICS_CHANGE_REQUIRES_LAYOUT_RULES_VERSION_BUMP = True
+TEXT_METRICS_IS_NOT_A_SEPARATE_DIGEST_INPUT = True   （不新增顶层 text_metrics_digest）
+```
+
+身份轴保持两条：`text extent 算法 → layout_rules_version`；
+`symbol renderer geometry → symbol_geometry_catalog_digest`。
+黄金用例用**固定文本/字号/期望宽度**（`ANNOTATION_TEXT_METRICS_GOLDEN_CASES`），
+**不 hash Python 源码/字节码**；其中必须包含一个"字号下限起决定作用"的短标签用例。
+算法的确定性 ≠ 排版保真度：中文/复杂字符宽度将来可能要做质量升级，那是 annotation quality
+问题，**不在 Step 3 顺手重写**。
+
+### 12.8 Step 3 的身份版本与固定顺序（routing 开始前的两个前置条件）
+
+```
+m7-diagram-spec/2
+m7-adapter-topology-digest/2
+m7-semantic-layout-plan-digest/4
+m7-symbol-geometry-catalog-digest/1
+m7-layout-digest/2
+m7-layout-projection/1            （未变：canonical projection 字段集没有变）
+```
+
+```
+DiagramSpec v2 + explicit symbol_key
+  → adapter / topology / plan identity 升版
+  → used-symbol geometry closure snapshot
+  → endpoint binding resolution
+  → actual geometry materialization
+  → deterministic reflow if needed
+  → non-overlap verification
+  → orthogonal routing
+  → obstacle avoidance
+  → deterministic annotation placement
+```
+
+routing 开始前**必须**已经满足（否则 hard fail，不得退回 Step 2 的假定尺寸 / 猜测端口继续画）：
+
+```
+每个 renderable node      → exactly one symbol geometry fact
+每个 connection endpoint  → exactly one resolved port binding
+```

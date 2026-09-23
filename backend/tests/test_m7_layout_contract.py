@@ -177,12 +177,15 @@ def test_layout_may_not_change_engineering_meaning() -> None:
 
 def test_the_canonical_projection_decides_what_the_digest_sees() -> None:
     assert contract.LAYOUT_IS_DETERMINISTIC is True
+    # The symbol geometry closure joined the inputs at step 3: the engine places against real
+    # symbol facts now, so "which facts" is part of where a drawing sits.
     assert contract.LAYOUT_DIGEST_INPUTS == (
         "layout_digest_version",
         "layout_projection_version",
         "diagram_spec_semantic_digest",
         "layout_engine_version",
         "layout_rules_version",
+        "symbol_geometry_catalog_digest",
         "canonical_projection_envelope",
         "canonical_placement_projection",
     )
@@ -237,7 +240,10 @@ def test_the_total_order_is_proven_by_a_unique_composite_key() -> None:
 def test_the_digest_and_projection_carry_their_own_versions() -> None:
     """The engine version describes the engine, not the shape of what was digested."""
 
-    assert contract.LAYOUT_DIGEST_VERSION == "m7-layout-digest/1"
+    # v2: step 3 added `symbol_geometry_catalog_digest` to the inputs, so a digest produced
+    # without it would be a different identity under the same name. The projection version does
+    # not move with it -- no canonical projection field changed.
+    assert contract.LAYOUT_DIGEST_VERSION == "m7-layout-digest/2"
     assert contract.LAYOUT_PROJECTION_VERSION == "m7-layout-projection/1"
     for version in ("layout_digest_version", "layout_projection_version"):
         assert version in contract.LAYOUT_DIGEST_INPUTS
@@ -887,8 +893,18 @@ def test_the_task_book_declares_the_phase_2b_seam() -> None:
 
 def test_the_engine_router_is_not_named_as_a_second_engine() -> None:
     """The ingress lands on the one authority. A module named like a second engine would read
-    as a second authority even if it only mixed in one method."""
-    assert contract.PHASE_2B_MAY_IMPORT_THE_CONTRACT == ("auto_layout_semantic.py",)
+    as a second authority even if it only mixed in one method.
+
+    The list grows as steps land, so the property under test is what each declared module *is*:
+    the ingress, and modules of facts the engine reads -- never a second placer or router with a
+    name of its own.
+    """
+
+    assert "auto_layout_semantic.py" in contract.PHASE_2B_MAY_IMPORT_THE_CONTRACT
+    for module_name in contract.PHASE_2B_MAY_IMPORT_THE_CONTRACT:
+        assert not any(
+            token in module_name for token in ("engine", "router", "routing", "placer")
+        ), module_name
 
 
 @pytest.mark.parametrize(

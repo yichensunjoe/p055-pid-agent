@@ -63,6 +63,10 @@ class TopologyNode:
     equipment_class: str
     instrument_type: str
     measurement: str
+    #: Which catalogue symbol expresses this device. Carried because the layout engine places
+    #: against that symbol's geometry -- and deliberately *not* part of the engineering semantic
+    #: digest: re-binding a device to an equivalent graphic changes the drawing, not the plant.
+    symbol_key: str = ""
     ports: tuple[tuple[str, str], ...] = ()
 
 
@@ -156,6 +160,7 @@ def adapt(spec: DiagramSpec | Any) -> SemanticTopology:
             equipment_class=entity.equipment_class,
             instrument_type=entity.instrument_type,
             measurement=entity.measurement,
+            symbol_key=entity.symbol_key,
             ports=tuple(sorted(set(ports_by_entity.get(entity.engineering_id, [])))),
         )
         for entity in spec.entities
@@ -221,6 +226,7 @@ def topology_projection(
                 "equipment_class": node.equipment_class,
                 "instrument_type": node.instrument_type,
                 "measurement": node.measurement,
+                "symbol_key": node.symbol_key,
                 "ports": [list(port) for port in node.ports],
             }
         )
@@ -282,7 +288,12 @@ def topology_digest(topology: SemanticTopology) -> str:
 
 
 def spec_semantic_digest(spec: DiagramSpec) -> str:
-    """The specification's own semantic digest, computed without any placement."""
+    """The specification's own semantic digest, computed without any placement.
+
+    ``symbol_key`` is deliberately absent: it is the renderer binding, not an engineering fact,
+    so re-binding a device to an equivalent graphic must leave the engineering digest standing
+    still. The adapter's own topology digest carries it, because the layout input did change.
+    """
 
     return _digest(
         {
@@ -329,7 +340,9 @@ def topology_semantic_digest(topology: SemanticTopology) -> str:
     """The same semantic digest, rebuilt from the adapted topology.
 
     Equal to :func:`spec_semantic_digest` for every specification: that equality *is* the
-    losslessness claim, and it is a test rather than a comment.
+    losslessness claim, and it is a test rather than a comment. ``symbol_key`` is excluded on
+    both sides for the same reason it is excluded there -- the two must agree, and what they
+    agree about is engineering semantics.
     """
 
     entities = [

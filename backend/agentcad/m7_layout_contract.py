@@ -282,7 +282,12 @@ LAYOUT_IS_DETERMINISTIC = True
 #: digested. Without these, adding a projection field or changing how a number is normalized
 #: would silently give a *different* digest the *same* name -- the identity failure this whole
 #: milestone is about, one layer down.
-LAYOUT_DIGEST_VERSION = "m7-layout-digest/1"
+#:
+#: v2: step 3 froze the symbol geometry the engine places against, so a digest produced without
+#: it would be a different identity wearing the same name -- the failure mode this milestone is
+#: about, one layer down. The projection version does not move: no canonical projection field
+#: changed, and only a field change is a projection change.
+LAYOUT_DIGEST_VERSION = "m7-layout-digest/2"
 LAYOUT_PROJECTION_VERSION = "m7-layout-projection/1"
 
 #: Everything the digest is computed over. The versions are inputs, not decoration: a reader
@@ -293,6 +298,7 @@ LAYOUT_DIGEST_INPUTS: tuple[str, ...] = (
     "diagram_spec_semantic_digest",
     "layout_engine_version",
     "layout_rules_version",
+    "symbol_geometry_catalog_digest",
     "canonical_projection_envelope",
     "canonical_placement_projection",
 )
@@ -454,7 +460,7 @@ class DigestVersionContract:
 
 
 DIGEST_VERSION_CONTRACT = DigestVersionContract(
-    digest_version="m7-layout-digest/1",
+    digest_version="m7-layout-digest/2",
     projection_version="m7-layout-projection/1",
     numeric_canonicalization="finite_fixed_decimal_v1",
     coordinate_decimals=6,
@@ -655,7 +661,11 @@ ADAPTER_TRANSLATES: tuple[tuple[str, str], ...] = (
 ADAPTER_IS_DETERMINISTIC = True
 ADAPTER_SEMANTIC_DIGEST_BEFORE_EQUALS_AFTER = True
 ADAPTER_TOPOLOGY_DIGEST_IS_NOT_THE_LAYOUT_DIGEST = True
-ADAPTER_TOPOLOGY_DIGEST_VERSION = "m7-adapter-topology-digest/1"
+#:
+#: v2: the specification gained an explicit `symbol_key`, so the topology carries which
+#: catalogue symbol expresses each device. That is layout input, not engineering semantics --
+#: which is why the engineering digest is unchanged while this one moves.
+ADAPTER_TOPOLOGY_DIGEST_VERSION = "m7-adapter-topology-digest/2"
 ADAPTER_TOPOLOGY_DIGEST_INPUTS: tuple[str, ...] = (
     "adapter_topology_digest_version",
     "adapter_topology_projection",
@@ -688,6 +698,7 @@ ADAPTER_TOPOLOGY_PROJECTION_FIELDS: tuple[str, ...] = (
     "grouping",
     "density",
     "system_order",
+    "symbol_key",
 )
 
 #: What the adapter digest version pins, for the same reason the layout digest pins its own
@@ -715,6 +726,7 @@ ADAPTER_TOPOLOGY_DIGEST_VERSION_FIELD_SET: tuple[str, ...] = (
     "grouping",
     "density",
     "system_order",
+    "symbol_key",
 )
 
 #: The contract is a review document that a phase-1 milestone must not import. Once a phase
@@ -881,7 +893,13 @@ ENGINE_MAY_TAKE_CANVAS_DIMENSIONS_AS_INPUT = False
 #: Phase 2B builds the ingress and the engine integration. It still adds no surface: nothing
 #: routes, no tool, no endpoint, no button calls the new ingress yet.
 PHASE_2B_WIRES_THE_INGRESS_TO_ANY_SURFACE = False
-PHASE_2B_MAY_IMPORT_THE_CONTRACT: tuple[str, ...] = ("auto_layout_semantic.py",)
+#: Step 3 adds one module: the frozen symbol geometry the engine places against. It is named
+#: here rather than in a test because the whitelist *is* the rule -- a test that kept its own
+#: copy of the list would enforce a rule the contract did not state.
+PHASE_2B_MAY_IMPORT_THE_CONTRACT: tuple[str, ...] = (
+    "auto_layout_semantic.py",
+    "m7_symbol_geometry.py",
+)
 
 # ------------------------------------------------------------------------------------
 # §8.3 Phase-2B step 2: deterministic partition, rank and absolute placement. The model
@@ -1031,6 +1049,269 @@ DEFERRED_TO_PHASE = "M7-2"
 #: Phase 1 changes no drawing behaviour. A contract that shipped a behaviour change would not
 #: be a contract, and the whole point of this phase is that the change is reviewable first.
 PHASE_1_MAY_CHANGE_PRODUCTION_DRAWING_BEHAVIOUR = False
+
+# --------------------------------------------------------------------------------------
+# §12 Phase-2B step 3: frozen symbol geometry, routing and annotations. The layout engine is
+#      still the only geometry authority; the catalogue supplies *facts* about a symbol and
+#      never a decision about where an instance sits.
+# --------------------------------------------------------------------------------------
+
+#: The snapshot's own version, separate from the layout digest and from the layout rules. Two
+#: drawings that differ because a symbol definition changed and two that differ because the
+#: spacing rules changed are different events, and a single version number cannot tell them
+#: apart.
+SYMBOL_GEOMETRY_CATALOG_DIGEST_VERSION = "m7-symbol-geometry-catalog-digest/1"
+
+#: Every fact a frozen symbol carries, in the order the row is written. The list is closed on
+#: purpose: a new fact is a new snapshot version, not an extra key nobody reviews.
+SYMBOL_GEOMETRY_FACT_FIELDS: tuple[str, ...] = (
+    "symbol_key",
+    "renderer_geometry_identity",
+    "renderer_supported",
+    "intrinsic_width",
+    "intrinsic_height",
+    "scale_constraint",
+    "entity_kinds",
+    "ports",
+)
+
+#: One port's geometry, as the catalogue states it. Anchors are *normalized* (fractions of the
+#: intrinsic size) because the engine may instantiate the symbol larger or smaller: an absolute
+#: anchor would only be correct at the catalogue's own size.
+SYMBOL_GEOMETRY_PORT_FIELDS: tuple[str, ...] = (
+    "port_id",
+    "direction",
+    "medium",
+    "normalized_x",
+    "normalized_y",
+)
+
+#: 「the symbol itself and where its ports are」 stays on this side of the line.
+SYMBOL_CATALOG_OWNS: tuple[str, ...] = (
+    "symbol_key",
+    "renderer_geometry",
+    "intrinsic_bounds",
+    "scale_constraint",
+    "entity_kind_compatibility",
+    "port_identities",
+    "port_anchors",
+    "port_directions",
+)
+
+#: 「this instance, at this size, here, joined to that neighbour」 stays on the engine's side.
+LAYOUT_ENGINE_OWNS_FOR_SYMBOLS: tuple[str, ...] = (
+    "instance_width",
+    "instance_height",
+    "instance_x",
+    "instance_y",
+    "rank",
+    "system_band",
+    "route",
+    "canvas",
+)
+
+#: Named so that "the snapshot must not contain x" is a list a validator can check instead of a
+#: sentence a reader has to believe.
+SYMBOL_GEOMETRY_FACT_EXCLUSIONS: tuple[str, ...] = (
+    "x",
+    "y",
+    "rank",
+    "system_band",
+    "route",
+    "waypoints",
+    "canvas",
+    "runtime_timings",
+    "document_revision",
+)
+SNAPSHOT_CARRIES_INSTANCE_GEOMETRY = False
+SNAPSHOT_CARRIES_LAYOUT_DECISIONS = False
+
+#: The catalogue declares one nominal size per symbol and nothing else, so a "minimum bounds"
+#: would have to be invented here. Naming the absence is cheaper than a fabricated minimum: the
+#: fact is that the intrinsic size is the whole story until the engine scales it.
+SYMBOL_GEOMETRY_HAS_A_SEPARATE_MINIMUM_BOUND = False
+
+#: Scaling. Not a catalogue field today, so the default applies to every symbol -- and a
+#: declared value this contract does not recognise is a hard failure rather than a silent
+#: fallback, which is the same rule the density class follows.
+SYMBOL_SCALE_CONSTRAINT_METADATA_KEY = "scale_constraint"
+SYMBOL_SCALE_CONSTRAINT_DEFAULT = "scalable_preserving_aspect"
+SYMBOL_SCALE_CONSTRAINTS: tuple[str, ...] = (
+    "scalable_preserving_aspect",
+    "intrinsic_size_fixed",
+)
+UNKNOWN_SYMBOL_SCALE_CONSTRAINT_IS_A_HARD_FAILURE = True
+
+#: Where each declared fact comes from in the catalogue. The mapping is data so the validator
+#: can check coverage instead of a reader checking prose, and so "which catalogue field is this
+#: snapshot fact" is answerable without reading the snapshot code.
+#: ``(fact field, catalogue source, the catalogue-ownership entry it discharges)``. The third
+#: element is what lets the validator prove that every claimed ownership is actually read, in
+#: both directions, without guessing from the field names.
+SYMBOL_GEOMETRY_FACT_SOURCES: tuple[tuple[str, str, str], ...] = (
+    ("symbol_key", "key", "symbol_key"),
+    ("renderer_geometry_identity", "shapes", "renderer_geometry"),
+    ("renderer_supported", "shapes", "renderer_geometry"),
+    ("intrinsic_width", "width", "intrinsic_bounds"),
+    ("intrinsic_height", "height", "intrinsic_bounds"),
+    ("scale_constraint", f"metadata.{SYMBOL_SCALE_CONSTRAINT_METADATA_KEY}", "scale_constraint"),
+    ("entity_kinds", "category", "entity_kind_compatibility"),
+    ("ports", "ports", "port_identities"),
+)
+
+SYMBOL_GEOMETRY_PORT_FACT_SOURCES: tuple[tuple[str, str, str], ...] = (
+    ("port_id", "ports[].id", "port_identities"),
+    ("direction", "ports[].direction", "port_directions"),
+    ("medium", "ports[].medium", "port_identities"),
+    ("normalized_x", "ports[].x / width", "port_anchors"),
+    ("normalized_y", "ports[].y / height", "port_anchors"),
+)
+
+#: Mirrors ``SymbolDefinition``: the snapshot may read these and nothing else. A test compares
+#: this list against the model's own field names, so the two cannot drift apart quietly.
+SYMBOL_CATALOG_SOURCE_FIELDS: tuple[str, ...] = (
+    "key",
+    "name",
+    "category",
+    "description",
+    "width",
+    "height",
+    "ports",
+    "shapes",
+    "metadata",
+)
+SYMBOL_CATALOG_SOURCE_PORT_FIELDS: tuple[str, ...] = (
+    "id",
+    "name",
+    "x",
+    "y",
+    "direction",
+    "medium",
+)
+
+#: The closure rule. The digest covers the symbols *this layout depends on*, not the whole
+#: catalogue: otherwise adding an unrelated symbol definition would change the identity of a
+#: drawing that did not move, and identity churn is indistinguishable from a real change.
+SYMBOL_GEOMETRY_DIGEST_INPUT_IS_THE_LAYOUT_CLOSURE = True
+SYMBOL_GEOMETRY_CLOSURE_IS_COMPLETE = True
+MISSING_SYMBOL_GEOMETRY_IS_A_HARD_FAILURE_BEFORE_ROUTING = True
+MISSING_SYMBOL_GEOMETRY_FALLS_BACK_TO_RULE_SIZES = False
+SAME_SYMBOL_GEOMETRY_FACTS_PRODUCE_THE_SAME_DIGEST = True
+SYMBOL_GEOMETRY_FACT_ORDER_DOES_NOT_CHANGE_THE_DIGEST = True
+
+#: How a node's symbol is chosen: an explicit field, not the engineering class wearing a second
+#: hat. The two are different facts that happen to coincide today -- `equipment_class` says what
+#: the equipment *is*, `symbol_key` says which catalogue symbol expresses it -- and a future where
+#: one class has several legal graphics is exactly the future this separation is for.
+SYMBOL_KEY_FIELD = "symbol_key"
+SYMBOL_KEY_IS_EXPLICIT = True
+ENTITY_SYMBOL_KEY_FALLS_BACK_TO_THE_PLACEMENT_KIND = False
+ENTITY_SYMBOL_KEY_FALLS_BACK_TO_THE_ENGINEERING_CLASS = False
+SYMBOL_KEY_MUST_EQUAL_THE_ENGINEERING_CLASS = False
+SYMBOL_KEY_REQUIREMENTS: tuple[str, ...] = (
+    "exists_in_the_frozen_catalogue",
+    "renderer_supported",
+    "entity_kind_compatible",
+)
+UNKNOWN_ENTITY_SYMBOL_KEY_IS_A_HARD_FAILURE = True
+ENTITY_SYMBOL_KEY_IS_DECLARED_BY_THE_SPECIFICATION = True
+
+#: What "entity kind compatible" means, as data. The catalogue states one category per symbol,
+#: and exactly one category holds measuring instruments; an instrument node and an equipment
+#: node may not cross that line, because a pressure indicator drawn as a vessel is a wrong
+#: drawing even though both are renderable symbols.
+SYMBOL_KIND_COMPATIBILITY_SOURCE = "SymbolDefinition.category"
+INSTRUMENT_SYMBOL_CATEGORY = "仪表"
+EQUIPMENT_SYMBOL_CATEGORIES_ARE_THE_REST = True
+SYMBOL_KIND_INCOMPATIBILITY_IS_A_HARD_FAILURE = True
+
+#: Renderer support is a declared property, not a guess: a symbol with no shapes has no geometry
+#: to draw, so it can be a catalogue entry without being a placeable one.
+SYMBOL_RENDERER_SUPPORT_REQUIRES_DECLARED_SHAPES = True
+
+#: The two digests answer two different questions, and a renderer-only change is the case that
+#: proves it. Re-binding a device to an equivalent graphic changes the layout input while the
+#: engineering facts stand still, and only a pair of separate digests can say so.
+ENGINEERING_SEMANTIC_DIGEST_IS_UNCHANGED_BY_SYMBOL_KEY = True
+ADAPTER_TOPOLOGY_IDENTITY_INCLUDES_SYMBOL_KEY = True
+SEMANTIC_LAYOUT_PLAN_IDENTITY_INCLUDES_SYMBOL_KEY = True
+
+#: Step 3 materializes real geometry and may therefore have to place the drawing again. The
+#: step-2 result is the initial solution, not a fact that the real sizes must fit into.
+STEP_2_PLACEMENT_IS_THE_INITIAL_RANK_SOLUTION = True
+MATERIALIZED_GEOMETRY_MAY_TRIGGER_DETERMINISTIC_REFLOW = True
+REFLOW_IS_DETERMINISTIC = True
+REFLOW_MAY_CHANGE_ENGINEERING_SEMANTICS = False
+PLACEMENT_MUST_BE_REVALIDATED_AGAINST_MATERIALIZED_GEOMETRY = True
+
+#: Routing. Every semantic connection is routed exactly once; routing adds waypoints and removes
+#: nothing, because a drawing that quietly loses a connection is a drawing of something else.
+ROUTING_RULES: tuple[str, ...] = (
+    "every semantic connection produces exactly one routed connection projection",
+    "routing may add waypoints and may not add or delete semantic connections",
+    "route endpoints are derived from the frozen symbol port geometry",
+    "every waypoint is finite and quantized to the declared coordinate quantum",
+    "the same plan, snapshot and rules produce the same route",
+    "a route never crosses the bounds of a node it does not serve",
+)
+ROUTING_MAY_ADD_WAYPOINTS = True
+ROUTING_MAY_ADD_OR_DELETE_SEMANTIC_CONNECTIONS = False
+ROUTE_ENDPOINTS_COME_FROM_FROZEN_PORT_GEOMETRY = True
+ROUTING_IS_ORTHOGONAL_ONLY = True
+PROTECTED_NODE_BOUNDS_ARE_OBSTACLES = True
+UNROUTABLE_EDGE_IS_A_HARD_DIAGNOSTIC = True
+UNROUTABLE_EDGE_FALLS_BACK_TO_A_STRAIGHT_LINE_THROUGH_EQUIPMENT = False
+DEGRADED_ROUTING_POLICY_IS_DEFINED = False
+
+#: Port binding. An explicit port is checked against the frozen geometry and its direction; an
+#: omitted port may be inferred only when exactly one candidate exists. "Sort the candidates and
+#: take the first" is rejected on purpose: that is a deterministic arbitrary choice, not an
+#: engineering derivation, and on a three-way valve it would quietly pick one of three.
+CONNECTION_PORT_IDS_MUST_EXIST_ON_THE_RESOLVED_SYMBOL = True
+EXPLICIT_PORT_BINDING_MUST_BE_DIRECTION_COMPATIBLE = True
+OMITTED_PORT_ID_IS_INFERRED_ONLY_WHEN_THE_CANDIDATE_IS_UNIQUE = True
+OMITTED_PORT_ID_WITH_NO_CANDIDATE_IS_A_HARD_FAILURE = True
+OMITTED_PORT_ID_WITH_SEVERAL_CANDIDATES_IS_A_HARD_FAILURE = True
+SORTED_PORT_IDS_ARE_NOT_AN_INFERENCE_RULE = True
+CATALOGUE_DEFAULT_PORT_IS_NOT_INVENTED_IN_V1 = True
+PORT_ROLE_COMPATIBLE_DIRECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("source", ("out", "bidirectional")),
+    ("target", ("in", "bidirectional")),
+)
+PORT_BINDING_RESOLUTIONS: tuple[str, ...] = ("explicit", "inferred_unique")
+PORT_BINDING_CODES: tuple[str, ...] = (
+    "port_not_found",
+    "port_direction_mismatch",
+    "no_compatible_port",
+    "ambiguous_port_binding",
+)
+PORT_BINDING_IS_RESOLVED_BEFORE_ROUTING = True
+ROUTING_CONSUMES_RESOLVED_BINDINGS_ONLY = True
+ROUTING_MAY_RE_GUESS_A_PORT = False
+
+#: Annotations. The text extent is a pure function of the text and its font size -- no browser
+#: metrics, no installed fonts, no canvas measurement -- so reusing it keeps the canonical
+#: layout digest free of the machine it ran on. The rule is *read* from the annotation layout
+#: module rather than restated as a second formula here, and it belongs to the layout *rules*
+#: axis: a change to the extent algorithm is a rules change, not a third identity axis.
+ANNOTATION_TEXT_EXTENT_IS_DETERMINISTIC = True
+ANNOTATION_TEXT_EXTENT_RULE_SOURCE = "agentcad.annotation_layout.text_bounds"
+ANNOTATION_TEXT_EXTENT_CHARACTER_FACTOR = 0.6
+ANNOTATION_TEXT_METRICS_POLICY = "deterministic_codepoint_extent_v1"
+ANNOTATION_TEXT_METRICS_CHANGE_REQUIRES_LAYOUT_RULES_VERSION_BUMP = True
+TEXT_METRICS_IS_NOT_A_SEPARATE_DIGEST_INPUT = True
+ANNOTATION_PLACEMENT_READS_BROWSER_FONT_METRICS = False
+ANNOTATION_PLACEMENT_READS_OS_FONTS = False
+ANNOTATION_PLACEMENT_USES_CANVAS_MEASURE_TEXT = False
+ANNOTATION_PLACEMENT_IS_PART_OF_THE_LAYOUT_IDENTITY = True
+
+#: Fixed cases rather than a hash of the function: what must not change is the extent the
+#: algorithm produces, not the bytes of the source that produced it.
+ANNOTATION_TEXT_METRICS_GOLDEN_CASES: tuple[tuple[str, float, float], ...] = (
+    ("V-101", 12.0, 36.0),
+    ("PT-101", 12.0, 43.2),
+    ("x", 14.0, 14.0),
+)
 
 
 # --------------------------------------------------------------------------------------
@@ -1756,6 +2037,264 @@ def validate_contract() -> list[str]:
                 f"the phase-1 violation token {token!r} also matches the pre-existing layout "
                 f"surface {clashing}: it would report the legacy path instead of a new one"
             )
+
+    # §12 step 3: the snapshot is facts, the engine stays the only geometry authority.
+    if not SYMBOL_GEOMETRY_CATALOG_DIGEST_VERSION:
+        problems.append("the symbol geometry snapshot must be versioned")
+    if SYMBOL_GEOMETRY_CATALOG_DIGEST_VERSION in LAYOUT_DIGEST_INPUTS:
+        problems.append("the snapshot's own version is not an input of the layout digest")
+    if SYMBOL_GEOMETRY_CATALOG_DIGEST_VERSION == LAYOUT_DIGEST_VERSION:
+        problems.append(
+            "the snapshot digest and the layout digest must not share a version string: "
+            "'a symbol changed' and 'the layout changed' are different events"
+        )
+    if "symbol_geometry_catalog_digest" not in LAYOUT_DIGEST_INPUTS:
+        problems.append(
+            "the layout digest must include the symbol geometry catalog digest: the engine no "
+            "longer owns the only input to placement"
+        )
+    catalog_owned = set(SYMBOL_CATALOG_OWNS)
+    if not SYMBOL_GEOMETRY_FACT_FIELDS:
+        problems.append("the snapshot must declare its facts")
+    sources = (*SYMBOL_GEOMETRY_FACT_SOURCES, *SYMBOL_GEOMETRY_PORT_FACT_SOURCES)
+    sourced_facts = {fact for fact, _, _ in sources}
+    for fact_field in (*SYMBOL_GEOMETRY_FACT_FIELDS, *SYMBOL_GEOMETRY_PORT_FIELDS):
+        if fact_field not in sourced_facts:
+            problems.append(
+                f"the declared snapshot fact {fact_field!r} names no catalogue source: a fact "
+                "nobody reads from anywhere is a fact nobody checks"
+            )
+    for fact, source, owner in sources:
+        if fact not in SYMBOL_GEOMETRY_FACT_FIELDS + SYMBOL_GEOMETRY_PORT_FIELDS:
+            problems.append(f"the snapshot fact source {fact!r} is not a declared fact field")
+        root = source.split(".", 1)[0].split("[", 1)[0]
+        if root not in SYMBOL_CATALOG_SOURCE_FIELDS:
+            problems.append(
+                f"the snapshot reads {source!r} from the catalogue, which does not declare the "
+                f"field {root!r}"
+            )
+        if owner not in catalog_owned:
+            problems.append(
+                f"the snapshot fact {fact!r} discharges {owner!r}, which the catalogue does "
+                "not claim to own"
+            )
+    discharged = {owner for _, _, owner in sources}
+    for owned in sorted(catalog_owned - discharged):
+        problems.append(
+            f"the catalogue claims to own {owned!r}, which no declared snapshot fact reads: "
+            "an ownership nobody exercises is a comment, not a boundary"
+        )
+    for port_source in (source for _, source, _ in SYMBOL_GEOMETRY_PORT_FACT_SOURCES):
+        leaf = port_source.split("[]")[-1].lstrip(".").split()[0]
+        if leaf not in SYMBOL_CATALOG_SOURCE_PORT_FIELDS:
+            problems.append(
+                f"the snapshot reads {port_source!r} from a symbol port, which does not declare "
+                f"the field {leaf!r}"
+            )
+    if not SYMBOL_CATALOG_OWNS or not LAYOUT_ENGINE_OWNS_FOR_SYMBOLS:
+        problems.append("the symbol/layout boundary must name both sides")
+    if catalog_owned & set(LAYOUT_ENGINE_OWNS_FOR_SYMBOLS):
+        problems.append(
+            "a fact cannot belong to the catalogue and to the engine: "
+            f"{sorted(catalog_owned & set(LAYOUT_ENGINE_OWNS_FOR_SYMBOLS))}"
+        )
+    declared_exclusions = set(SYMBOL_GEOMETRY_FACT_EXCLUSIONS)
+    overlap = declared_exclusions & set(SYMBOL_GEOMETRY_FACT_FIELDS)
+    if overlap:
+        problems.append(
+            f"a field cannot be both a declared fact and an excluded one: {sorted(overlap)}"
+        )
+    instance_geometry = declared_exclusions & set(LAYOUT_ENGINE_OWNS_FOR_SYMBOLS)
+    if len(instance_geometry) < 4:
+        problems.append(
+            "the snapshot must exclude instance geometry (x, y, rank, canvas): a snapshot that "
+            "carries a position is a second placement authority"
+        )
+    if SNAPSHOT_CARRIES_INSTANCE_GEOMETRY:
+        problems.append("the snapshot carries facts about symbols, not about instances")
+    if SNAPSHOT_CARRIES_LAYOUT_DECISIONS:
+        problems.append("the snapshot carries facts; every layout decision stays with the engine")
+    if SYMBOL_GEOMETRY_HAS_A_SEPARATE_MINIMUM_BOUND:
+        problems.append(
+            "the catalogue declares one nominal size: a separate minimum bound would be invented"
+        )
+    if SYMBOL_SCALE_CONSTRAINT_DEFAULT not in SYMBOL_SCALE_CONSTRAINTS:
+        problems.append("the default scale constraint must be one of the declared constraints")
+    if not UNKNOWN_SYMBOL_SCALE_CONSTRAINT_IS_A_HARD_FAILURE:
+        problems.append("an unrecognised scale constraint must fail rather than default")
+    if not SYMBOL_GEOMETRY_DIGEST_INPUT_IS_THE_LAYOUT_CLOSURE:
+        problems.append(
+            "the snapshot digest covers the layout's closure, not the whole catalogue: "
+            "otherwise an unrelated symbol edit changes a drawing that did not move"
+        )
+    if not SYMBOL_GEOMETRY_CLOSURE_IS_COMPLETE:
+        problems.append("the closure must be complete: every node that needs geometry is in it")
+    if not MISSING_SYMBOL_GEOMETRY_IS_A_HARD_FAILURE_BEFORE_ROUTING:
+        problems.append("missing symbol geometry must fail before routing")
+    if MISSING_SYMBOL_GEOMETRY_FALLS_BACK_TO_RULE_SIZES:
+        problems.append("missing symbol geometry must not fall back to the rule sizes")
+    if not SYMBOL_KEY_IS_EXPLICIT:
+        problems.append(
+            "the symbol key is an explicit field: the engineering class says what the equipment "
+            "is, the symbol key says how it is drawn, and they may diverge"
+        )
+    if ENTITY_SYMBOL_KEY_FALLS_BACK_TO_THE_PLACEMENT_KIND:
+        problems.append("a node's symbol is not its placement kind")
+    if ENTITY_SYMBOL_KEY_FALLS_BACK_TO_THE_ENGINEERING_CLASS:
+        problems.append("a node's symbol may not be inferred from its engineering class")
+    if SYMBOL_KEY_MUST_EQUAL_THE_ENGINEERING_CLASS:
+        problems.append(
+            "requiring symbol_key == equipment_class would forbid two graphics for one class"
+        )
+    if SYMBOL_KEY_FIELD not in ADAPTER_TOPOLOGY_PROJECTION_FIELDS:
+        problems.append(
+            f"the adapter identity must carry {SYMBOL_KEY_FIELD!r}: a renderer-only re-binding "
+            "changes the layout input"
+        )
+    if not ENGINEERING_SEMANTIC_DIGEST_IS_UNCHANGED_BY_SYMBOL_KEY:
+        problems.append("a renderer-only symbol change must not move the engineering semantics")
+    for requirement in SYMBOL_KEY_REQUIREMENTS:
+        if requirement != requirement.lower():
+            problems.append(f"the symbol requirement {requirement!r} must be a lowercase code")
+    if not SYMBOL_RENDERER_SUPPORT_REQUIRES_DECLARED_SHAPES:
+        problems.append("a symbol without shapes has no renderer geometry to place")
+    if SYMBOL_KIND_INCOMPATIBILITY_IS_A_HARD_FAILURE is False:
+        problems.append("an instrument drawn as a vessel is a wrong drawing, not a warning")
+    if not INSTRUMENT_SYMBOL_CATEGORY.strip():
+        problems.append("the instrument category must name the catalogue category it means")
+    if not STEP_2_PLACEMENT_IS_THE_INITIAL_RANK_SOLUTION:
+        problems.append("the step-2 placement is the initial solution, not a fixed frame")
+    if not PLACEMENT_MUST_BE_REVALIDATED_AGAINST_MATERIALIZED_GEOMETRY:
+        problems.append("real geometry must be validated against the placement it lands in")
+    if not MATERIALIZED_GEOMETRY_MAY_TRIGGER_DETERMINISTIC_REFLOW:
+        problems.append("when real sizes break the placement, a deterministic reflow is needed")
+    if not REFLOW_IS_DETERMINISTIC:
+        problems.append("a reflow that is not deterministic is a new drawing every run")
+    if REFLOW_MAY_CHANGE_ENGINEERING_SEMANTICS:
+        problems.append("a reflow changes positions, never engineering semantics")
+    if not ROUTING_RULES:
+        problems.append("the routing rules must be declared")
+    if not ROUTING_MAY_ADD_WAYPOINTS:
+        problems.append("routing adds waypoints by definition")
+    if ROUTING_MAY_ADD_OR_DELETE_SEMANTIC_CONNECTIONS:
+        problems.append("routing may not add or delete a semantic connection")
+    if not ROUTE_ENDPOINTS_COME_FROM_FROZEN_PORT_GEOMETRY:
+        problems.append("route endpoints come from the frozen port geometry")
+    if not ROUTING_IS_ORTHOGONAL_ONLY:
+        problems.append("routing is orthogonal: a diagonal is a drawing nobody asked for")
+    if not PROTECTED_NODE_BOUNDS_ARE_OBSTACLES:
+        problems.append("a route may not cross the bounds of a node it does not serve")
+    if not UNROUTABLE_EDGE_IS_A_HARD_DIAGNOSTIC:
+        problems.append("an unroutable edge must be reported, not drawn as a straight line")
+    if UNROUTABLE_EDGE_FALLS_BACK_TO_A_STRAIGHT_LINE_THROUGH_EQUIPMENT:
+        problems.append("a straight line through equipment is not a fallback, it is a defect")
+    if DEGRADED_ROUTING_POLICY_IS_DEFINED and not UNROUTABLE_EDGE_IS_A_HARD_DIAGNOSTIC:
+        problems.append("a degraded routing policy may not replace the hard diagnostic")
+    if not CONNECTION_PORT_IDS_MUST_EXIST_ON_THE_RESOLVED_SYMBOL:
+        problems.append("a port the symbol does not define is a wrong reference")
+    if not EXPLICIT_PORT_BINDING_MUST_BE_DIRECTION_COMPATIBLE:
+        problems.append("an explicit port still has to point the way the connection runs")
+    if not OMITTED_PORT_ID_IS_INFERRED_ONLY_WHEN_THE_CANDIDATE_IS_UNIQUE:
+        problems.append(
+            "an omitted port may be inferred only when exactly one candidate exists"
+        )
+    if not OMITTED_PORT_ID_WITH_NO_CANDIDATE_IS_A_HARD_FAILURE:
+        problems.append("an omitted port with no candidate must fail")
+    if not OMITTED_PORT_ID_WITH_SEVERAL_CANDIDATES_IS_A_HARD_FAILURE:
+        problems.append(
+            "an omitted port with several candidates must fail: choosing one would be an "
+            "arbitrary decision dressed as a derivation"
+        )
+    if not SORTED_PORT_IDS_ARE_NOT_AN_INFERENCE_RULE:
+        problems.append(
+            "sorting the candidates and taking the first is not an engineering derivation"
+        )
+    if not CATALOGUE_DEFAULT_PORT_IS_NOT_INVENTED_IN_V1:
+        problems.append("v1 does not invent a catalogue default port")
+    if not PORT_BINDING_IS_RESOLVED_BEFORE_ROUTING:
+        problems.append("endpoint bindings are resolved before routing, not during it")
+    if not ROUTING_CONSUMES_RESOLVED_BINDINGS_ONLY:
+        problems.append("routing consumes resolved bindings and never guesses a port again")
+    if ROUTING_MAY_RE_GUESS_A_PORT:
+        problems.append("routing may not re-guess a port the resolution step already resolved")
+    declared_port_directions = {"in", "out", "bidirectional", "none"}
+    role_names = [role for role, _ in PORT_ROLE_COMPATIBLE_DIRECTIONS]
+    if sorted(role_names) != ["source", "target"]:
+        problems.append(
+            f"the port compatibility table must cover exactly both endpoints, found {role_names}"
+        )
+    for role, directions in PORT_ROLE_COMPATIBLE_DIRECTIONS:
+        if not directions:
+            problems.append(f"the {role} endpoint must accept at least one port direction")
+        for direction in directions:
+            if direction not in declared_port_directions:
+                problems.append(
+                    f"the {role} rule names {direction!r}, which is not a declared port direction"
+                )
+        if "bidirectional" not in directions:
+            problems.append(
+                f"the {role} rule must accept a bidirectional port: a symbol that can flow both "
+                "ways is not thereby unusable"
+            )
+    if sorted(PORT_BINDING_RESOLUTIONS) != ["explicit", "inferred_unique"]:
+        problems.append(
+            f"port bindings are explicit or uniquely inferred, found {list(PORT_BINDING_RESOLUTIONS)}"
+        )
+    if not PORT_BINDING_CODES:
+        problems.append("the port binding failures must be named")
+    for code in PORT_BINDING_CODES:
+        if code != code.lower():
+            problems.append(f"the port binding code {code!r} must be lowercase")
+    if not ANNOTATION_TEXT_EXTENT_IS_DETERMINISTIC:
+        problems.append(
+            "annotation text extent must be deterministic, or the layout digest depends on "
+            "the machine"
+        )
+    if not ANNOTATION_TEXT_METRICS_POLICY.strip():
+        problems.append("the text extent algorithm must be named as a policy")
+    if not ANNOTATION_TEXT_METRICS_CHANGE_REQUIRES_LAYOUT_RULES_VERSION_BUMP:
+        problems.append(
+            "a change to the extent algorithm belongs to the layout rules version, or nobody "
+            "can say which drawing changed and why"
+        )
+    if not TEXT_METRICS_IS_NOT_A_SEPARATE_DIGEST_INPUT:
+        problems.append("text metrics ride the layout rules version, not a third identity axis")
+    metric_inputs = [
+        name
+        for name in LAYOUT_DIGEST_INPUTS
+        if "text" in name or "metric" in name or "font" in name
+    ]
+    if metric_inputs:
+        problems.append(
+            f"text metrics must not become a layout digest input on their own: {metric_inputs}"
+        )
+    if not ANNOTATION_TEXT_METRICS_GOLDEN_CASES:
+        problems.append("the extent algorithm needs fixed cases, not a hash of its source")
+    if not any(
+        len(text) * font_size * ANNOTATION_TEXT_EXTENT_CHARACTER_FACTOR < font_size
+        for text, font_size, _ in ANNOTATION_TEXT_METRICS_GOLDEN_CASES
+    ):
+        problems.append(
+            "the golden cases must include a short label, where the font size floor decides the "
+            "extent rather than the character count"
+        )
+    for flag, sentence in (
+        (
+            ANNOTATION_PLACEMENT_READS_BROWSER_FONT_METRICS,
+            "annotation placement may not read browser font metrics",
+        ),
+        (ANNOTATION_PLACEMENT_READS_OS_FONTS, "annotation placement may not read installed fonts"),
+        (
+            ANNOTATION_PLACEMENT_USES_CANVAS_MEASURE_TEXT,
+            "annotation placement may not measure text on a canvas",
+        ),
+    ):
+        if flag:
+            problems.append(sentence)
+    if not ANNOTATION_TEXT_EXTENT_RULE_SOURCE.strip():
+        problems.append("the text extent rule must name the function that implements it")
+    if ANNOTATION_TEXT_EXTENT_CHARACTER_FACTOR <= 0:
+        problems.append("the declared text extent factor must be positive")
 
     return problems
 

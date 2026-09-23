@@ -730,6 +730,159 @@ PHASE_2A_MAY_IMPORT_THE_CONTRACT: tuple[str, ...] = (
 VERSION_CHECK_DETECTS_DRIFT_BETWEEN_LIVE_AND_FROZEN_DEFINITION = True
 VERSION_CHECK_CANNOT_PREVENT_A_DELIBERATE_DOUBLE_EDIT = True
 
+#: The clarification the phase-2A gate asked for: the geometry scan is not weakened, but when
+#: the specification grows real prose (notes, annotations) the scan must be scoped by field
+#: semantics rather than applied to every string. Declared here so that "scan everything" is a
+#: *current* state with a named successor rather than a permanent property.
+GEOMETRY_SCAN_COVERS_EVERY_STRING_VALUE = True
+GEOMETRY_SCAN_IS_FIELD_SCOPED_WHEN_THE_SPEC_CARRIES_PROSE = False
+GEOMETRY_SCAN_SCOPE_DEFERRAL = (
+    "When DiagramSpec gains free prose fields, scope the anchor scan to layout-instruction "
+    "fields and read prose as content. Do not weaken structured geometry rejection."
+)
+
+# ------------------------------------------------------------------------------------
+# §8.2 Phase-2B: the seam into the one layout authority. SemanticTopology *is* the
+#      engine-facing input contract -- no second adapter, no placeholder coordinates, and
+#      the model cannot reach `preserve_positions` at all.
+# ------------------------------------------------------------------------------------
+
+#: The internal order the engine integration is built in, declared so "which step consumes
+#: which intent dimension" is a fact a test can read instead of a claim in a comment.
+PHASE_2B_STEPS: tuple[tuple[str, str], ...] = (
+    ("step_1", "semantic_topology_ingress_and_intent_resolution"),
+    ("step_2", "deterministic_rank_and_absolute_placement"),
+    ("step_3", "orthogonal_routing_and_annotation_placement"),
+    ("step_4", "content_bounds_to_canvas_bounds_and_aspect_enforcement"),
+    ("step_5", "canonical_projection_and_layout_digest"),
+)
+
+#: The ingress, by name. Its shape is a method on the existing engine rather than a new
+#: component: a second "clever" adapter would recreate two sources of truth for what the
+#: layout input is, which is the defect this milestone removes.
+ENGINE_SEMANTIC_TOPOLOGY_INGRESS = "layout_semantic_topology"
+SEMANTIC_TOPOLOGY_IS_THE_ENGINE_FACING_INPUT_CONTRACT = True
+SECOND_ADAPTER_WITH_SEMANTIC_AUTHORITY_IS_ALLOWED = False
+LEGACY_INGRESS_RETAINS_THE_SAME_ALGORITHM_AUTHORITY = True
+LAYOUT_AUTHORITY_COUNT = 1
+
+#: Inside the engine, converting the topology into whatever graph objects its algorithms
+#: already use is allowed -- but as representation conversion only. The three zeros are the
+#: whole licence, and they are numbers rather than adjectives on purpose.
+INTERNAL_NORMALIZATION_IS_REPRESENTATION_ONLY = True
+INTERNAL_NORMALIZATION_SEMANTIC_DECISIONS = 0
+INTERNAL_NORMALIZATION_GEOMETRY_DECISIONS = 0
+INTERNAL_NORMALIZATION_TOPOLOGY_EDITS = 0
+
+#: The shortcut that would undo the milestone: give every node a placeholder position so the
+#: legacy document-shaped entry point can be reused, then let the engine preserve or correct
+#: those coordinates. Coordinate authority would move from the model to the adapter, and the
+#: original problem would come back wearing a different hat.
+ENGINE_INGRESS_MAY_FABRICATE_PLACEHOLDER_POSITIONS = False
+ENGINE_INGRESS_MAY_DISGUISE_TOPOLOGY_AS_A_POSITIONED_DOCUMENT = False
+
+#: Path-scoped policy, carried into the runtime: the semantic-first ingress has no
+#: `preserve_positions` parameter at all, so "the caller may not override it" is enforced by
+#: the signature rather than by an argument check.
+M7_SYNTHESIS_INGRESS_PRESERVE_POSITIONS = False
+M7_INGRESS_HAS_NO_PRESERVE_POSITIONS_PARAMETER = True
+M7_INGRESS_PRESERVE_POSITIONS_IS_CALLER_OVERRIDABLE = False
+
+#: The engine reports which engine and rules version produced a plan, because the digest names
+#: both. The contract declares the *names* the engine must publish; the engine owns the values,
+#: so a rules change is an engine edit with a visible version, not a contract edit.
+ENGINE_INGRESS_REPORTS_ENGINE_AND_RULES_VERSION = True
+ENGINE_VERSION_CONSTANT_NAMES: tuple[str, ...] = (
+    "LAYOUT_ENGINE_VERSION",
+    "LAYOUT_RULES_VERSION",
+)
+
+
+@dataclass(frozen=True)
+class IntentConsumption:
+    """Where one discrete intent dimension enters the engine and where it changes the drawing.
+
+    Two steps rather than one, because "received" and "applied" are different facts: a
+    dimension that is carried into the plan but never applies anywhere is exactly the silent
+    ignoring this table exists to make visible.
+    """
+
+    dimension: str
+    received_at_step: str
+    applied_at_step: str
+    behaviour: str
+
+
+#: Every declared intent dimension, with the step that applies it. Coverage is checked by the
+#: validator in both directions, so an intent dimension with no consumption point and a
+#: consumption point for a dimension that does not exist are both reported.
+LAYOUT_INTENT_CONSUMPTION: tuple[IntentConsumption, ...] = (
+    IntentConsumption(
+        "orientation",
+        "step_1",
+        "step_4",
+        "Landscape or portrait is enforced on the derived canvas, not requested in pixels.",
+    ),
+    IntentConsumption(
+        "preferred_aspect_class",
+        "step_1",
+        "step_4",
+        "The aspect class shapes the derived canvas so `extra_wide` is reachable.",
+    ),
+    IntentConsumption(
+        "primary_flow_direction",
+        "step_1",
+        "step_2",
+        "Ranking follows the process order, so the drawing reads the way the process runs.",
+    ),
+    IntentConsumption(
+        "system_order",
+        "step_1",
+        "step_2",
+        "The system partition follows the declared sequence, resolved against the spec.",
+    ),
+    IntentConsumption(
+        "grouping",
+        "step_1",
+        "step_2",
+        "Grouped or flat placement, so one system's equipment stays together.",
+    ),
+    IntentConsumption(
+        "density",
+        "step_1",
+        "step_2",
+        "Spacing class, used once as separation rather than nudged per element.",
+    ),
+)
+
+#: Declared and unimplemented may not be the same thing as ignored.
+UNIMPLEMENTED_INTENT_DIMENSION_MAY_BE_SILENTLY_IGNORED = False
+INTENT_DIMENSIONS_ARE_RECEIVED_AT_STEP = "step_1"
+
+#: The official chain. Canvas is the tail of it, and `canvas_width` / `canvas_height` remain
+#: forbidden on the request: the engine may be given intent and a margin policy, never pixels.
+CANVAS_DERIVATION_CHAIN: tuple[str, ...] = (
+    "semantic_topology",
+    "system_partition",
+    "absolute_placement",
+    "routing",
+    "annotations",
+    "content_bounds",
+    "derive_canvas_bounds_from_content_and_margin_and_intent",
+    "verify_no_clipping",
+    "canonical_layout_projection",
+    "canonical_layout_digest",
+)
+CANVAS_IS_ENGINE_OUTPUT_DERIVED_FROM_CONTENT = True
+CANVAS_MUST_BE_VERIFIED_TO_CLIP_NOTHING = True
+ENGINE_MAY_TAKE_INTENT_AND_MARGIN_POLICY = True
+ENGINE_MAY_TAKE_CANVAS_DIMENSIONS_AS_INPUT = False
+
+#: Phase 2B builds the ingress and the engine integration. It still adds no surface: nothing
+#: routes, no tool, no endpoint, no button calls the new ingress yet.
+PHASE_2B_WIRES_THE_INGRESS_TO_ANY_SURFACE = False
+PHASE_2B_MAY_IMPORT_THE_CONTRACT: tuple[str, ...] = ("auto_layout_semantic.py",)
+
 PHASE_1_FORBIDDEN_SURFACES: tuple[str, ...] = (
     "new_http_route",
     "new_mcp_tool",
@@ -1262,6 +1415,132 @@ def validate_contract() -> list[str]:
         problems.append("the deferral this contract supersedes belongs to M7-2")
     if not PRE_EXISTING_LAYOUT_SURFACES:
         problems.append("the pre-existing layout surface must be named so it is not mistaken")
+
+    # §8.2 phase 2B: the seam, and the two shortcuts it exists to forbid.
+    if ENGINE_INGRESS_MAY_FABRICATE_PLACEHOLDER_POSITIONS:
+        problems.append(
+            "the semantic ingress must not fabricate placeholder positions to reuse the "
+            "document-shaped entry point"
+        )
+    if ENGINE_INGRESS_MAY_DISGUISE_TOPOLOGY_AS_A_POSITIONED_DOCUMENT:
+        problems.append("the topology must reach the engine as topology")
+    if SECOND_ADAPTER_WITH_SEMANTIC_AUTHORITY_IS_ALLOWED:
+        problems.append("there must not be a second adapter with semantic authority")
+    if not SEMANTIC_TOPOLOGY_IS_THE_ENGINE_FACING_INPUT_CONTRACT:
+        problems.append("the topology is the engine-facing input contract")
+    if LAYOUT_AUTHORITY_COUNT != 1:
+        problems.append(f"there must be exactly one layout authority, found {LAYOUT_AUTHORITY_COUNT}")
+    for counter_name in (
+        "INTERNAL_NORMALIZATION_SEMANTIC_DECISIONS",
+        "INTERNAL_NORMALIZATION_GEOMETRY_DECISIONS",
+        "INTERNAL_NORMALIZATION_TOPOLOGY_EDITS",
+    ):
+        if globals()[counter_name] != 0:
+            problems.append(
+                f"internal graph normalization is representation conversion only, but "
+                f"{counter_name} is {globals()[counter_name]}"
+            )
+    if M7_SYNTHESIS_INGRESS_PRESERVE_POSITIONS:
+        problems.append("the semantic-first ingress must not preserve positions")
+    if M7_INGRESS_PRESERVE_POSITIONS_IS_CALLER_OVERRIDABLE:
+        problems.append(
+            "the semantic-first ingress must have no preserve_positions parameter for a "
+            "caller to override"
+        )
+    if not M7_INGRESS_HAS_NO_PRESERVE_POSITIONS_PARAMETER:
+        problems.append("the semantic-first ingress must not accept preserve_positions")
+    if ENGINE_MAY_TAKE_CANVAS_DIMENSIONS_AS_INPUT:
+        problems.append("canvas dimensions are an engine output, not an input")
+    if not CANVAS_IS_ENGINE_OUTPUT_DERIVED_FROM_CONTENT:
+        problems.append("the canvas must be derived from the content")
+    if not CANVAS_MUST_BE_VERIFIED_TO_CLIP_NOTHING:
+        problems.append("a derived canvas that clips content is not an acceptable canvas")
+    if PHASE_2B_WIRES_THE_INGRESS_TO_ANY_SURFACE:
+        problems.append("phase 2B adds no surface: the ingress is not wired to a route or tool")
+    if set(PHASE_2A_MAY_IMPORT_THE_CONTRACT) & set(PHASE_2B_MAY_IMPORT_THE_CONTRACT):
+        problems.append(
+            "a module may be declared the importer for one phase, not for two: "
+            f"{sorted(set(PHASE_2A_MAY_IMPORT_THE_CONTRACT) & set(PHASE_2B_MAY_IMPORT_THE_CONTRACT))}"
+        )
+    step_keys = tuple(key for key, _ in PHASE_2B_STEPS)
+    if not PHASE_2B_STEPS:
+        problems.append("the engine integration must declare its steps")
+    for consumption in LAYOUT_INTENT_CONSUMPTION:
+        if consumption.received_at_step != INTENT_DIMENSIONS_ARE_RECEIVED_AT_STEP:
+            problems.append(
+                f"intent dimension {consumption.dimension!r} is not received at the ingress"
+            )
+        for step in (consumption.received_at_step, consumption.applied_at_step):
+            if step not in step_keys:
+                problems.append(
+                    f"intent dimension {consumption.dimension!r} names an undeclared step {step!r}"
+                )
+        if not consumption.behaviour.strip():
+            problems.append(
+                f"intent dimension {consumption.dimension!r} must say what applying it does"
+            )
+    declared_dimensions = tuple(dimension.name for dimension in LAYOUT_INTENT_DIMENSIONS)
+    consumed_dimensions = tuple(item.dimension for item in LAYOUT_INTENT_CONSUMPTION)
+    if sorted(consumed_dimensions) != sorted(declared_dimensions):
+        missing = sorted(set(declared_dimensions) - set(consumed_dimensions))
+        extra = sorted(set(consumed_dimensions) - set(declared_dimensions))
+        problems.append(
+            "every declared layout intent dimension needs exactly one consumption point "
+            f"(missing={missing}, unexpected={extra})"
+        )
+    if len(set(consumed_dimensions)) != len(consumed_dimensions):
+        problems.append("a layout intent dimension may have only one consumption point")
+    for dimension in declared_dimensions:
+        if dimension == "preserve_positions":
+            problems.append(
+                "preserve_positions is execution-path policy, not a dimension the model may "
+                "declare in layout intent"
+            )
+    if UNIMPLEMENTED_INTENT_DIMENSION_MAY_BE_SILENTLY_IGNORED:
+        problems.append("a declared intent dimension may not be silently ignored")
+    if not ENGINE_INGRESS_REPORTS_ENGINE_AND_RULES_VERSION:
+        problems.append("the ingress must report which engine and rules version ran")
+    if set(ENGINE_VERSION_CONSTANT_NAMES) == {"layout_engine_version", "layout_rules_version"}:
+        problems.append(
+            "the engine version constants must be the published constant names, not the "
+            "digest field names that read them"
+        )
+    for constant_name in ENGINE_VERSION_CONSTANT_NAMES:
+        if not constant_name.isupper():
+            problems.append(
+                f"the engine version constant {constant_name!r} must be a published constant"
+            )
+        if constant_name.lower() not in LAYOUT_DIGEST_INPUTS:
+            problems.append(
+                f"{constant_name!r} must be readable from the digest as "
+                f"{constant_name.lower()!r}"
+            )
+    for field_name in ("layout_engine_version", "layout_rules_version"):
+        if field_name not in LAYOUT_DIGEST_INPUTS:
+            problems.append(f"the digest must include {field_name!r}")
+    if CANVAS_DERIVATION_CHAIN[0] != "semantic_topology":
+        problems.append("the canvas chain must start at the semantic topology")
+    if CANVAS_DERIVATION_CHAIN[-1] != "canonical_layout_digest":
+        problems.append("the canvas chain must end at the canonical layout digest")
+    if "routing" not in CANVAS_DERIVATION_CHAIN[:-1]:
+        problems.append("routing must precede the canvas derivation")
+    canvas_bounds_step = "derive_canvas_bounds_from_content_and_margin_and_intent"
+    for required_step in ("content_bounds", canvas_bounds_step):
+        if required_step not in CANVAS_DERIVATION_CHAIN:
+            problems.append(f"the canvas chain must include {required_step!r}")
+    # Positional rules are only checked when both names are present: a validator that raises
+    # on a broken declaration reports nothing at all.
+    if (
+        "content_bounds" in CANVAS_DERIVATION_CHAIN
+        and canvas_bounds_step in CANVAS_DERIVATION_CHAIN
+        and CANVAS_DERIVATION_CHAIN.index("content_bounds")
+        > CANVAS_DERIVATION_CHAIN.index(canvas_bounds_step)
+    ):
+        problems.append("the canvas must be derived from the content bounds, not before them")
+    if not GEOMETRY_SCAN_SCOPE_DEFERRAL.strip():
+        problems.append("the anchor scan scope change must name its successor")
+    if not PHASE_2B_MAY_IMPORT_THE_CONTRACT:
+        problems.append("phase 2B must name the module that will read this contract")
     for token in PHASE_1_FORBIDDEN_SURFACE_TOKENS:
         clashing = [name for name in PRE_EXISTING_LAYOUT_SURFACES if token in name]
         if clashing:

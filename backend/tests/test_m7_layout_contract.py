@@ -535,7 +535,21 @@ def test_only_the_declared_modules_import_the_layout_contract() -> None:
         if path.name != "m7_layout_contract.py"
         and "m7_layout_contract" in path.read_text(encoding="utf-8")
     )
-    assert importers == sorted(contract.PHASE_2A_MAY_IMPORT_THE_CONTRACT), importers
+    # A phase-2B module may only appear here once the module exists: the allow-list names the
+    # importer before it is written, so "declared for later" cannot be mistaken for "already
+    # reading the contract".
+    agentcad = Path(__file__).resolve().parents[1] / "agentcad"
+    allowed = set(contract.PHASE_2A_MAY_IMPORT_THE_CONTRACT)
+    allowed |= {
+        name for name in contract.PHASE_2B_MAY_IMPORT_THE_CONTRACT if (agentcad / name).exists()
+    }
+    assert importers == sorted(allowed), importers
+
+
+def test_the_two_phase_import_lists_do_not_overlap() -> None:
+    assert not set(contract.PHASE_2A_MAY_IMPORT_THE_CONTRACT) & set(
+        contract.PHASE_2B_MAY_IMPORT_THE_CONTRACT
+    )
 
 
 # --------------------------------------------------------------------------------------
@@ -819,3 +833,261 @@ def test_the_validator_reports_a_phase_that_ships_a_runtime(
     assert any(
         "must not build 'layout_service'" in problem for problem in contract.validate_contract()
     )
+
+
+# --------------------------------------------------------------------------------------
+# §8.2 phase 2B: the seam, its two shortcuts, and the intent consumption table
+# --------------------------------------------------------------------------------------
+
+
+def test_the_task_book_declares_the_phase_2b_seam() -> None:
+    task_book = (
+        Path(__file__).resolve().parents[2] / "docs" / "m7-2-deterministic-layout.md"
+    ).read_text(encoding="utf-8")
+    names = (
+        *[key for key, _ in contract.PHASE_2B_STEPS],
+        *[value for _, value in contract.PHASE_2B_STEPS],
+        *[item.dimension for item in contract.LAYOUT_INTENT_CONSUMPTION],
+        *contract.ENGINE_VERSION_CONSTANT_NAMES,
+        *contract.PHASE_2B_MAY_IMPORT_THE_CONTRACT,
+        contract.ENGINE_SEMANTIC_TOPOLOGY_INGRESS,
+        contract.INTENT_DIMENSIONS_ARE_RECEIVED_AT_STEP,
+        "SEMANTIC_TOPOLOGY_IS_THE_ENGINE_FACING_INPUT_CONTRACT",
+        "SECOND_ADAPTER_WITH_SEMANTIC_AUTHORITY_IS_ALLOWED",
+        "LAYOUT_AUTHORITY_COUNT",
+        "LEGACY_INGRESS_RETAINS_THE_SAME_ALGORITHM_AUTHORITY",
+        "INTERNAL_NORMALIZATION_IS_REPRESENTATION_ONLY",
+        "INTERNAL_NORMALIZATION_SEMANTIC_DECISIONS",
+        "INTERNAL_NORMALIZATION_GEOMETRY_DECISIONS",
+        "INTERNAL_NORMALIZATION_TOPOLOGY_EDITS",
+        "ENGINE_INGRESS_MAY_FABRICATE_PLACEHOLDER_POSITIONS",
+        "ENGINE_INGRESS_MAY_DISGUISE_TOPOLOGY_AS_A_POSITIONED_DOCUMENT",
+        "M7_SYNTHESIS_INGRESS_PRESERVE_POSITIONS",
+        "M7_INGRESS_HAS_NO_PRESERVE_POSITIONS_PARAMETER",
+        "M7_INGRESS_PRESERVE_POSITIONS_IS_CALLER_OVERRIDABLE",
+        "LAYOUT_INTENT_CONSUMPTION",
+        "IntentConsumption",
+        "UNIMPLEMENTED_INTENT_DIMENSION_MAY_BE_SILENTLY_IGNORED",
+        "CANVAS_DERIVATION_CHAIN",
+        "CANVAS_IS_ENGINE_OUTPUT_DERIVED_FROM_CONTENT",
+        "CANVAS_MUST_BE_VERIFIED_TO_CLIP_NOTHING",
+        "ENGINE_MAY_TAKE_INTENT_AND_MARGIN_POLICY",
+        "ENGINE_MAY_TAKE_CANVAS_DIMENSIONS_AS_INPUT",
+        "ENGINE_INGRESS_REPORTS_ENGINE_AND_RULES_VERSION",
+        "PHASE_2B_WIRES_THE_INGRESS_TO_ANY_SURFACE",
+        "GEOMETRY_SCAN_COVERS_EVERY_STRING_VALUE",
+        "GEOMETRY_SCAN_IS_FIELD_SCOPED_WHEN_THE_SPEC_CARRIES_PROSE",
+        "GEOMETRY_SCAN_SCOPE_DEFERRAL",
+        "SemanticTopology",
+        "layout_semantic_topology",
+    )
+    missing = [name for name in names if name not in task_book]
+    assert not missing, missing
+
+
+def test_the_engine_router_is_not_named_as_a_second_engine() -> None:
+    """The ingress lands on the one authority. A module named like a second engine would read
+    as a second authority even if it only mixed in one method."""
+    assert contract.PHASE_2B_MAY_IMPORT_THE_CONTRACT == ("auto_layout_semantic.py",)
+
+
+@pytest.mark.parametrize(
+    ("attribute", "value", "expected"),
+    [
+        (
+            "ENGINE_INGRESS_MAY_FABRICATE_PLACEHOLDER_POSITIONS",
+            True,
+            "must not fabricate placeholder positions",
+        ),
+        (
+            "ENGINE_INGRESS_MAY_DISGUISE_TOPOLOGY_AS_A_POSITIONED_DOCUMENT",
+            True,
+            "must reach the engine as topology",
+        ),
+        (
+            "SECOND_ADAPTER_WITH_SEMANTIC_AUTHORITY_IS_ALLOWED",
+            True,
+            "must not be a second adapter",
+        ),
+        ("LAYOUT_AUTHORITY_COUNT", 2, "exactly one layout authority"),
+        ("INTERNAL_NORMALIZATION_SEMANTIC_DECISIONS", 1, "representation conversion only"),
+        ("INTERNAL_NORMALIZATION_TOPOLOGY_EDITS", 3, "representation conversion only"),
+        ("M7_SYNTHESIS_INGRESS_PRESERVE_POSITIONS", True, "must not preserve positions"),
+        (
+            "M7_INGRESS_PRESERVE_POSITIONS_IS_CALLER_OVERRIDABLE",
+            True,
+            "no preserve_positions parameter",
+        ),
+        ("M7_INGRESS_HAS_NO_PRESERVE_POSITIONS_PARAMETER", False, "must not accept"),
+        (
+            "ENGINE_MAY_TAKE_CANVAS_DIMENSIONS_AS_INPUT",
+            True,
+            "canvas dimensions are an engine output",
+        ),
+        ("CANVAS_IS_ENGINE_OUTPUT_DERIVED_FROM_CONTENT", False, "derived from the content"),
+        ("CANVAS_MUST_BE_VERIFIED_TO_CLIP_NOTHING", False, "is not an acceptable canvas"),
+        ("PHASE_2B_WIRES_THE_INGRESS_TO_ANY_SURFACE", True, "phase 2B adds no surface"),
+        (
+            "UNIMPLEMENTED_INTENT_DIMENSION_MAY_BE_SILENTLY_IGNORED",
+            True,
+            "may not be silently ignored",
+        ),
+        (
+            "ENGINE_INGRESS_REPORTS_ENGINE_AND_RULES_VERSION",
+            False,
+            "must report which engine",
+        ),
+    ],
+)
+def test_the_validator_reports_a_relaxed_phase_2b_rule(
+    monkeypatch: pytest.MonkeyPatch, attribute: str, value: object, expected: str
+) -> None:
+    monkeypatch.setattr(contract, attribute, value)
+    problems = contract.validate_contract()
+    assert any(expected in problem for problem in problems), problems
+
+
+def test_the_validator_reports_an_intent_dimension_with_no_consumption_point(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The rule that keeps "declared but unimplemented" from meaning "silently ignored"."""
+
+    monkeypatch.setattr(
+        contract,
+        "LAYOUT_INTENT_CONSUMPTION",
+        tuple(
+            item
+            for item in contract.LAYOUT_INTENT_CONSUMPTION
+            if item.dimension != "preferred_aspect_class"
+        ),
+    )
+    problems = contract.validate_contract()
+    assert any("exactly one consumption point" in problem for problem in problems), problems
+
+
+def test_the_validator_reports_a_consumption_point_for_an_undeclared_dimension(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        contract,
+        "LAYOUT_INTENT_CONSUMPTION",
+        (
+            *contract.LAYOUT_INTENT_CONSUMPTION,
+            contract.IntentConsumption("compass_bearing", "step_1", "step_2", "invented"),
+        ),
+    )
+    problems = contract.validate_contract()
+    assert any("exactly one consumption point" in problem for problem in problems), problems
+
+
+def test_the_validator_reports_an_intent_dimension_received_after_the_ingress(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        contract,
+        "LAYOUT_INTENT_CONSUMPTION",
+        tuple(
+            contract.IntentConsumption(
+                item.dimension,
+                "step_2" if item.dimension == "density" else item.received_at_step,
+                item.applied_at_step,
+                item.behaviour,
+            )
+            for item in contract.LAYOUT_INTENT_CONSUMPTION
+        ),
+    )
+    problems = contract.validate_contract()
+    assert any("is not received at the ingress" in problem for problem in problems), problems
+
+
+def test_the_validator_reports_a_consumption_point_naming_an_undeclared_step(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        contract,
+        "LAYOUT_INTENT_CONSUMPTION",
+        tuple(
+            contract.IntentConsumption(
+                item.dimension,
+                item.received_at_step,
+                "step_9" if item.dimension == "grouping" else item.applied_at_step,
+                item.behaviour,
+            )
+            for item in contract.LAYOUT_INTENT_CONSUMPTION
+        ),
+    )
+    problems = contract.validate_contract()
+    assert any("names an undeclared step" in problem for problem in problems), problems
+
+
+def test_the_validator_reports_preserve_positions_becoming_a_model_dimension(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The side door: the model asks for its coordinates back through the intent."""
+    dimension = contract.LayoutIntentDimension(
+        name="preserve_positions",
+        values=(),
+        open_ended=False,
+        note="the coordinates we were asked to give up",
+    )
+    monkeypatch.setattr(
+        contract,
+        "LAYOUT_INTENT_DIMENSIONS",
+        (*contract.LAYOUT_INTENT_DIMENSIONS, dimension),
+    )
+    monkeypatch.setattr(
+        contract,
+        "LAYOUT_INTENT_CONSUMPTION",
+        (
+            *contract.LAYOUT_INTENT_CONSUMPTION,
+            contract.IntentConsumption("preserve_positions", "step_1", "step_2", "keep them"),
+        ),
+    )
+    problems = contract.validate_contract()
+    assert any("execution-path policy" in problem for problem in problems), problems
+
+
+def test_the_validator_reports_a_canvas_derived_before_the_content_bounds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A canvas that is not derived from what is on the drawing is the 1600x900 default again."""
+
+    chain = list(contract.CANVAS_DERIVATION_CHAIN)
+    chain.remove("derive_canvas_bounds_from_content_and_margin_and_intent")
+    chain.insert(
+        chain.index("content_bounds"), "derive_canvas_bounds_from_content_and_margin_and_intent"
+    )
+    monkeypatch.setattr(contract, "CANVAS_DERIVATION_CHAIN", tuple(chain))
+    problems = contract.validate_contract()
+    assert any("derived from the content bounds" in problem for problem in problems), problems
+
+
+def test_the_validator_reports_a_chain_that_does_not_end_at_the_digest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(contract, "CANVAS_DERIVATION_CHAIN", ("semantic_topology", "routing"))
+    problems = contract.validate_contract()
+    assert any("must end at the canonical layout digest" in problem for problem in problems)
+    assert any("routing must precede the canvas derivation" in problem for problem in problems)
+
+
+def test_the_validator_reports_a_module_declared_for_two_phases(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        contract,
+        "PHASE_2B_MAY_IMPORT_THE_CONTRACT",
+        ("auto_layout_semantic.py", "m7_diagram_adapter.py"),
+    )
+    problems = contract.validate_contract()
+    assert any("one phase, not for two" in problem for problem in problems), problems
+
+
+def test_the_validator_reports_engine_versions_the_digest_cannot_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        contract, "ENGINE_VERSION_CONSTANT_NAMES", ("layout_engine_version", "layout_rules_version")
+    )
+    problems = contract.validate_contract()
+    assert any("must be a published constant" in problem for problem in problems), problems

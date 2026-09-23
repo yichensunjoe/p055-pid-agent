@@ -7,6 +7,7 @@ from heapq import heappop, heappush
 from math import hypot
 from typing import Literal
 
+from .auto_layout_semantic import SemanticTopologyIngress
 from .diagram_quality import port_outward_normal
 from .layout_models import (
     AutoLayoutMetrics,
@@ -89,7 +90,18 @@ class LayoutNode:
     rank: int = 0
 
 
-class AutoLayoutEngine:
+class AutoLayoutEngine(SemanticTopologyIngress):
+    """The one layout authority.
+
+    It gains a second way in for M7-2: :meth:`layout_semantic_topology` takes the
+    engine-facing *semantic* input contract and receives the discrete layout intent. The
+    document-shaped entry points are the manual path and keep ``preserve_positions``; the
+    semantic ingress has no such parameter, by signature. Both paths end in the same
+    algorithm, which is why this is a mixin on this class rather than a second engine beside
+    it. Step 1 places nothing; placement, routing and the derived canvas arrive in the later
+    phase-2B steps from the plan the ingress returns.
+    """
+
     def __init__(self, service: DocumentService):
         self.service = service
 

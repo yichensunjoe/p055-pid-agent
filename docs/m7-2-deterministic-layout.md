@@ -431,3 +431,154 @@ Phase-2A 落运行时后，这个断言变成白名单：**只有适配层那两
 
 Phase-2A 不解决"大图怎么排"。拓扑难排、系统多、required loop 复杂都不是本阶段的失败；
 本阶段只证明一件事：**模型已经彻底失去 geometry authority，而所有工程语义完整、确定性地抵达了引擎门口。**
+
+---
+
+## 11. M7-2 Phase-2B — Deterministic Layout Engine Integration
+
+Phase-2A 把模型赶出了几何领域，并在引擎门口停下。Phase-2B 走完剩下那一段：**让那份
+`SemanticTopology` 真正进入唯一的排版权威，并产出可复现的 canonical layout digest。**
+
+### 11.1 接缝：不新增第二个有语义权力的适配层
+
+不采用：
+
+```
+DiagramSpec → DiagramSpecAdapter → SemanticTopology → 又一个聪明的 TopologyToEngineAdapter → AutoLayoutEngine
+```
+
+那会重新造出两个"谁决定排版输入"的真相源。采用：
+
+```
+DiagramSpec → DiagramSpecAdapter → SemanticTopology → AutoLayoutEngine semantic-topology ingress
+```
+
+```
+ENGINE_SEMANTIC_TOPOLOGY_INGRESS = layout_semantic_topology
+SEMANTIC_TOPOLOGY_IS_THE_ENGINE_FACING_INPUT_CONTRACT = True
+SECOND_ADAPTER_WITH_SEMANTIC_AUTHORITY_IS_ALLOWED = False
+LAYOUT_AUTHORITY_COUNT = 1
+LEGACY_INGRESS_RETAINS_THE_SAME_ALGORITHM_AUTHORITY = True
+```
+
+`SemanticTopology` **就是** M7-2 的 engine-facing semantic input contract。
+
+引擎内部可以有一个纯结构 normalization（把 `TopologyNode` / `TopologyEdge` 变成它既有算法
+使用的内部 graph object），但这层只能是**表示转换**，三个零是它全部的授权：
+
+```
+INTERNAL_NORMALIZATION_IS_REPRESENTATION_ONLY = True
+INTERNAL_NORMALIZATION_SEMANTIC_DECISIONS = 0
+INTERNAL_NORMALIZATION_GEOMETRY_DECISIONS = 0
+INTERNAL_NORMALIZATION_TOPOLOGY_EDITS = 0
+```
+
+最合适的形状是方法，而不是组件：
+
+```python
+AutoLayoutEngine.layout_semantic_topology(topology: SemanticTopology, ...) -> LayoutResult
+```
+
+**禁止为兼容旧入口给节点塞假坐标：**
+
+```
+ENGINE_INGRESS_MAY_FABRICATE_PLACEHOLDER_POSITIONS = False
+ENGINE_INGRESS_MAY_DISGUISE_TOPOLOGY_AS_A_POSITIONED_DOCUMENT = False
+```
+
+否则坐标责任只是从模型转到适配层，然后由引擎 preserve / 修正——旧问题换个帽子回来。
+legacy/manual 的既有入口继续存在，两条路径最终共用**同一个** `AutoLayoutEngine` 算法权威。
+
+### 11.2 `preserve_positions` 不是模型的 `layout_intent`
+
+`LAYOUT_INTENT_DIMENSIONS` 仍然**只有六个**：`orientation`、`preferred_aspect_class`、
+`primary_flow_direction`、`system_order`、`grouping`、`density`。`preserve_positions` 属于
+**执行路径 policy**，不属于模型可声明的意图：
+
+```
+M7_SYNTHESIS_INGRESS_PRESERVE_POSITIONS = False
+M7_INGRESS_HAS_NO_PRESERVE_POSITIONS_PARAMETER = True
+M7_INGRESS_PRESERVE_POSITIONS_IS_CALLER_OVERRIDABLE = False
+```
+
+执行方式是**签名里没有这个参数**，而不是"传了再拒绝"：调用方无从覆盖。契约校验器另外声明
+**任何名为 `preserve_positions` 的 intent 维度都是违规**——模型不能通过
+`"preserve_positions": true` 重新取得几何权力。
+
+### 11.3 离散 `layout_intent` 从 ingress 第一刀起就被消费
+
+六个维度**都在 Step 1 被接收**，并且每一个都有明确的施加位置——这就是
+`LAYOUT_INTENT_CONSUMPTION`（`IntentConsumption(dimension, received_at_step, applied_at_step, behaviour)`）：
+
+| 维度 | 接收 | 施加 | 作用 |
+|---|---|---|---|
+| `orientation` | step_1 | step_4 | 画布方向在派生的画布上强制，而不是以像素请求 |
+| `preferred_aspect_class` | step_1 | step_4 | 形状类别塑形派生画布，使 `extra_wide` 可达 |
+| `primary_flow_direction` | step_1 | step_2 | 排序跟随工艺顺序，图才按工艺方向阅读 |
+| `system_order` | step_1 | step_2 | 系统分区按声明序列，且对 spec 校验 |
+| `grouping` | step_1 | step_2 | 分组或平铺放置 |
+| `density` | step_1 | step_2 | 间距类别，一次作为间距使用，而不是逐元素微调 |
+
+```
+INTENT_DIMENSIONS_ARE_RECEIVED_AT_STEP = step_1
+UNIMPLEMENTED_INTENT_DIMENSION_MAY_BE_SILENTLY_IGNORED = False
+```
+
+**已声明但引擎尚未实现的维度，不得被静默忽略。** Phase-2B 最终 Gate 时，六个维度都必须有
+消费位置与测试。反向也成立：一个没有消费点的维度、或一个指向不存在维度的消费点，都会被
+校验器报出来。
+
+内部实施顺序（`PHASE_2B_STEPS`）：
+
+```
+step_1  semantic_topology_ingress_and_intent_resolution
+step_2  deterministic_rank_and_absolute_placement
+step_3  orthogonal_routing_and_annotation_placement
+step_4  content_bounds_to_canvas_bounds_and_aspect_enforcement
+step_5  canonical_projection_and_layout_digest
+```
+
+`orientation` / `preferred_aspect_class` 对画布的最终效果在 Step 4，但它们从 Step 1 起就作为
+**已知约束**存在——不能被静默忽略，最后再补一个宽画布。
+
+### 11.4 Canvas 属于 Phase-2B 的 engine-output 尾段
+
+```
+CANVAS_DERIVATION_CHAIN = (
+  semantic_topology → system_partition → absolute_placement → routing → annotations
+  → content_bounds → derive_canvas_bounds_from_content_and_margin_and_intent
+  → verify_no_clipping → canonical_layout_projection → canonical_layout_digest )
+CANVAS_IS_ENGINE_OUTPUT_DERIVED_FROM_CONTENT = True
+CANVAS_MUST_BE_VERIFIED_TO_CLIP_NOTHING = True
+ENGINE_MAY_TAKE_INTENT_AND_MARGIN_POLICY = True
+ENGINE_MAY_TAKE_CANVAS_DIMENSIONS_AS_INPUT = False
+```
+
+`canvas_width` / `canvas_height` **仍然不得进入 `AutoLayoutRequest`**。引擎可以接收
+`orientation`、`preferred_aspect_class` 与 margin policy/version；**画布尺寸本身只能是输出。**
+
+### 11.5 本阶段的表层边界
+
+```
+PHASE_2B_WIRES_THE_INGRESS_TO_ANY_SURFACE = False
+PHASE_2B_MAY_IMPORT_THE_CONTRACT = (auto_layout_semantic.py)
+ENGINE_INGRESS_REPORTS_ENGINE_AND_RULES_VERSION = True
+ENGINE_VERSION_CONSTANT_NAMES = (LAYOUT_ENGINE_VERSION, LAYOUT_RULES_VERSION)
+```
+
+引擎不会变成组件，`auto_layout_semantic.py` 也不是第二个引擎：ingress 以组合/混入的方式
+落在**既有** `AutoLayoutEngine` 类上。digest 需要 `layout_engine_version` 与
+`layout_rules_version` 两个输入，契约声明引擎**必须发布的常量名**，值由引擎自己持有——
+规则变化因此是带可见版本号的引擎改动，而不是契约改动。本阶段仍然**不加任何表层**：
+没有路由、没有 MCP 工具、没有按钮调用这个新 ingress。
+
+### 11.6 一条来自 Phase-2A 复核的补充（不弱化结构化硬拒绝）
+
+```
+GEOMETRY_SCAN_COVERS_EVERY_STRING_VALUE = True
+GEOMETRY_SCAN_IS_FIELD_SCOPED_WHEN_THE_SPEC_CARRIES_PROSE = False
+GEOMETRY_SCAN_SCOPE_DEFERRAL = 当 DiagramSpec 出现真正的工程备注/annotation 文本时，
+  把锚点扫描按字段语义限定到"布局指令"字段，把散文当内容读；不得弱化结构化几何硬拒绝。
+```
+
+今天"扫所有字符串值"是**当前状态**，不是永久性质；将来收窄扫描范围时，替换动作是可见的。

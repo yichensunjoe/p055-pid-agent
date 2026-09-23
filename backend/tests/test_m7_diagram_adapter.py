@@ -53,6 +53,7 @@ def fixture_a_payload() -> dict:
                 "tag": "V-101",
                 "name": "氩气储罐",
                 "equipment_class": "gas_tank",
+                "symbol_key": "gas_tank",
             },
             {
                 "engineering_id": "el_purifier",
@@ -61,6 +62,7 @@ def fixture_a_payload() -> dict:
                 "tag": "X-201",
                 "name": "纯化器",
                 "equipment_class": "purifier",
+                "symbol_key": "purifier",
             },
             {
                 "engineering_id": "el_pt_101",
@@ -69,6 +71,7 @@ def fixture_a_payload() -> dict:
                 "tag": "PT-101",
                 "instrument_type": "pressure_indicator",
                 "measurement": "pressure",
+                "symbol_key": "pressure_indicator",
             },
             {
                 "engineering_id": "el_recycle",
@@ -77,6 +80,7 @@ def fixture_a_payload() -> dict:
                 "tag": "X-301",
                 "name": "覆盖气回用净化",
                 "equipment_class": "purifier",
+                "symbol_key": "purifier",
             },
         ],
         "connections": [

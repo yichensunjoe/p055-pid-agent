@@ -27,7 +27,9 @@ test("the TypeSafe fields keep their own accessible names", async ({ page, reque
   // Playwright matches a name by substring.
   await expect(page.getByRole("textbox", { name: "Base URL" })).toHaveCount(1);
   await expect(page.getByRole("textbox", { name: /Model name/ })).toHaveCount(1);
-  await expect(page.locator(".typesafe-settings").getByRole("textbox")).toHaveCount(3);
+  // Three TypeSafe fields (Key / 服务地址 / 判读模型) plus the natural-language sentence
+  // field the draw block below them adds.
+  await expect(page.locator(".typesafe-settings").getByRole("textbox")).toHaveCount(4);
   await expect(page.getByRole("textbox", { name: "TypeSafe Key" })).toHaveCount(1);
   await expect(page.getByRole("button", { name: "测试 TypeSafe Key" })).toBeVisible();
 });

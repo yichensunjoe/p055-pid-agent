@@ -18,6 +18,11 @@
 - **下一步（等 Gate）**：Gate 复核本分支（范围 = `a56c806` planner 切片 + `d5eff01` 后端 surface + `346245c` 前端，
   docs 提交在 tip 可整体不带）；签后 fast-forward main 并进入纵切第三块「第二句中文改语义 → 重画 → 导出」
   （重画需要新的 target 语义：当前写者只接受空目标）。
+- **暂停点（2026-09-24）**：本轮工作已推送（HEAD `ee30885`），CI 四 job 全绿（run `35971751833`）。
+  Gate 汇报已成稿但**尚未发出**——全文在「覆盖扩展方案裁决」会话的输入框草稿里（浏览器标签页还开着的话可直接发送）。
+  待发内容存于会话草稿与 `/tmp/gate-report.txt`（/tmp 重启即失，草稿在 ChatGPT 侧仍在）。发送注意：
+  `bsk press Enter --ref` 只认 observe 拿到的 `@eN` 引用，不认 CSS 选择器；下次先 observe 取输入框 `@eN` 再按回车，
+  或继续用 `document.execCommand('insertText')` + Enter 的方式。发后等流式结束读回裁定再动 main。
 
 ## 上一状态（2026-09-24 R27 —— M7-2 Phase-3 已签 CLOSED：`origin/main = 28c4f96`（CI run `35837923170` 四 job success）。本地分支在已签内容之上多 carry 未签的 NL planner 纵切第一块与 docs 提交；基线复验 ruff clean / contract `[]` / 1519 passed）
 

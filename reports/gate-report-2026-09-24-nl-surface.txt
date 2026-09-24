@@ -1,0 +1,32 @@
+【M7 NL 纵切第二块 · 复核请求】自然语言 surface：一句话 → DiagramSpec → 冻结链 → 受治理落图（API+面板）
+
+① 范围与 ancestry
+base = 28c4f96964f5c7db91a18a0d798f40aaeb10bceb（你签的 Phase-3，即 origin/main）
+branch = m7-semantic-first-synthesis，head = ee30885
+代码提交（建议复核范围）：
+- a56c806 feat(m7): plan a DiagramSpec from one sentence…（planner 切片，即你签署时说"不要带入 main"的那块，原样保留、未改动）
+- d5eff01 feat(m7): draw from one sentence through the one governed writer（后端 surface）
+- 346245c feat(m7): draw from one sentence in the agent panel（前端 + e2e）
+tip 另有 5 笔 docs 记账提交（HANDOFF/踩坑日志），签 main 时可不带。
+
+② 做了什么
+- 新端点 POST /api/v2/documents/{document_id}/agent/text-plan：句子 → judged DiagramSpec → 冻结确定性链 finalize → phase-3 materializer 受治理落图；dry_run 预览零写入；写前 preflight 拒非空目标（409、零副作用）；审计 metadata 带 M7 身份链（5 identity + 7 version，按绑定表）+ layout_contract_version。
+- 合同：tool registry 注册 draw_text_plan；surface_contract 声明（engineering_write / audited / 伴生负测试 test_text_plan_surface.py）；layout contract 新增 §16 Phase-4 声明块（route/module 声明成数据 + "必须拒非空目标"入 validator）。
+- 面板：Agent → 模型服务与高级设置 → TypeSafe 区新增「自然语言一句话出图」（预览 / 生成图纸；提交后画布同步 rN；被拒时原文展示原因与跳过子句）。
+
+③ 门禁（本地实跑）
+ruff clean；validate_contract() []；后端 1526 passed（+7 新）；前端 build + e2e 60 passed（新增 nl-draw.spec.ts 4 条，全拦截式无网络）+ 单测 161。
+变异两条实跑全红：摘除 surface 绑定 → test_every_mutating_route_is_declared 红；PHASE_4_REQUIRES_AN_EMPTY_TARGET=False → contract validator 红。
+负测试断言副作用缺席：被拒的画 revision 不动、元素不进、audit 无 revision.created。
+
+④ CI
+workflow_dispatch run 35971751833（分支不触发 ci.yml，同你上轮的用法），四 job（Backend 3.11 / Frontend Node 24 / M5 72-case / Browser Chromium）均 success，绑定 head ee30885。
+
+⑤ 发现的引擎边界（如实上报，未擅自放开）
+冻结链今日拒两种真实句子（端点映射 422 并点名句子）：
+- 无连接图纸（单设备）：route_semantic_layout 对空 endpoint_bindings 无条件硬失败；
+- 多候选端口符号（fractionation_column 3 端口）：连接绑定不做唯一性猜测。
+是否放开属引擎语义变更，等你裁决；不放开也不阻塞纵切目标句。
+
+⑥ 口径
+不动 main，直到你签 NL surface 并授权 fast-forward；你签后进入纵切第三块「第二句中文改语义 → 重画 → 导出」（重画需要新的 target 语义：当前写者只接受空目标——这是下一个设计点，到时一并报你）。

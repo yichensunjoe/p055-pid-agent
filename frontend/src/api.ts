@@ -117,6 +117,26 @@ export type TypesafeVerifyResult = {
   answer?: Record<string, unknown>;
 };
 
+export type TextPlanResult = {
+  document_id: string;
+  committed: boolean;
+  revision: number | null;
+  spec: {
+    label: string;
+    entities: { engineering_id: string; tag: string; name: string; symbol_key: string }[];
+    connections: { engineering_id: string; source_engineering_id: string; target_engineering_id: string }[];
+  };
+  canonical_layout_digest: string;
+  materialization_digest: string;
+  notes: string[];
+  skipped: string[];
+  unknown_tags: string[];
+  model: string;
+  latency_ms: number;
+  question_count: number;
+  judgment_count: number;
+};
+
 // The panel can carry a key, but the server may already hold one (``TYPESAFE_API_KEY``). Which of the
 // two a blank field falls back to changes what the user has to do, so it is read from the server and
 // said out loud instead of guessed at from an empty input.
@@ -703,6 +723,23 @@ export const api = {
       expected_revision: revision,
       require_visible_output: requireVisibleOutput,
       confidence_floor: confidenceFloor,
+      base_url: provider.base_url,
+      model: provider.model,
+      api_key: provider.api_key,
+    }),
+    signal,
+  }),
+  planTextDrawing: (
+    id: string,
+    sentence: string,
+    provider: { base_url?: string; model?: string; api_key?: string },
+    dryRun: boolean,
+    signal?: AbortSignal,
+  ) => request<TextPlanResult>(`/documents/${id}/agent/text-plan`, {
+    method: "POST",
+    body: JSON.stringify({
+      sentence,
+      dry_run: dryRun,
       base_url: provider.base_url,
       model: provider.model,
       api_key: provider.api_key,

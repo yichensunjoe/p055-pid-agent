@@ -26,7 +26,7 @@ import { HistoryPanel } from "./editor/HistoryPanel";
 import { LayerSystemPanel } from "./editor/LayerSystemPanel";
 import { PropertyInspector } from "./editor/PropertyInspector";
 import { SymbolPalette } from "./editor/SymbolPalette";
-import { api, ApiError, clearServiceAccessToken, describeTypesafeKeySource, downloadApiResource, getServiceAccessToken, getTypesafeApiKey, readTypesafePreference, setServiceAccessToken, setTypesafeApiKey, writeTypesafePreferences, type ProviderConfig, type ProviderTestResult, type TypesafeProviderStatus } from "./api";
+import { api, ApiError, clearServiceAccessToken, describeTypesafeKeySource, downloadApiResource, getServiceAccessToken, getTypesafeApiKey, readTypesafePreference, setServiceAccessToken, setTypesafeApiKey, writeTypesafePreferences, type ProviderConfig, type ProviderTestResult, type TextPlanResult, type TypesafeProviderStatus } from "./api";
 import { CAD_ACCEPT, cadReportLines, dwgConverterHint, isCadFileName, type CadCapabilities } from "./cadImport";
 import { documentDeletionConfirmation } from "./documentDeletion";
 import {
@@ -173,6 +173,10 @@ export default function App() {
   const [typesafeEnabled, setTypesafeEnabled] = useState(() => readTypesafePreference("enabled", "false") === "true");
   const [typesafeTest, setTypesafeTest] = useState<{ ok: boolean; message: string } | null>(null);
   const [typesafeStatus, setTypesafeStatus] = useState<TypesafeProviderStatus | null>(null);
+  const [nlSentence, setNlSentence] = useState("");
+  const [drawingTextPlan, setDrawingTextPlan] = useState(false);
+  const [nlResult, setNlResult] = useState<TextPlanResult | null>(null);
+  const [nlError, setNlError] = useState("");
   const [testingTypesafe, setTestingTypesafe] = useState(false);
   const [serviceToken, setServiceToken] = useState(() => getServiceAccessToken());
   const [showServiceToken, setShowServiceToken] = useState(false);
@@ -457,6 +461,48 @@ export default function App() {
       setTestingTypesafe(false);
       // A failure here is often "no key anywhere", which the hint above the field should say.
       void refreshTypesafeStatus();
+    }
+  };
+
+  const drawFromSentence = async (dryRun: boolean) => {
+    const document = state.document;
+    if (!document || !nlSentence.trim() || drawingTextPlan) return;
+    setDrawingTextPlan(true);
+    setNlError("");
+    try {
+      const result = await api.planTextDrawing(
+        document.id,
+        nlSentence.trim(),
+        {
+          base_url: typesafeBaseUrl.trim() || undefined,
+          model: typesafeModel.trim() || undefined,
+          api_key: typesafeKey.trim() || undefined,
+        },
+        dryRun,
+      );
+      setNlResult(result);
+      if (result.committed && typeof result.revision === "number") {
+        const active = useWorkspace.getState().document;
+        if (!active || active.id !== document.id) {
+          setNlError("图纸已切换，出图结果未写回当前画布。");
+          return;
+        }
+        const fresh = await api.getDocument(document.id);
+        const documents = await api.listDocuments();
+        useWorkspace.setState({
+          document: fresh,
+          documents,
+          selectedElementIds: [],
+          error: null,
+          syncState: "synced",
+          syncMessage: `已同步至 r${fresh.revision}`,
+          pendingExternalRevision: null,
+        });
+      }
+    } catch (error) {
+      setNlError(error instanceof ApiError ? error.message : String(error));
+    } finally {
+      setDrawingTextPlan(false);
     }
   };
 
@@ -1179,6 +1225,21 @@ export default function App() {
                   <button type="button" onClick={() => void refreshTypesafeStatus()}>刷新服务端配置</button>
                 </div>
                 {typesafeTest ? <div className={typesafeTest.ok ? "provider-model-status" : "provider-model-status error"}>{typesafeTest.message}</div> : null}
+                <div className="nl-draw">
+                  <label>自然语言一句话出图<input value={nlSentence} onChange={(event: ChangeEvent<HTMLInputElement>) => setNlSentence(event.target.value)} placeholder="例如：添加一个缓冲罐 V-101，添加一台燃料盐泵 P-101，把 V-101 接到 P-101" autoComplete="off" /></label>
+                  <div className="typesafe-hint">对一张空图纸生效：代码读句造候选，TypeSafe 只判断代码查不了的子句，冻结的确定性链负责布局与落图。只建图、不改已有图纸；不确定的子句会列出并跳过。</div>
+                  <div className="provider-actions">
+                    <button type="button" onClick={() => void drawFromSentence(true)} disabled={drawingTextPlan || !nlSentence.trim()}>{drawingTextPlan ? "处理中…" : "预览"}</button>
+                    <button type="button" onClick={() => void drawFromSentence(false)} disabled={drawingTextPlan || !nlSentence.trim()}>生成图纸</button>
+                  </div>
+                  {nlError ? <div className="provider-model-status error">{nlError}</div> : null}
+                  {nlResult ? <div className="nl-draw-result">
+                    <div>{nlResult.committed ? `已画入 r${nlResult.revision}` : "预览（未写入图纸）"} · {nlResult.spec.entities.length} 台设备 · {nlResult.spec.connections.length} 条连接 · 模型判读 {nlResult.judgment_count} 次</div>
+                    {nlResult.notes.map((note) => <div key={note}>· {note}</div>)}
+                    {nlResult.skipped.map((item) => <div key={item} className="provider-model-status error">跳过：{item}</div>)}
+                    {nlResult.unknown_tags.map((tag) => <div key={tag}>未识别的位号：{tag}</div>)}
+                  </div> : null}
+                </div>
               </div>
               <div className="provider-actions">
                 <button type="button" onClick={() => void discoverProviderModels()} disabled={loadingModels || !baseUrl.trim()}>{loadingModels ? "读取中…" : "刷新模型列表"}</button>

@@ -404,6 +404,30 @@ button:focus-visible, a:focus-visible { outline: none; box-shadow: var(--focus-r
   line-height: 1.5;
 }
 
+.nl-draw {
+  display: grid;
+  gap: 8px;
+  margin-top: 6px;
+  padding-top: 10px;
+  border-top: 1px dashed #cbd5e1;
+}
+
+.nl-draw-result {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #334155;
+}
+
+.app-shell[data-theme="dark"] .nl-draw {
+  border-top-color: #334155;
+}
+
+.app-shell[data-theme="dark"] .nl-draw-result {
+  color: #cbd5e1;
+}
+
 /* Which key the next call would actually use is information, not decoration: green when the server
    already has one, amber when nothing does and the field below is the only way in. */
 .typesafe-key-source {

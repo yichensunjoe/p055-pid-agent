@@ -2,7 +2,23 @@
 
 > 交接文档：每次开新会话先读本文件。更新规则见 `AGENTS.md`「HANDOFF 交接规则」。
 
-## 当前状态（2026-09-23 R26 —— **Phase-3 候选在 `review/m7-2-phase3 = 28c4f96`（5 commit，CI 四 job 全绿），等 Gate 复核最后一轮 delta；`main` 仍是已签基线 `592e6b9`**）
+## 当前状态（2026-09-24 R27 —— **M7-2 Phase-3 已签 CLOSED：`origin/main = 28c4f96`（CI run `35837923170` 四 job success）。本地 `m7-semantic-first-synthesis = c35c393` 在已签内容之上多 carry 未签的 NL planner 纵切第一块（`device_phrases.py` + `m7_text_planner.py` + 17 条测试）与三笔 docs 提交；工作树基线已复验：ruff clean / `validate_contract()` `[]` / 后端 1519 passed**）
+
+- **已签 vs 本地**：签进 main 的 `6a9bfe6`/`28c4f96` 是 `5509e16`/`405e8e3` 的 rebase 版，差异恰好是剥掉 NL planner
+  （`device_phrases` / `m7_text_planner` / `test_m7_text_planner.py` 285 行 / `typesafe_planner.py` 的共享词汇抽取）
+  与 docs 提交——即 **Gate 签的是纯 provenance 修复，NL planner 未进 main**。
+- **远端 Gate 原话已核**（2026-09-24 读回 agentcad 项目「覆盖扩展方案裁决」会话，该会话即 Gate 签署线，映射已登记进
+  `/Users/joe/ai/reasonix/chatgpt-threads.json`）：Gate 签 **CLOSED @ `28c4f96`**，授权 `git push origin 28c4f96…:main`
+  **仅此 exact SHA**，并明确「不要把 `80d0ec0` 或 NL planner 本地 ancestry 一并带入」；签署后条件已满足
+  （main 已推、main CI run `35837923170` 四 job 绿），**下一阶段（自然语言纵切）已获授权，可直接开工，无需再问 Gate**。
+  纵切目标句：一句中文 → DiagramSpec → 已冻结 deterministic chain → UI 真实出图；第二句中文改语义 → 重画 → 导出。
+  Gate 同时明确：不先扩 200+ catalogue、不做 CAD runtime ingestion。
+- **下一步（NL 纵切第二块，已授权）**：把 `m7_text_planner` 接到 API + 面板（界面 agent 用 TypeSafe key 一句话出图），
+  再做“第二句中文改语义 → 重画 → 导出”。开工前先把本地 `m7-semantic-first-synthesis` 缝合到 `origin/main`
+  （rebase 掉与 `6a9bfe6`/`28c4f96` 重复的 `5509e16`/`405e8e3`，保留 planner 切片），每轮收口按惯例发 Gate 复核。
+- 本地 `main` 分支仍停在 `4e661b1`（m6），落后于 `origin/main`；未见 `review/m7-2-phase3` 本地分支残留。
+
+## 上一状态（2026-09-23 R26 —— Phase-3 候选在 `review/m7-2-phase3 = 28c4f96`（5 commit，CI 四 job 全绿），等 Gate 复核最后一轮 delta；`main` 仍是已签基线 `592e6b9`）
 
 - **本轮做了什么（Gate 第五轮一个小 delta）**：把 provenance 的“identity ↔ version”从一个 version 集合改成**声明成数据的绑定表**
   `PROVENANCE_IDENTITY_VERSION_BINDINGS`（identity → 定义它的 version(s)），`MATERIALIZATION_PROVENANCE_VERSION_FIELDS`

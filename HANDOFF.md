@@ -2,7 +2,24 @@
 
 > 交接文档：每次开新会话先读本文件。更新规则见 `AGENTS.md`「HANDOFF 交接规则」。
 
-## 当前状态（2026-09-24 R27 —— **M7-2 Phase-3 已签 CLOSED：`origin/main = 28c4f96`（CI run `35837923170` 四 job success）。本地 `m7-semantic-first-synthesis = c35c393` 在已签内容之上多 carry 未签的 NL planner 纵切第一块（`device_phrases.py` + `m7_text_planner.py` + 17 条测试）与三笔 docs 提交；工作树基线已复验：ruff clean / `validate_contract()` `[]` / 后端 1519 passed**）
+## 当前状态（2026-09-24 R28 —— **NL 纵切第二块已落地并推送：`m7-semantic-first-synthesis = 346245c`（基于已签 `28c4f96` + planner 切片 cherry-pick + 2 feat 提交）。一句中文 → DiagramSpec → 冻结链 → 受治理落图的端到端 API+面板已通：新端点 `POST /api/v2/documents/{id}/agent/text-plan`（工具 `draw_text_plan`，写前拒非空目标、`dry_run` 预览不写、审计带 M7 身份链+合同版本）；Agent 面板 TypeSafe 区新增「自然语言一句话出图」。门禁：ruff clean / contract `[]` / 后端 1526 passed（+7）/ 前端构建+e2e 60 passed（新增 `nl-draw.spec.ts` 4 条）+ 单测 161 / 变异 2 条实跑全红。CI run `35971751833`（workflow_dispatch，等四 job 结果补报 Gate）。等 Gate 复核签 NL surface 后才动 main**
+
+- **本轮做了什么**：① 分支缝合：`reset --hard origin/main(28c4f96)` + cherry-pick `a56c806`(planner feat) + 4 笔 docs 到 tip；
+  ② 后端 surface（按远端已授权的纵切句，未扩大范围）：tool registry 注册 `draw_text_plan` → surface_contract 声明
+  → layout contract 新增 **§16 Phase-4 声明块**（`PHASE_4_NL_SURFACE_ROUTE/MODULE` + 空目标必拒入 validator）
+  → 端点本体（engine 步骤错误映射 422、空 spec 拒 422、非空目标 409 且零副作用）；③ 前端：api.ts `planTextDrawing`
+  + 面板 UI（预览/生成图纸、结果/跳过/未识别位号展示、提交后画布同步 rN）；④ 测试：后端 `test_text_plan_surface.py` 7 条
+  （含伴生负测试：拒绝的画零副作用）、e2e `nl-draw.spec.ts` 4 条拦截式、typesafe 计数 3→4 修正。
+- **发现的引擎边界（如实记录，未在本轮擅改）**：冻结链**拒绝无连接图纸**——`route_semantic_layout` 对空
+  `endpoint_bindings` 无条件硬失败（单设备图画不了）；多候选端口的设备（如 fractionation_column 3 端口）连接
+  绑定不做猜测也拒。端点把这些映射成 422 并点名句子。**是否放开无连接图纸属引擎语义变更，留给 Gate 裁决。**
+- **mutation 实证**：摘除 surface 绑定 → `test_every_mutating_route_is_declared` 红；`PHASE_4_REQUIRES_AN_EMPTY_TARGET=False`
+  → contract validator 红。均还原后全绿。
+- **下一步（等 Gate）**：Gate 复核本分支（范围 = `a56c806` planner 切片 + `d5eff01` 后端 surface + `346245c` 前端，
+  docs 提交在 tip 可整体不带）；签后 fast-forward main 并进入纵切第三块「第二句中文改语义 → 重画 → 导出」
+  （重画需要新的 target 语义：当前写者只接受空目标）。
+
+## 上一状态（2026-09-24 R27 —— M7-2 Phase-3 已签 CLOSED：`origin/main = 28c4f96`（CI run `35837923170` 四 job success）。本地分支在已签内容之上多 carry 未签的 NL planner 纵切第一块与 docs 提交；基线复验 ruff clean / contract `[]` / 1519 passed）
 
 - **已签 vs 本地**：签进 main 的 `6a9bfe6`/`28c4f96` 是 `5509e16`/`405e8e3` 的 rebase 版，差异恰好是剥掉 NL planner
   （`device_phrases` / `m7_text_planner` / `test_m7_text_planner.py` 285 行 / `typesafe_planner.py` 的共享词汇抽取）
@@ -13,9 +30,6 @@
   （main 已推、main CI run `35837923170` 四 job 绿），**下一阶段（自然语言纵切）已获授权，可直接开工，无需再问 Gate**。
   纵切目标句：一句中文 → DiagramSpec → 已冻结 deterministic chain → UI 真实出图；第二句中文改语义 → 重画 → 导出。
   Gate 同时明确：不先扩 200+ catalogue、不做 CAD runtime ingestion。
-- **下一步（NL 纵切第二块，已授权）**：把 `m7_text_planner` 接到 API + 面板（界面 agent 用 TypeSafe key 一句话出图），
-  再做“第二句中文改语义 → 重画 → 导出”。开工前先把本地 `m7-semantic-first-synthesis` 缝合到 `origin/main`
-  （rebase 掉与 `6a9bfe6`/`28c4f96` 重复的 `5509e16`/`405e8e3`，保留 planner 切片），每轮收口按惯例发 Gate 复核。
 - 本地 `main` 分支仍停在 `4e661b1`（m6），落后于 `origin/main`；未见 `review/m7-2-phase3` 本地分支残留。
 
 ## 上一状态（2026-09-23 R26 —— Phase-3 候选在 `review/m7-2-phase3 = 28c4f96`（5 commit，CI 四 job 全绿），等 Gate 复核最后一轮 delta；`main` 仍是已签基线 `592e6b9`）

@@ -1,3 +1,32 @@
+## 2026-09-24 · 新写一个「会落图」的 HTTP 表面要同时动五处，漏一处都有测试等着（P055-PID-Agent）
+
+- 场景：NL 纵切第二块要把 M7 链接到第一个生产路由。只写端点会被三道闸拦下：`test_every_mutating_route_is_declared`
+  （surface_contract 枚举 live OpenAPI）、`test_only_the_declared_modules_import_the_layout_contract` /
+  `test_only_the_declared_modules_read_the_contract`（合同导入白名单）、`validate_contract()`（layout contract）。
+- 结论做法（五处清单，按顺序）：① tool registry 注册工具（`has_side_effect=True`、真实 audit_event）；
+  ② `surface_contract.HTTP_SURFACE_BINDINGS` 声明路由（category=`engineering_write`、tool、audited=True、notes 写明
+  伴生负测试文件名）；③ layout contract 新增 Phase 声明块（route/module 声明成数据 + 不变量进 validator，如
+  「必须拒非空目标」）；④ 两个白名单测试把新 module 并进来（保持「合同是唯一的规则源」，测试只读合同常量）；
+  ⑤ 端点本体 + 负测试（拒绝路径断言 revision 不动、元素不进、audit 无 revision.created——副作用缺席要写出来）。
+- 踩坑点：① notes 里「Verified by …」是这个仓库的惯例，等于给审查者的指路牌。② `test_no_route_can_be_added_
+  without_a_companion_negative_test` 会保证合同文件被 live app 实跑——别幻想声明了不被发现。③ 改 e2e 面板后顺手跑
+  `typesafe-panel` 这类计数断言（textbox 3→4），视觉快照反而没拍到收起状态的面板。
+- 适用场景：任何给这个项目新增「会写 revision 的端点」的任务——先找齐这五处再动手。
+
+## 2026-09-24 · 冻结链有两个诚实的引擎边界，surface 只能映射不能擅自放开（P055-PID-Agent）
+
+- 场景：「添加一个塔 T-101」这类**单设备、无连接**的句子走到 `route_semantic_layout` 被无条件硬失败
+  （`if not plan.endpoint_bindings: raise`——空绑定=猜端口，宁可拒画）；「塔」被判成
+  fractionation_column（3 个候选端口）时连接绑定同样拒绝唯一性猜测。
+- 结论做法：surface 把 `SemanticTopologyIngressError`/`SymbolGeometryError` 映射成 **422 并在 detail 里点名
+  句子**（拒绝是产品行为，不该是 500）；「是否放开无连接图纸」是**引擎语义变更**，连同证据（两个真实失败句）留给
+  Gate 裁决，不在功能轮里顺手改签名过的模块。
+- 踩坑点：默认参数 `client_factory=TypesafeClient` 在 **def 时绑定**，monkeypatch 模块属性注入不进去；
+  要给 surface 测试换判断行为得 patch `TypesafeClient.judge`（类属性、调用时才查）。另外 provenance 命名空间
+  是**随写落库**的，所以 `resulting_revision` 不可能在里面——断言它缺席 + 断言声明的 key 集合 ⊆ 实存集合，
+  两侧都从同一函数取就是自证式断言（老坑新犯一次，靠断言形状纠回来的）。
+- 适用场景：任何「把已证明的链接到新表面」的工作——先把链的拒绝情形当**特性清单**列出来，再决定哪些映射、哪些上报。
+
 ## 2026-09-23 · 「整体有个版本」不等于「每个 digest 有定义它的那个版本」（P055-PID-Agent）
 
 - 场景：为满足「provenance 必须可追溯」的要求，我在记录里放了一组 version 字段（layout digest / projection /

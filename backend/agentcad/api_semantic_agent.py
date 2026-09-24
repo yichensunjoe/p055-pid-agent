@@ -20,12 +20,37 @@ from .agent_semantic_models import (
     SemanticAgentPlanResult,
 )
 from .api_harness import _raise_harness_error
+from .audit_models import AuditContext
+from .auto_layout_canvas import derive_semantic_canvas
+from .auto_layout_geometry import (
+    annotate_semantic_layout,
+    materialize_semantic_layout,
+    route_semantic_layout,
+)
+from .auto_layout_identity import finalize_semantic_layout
+from .auto_layout_semantic import (
+    SemanticTopologyIngressError,
+    place_semantic_layout,
+    plan_semantic_layout,
+)
 from .diagnostics import DiagnosticLogger
 from .flow_topology import build_agent_harness_context
 from .harness import AgentHarnessService
 from .harness_models import AgentSessionCreateRequest
 from .llm import PlannerError
+from .m7_diagram_adapter import adapt
+from .m7_diagram_spec import load_diagram_spec
+from .m7_layout_contract import M7_LAYOUT_CONTRACT_VERSION
+from .m7_layout_materialization import (
+    MaterializationCanvasError,
+    MaterializationError,
+    MaterializationTargetNotEmptyError,
+    apply_materialized_layout,
+    materialize_canonical_layout,
+)
+from .m7_symbol_geometry import SymbolGeometryError, freeze_symbol_geometry
 from .m7_synthesis_models import build_not_evaluated_evidence, build_proposal_evidence
+from .m7_text_planner import TypesafeDiagramSpecPlanner
 from .models import AgentPlan, StrictModel, TransactionRequest, TransactionResult
 from .permissive_semantic_compiler import (
     COMPILER_VERSION,
@@ -75,6 +100,62 @@ class TypesafeVerifyRequest(StrictModel):
     model: str | None = None
     api_key: str | None = Field(default=None, repr=False)
     timeout_seconds: float | None = Field(default=None, gt=0)
+
+
+class TextPlanRequest(StrictModel):
+    """One sentence the natural-language surface draws.
+
+    ``dry_run`` plans and finalizes the layout but never touches the document: preview is a
+    request flag on the write path, not a second endpoint that could drift away from it.
+    """
+
+    sentence: str = Field(min_length=1, max_length=10_000)
+    dry_run: bool = False
+    confidence_floor: float = Field(default=DEFAULT_CONFIDENCE_FLOOR, ge=0, le=1)
+    base_url: str | None = None
+    model: str | None = None
+    api_key: str | None = Field(default=None, repr=False)
+    timeout_seconds: float | None = Field(default=None, gt=0)
+
+
+class TextPlanResult(StrictModel):
+    """What the sentence became: the specification, the layout identities, and the write fact."""
+
+    document_id: str
+    committed: bool
+    #: The revision the governed writer committed; ``None`` on a dry run, so a caller can tell
+    #: "previewed" from "drawn" without trusting a status string.
+    revision: int | None = None
+    spec: dict[str, Any]
+    canonical_layout_digest: str
+    materialization_digest: str
+    notes: list[str]
+    skipped: list[str]
+    unknown_tags: list[str]
+    model: str
+    latency_ms: float
+    question_count: int
+    judgment_count: int
+
+
+def _finalize_spec_layout(spec) -> Any:
+    """The frozen deterministic chain, as the phase-2B/3 proofs run it: no coordinates in.
+
+    Kept as one helper so the route reads as the pipeline it is; every stage is the proved
+    module, and the caller never sees an intermediate layout it could mistake for the result.
+    """
+
+    topology = adapt(load_diagram_spec(spec.model_dump(mode="json")))
+    snapshot = freeze_symbol_geometry(entity.symbol_key for entity in spec.entities)
+    staged = plan_semantic_layout(topology)
+    placed = place_semantic_layout(staged)
+    materialized = materialize_semantic_layout(placed, snapshot)
+    routed = route_semantic_layout(materialized, snapshot)
+    annotated = annotate_semantic_layout(
+        routed, {entity.engineering_id: entity.tag for entity in spec.entities}
+    )
+    canvassed = derive_semantic_canvas(annotated)
+    return finalize_semantic_layout(canvassed, topology)
 
 
 @dataclass(frozen=True)
@@ -470,6 +551,140 @@ def create_semantic_agent_router(
                 **_operation_types(plan, compiled),
             )
         return _result(session.id, plan, compiled, attempt=0)
+
+    # -- Natural-language surface: one sentence in, one governed revision out ------------------- #
+
+    @router.post(
+        "/documents/{document_id}/agent/text-plan",
+        response_model=TextPlanResult,
+    )
+    def plan_text_drawing(document_id: str, request: TextPlanRequest):
+        """Draw from one sentence: judged planning, the frozen chain, the one governed write.
+
+        The target must be empty — the surface creates a drawing, it never overwrites one.
+        A refused preflight leaves the document byte-identical, revision included.
+        """
+
+        started = perf_counter()
+        try:
+            typesafe_config = resolve_typesafe_config(
+                api_key=request.api_key,
+                base_url=request.base_url,
+                model=request.model,
+                timeout_seconds=request.timeout_seconds,
+            )
+            service.get_document(document_id)  # 404 outside the write, no session for a ghost
+            session = harness.create_session(
+                AgentSessionCreateRequest(
+                    document_id=document_id,
+                    actor="web-user",
+                    provider=typesafe_config.base_url,
+                    model=typesafe_config.model,
+                    metadata={
+                        "surface": "rest",
+                        "workflow": "nl-text-plan",
+                        "dry_run": request.dry_run,
+                    },
+                )
+            )
+            planner = TypesafeDiagramSpecPlanner(
+                service.symbols, confidence_floor=request.confidence_floor
+            )
+            planned = planner.plan(request.sentence, typesafe_config=typesafe_config)
+            if not planned.spec.entities:
+                # Every device the sentence declared was skipped; committing an empty drawing
+                # would be a revision that says it drew something and drew nothing.
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        "这句话里没有可画的设备（每个子句要么没有候选符号，要么置信度低于 "
+                        f"阈值）：「{request.sentence.strip()}」。"
+                        f"被跳过的子句：{'；'.join(planned.skipped) or '（无明细）'}"
+                    ),
+                )
+            finalized = _finalize_spec_layout(planned.spec)
+            layout = materialize_canonical_layout(finalized, document_id=document_id)
+        except TypesafeError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail()) from exc
+        except DocumentNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=f"document not found: {exc.args[0]}") from exc
+        except (SemanticTopologyIngressError, SymbolGeometryError) as exc:
+            # The sentence planned fine; the frozen chain refused the drawing (today that
+            # includes the connection-less drawing the router declines). A refusal about
+            # the sentence's shape is a client-visible 422, not an uncaught 500.
+            raise HTTPException(
+                status_code=422,
+                detail=f"这句话规划出的图纸引擎目前画不了：{exc}",
+            ) from exc
+
+        payload: dict[str, Any] = {
+            "document_id": document_id,
+            "committed": False,
+            "revision": None,
+            "spec": planned.spec.model_dump(mode="json"),
+            "canonical_layout_digest": finalized.canonical_layout_digest,
+            "materialization_digest": layout.materialization_digest,
+            "notes": list(planned.notes),
+            "skipped": list(planned.skipped),
+            "unknown_tags": list(planned.unknown_tags),
+            "model": planned.model,
+            "latency_ms": planned.latency_ms,
+            "question_count": planned.question_count,
+            "judgment_count": planned.judgment_count,
+        }
+        if request.dry_run:
+            return TextPlanResult(**payload)
+
+        # Read the revision at the last moment and let the writer refuse a raced target: the
+        # drawing that was verified belongs to this revision, and a conflict is terminal.
+        current = service.get_document(document_id)
+        audit = AuditContext(
+            actor="web-user",
+            surface="rest",
+            tool_name="draw_text_plan",
+            session_id=session.id,
+            provider=typesafe_config.base_url,
+            model=typesafe_config.model,
+            validation_status="valid",
+            metadata={
+                "workflow": "nl-text-plan",
+                "sentence": request.sentence.strip(),
+                "layout_contract_version": M7_LAYOUT_CONTRACT_VERSION,
+            },
+        )
+        try:
+            applied = apply_materialized_layout(
+                service,
+                layout,
+                expected_revision=current.revision,
+                audit=audit,
+                label=f"NL 出图：{request.sentence.strip()[:40]}",
+            )
+        except MaterializationTargetNotEmptyError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except MaterializationCanvasError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except MaterializationError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+        if diagnostics is not None:
+            diagnostics.emit(
+                "nl.text_plan.completed",
+                document_id=document_id,
+                session_id=session.id,
+                duration_ms=round((perf_counter() - started) * 1000, 2),
+                committed=True,
+                revision=applied.document.revision,
+                entity_count=len(planned.spec.entities),
+                connection_count=len(planned.spec.connections),
+                question_count=planned.question_count,
+                judgment_count=planned.judgment_count,
+                canonical_layout_digest=finalized.canonical_layout_digest,
+                materialization_digest=layout.materialization_digest,
+            )
+        return TextPlanResult(
+            **{**payload, "committed": True, "revision": applied.document.revision}
+        )
 
     @router.post("/documents/{document_id}/agent/plan-v2-stream")
     async def plan_semantic_transaction_stream(

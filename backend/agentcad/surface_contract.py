@@ -327,6 +327,19 @@ HTTP_SURFACE_BINDINGS: tuple[SurfaceBinding, ...] = (
             "the same compiler assessment and apply-v2 harness gate as plan-v2."
         ),
     ),
+    _http(
+        "POST",
+        "/api/v2/documents/{document_id}/agent/text-plan",
+        "engineering_write",
+        tool="draw_text_plan",
+        audited=True,
+        notes=(
+            "One sentence -> DiagramSpec -> the frozen deterministic chain -> the phase-3 "
+            "materializer's one governed write. Preflight refuses a non-empty target, so the "
+            "route can create a drawing but never overwrite one; dry_run previews without "
+            "writing. Verified by test_text_plan_surface.py."
+        ),
+    ),
     # --- harness lifecycle ------------------------------------------------------
     _http("POST", "/api/v2/agent/sessions", "harness_lifecycle", audited=True),
     _http(

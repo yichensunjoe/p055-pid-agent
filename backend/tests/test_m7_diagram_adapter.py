@@ -416,6 +416,8 @@ def test_only_the_declared_modules_read_the_contract() -> None:
         contract.PHASE_3_MAY_IMPORT_THE_CONTRACT,
     ):
         allowed |= {name for name in declared if (agentcad / name).exists()}
+    # Phase 4 declares the natural-language surface module against the same rule.
+    allowed |= {contract.PHASE_4_NL_SURFACE_MODULE}
     assert importers == sorted(allowed), importers
 
 

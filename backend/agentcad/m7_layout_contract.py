@@ -1682,6 +1682,31 @@ MATERIALIZATION_REQUIRES_THE_FINALIZED_CANONICAL_LAYOUT = True
 MATERIALIZATION_ACCEPTS_A_SPEC_OR_A_DOCUMENT_AS_GEOMETRY = False
 LLM_SUPPLIES_GEOMETRY_ON_THE_M7_MATERIALIZATION_PATH = False
 
+# --------------------------------------------------------------------------------------
+# §16 Phase 4: the natural-language surface. Phases 2A-3 built and proved the chain; this
+#      phase wires it to the first production route: one sentence in, one governed revision
+#      out. Declared as data, like every other phase gate: the route it serves, the module
+#      that may read this contract there, and the writer the route commits through. Phase 2B's
+#      "no surface" statement stays true *of phase 2B*; the wiring it deferred is this phase.
+# --------------------------------------------------------------------------------------
+
+PHASE_4_NAME = "M7 Phase-4 — Natural-Language Drawing Surface"
+#: The one route the ingress is wired to. ``{document_id}`` is the path parameter, spelled like
+#: the live FastAPI route so a test can bind this declaration to the real OpenAPI paths.
+PHASE_4_NL_SURFACE_ROUTE = "/api/v2/documents/{document_id}/agent/text-plan"
+#: The module that reads this contract at that route: it stamps the audit with the contract
+#: version it ran against, so a later audit row can be asked "under which rules was this drawn".
+PHASE_4_NL_SURFACE_MODULE = "api_semantic_agent.py"
+#: The route commits through the phase-3 materializer and its one governed writer -- no new
+#: write path comes with the surface.
+PHASE_4_WRITES_THROUGH_MODULE = MATERIALIZER_MODULE
+#: ``dry_run`` plans and finalizes the layout but never touches the document: preview is a
+#: first-class request flag, not a separate endpoint that could drift from the write path.
+PHASE_4_PREVIEW_IS_A_REQUEST_FLAG = True
+#: The surface may only create a drawing where none exists. Overwriting a drawing from a
+#: sentence is a redraw, and redraw semantics belong to a later round, not to this flag.
+PHASE_4_REQUIRES_AN_EMPTY_TARGET = True
+
 #: Two versions, for the same reason the layout has two: the materializer is a program and the
 #: digest describes what it digested.
 MATERIALIZER_VERSION = "m7-materializer/1"
@@ -3542,6 +3567,29 @@ def validate_contract() -> list[str]:
             f"{sorted(overlap)} cannot belong to two phases: a module that is both is a module "
             "nobody can say when it landed"
         )
+
+    # -- §16 phase 4: the natural-language surface is declared, not implied -------------------- #
+    if not PHASE_4_NL_SURFACE_ROUTE.startswith("/api/v2/documents/"):
+        problems.append("the phase-4 surface must be a v2 document route")
+    if "{document_id}" not in PHASE_4_NL_SURFACE_ROUTE:
+        problems.append("the phase-4 surface route must name its {document_id} parameter")
+    if not PHASE_4_NL_SURFACE_MODULE.endswith(".py"):
+        problems.append("the phase-4 surface must name the module that reads this contract")
+    for earlier in (
+        PHASE_2A_MAY_IMPORT_THE_CONTRACT,
+        PHASE_2B_MAY_IMPORT_THE_CONTRACT,
+        PHASE_3_MAY_IMPORT_THE_CONTRACT,
+    ):
+        overlap = set(earlier) & {PHASE_4_NL_SURFACE_MODULE}
+        if overlap:
+            problems.append(
+                f"{sorted(overlap)} cannot belong to two phases: a module that is both is a "
+                "module nobody can say when it landed"
+            )
+    if PHASE_4_WRITES_THROUGH_MODULE != MATERIALIZER_MODULE:
+        problems.append("the phase-4 surface must commit through the phase-3 materializer")
+    if not PHASE_4_REQUIRES_AN_EMPTY_TARGET:
+        problems.append("the phase-4 surface must refuse to overwrite an existing drawing")
 
     return problems
 

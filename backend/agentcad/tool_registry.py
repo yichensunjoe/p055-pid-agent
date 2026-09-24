@@ -660,6 +660,32 @@ def get_default_tool_registry() -> ToolRegistry:
                 tags=["drafting", "layout", "draft-edit"],
             ),
             ToolDefinition(
+                name="draw_text_plan",
+                description=(
+                    "Draw one new P&ID from a single natural-language sentence: code reads the "
+                    "sentence into catalogue-backed candidates, System One judges only what a "
+                    "lookup cannot decide, the frozen deterministic chain lays the drawing out, "
+                    "and the phase-3 materializer commits it through the one governed writer. "
+                    "The target document must be empty; an existing drawing is never overwritten. "
+                    "A dry_run plans and finalizes without writing."
+                ),
+                input_schema=_object_schema(
+                    "Document id, the sentence, provider config, and the dry_run flag."
+                ),
+                output_schema=_object_schema(
+                    "The committed revision, the planned specification, layout identities, "
+                    "and the notes/skipped report."
+                ),
+                permission="allow",
+                risk="engineering_change",
+                has_side_effect=True,
+                preview_supported=True,
+                idempotency="depends_on_revision",
+                audit_event="tool.draw_text_plan",
+                surfaces=["rest"],
+                tags=["draw", "natural-language", "m7", "engineering-change"],
+            ),
+            ToolDefinition(
                 name="undo_document",
                 description="Undo the latest document edit at an expected revision.",
                 input_schema=RevisionToolInput.model_json_schema(),

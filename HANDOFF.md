@@ -2,7 +2,20 @@
 
 > 交接文档：每次开新会话先读本文件。更新规则见 `AGENTS.md`「HANDOFF 交接规则」。
 
-## 当前状态（2026-09-24 R28 —— **NL 纵切第二块已落地并推送：`m7-semantic-first-synthesis = 346245c`（基于已签 `28c4f96` + planner 切片 cherry-pick + 2 feat 提交）。一句中文 → DiagramSpec → 冻结链 → 受治理落图的端到端 API+面板已通：新端点 `POST /api/v2/documents/{id}/agent/text-plan`（工具 `draw_text_plan`，写前拒非空目标、`dry_run` 预览不写、审计带 M7 身份链+合同版本）；Agent 面板 TypeSafe 区新增「自然语言一句话出图」。门禁：ruff clean / contract `[]` / 后端 1526 passed（+7）/ 前端构建+e2e 60 passed（新增 `nl-draw.spec.ts` 4 条）+ 单测 161 / 变异 2 条实跑全红。CI run `35971751833`（workflow_dispatch，等四 job 结果补报 Gate）。等 Gate 复核签 NL surface 后才动 main**
+## 当前状态（2026-09-25 R29 —— **Gate 对 NL surface 首报裁 HOLD（2 P0 + ancestry），两项 P0 已闭、干净 review 分支已建并推远端：`review/m7-nl-surface = 6d3ffd3`（base = 已签 `28c4f96`，4 commit 纯代码无 docs：planner `199345f` / 后端 `462fa56` / 前端 `81efec8` / P0 修复 `6d3ffd3`；与工作分支 tree diff 只剩 HANDOFF/日志/reports）。门禁：后端 1534 passed（+8）/ e2e 60（+1）/ 单测 161 / 变异 3 条新全红（fallback 回归、绕过闸、合同放开 partial）。CI run `36101960861` 跑完补报 Gate。注意：HANDOFF/日志记账只活在工作分支，review 分支刻意不带（其 HANDOFF 是旧码线快照，别看）**）
+
+- **Gate 裁定要点（2026-09-25 读回）**：主体全 PASS（writer 复用 / dry-run / 目标安全 / 审计 / 前端 / CI / 两个引擎边界维持原判）；
+  P0-1 = partial 可提交（coherent ≠ complete）→ 已修：planner 出 **clause 级 completeness 账本**
+  （complete/partial/empty，复用 synthesis contract 的 Completeness），每个输入子句**要么兑现要么出 receipt**
+  （`undelivered`），surface **commit ⇔ complete**，partial commit → 422 structured receipt 且零副作用，dry_run 可 partial；
+  P0-2 = catalog gap 被整目录 fallback 偷换 → 已修：`candidate_symbols` 删掉 fallback，新增 `matched_hints()`/`available_alternatives()`，
+  gap 只报不发问；unknown 子句不再沉默消失。合同 §16 新增四个 Phase-4 声明入 validator。
+  ancestry blocker → 按指示从 `28c4f96` 干净 replay 四 patch（不 squash、docs 不进 main）。
+- **下一步（等 Gate）**：签 `6d3ffd3` 后授权 fast-forward main（该分支可直接 FF）；然后纵切第三块
+  「第二句中文改语义 → 重画 → 导出」（重画需新 target 语义，写者今日只接受空目标，设计点先报 Gate）。
+- 工作分支 `m7-semantic-first-synthesis` 停在 `6f1163f`（含全部 docs 记账），代码树与 review 分支一致。
+
+## 上一状态（2026-09-24 R28 —— NL 纵切第二块首报：surface 落地推远端，CI `35971751833` 四 job 绿，Gate 首报 HOLD，2 P0 + ancestry）
 
 - **本轮做了什么**：① 分支缝合：`reset --hard origin/main(28c4f96)` + cherry-pick `a56c806`(planner feat) + 4 笔 docs 到 tip；
   ② 后端 surface（按远端已授权的纵切句，未扩大范围）：tool registry 注册 `draw_text_plan` → surface_contract 声明

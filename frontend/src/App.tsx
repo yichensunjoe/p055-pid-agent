@@ -500,7 +500,30 @@ export default function App() {
         });
       }
     } catch (error) {
-      setNlError(error instanceof ApiError ? error.message : String(error));
+      const receipt = error instanceof ApiError ? error.detail : undefined;
+      if (
+        error instanceof ApiError &&
+        receipt &&
+        typeof receipt === "object" &&
+        ((receipt as { code?: string }).code === "typesafe_spec_partial" ||
+          (receipt as { code?: string }).code === "typesafe_spec_no_device")
+      ) {
+        const detail = receipt as {
+          code?: string;
+          undelivered?: string[];
+          skipped?: string[];
+        };
+        const lines = [
+          detail.code === "typesafe_spec_partial"
+            ? "句子只兑现了一部分，图纸未写入。未兑现："
+            : "没有可画的设备，图纸未写入。",
+          ...(detail.undelivered ?? []).map((item) => `· ${item}`),
+          ...(detail.skipped ?? []).map((item) => `· ${item}`),
+        ];
+        setNlError(lines.join("\n"));
+      } else {
+        setNlError(error instanceof ApiError ? error.message : String(error));
+      }
     } finally {
       setDrawingTextPlan(false);
     }
@@ -1232,10 +1255,11 @@ export default function App() {
                     <button type="button" onClick={() => void drawFromSentence(true)} disabled={drawingTextPlan || !nlSentence.trim()}>{drawingTextPlan ? "处理中…" : "预览"}</button>
                     <button type="button" onClick={() => void drawFromSentence(false)} disabled={drawingTextPlan || !nlSentence.trim()}>生成图纸</button>
                   </div>
-                  {nlError ? <div className="provider-model-status error">{nlError}</div> : null}
+                  {nlError ? <div className="provider-model-status error" style={{ whiteSpace: "pre-line" }}>{nlError}</div> : null}
                   {nlResult ? <div className="nl-draw-result">
-                    <div>{nlResult.committed ? `已画入 r${nlResult.revision}` : "预览（未写入图纸）"} · {nlResult.spec.entities.length} 台设备 · {nlResult.spec.connections.length} 条连接 · 模型判读 {nlResult.judgment_count} 次</div>
+                    <div>{nlResult.committed ? `已画入 r${nlResult.revision}` : "预览（未写入图纸）"} · {nlResult.spec.entities.length} 台设备 · {nlResult.spec.connections.length} 条连接 · 模型判读 {nlResult.judgment_count} 次{nlResult.completeness !== "complete" ? ` · 完整度 ${nlResult.completeness}` : ""}</div>
                     {nlResult.notes.map((note) => <div key={note}>· {note}</div>)}
+                    {nlResult.undelivered.map((item) => <div key={item}>未兑现：{item}</div>)}
                     {nlResult.skipped.map((item) => <div key={item} className="provider-model-status error">跳过：{item}</div>)}
                     {nlResult.unknown_tags.map((tag) => <div key={tag}>未识别的位号：{tag}</div>)}
                   </div> : null}

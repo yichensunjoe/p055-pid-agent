@@ -25,9 +25,11 @@ const DRAW_RESULT = {
   },
   canonical_layout_digest: "c" + "0".repeat(63),
   materialization_digest: "d" + "0".repeat(63),
-  notes: ["TypeSafe 判读：2 个判断（2 个设备、1 条连接），代码查找决定 0 个设备。"],
+  notes: ["TypeSafe 判读：2 个判断（2 个设备、1 条连接），代码查找决定 0 个设备。完整度：complete。"],
   skipped: [],
   unknown_tags: [],
+  completeness: "complete",
+  undelivered: [],
   model: "judge-stub",
   latency_ms: 3,
   question_count: 2,
@@ -129,6 +131,41 @@ test("a committed draw refreshes the canvas to the written revision", async ({
   await expect(result).toContainText("已画入 r1");
   await expect(page.locator(".sync-badge")).toContainText("已同步至 r1");
   await expect.poll(async () => (await workspaceSnapshot(page)).document?.elements?.length).toBe(2);
+});
+
+test("a partial plan is refused with its receipt and changes nothing", async ({ page, request }) => {
+  const seeded = await createDocument(request, "E2E NL draw partial");
+  await openDocument(page, seeded.id);
+  await openProviderSettings(page);
+
+  await page.route("**/agent/text-plan", async (route) => {
+    await route.fulfill({
+      status: 422,
+      contentType: "application/json",
+      body: JSON.stringify({
+        detail: {
+          code: "typesafe_spec_partial",
+          completeness: "partial",
+          sentence: SENTENCE,
+          skipped: [],
+          unknown_tags: [],
+          undelivered: [
+            "「燃料盐泵」（位号 P-101）没有被兑现。",
+            "「把 V-101 接到 P-101」没有被兑现。",
+          ],
+        },
+      }),
+    });
+  });
+
+  await page.getByRole("textbox", { name: "自然语言一句话出图" }).fill(SENTENCE);
+  await page.getByRole("button", { name: "生成图纸" }).click();
+
+  const error = page.locator(".nl-draw .provider-model-status.error");
+  await expect(error).toContainText("只兑现了一部分");
+  await expect(error).toContainText("P-101");
+  await expect(page.locator(".nl-draw-result")).toHaveCount(0);
+  await expect(page.locator(".sync-badge")).not.toContainText("已同步至 r1");
 });
 
 test("a refused draw says why and changes nothing", async ({ page, request }) => {

@@ -197,6 +197,59 @@ def test_every_device_skipped_is_422_not_an_empty_revision(client: TestClient) -
     assert client.app.state.service.get_document(document_id).revision == 0
 
 
+def test_a_partial_plan_cannot_be_committed_and_changes_nothing(client: TestClient) -> None:
+    """One device judged, one skipped: the spec is drawable but not the whole sentence, so
+    the commit is refused with a structured receipt and the document is byte-identical."""
+
+    document_id = _new_document(client)
+
+    class _SplitStub:
+        def __call__(self, state: dict, questions: dict) -> dict:
+            return {
+                "model": "judge-stub",
+                "answers": {
+                    question: {
+                        "choice": sorted(definition["criteria"])[0],
+                        "confidence": 0.9 if question == "el_V_101" else 0.12,
+                    }
+                    for question, definition in questions.items()
+                },
+            }
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(TypesafeClient, "judge", _SplitStub())
+    try:
+        response = _draw(client, document_id, SENTENCE)
+    finally:
+        monkeypatch.undo()
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert detail["code"] == "typesafe_spec_partial"
+    assert detail["completeness"] == "partial"
+    assert detail["undelivered"], "the receipt must name what the sentence did not get"
+
+    service = client.app.state.service
+    assert service.get_document(document_id).revision == 0
+    assert not service.get_document(document_id).elements
+    assert not [
+        record
+        for record in _audit_records(client, document_id)
+        if record.event_type == "revision.created"
+    ]
+
+
+def test_dry_run_may_be_partial_and_names_what_is_missing(client: TestClient) -> None:
+    document_id = _new_document(client)
+    response = _draw(client, document_id, SENTENCE + "，顺便说明一下布局", dry_run=True)
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result["committed"] is False
+    assert result["completeness"] == "partial"
+    assert any("说明一下布局" in item for item in result["undelivered"])
+    service = client.app.state.service
+    assert service.get_document(document_id).revision == 0
+
+
 def test_the_contract_declaration_and_the_live_route_agree(client: TestClient) -> None:
     """The phase-4 declaration in the layout contract names this exact live route, and the
     surface module reads the contract it is declared against -- both directions, so a rename

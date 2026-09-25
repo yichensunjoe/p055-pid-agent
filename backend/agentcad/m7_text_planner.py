@@ -38,6 +38,7 @@ from .device_phrases import (
     SymbolCandidate,
     candidate_symbols,
     extract_tags,
+    matched_hints,
     normalise,
     split_clauses,
 )
@@ -47,6 +48,7 @@ from .m7_diagram_spec import (
     DiagramSpec,
     DiagramSystem,
 )
+from .m7_synthesis_contract import Completeness
 from .symbols import SymbolRegistry
 from .typesafe import DEFAULT_CONFIDENCE_FLOOR, TypesafeClient, TypesafeError, choice_probabilities
 
@@ -98,6 +100,10 @@ class PlannedEntity:
     chosen_symbol_key: str = ""
     confidence: float = 1.0
     decided_by: str = "lookup"  # "lookup" | "judgment" | "uncertain"
+    #: The clause named a kind the catalogue does not carry (matched hint, zero rows). This is a
+    #: catalogue gap, recorded so completeness can say partial -- never widened into a choice
+    #: among symbols the sentence did not ask for.
+    catalog_gap: bool = False
 
     @property
     def resolved(self) -> bool:
@@ -119,7 +125,16 @@ class PlannedConnection:
 
 @dataclass(frozen=True)
 class PlannedDiagram:
-    """The planning result: a specification, what it cost to decide, and what was skipped."""
+    """The planning result: a specification, what it cost to decide, and what was skipped.
+
+    ``completeness`` is the same three-value statement the synthesis contract uses: the
+    specification may be *coherent* while still being *partial* -- a skipped device, a dropped
+    connection, an unknown tag, an unrecognised clause or a catalogue gap all leave the spec
+    drawable yet incomplete. Coherence is about structure; completeness is about whether the
+    drawing is the whole sentence. Every input clause lands in exactly one of two places: it is
+    delivered (an entity or connection in the spec) or it is receipted in ``undelivered`` --
+    a clause may not silently disappear between reading and planning.
+    """
 
     spec: DiagramSpec
     entities: tuple[PlannedEntity, ...]
@@ -133,6 +148,10 @@ class PlannedDiagram:
     #: The tags a clause named that no entity carries. Reported so a typo is visible rather than
     #: silently becoming a second device.
     unknown_tags: tuple[str, ...] = field(default=())
+    #: "complete" | "partial" | "empty": whether the spec is the whole sentence.
+    completeness: Completeness = "complete"
+    #: One receipt per input clause that nothing in the spec honours, in sentence order.
+    undelivered: tuple[str, ...] = ()
 
 
 def _slug(text: str) -> str:
@@ -195,15 +214,19 @@ class TypesafeDiagramSpecPlanner:
 
     # -- the code half: read the sentence, build the candidates -------------------------------- #
 
-    def read(self, prompt: str) -> tuple[list[PlannedEntity], list[Clause], tuple[str, ...]]:
-        """Every device the sentence declares, plus the connection clauses and any unknown tags.
+    def read(
+        self, prompt: str
+    ) -> tuple[list[PlannedEntity], list[Clause], tuple[str, ...], list[Clause]]:
+        """Every device the sentence declares, the connection clauses, and what code could not read.
 
-        Done before any judgment is asked, because the connection questions need the device list:
-        a connection clause can only be about devices the same sentence has already declared.
+        ``unknown_clauses`` is returned rather than dropped: a clause the verb table cannot
+        classify is a receipt the completeness account must carry, not text that silently
+        vanishes between reading and planning.
         """
 
         add_clauses = [clause for clause in split_clauses(prompt) if clause.kind == "add"]
         connect_clauses = [clause for clause in split_clauses(prompt) if clause.kind == "connect"]
+        unknown_clauses = [clause for clause in split_clauses(prompt) if clause.kind == "unknown"]
         entities: list[PlannedEntity] = []
         known_tags: list[str] = []
         for index, clause in enumerate(add_clauses, start=1):
@@ -211,6 +234,7 @@ class TypesafeDiagramSpecPlanner:
             tag = tags[0] if tags else UNTAGGED_TAG_TEMPLATE.format(index=index)
             phrase = _device_phrase(clause.text) or clause.text
             candidates = tuple(candidate_symbols(self.symbols, clause.text))
+            catalog_gap = bool(matched_hints(clause.text)) and not candidates
             symbol_key = ""
             decided_by = "judgment"
             if _is_bare_kind(phrase) and len(candidates) == 1:
@@ -226,6 +250,7 @@ class TypesafeDiagramSpecPlanner:
                     candidates=candidates,
                     chosen_symbol_key=symbol_key,
                     decided_by=decided_by,
+                    catalog_gap=catalog_gap,
                 )
             )
             known_tags.append(tag)
@@ -239,7 +264,7 @@ class TypesafeDiagramSpecPlanner:
             for tag in extract_tags(clause.text)
         }
         unknown = tuple(sorted(mentioned - declared))
-        return entities, connect_clauses, unknown
+        return entities, connect_clauses, unknown, unknown_clauses
 
     def connection_candidates(
         self, entities: Sequence[PlannedEntity], clause: Clause
@@ -340,7 +365,7 @@ class TypesafeDiagramSpecPlanner:
     def plan(self, prompt: str, *, typesafe_config) -> PlannedDiagram:
         """Read the sentence, ask what code cannot decide, and assemble the specification."""
 
-        entities, connect_clauses, unknown = self.read(prompt)
+        entities, connect_clauses, unknown, unknown_clauses = self.read(prompt)
         if not entities:
             raise DiagramSpecPlanningError(
                 "typesafe_spec_no_device",
@@ -388,10 +413,35 @@ class TypesafeDiagramSpecPlanner:
         ]
 
         spec = self._spec(entities, connections)
+        # Clause ledger: every declared device the spec does not carry is receipted, with the
+        # catalogue gap named as its own reason. A gap is never widened into a judgment -- the
+        # model may not pick a look-alike the sentence did not ask for.
+        undelivered: list[str] = [f"无法理解的子句：「{clause.text}」" for clause in unknown_clauses]
+        delivered_entities = {entity.engineering_id for entity in spec.entities}
+        for entity in entities:
+            if entity.engineering_id in delivered_entities:
+                continue
+            if entity.catalog_gap:
+                undelivered.append(f"「{entity.phrase}」（位号 {entity.tag}）：目录里没有这类设备的符号。")
+            else:
+                undelivered.append(f"「{entity.phrase}」（位号 {entity.tag}）没有被兑现。")
+        delivered_connections = {connection.engineering_id for connection in spec.connections}
+        for connection in connections:
+            if connection.engineering_id not in delivered_connections:
+                undelivered.append(f"「{connection.phrase}」没有被兑现。")
+
+        resolved_count = len(spec.entities)
+        if resolved_count == 0:
+            completeness: Completeness = "empty"
+        elif skipped or unknown or undelivered:
+            completeness = "partial"
+        else:
+            completeness = "complete"
         notes.insert(
             0,
             f"TypeSafe 判读：{judgments} 个判断（{len(entities)} 个设备、{len(connections)} 条连接），"
-            f"代码查找决定 {sum(1 for e in entities if e.decided_by == 'lookup')} 个设备。",
+            f"代码查找决定 {sum(1 for e in entities if e.decided_by == 'lookup')} 个设备。"
+            f"完整度：{completeness}。",
         )
         if model:
             notes.append(f"model={model} latency={latency:.0f}ms")
@@ -418,6 +468,8 @@ class TypesafeDiagramSpecPlanner:
             question_count=len(questions),
             judgment_count=judgments,
             unknown_tags=unknown,
+            completeness=completeness,
+            undelivered=tuple(undelivered),
         )
 
     def _resolve_entity(

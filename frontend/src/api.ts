@@ -131,6 +131,8 @@ export type TextPlanResult = {
   notes: string[];
   skipped: string[];
   unknown_tags: string[];
+  completeness: string;
+  undelivered: string[];
   model: string;
   latency_ms: number;
   question_count: number;

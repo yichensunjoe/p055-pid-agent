@@ -1055,3 +1055,10 @@
 - 场景：本机 8000 端口被另一个工作区的常驻后端占用（连着共享的 35 张真实图纸 dev DB），而 `playwright.config.ts` 的 webServer 固定 8000/4173 + `reuseExistingServer:false`，于是“想跑 e2e”就变成“要么清活库、要么跑不了”。
 - 结论做法：把端口改为环境变量可覆盖（`PID_AGENT_E2E_API_PORT` / `PID_AGENT_E2E_PREVIEW_PORT`），`vite.config.ts` 的 preview proxy 读 `PID_AGENT_API_TARGET`，`fixtures.ts` 的直连 API 根地址由同一组变量推导；CI 不传变量即用默认值。数据库仍然由 config 注入到 `test-results/*.db`，所以永远不会碰活库。
 - 关键经验：**验收脚本的破坏性要写进它的接口设计里**——只要“目标库/端口”是硬编码的，下一个人就会在错误的库上跑它；让端口和库路径可参数化，是把“别这么做”变成“做不到”的唯一办法。
+
+## 2026-09-26 · 三个 release blocker 的共性：「最后瞬间重读」和「行级对账的盲区」（P055-PID-Agent）
+
+- 场景：redraw 边界一审 HOLD 的三个 blocker：①endpoint 把调用方 expected_revision 在写前"升级"成新鲜读的 current（TOCTOU 变合法）；②drift 门只做到行级对账+元素 id 集合——人工改 style/metadata（同 id）对两者都不可见，clear_document 会吞掉它；③redraw 路径漏调 require_document_canvas，大图静默裁切提交。
+- 结论做法：①**调用方的绑定值要从入口直达 writer**，"写前最后瞬间重读"只能用于原子 race 检测（expected_revision 语义），不能用来替换调用方语义；文档中途前进 → 收进 drift 门统一 409。②**destructive 替换要有独立的安全对账**：对将被销毁的对象做全量持久化状态全等（model_dump），它宽于 canonical identity 对账、且**不进 digest**（安全对账 ≠ 新身份轴）。③**新写路径要逐一继承旧写路径的写前闸清单**（empty target / canvas / drift），漏一个就是一个 blocker。
+- 踩坑点：行级 canonical 对账只覆盖物化写的元素种类——foreign rectangle/note 不产生行；same-id 字段改动行内容不变。两层盲区要两层独立的检查。另外 bsk 操作 ChatGPT 发送：execCommand insertText 后**必须点 aria-label=「发送」按钮**，JS 派 Enter 常常只清空草稿不发送（截图验证过一次教训）。
+- 适用场景：任何"替换/重画/覆盖"类写路径的审查清单；任何用 bsk 发消息的自动化。

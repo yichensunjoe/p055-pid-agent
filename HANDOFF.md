@@ -2,7 +2,7 @@
 
 > 交接文档：每次开新会话先读本文件。更新规则见 `AGENTS.md`「HANDOFF 交接规则」。
 
-## 当前状态（2026-09-26 R33 —— **第三块首轮 HOLD 的 3 个 release blocker 已修，review 分支 `review/m7-nl-edit = ba4d447`（ad8cc93 + 0e60fb6 + 89c075d + repair `ba4d447`）。修复：①expected_revision 从入口到 writer 不被替换（writer 绑定调用方值；文档在读取后前进 → drift 门 409 拒绝，TOCTOU 回归测试：改名推到 r2 后旧请求 409、spec row 仍 r1、无 redraw 审计）；②destructive state guard——对上一版物化的每个元素做**全量持久化状态对账**（model_dump 全等：style/metadata/layer 全部，行级对账看不见的 same-ID 人工改动真红，人工 style/metadata 两个测试）；③redraw 写前补 require_document_canvas（新增 12 设备把派生画布撑过 1600×900 → 422、旧 revision/spec/audit 不动）。变异：state guard 摘除→红、canvas 摘除→红、revision 换新鲜读→被 drift 层兜住仍 409（双层，已如实报）。全量 1558 passed。Visual baselines 已绿（36160238735）；标准 CI run 36160234491 等结果**）
+## 当前状态（2026-09-25/26 R34 —— **M7 自然语言纵切三块全部签 CLOSED 并落 main：`origin/main = ba4d447`（Phase-3 `28c4f96` → 第二块 `ad8cc93` → 第三块 `ba4d447`），main CI run `36162146013` 四 job 全绿（签署前 visual baselines 36160238735 同 SHA 已过）。产品纵切完整闭环：一句中文 → 完整 DiagramSpec → 确定性布局 → 受治理落图 r1；第二句中文 → 编辑语义源 S1 → 完整 S2 → 整图确定性重画 → 单事务原子切换 r2 → 既有 DXF/PDF 导出；全程模型无像素/坐标编辑权。未做的遗留（都属引擎 capability 边界，Gate 已裁不阻塞）：无连接图纸拒画、多候选端口符号不猜绑定、删到单设备撞无连接边界**）
 
 - **Gate 裁定要点（2026-09-25 读回）**：主体全 PASS（writer 复用 / dry-run / 目标安全 / 审计 / 前端 / CI / 两个引擎边界维持原判）；
   P0-1 = partial 可提交（coherent ≠ complete）→ 已修：planner 出 **clause 级 completeness 账本**

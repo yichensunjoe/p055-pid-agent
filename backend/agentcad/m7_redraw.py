@@ -35,6 +35,7 @@ from .auto_layout_semantic import place_semantic_layout, plan_semantic_layout
 from .m7_diagram_adapter import adapt
 from .m7_diagram_spec import DiagramSpec, load_diagram_spec
 from .m7_layout_materialization import (
+    AddElementOperation,
     AddSystemOperation,
     MaterializationDocumentError,
     MaterializationError,
@@ -42,6 +43,7 @@ from .m7_layout_materialization import (
     materialization_matches_document,
     materialize_canonical_layout,
     provenance_version_values,
+    require_document_canvas,
     with_materialization_provenance,
 )
 from .m7_semantic_specs import (
@@ -114,6 +116,8 @@ def materialize_finalized(finalized: Any, *, document_id: str) -> MaterializedLa
 def require_replaceable_target(
     document: Document,
     prior: MaterializedLayout,
+    *,
+    source_revision: int,
 ) -> None:
     """The pre-write gate, stricter than element-id equality.
 
@@ -124,7 +128,13 @@ def require_replaceable_target(
     ``expected_revision`` own it, and a raced revision must fail atomically there.
     """
 
-    problems = materialization_matches_document(prior, document)
+    problems: list[str] = []
+    if document.revision != source_revision:
+        problems.append(
+            f"the document is at revision {document.revision} but the prior materialization "
+            f"was committed at revision {source_revision}"
+        )
+    problems.extend(materialization_matches_document(prior, document))
     # Raw-element coverage on top: the row reconciliation only reads the element kinds a
     # materialization writes, so a foreign rectangle or note would be invisible to it. The
     # element-id sets must match exactly in both directions -- same id is not same content,
@@ -140,6 +150,7 @@ def require_replaceable_target(
         problems.append(
             f"the document is missing element {element_id!r} the prior materialization decided"
         )
+    problems.extend(_destructive_state_problems(document, prior))
     expected_systems = _materialized_systems(prior)
     actual_systems = {
         (system.id, system.name)
@@ -176,6 +187,35 @@ def replace_transaction_operations(
     return operations
 
 
+def _destructive_state_problems(document: Document, prior: MaterializedLayout) -> list[str]:
+    """The destructive-replacement guard, wider than the canonical identity reconciliation.
+
+    ``clear_document`` destroys the *whole persisted element* -- style, metadata, layer,
+    rotation and every field the canonical rows never compare. A human edit that keeps an
+    id while touching any of those is invisible to row reconciliation, and a redraw would
+    silently destroy it. So for every element the prior materialization wrote, the full
+    persisted state must be exactly what the deterministic write produced. This is a
+    safety reconciliation, not a new identity axis: it never enters any digest.
+    """
+
+    problems: list[str] = []
+    expected = {
+        op.element.id: op.element
+        for op in prior.operations
+        if isinstance(op, AddElementOperation)
+    }
+    actual = {element.id: element for element in document.elements}
+    for element_id in sorted(set(expected) & set(actual)):
+        if actual[element_id].model_dump(mode="json") != expected[element_id].model_dump(
+            mode="json"
+        ):
+            problems.append(
+                f"element {element_id!r} was modified since the prior materialization; "
+                "an automatic redraw would destroy a change it did not decide"
+            )
+    return problems
+
+
 def _materialized_systems(layout: MaterializedLayout) -> set[tuple[str, str]]:
     """The M7-owned system groups a materialization writes, as (id, name) pairs.
 
@@ -205,12 +245,17 @@ def apply_redraw(
     """Verify, replace atomically, and commit the new source beside the new revision."""
 
     current = service.get_document(document_id)
+    require_replaceable_target(current, prior, source_revision=base_record.revision)
     if current.revision != expected_revision:
+        # The true race: the document matched when the caller read it, then moved. The
+        # binding is the caller's expected revision, never a freshly-read current.
         raise MaterializationError(
             f"expected revision {expected_revision}, document {document_id!r} is at "
             f"{current.revision}"
         )
-    require_replaceable_target(current, prior)
+    # The same canvas discipline the first materialization keeps: a drawing the derived
+    # canvas cannot fit is refused before the write, never committed cropped.
+    require_document_canvas(current, new)
 
     lineage = {
         "edited_from_revision": str(base_record.revision),

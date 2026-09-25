@@ -260,3 +260,130 @@ def test_the_contract_declaration_and_the_live_route_agree(client: TestClient) -
     assert binding is not None
     assert binding.tool == "edit_text_plan"
     assert binding.audited is True
+
+
+def test_a_document_that_moved_after_the_callers_read_is_stale_not_a_new_baseline(
+    client: TestClient,
+) -> None:
+    """TOCTOU: the caller read r1/S1, then another governed write advanced the document.
+    The edit must refuse -- the caller's expected_revision binds the edit end to end and
+    is never swapped for a freshly-read 'current'."""
+
+    document_id = _new_document(client)
+    assert _draw(client, document_id, SENTENCE).status_code == 200
+    base = _source(client, document_id)
+
+    renamed = client.put(
+        f"/api/v2/documents/{document_id}/name",
+        json={"name": "renamed", "expected_revision": 1},
+    )
+    assert renamed.status_code == 200, renamed.text
+
+    edited = _edit(client, document_id, EDIT, revision=1, digest=base.spec_digest)
+    assert edited.status_code == 409
+    detail = edited.json()["detail"]
+    assert (
+        (isinstance(detail, dict) and detail.get("code") == "semantic_source_stale")
+        or "revision 2" in str(detail)
+    ), "a document that moved after the caller's read is refused, however it drifted"
+
+    service = client.app.state.service
+    assert service.get_document(document_id).revision == 2
+    assert _source(client, document_id).revision == 1, "no spec row for a refused edit"
+    record = service.audit.revision_evidence(document_id, 2).audit_record
+    assert "edited_from_revision" not in record.evidence["metadata"]
+
+
+def test_a_same_id_human_style_edit_refuses_the_redraw_and_keeps_the_change(
+    client: TestClient,
+) -> None:
+    """The destructive guard is wider than canonical identity: a human restyle of an M7
+    element -- same id, same position, same tag, invisible to row reconciliation -- must
+    refuse the redraw and survive it."""
+
+    document_id = _new_document(client)
+    assert _draw(client, document_id, SENTENCE).status_code == 200
+    base = _source(client, document_id)
+
+    service = client.app.state.service
+    current = service.get_document(document_id)
+    symbol_element = next(e for e in current.elements if e.type == "symbol")
+    from agentcad.models import TransactionRequest
+
+    service.apply_transaction(
+        document_id,
+        TransactionRequest(
+            operations=[
+                {
+                    "op": "update_element",
+                    "element_id": symbol_element.id,
+                    "patch": {"style": {**symbol_element.style.model_dump(), "stroke": "#ff0000"}},
+                }
+            ],
+            expected_revision=current.revision,
+            label="human restyle",
+        ),
+    )
+
+    edited = _edit(client, document_id, EDIT, revision=1, digest=base.spec_digest)
+    assert edited.status_code == 409
+    assert "modified since the prior materialization" in edited.json()["detail"]
+
+    after = service.get_document(document_id)
+    assert after.revision == 2, "the refused redraw must not advance the revision"
+    restyled = next(e for e in after.elements if e.id == symbol_element.id)
+    assert restyled.style.stroke == "#ff0000", "the human change survives the refusal"
+    assert _source(client, document_id).revision == 1
+
+
+def test_a_same_id_human_metadata_edit_also_refuses_the_redraw(client: TestClient) -> None:
+    document_id = _new_document(client)
+    assert _draw(client, document_id, SENTENCE).status_code == 200
+    base = _source(client, document_id)
+
+    service = client.app.state.service
+    current = service.get_document(document_id)
+    symbol_element = next(e for e in current.elements if e.type == "symbol")
+    from agentcad.models import TransactionRequest
+
+    service.apply_transaction(
+        document_id,
+        TransactionRequest(
+            operations=[
+                {
+                    "op": "update_element",
+                    "element_id": symbol_element.id,
+                    "patch": {"metadata": {**symbol_element.metadata, "human_note": "touched"}},
+                }
+            ],
+            expected_revision=current.revision,
+            label="human metadata note",
+        ),
+    )
+
+    edited = _edit(client, document_id, EDIT, revision=1, digest=base.spec_digest)
+    assert edited.status_code == 409
+    assert "modified since the prior materialization" in edited.json()["detail"]
+    assert service.get_document(document_id).revision == 2
+
+
+def test_a_redraw_whose_derived_canvas_no_longer_fits_is_refused(client: TestClient) -> None:
+    document_id = _new_document(client)
+    assert _draw(client, document_id, SENTENCE).status_code == 200
+    base = _source(client, document_id)
+
+    additions = "，".join(f"再添加一个缓冲罐 V-{index}" for index in range(102, 114))
+    edited = _edit(client, document_id, additions, revision=1, digest=base.spec_digest)
+    assert edited.status_code == 422, edited.text
+    detail = edited.json()["detail"]
+    assert "canvas" in str(detail).lower()
+
+    service = client.app.state.service
+    assert service.get_document(document_id).revision == 1
+    assert _source(client, document_id).spec_digest == base.spec_digest
+    created = [
+        record
+        for record in service.audit.audit_trail(document_id=document_id, limit=10)
+        if record.event_type == "revision.created"
+    ]
+    assert len(created) == 1, "exactly the first drawing's revision may exist"

@@ -816,6 +816,10 @@ def create_semantic_agent_router(
                         "current_spec_digest": record.spec_digest,
                     },
                 )
+            # The caller's revision binds the whole edit: the very same value -- never a
+            # freshly-read "current" -- is what the writer is asked to commit against, and
+            # a document that moved since the caller's read is refused at the redraw gate
+            # as drift, before anything is written.
             # Rebuilt from the stored source under the rules it records; a version mismatch is
             # a migration, not something to recompute silently.
             prior_layout = rebuild_expected_materialization(record)
@@ -902,7 +906,6 @@ def create_semantic_agent_router(
         if request.dry_run:
             return TextPlanResult(**payload)
 
-        current = service.get_document(document_id)
         audit = AuditContext(
             actor="web-user",
             surface="rest",
@@ -921,7 +924,7 @@ def create_semantic_agent_router(
             applied = apply_redraw(
                 service,
                 document_id=document_id,
-                expected_revision=current.revision,
+                expected_revision=request.expected_revision,
                 prior=prior_layout,
                 new=new_layout,
                 new_spec=planned.spec,

@@ -2,7 +2,7 @@
 
 > 交接文档：每次开新会话先读本文件。更新规则见 `AGENTS.md`「HANDOFF 交接规则」。
 
-## 当前状态（2026-09-25 R31 —— **纵切第二块签 CLOSED @ `ad8cc93d6d0a0ff90686a3cb287ccb52c766d7d9`，已按授权 exact-SHA 推 main（`28c4f96..ad8cc93`，不带记账）。main CI run `36105635768` 四 job（push 触发）。纵切第三块（第二句改语义 → 重画 → 导出）按 Gate 指示**先报 redraw 语义设计再动手**：编辑对象=语义源（DiagramSpec N→N+1 完整重算），旧图=证据；原子切换=新 governed 边界（clear_document+add 单事务，写前闸=目标恰好等于上一版物化集合，拒外来元素/锁定）；设计三问已报 Gate 待裁（Q1 spec 源落点：审计 metadata vs 窄 spec store〔倾向 B〕；Q2 replace preflight 严格度；Q3 edit 独立端点 vs 参数〔倾向独立〕）**）
+## 当前状态（2026-09-25 R32 —— **纵切第三块实现完毕，review 分支 `review/m7-nl-edit`（origin/main `ad8cc93` + 2 代码 commit：`0e60fb6` 后端 / `89c075d` 前端）已推远端，CI run `36113934180` 等四 job。按 Gate 冻结形状落地：①schema v11 窄 spec store（`m7_semantic_specs`，append-only，**与 revision 同一 BEGIN IMMEDIATE 事务**，行 revision 由 store 提交时盖章——调用方不许预测）；②text-plan 首落图原子补写 spec row（Block-2 的必要后果，已 retro）；③edit planner（`m7_text_edit`：加/删/连子句，删除=按位号查数据不问模型，重复位号/未知位号/目录缺口全入账，连接可点名 base 已有设备）；④redraw 边界（`m7_redraw`：从 S_N 冻结链重建 M_N 对账——行级+**原始元素级**（foreign 矩形行对账看不见）+system 成员三层；版本不符 → semantic_source_version_requires_migration 硬拒；一个事务 = clear_document + delete_system(旧 M7 systems) + 新物化全部 ops；审计带完整新身份链 + edited_from_revision/spec_digest + replaced_from_materialization_digest 三条 lineage）。text-edit 端点：expected_revision 与 base_spec_digest 双 stale 守卫。门禁：后端 1554 passed / e2e 62 / 单测 161 / 变异 4 条全红（stale 守卫、drift preflight 整体摘除、spec row 不写、行对账跳过仍被原始元素层抓）。等 Gate 签**）
 
 - **Gate 裁定要点（2026-09-25 读回）**：主体全 PASS（writer 复用 / dry-run / 目标安全 / 审计 / 前端 / CI / 两个引擎边界维持原判）；
   P0-1 = partial 可提交（coherent ≠ complete）→ 已修：planner 出 **clause 级 completeness 账本**

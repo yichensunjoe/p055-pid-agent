@@ -2,7 +2,7 @@
 
 > 交接文档：每次开新会话先读本文件。更新规则见 `AGENTS.md`「HANDOFF 交接规则」。
 
-## 当前状态（2026-09-25 R29 —— **Gate 对 NL surface 首报裁 HOLD（2 P0 + ancestry），两项 P0 已闭、干净 review 分支已建并推远端：`review/m7-nl-surface = 6d3ffd3`（base = 已签 `28c4f96`，4 commit 纯代码无 docs：planner `199345f` / 后端 `462fa56` / 前端 `81efec8` / P0 修复 `6d3ffd3`；与工作分支 tree diff 只剩 HANDOFF/日志/reports）。门禁：后端 1534 passed（+8）/ e2e 60（+1）/ 单测 161 / 变异 3 条新全红（fallback 回归、绕过闸、合同放开 partial）。CI run `36101960861` 跑完补报 Gate。注意：HANDOFF/日志记账只活在工作分支，review 分支刻意不带（其 HANDOFF 是旧码线快照，别看）**）
+## 当前状态（2026-09-25 R30 —— **Gate 二轮 HOLD 的两个窄缺口已闭，`review/m7-nl-surface = ad8cc93`（28c4f96 + 5 个纯代码 commit）。缺口①catalog_gap 现按 synthesis contract 冻结四字段出**结构化机器可读记录**（requested_type/requested_tag/source_requirement/available_alternatives，alternatives 只报告永不成候选，planner 测试断言 tuple(gap) == CATALOG_GAP_REQUIRED_FIELDS）；缺口②connection 子句**显式写出未声明位号 → 候选清空**（不再拿已声明设备替代，dry-run 预览也不会带猜出来的连接）。门禁：后端 1537 passed（+3）/ e2e 61 / 单测 161 / 变异 2 条新全红（摘守卫→替代测试红、删字段→schema 测试红）。CI run `36104735547` 跑完报 Gate 第三轮**）
 
 - **Gate 裁定要点（2026-09-25 读回）**：主体全 PASS（writer 复用 / dry-run / 目标安全 / 审计 / 前端 / CI / 两个引擎边界维持原判）；
   P0-1 = partial 可提交（coherent ≠ complete）→ 已修：planner 出 **clause 级 completeness 账本**

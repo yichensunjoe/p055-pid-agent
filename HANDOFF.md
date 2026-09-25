@@ -2,7 +2,7 @@
 
 > 交接文档：每次开新会话先读本文件。更新规则见 `AGENTS.md`「HANDOFF 交接规则」。
 
-## 当前状态（2026-09-25 R30 —— **Gate 二轮 HOLD 的两个窄缺口已闭，`review/m7-nl-surface = ad8cc93`（28c4f96 + 5 个纯代码 commit）。缺口①catalog_gap 现按 synthesis contract 冻结四字段出**结构化机器可读记录**（requested_type/requested_tag/source_requirement/available_alternatives，alternatives 只报告永不成候选，planner 测试断言 tuple(gap) == CATALOG_GAP_REQUIRED_FIELDS）；缺口②connection 子句**显式写出未声明位号 → 候选清空**（不再拿已声明设备替代，dry-run 预览也不会带猜出来的连接）。门禁：后端 1537 passed（+3）/ e2e 61 / 单测 161 / 变异 2 条新全红（摘守卫→替代测试红、删字段→schema 测试红）。CI run `36104735547` 跑完报 Gate 第三轮**）
+## 当前状态（2026-09-25 R31 —— **纵切第二块签 CLOSED @ `ad8cc93d6d0a0ff90686a3cb287ccb52c766d7d9`，已按授权 exact-SHA 推 main（`28c4f96..ad8cc93`，不带记账）。main CI run `36105635768` 四 job（push 触发）。纵切第三块（第二句改语义 → 重画 → 导出）按 Gate 指示**先报 redraw 语义设计再动手**：编辑对象=语义源（DiagramSpec N→N+1 完整重算），旧图=证据；原子切换=新 governed 边界（clear_document+add 单事务，写前闸=目标恰好等于上一版物化集合，拒外来元素/锁定）；设计三问已报 Gate 待裁（Q1 spec 源落点：审计 metadata vs 窄 spec store〔倾向 B〕；Q2 replace preflight 严格度；Q3 edit 独立端点 vs 参数〔倾向独立〕）**）
 
 - **Gate 裁定要点（2026-09-25 读回）**：主体全 PASS（writer 复用 / dry-run / 目标安全 / 审计 / 前端 / CI / 两个引擎边界维持原判）；
   P0-1 = partial 可提交（coherent ≠ complete）→ 已修：planner 出 **clause 级 completeness 账本**

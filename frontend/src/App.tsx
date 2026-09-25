@@ -177,6 +177,7 @@ export default function App() {
   const [drawingTextPlan, setDrawingTextPlan] = useState(false);
   const [nlResult, setNlResult] = useState<TextPlanResult | null>(null);
   const [nlError, setNlError] = useState("");
+  const [nlSource, setNlSource] = useState<{ revision: number; specDigest: string } | null>(null);
   const [testingTypesafe, setTestingTypesafe] = useState(false);
   const [serviceToken, setServiceToken] = useState(() => getServiceAccessToken());
   const [showServiceToken, setShowServiceToken] = useState(false);
@@ -499,6 +500,9 @@ export default function App() {
           pendingExternalRevision: null,
         });
       }
+      if (result.committed && result.spec_digest) {
+        setNlSource({ revision: result.revision ?? document.revision, specDigest: result.spec_digest });
+      }
     } catch (error) {
       const receipt = error instanceof ApiError ? error.detail : undefined;
       if (
@@ -517,6 +521,77 @@ export default function App() {
           detail.code === "typesafe_spec_partial"
             ? "句子只兑现了一部分，图纸未写入。未兑现："
             : "没有可画的设备，图纸未写入。",
+          ...(detail.undelivered ?? []).map((item) => `· ${item}`),
+          ...(detail.skipped ?? []).map((item) => `· ${item}`),
+        ];
+        setNlError(lines.join("\n"));
+      } else {
+        setNlError(error instanceof ApiError ? error.message : String(error));
+      }
+    } finally {
+      setDrawingTextPlan(false);
+    }
+  };
+
+  const editFromSentence = async (dryRun: boolean) => {
+    const document = state.document;
+    const source = nlSource;
+    if (!document || !nlSentence.trim() || drawingTextPlan || !source) return;
+    setDrawingTextPlan(true);
+    setNlError("");
+    try {
+      const result = await api.editTextDrawing(
+        document.id,
+        nlSentence.trim(),
+        source.revision,
+        source.specDigest,
+        {
+          base_url: typesafeBaseUrl.trim() || undefined,
+          model: typesafeModel.trim() || undefined,
+          api_key: typesafeKey.trim() || undefined,
+        },
+        dryRun,
+      );
+      setNlResult(result);
+      if (result.committed && typeof result.revision === "number") {
+        const active = useWorkspace.getState().document;
+        if (!active || active.id !== document.id) {
+          setNlError("图纸已切换，改图结果未写回当前画布。");
+          return;
+        }
+        const fresh = await api.getDocument(document.id);
+        const documents = await api.listDocuments();
+        useWorkspace.setState({
+          document: fresh,
+          documents,
+          selectedElementIds: [],
+          error: null,
+          syncState: "synced",
+          syncMessage: `已同步至 r${fresh.revision}`,
+          pendingExternalRevision: null,
+        });
+      }
+      if (result.committed && result.spec_digest) {
+        setNlSource({ revision: result.revision ?? document.revision, specDigest: result.spec_digest });
+      }
+    } catch (error) {
+      const receipt = error instanceof ApiError ? error.detail : undefined;
+      if (
+        error instanceof ApiError &&
+        receipt &&
+        typeof receipt === "object" &&
+        ((receipt as { code?: string }).code === "typesafe_spec_partial" ||
+          (receipt as { code?: string }).code === "typesafe_spec_no_device")
+      ) {
+        const detail = receipt as {
+          code?: string;
+          undelivered?: string[];
+          skipped?: string[];
+        };
+        const lines = [
+          detail.code === "typesafe_spec_partial"
+            ? "句子只兑现了一部分，图纸未写入。未兑现："
+            : "没有可画的变更，图纸未写入。",
           ...(detail.undelivered ?? []).map((item) => `· ${item}`),
           ...(detail.skipped ?? []).map((item) => `· ${item}`),
         ];
@@ -1254,6 +1329,8 @@ export default function App() {
                   <div className="provider-actions">
                     <button type="button" onClick={() => void drawFromSentence(true)} disabled={drawingTextPlan || !nlSentence.trim()}>{drawingTextPlan ? "处理中…" : "预览"}</button>
                     <button type="button" onClick={() => void drawFromSentence(false)} disabled={drawingTextPlan || !nlSentence.trim()}>生成图纸</button>
+                    <button type="button" onClick={() => void editFromSentence(true)} disabled={drawingTextPlan || !nlSentence.trim() || !nlSource} title={nlSource ? "预览这句话对现有图纸的语义改图" : "先用「生成图纸」创建一张自然语言图纸"}>预览改图</button>
+                    <button type="button" onClick={() => void editFromSentence(false)} disabled={drawingTextPlan || !nlSentence.trim() || !nlSource}>改图</button>
                   </div>
                   {nlError ? <div className="provider-model-status error" style={{ whiteSpace: "pre-line" }}>{nlError}</div> : null}
                   {nlResult ? <div className="nl-draw-result">

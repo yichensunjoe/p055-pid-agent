@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, BinaryIO
 from urllib.parse import quote
 
-CURRENT_SCHEMA_VERSION = 10
+CURRENT_SCHEMA_VERSION = 11
 BACKUP_FORMAT = "pid-agent.sqlite-backup"
 BACKUP_VERSION = 1
 BACKUP_DATABASE_MEMBER = "database.sqlite3"
@@ -1003,6 +1003,31 @@ def _migration_10(connection: sqlite3.Connection) -> None:
     )
 
 
+def _migration_11(connection: sqlite3.Connection) -> None:
+    """M7 vertical slice block 3: the semantic spec is the source of truth.
+
+    The table is an append-only per-revision source: one row per (document, revision)
+    that a governed materialization or redraw committed. It is never updated in place --
+    a redraw appends the next revision's row -- and it is written only as the atomic
+    companion of the document revision itself (see ``SQLiteDocumentStore.save``), so a
+    drawing revision and its semantic source can never disagree about having happened.
+    """
+
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS m7_semantic_specs (
+            document_id TEXT NOT NULL,
+            revision INTEGER NOT NULL,
+            spec_schema_version TEXT NOT NULL,
+            spec_json TEXT NOT NULL,
+            spec_digest TEXT NOT NULL,
+            chain_versions_json TEXT NOT NULL,
+            PRIMARY KEY (document_id, revision)
+        )
+        """
+    )
+
+
 _MIGRATIONS = {
     1: _migration_1,
     2: _migration_2,
@@ -1014,6 +1039,7 @@ _MIGRATIONS = {
     8: _migration_8,
     9: _migration_9,
     10: _migration_10,
+    11: _migration_11,
 }
 
 

@@ -8,6 +8,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from .audit_models import AuditContext, ProvenanceState
+from .m7_semantic_specs import SemanticSpecRecord
 from .models import (
     AddElementOperation,
     AddLayerOperation,
@@ -500,6 +501,7 @@ class DocumentService:
         source: HistorySource | None = None,
         audit: AuditContext | None = None,
         state: ProvenanceState | None = None,
+        semantic_spec: SemanticSpecRecord | None = None,
     ) -> TransactionResult:
         stored = self._get_stored(document_id)
         current = stored.document
@@ -547,6 +549,7 @@ class DocumentService:
                 tool_call=final.tool_call,
                 approval=final.approval,
                 session=final.session,
+                semantic_spec=semantic_spec,
             )
         except StoreRevisionConflictError as exc:
             raise RevisionConflictError(str(exc)) from exc

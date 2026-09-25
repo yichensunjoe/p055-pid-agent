@@ -1721,6 +1721,29 @@ PHASE_4_CATALOG_GAP_OFFERS_THE_WHOLE_CATALOGUE = False
 #: disappearance between reading the sentence and committing the drawing.
 PHASE_4_EVERY_CLAUSE_IS_DELIVERED_OR_RECEIPTED = True
 
+# --------------------------------------------------------------------------------------
+# §17 Phase 5: the semantic source and the redraw. The drawing is output and evidence; the
+#      stored DiagramSpec is the product state the next sentence edits. A redraw replaces
+#      one whole governed drawing with the next in one transaction, and the new source row
+#      commits in the same SQLite transaction as the new revision.
+# --------------------------------------------------------------------------------------
+
+PHASE_5_NAME = "M7 Phase-5 — Semantic Source & Governed Redraw"
+#: The sentence edits the stored spec, never the drawing's pixels or elements.
+PHASE_5_EDITS_THE_STORED_SPEC_NOT_THE_DRAWING = True
+#: The spec is never reconstructed from DrawingElements or from audit digests: a revision
+#: without a stored row answers ``semantic_source_unavailable``.
+PHASE_5_RECONSTRUCTS_SPEC_FROM_DRAWING = False
+#: The replace is one existing-writer transaction (clear, drop prior M7 systems, add the
+#: complete new materialization), not element-level delete/update patching.
+PHASE_5_REDRAWS_THROUGH_ONE_REPLACE_TRANSACTION = True
+#: The spec row is the revision write's atomic companion inside the same BEGIN IMMEDIATE
+#: transaction; a post-commit second write is forbidden.
+PHASE_5_SPEC_ROW_SHARES_THE_REVISION_TRANSACTION = True
+#: The pre-write gate is Phase-3's exact reconciliation (identity, text, geometry,
+#: waypoints, system membership), not element-id equality.
+PHASE_5_REPLACE_REQUIRES_EXACT_PRIOR_MATERIALIZATION = True
+
 #: Two versions, for the same reason the layout has two: the materializer is a program and the
 #: digest describes what it digested.
 MATERIALIZER_VERSION = "m7-materializer/1"
@@ -3615,6 +3638,24 @@ def validate_contract() -> list[str]:
     if not PHASE_4_EVERY_CLAUSE_IS_DELIVERED_OR_RECEIPTED:
         problems.append(
             "every input clause must be delivered or receipted; silent dropping is a hole"
+        )
+
+    # -- §17 phase 5: the semantic source and the governed redraw ------------------------------ #
+    if not PHASE_5_EDITS_THE_STORED_SPEC_NOT_THE_DRAWING:
+        problems.append("a redraw edits the stored spec, never the drawing's pixels")
+    if PHASE_5_RECONSTRUCTS_SPEC_FROM_DRAWING:
+        problems.append(
+            "the spec source must never be reconstructed from DrawingElements or audit digests"
+        )
+    if not PHASE_5_REDRAWS_THROUGH_ONE_REPLACE_TRANSACTION:
+        problems.append("a redraw must be one existing-writer transaction")
+    if not PHASE_5_SPEC_ROW_SHARES_THE_REVISION_TRANSACTION:
+        problems.append(
+            "the semantic spec row must share the revision's SQLite transaction"
+        )
+    if not PHASE_5_REPLACE_REQUIRES_EXACT_PRIOR_MATERIALIZATION:
+        problems.append(
+            "a redraw must prove the target is exactly the prior materialization"
         )
 
     return problems

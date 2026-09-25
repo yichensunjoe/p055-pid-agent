@@ -1030,6 +1030,7 @@ def apply_materialized_layout(
     expected_revision: int,
     audit: Any = None,
     label: str = "",
+    semantic_spec: Any = None,
 ) -> Any:
     """Submit the materialization through ``DocumentService.apply_transaction``.
 
@@ -1061,6 +1062,7 @@ def apply_materialized_layout(
         request,
         source="system",
         audit=context,
+        semantic_spec=semantic_spec,
     )
     problems = materialization_matches_document(layout, result.document)
     if problems:

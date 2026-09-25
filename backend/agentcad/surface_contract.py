@@ -340,6 +340,21 @@ HTTP_SURFACE_BINDINGS: tuple[SurfaceBinding, ...] = (
             "writing. Verified by test_text_plan_surface.py."
         ),
     ),
+    _http(
+        "POST",
+        "/api/v2/documents/{document_id}/agent/text-edit",
+        "engineering_write",
+        tool="edit_text_plan",
+        audited=True,
+        notes=(
+            "One sentence edits the stored semantic spec (never the pixels), the frozen "
+            "chain recomputes the whole drawing, and one existing-writer transaction "
+            "replaces the prior materialization exactly. Stale revision or digest is "
+            "refused, foreign/human drift is refused before the write, and the new spec "
+            "row commits in the same transaction as the revision. Verified by "
+            "test_text_edit_surface.py."
+        ),
+    ),
     # --- harness lifecycle ------------------------------------------------------
     _http("POST", "/api/v2/agent/sessions", "harness_lifecycle", audited=True),
     _http(

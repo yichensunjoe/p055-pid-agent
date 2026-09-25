@@ -127,6 +127,11 @@ class TextPlanResult(StrictModel):
     #: "previewed" from "drawn" without trusting a status string.
     revision: int | None = None
     spec: dict[str, Any]
+    #: "complete" | "partial" | "empty": whether the specification is the whole sentence. A
+    #: commit response is always "complete"; a preview may be partial and says what is missing
+    #: through ``undelivered``.
+    completeness: str = "complete"
+    undelivered: list[str] = Field(default_factory=list)
     canonical_layout_digest: str
     materialization_digest: str
     notes: list[str]
@@ -591,16 +596,24 @@ def create_semantic_agent_router(
                 service.symbols, confidence_floor=request.confidence_floor
             )
             planned = planner.plan(request.sentence, typesafe_config=typesafe_config)
-            if not planned.spec.entities:
-                # Every device the sentence declared was skipped; committing an empty drawing
-                # would be a revision that says it drew something and drew nothing.
+            if not request.dry_run and planned.completeness != "complete":
+                # The frozen synthesis rule: a partial result can never be reported as success.
+                # Preview may show what is missing; a commit must be the whole sentence, and a
+                # refused commit is a no-op -- this raise happens before any write is attempted.
                 raise HTTPException(
                     status_code=422,
-                    detail=(
-                        "这句话里没有可画的设备（每个子句要么没有候选符号，要么置信度低于 "
-                        f"阈值）：「{request.sentence.strip()}」。"
-                        f"被跳过的子句：{'；'.join(planned.skipped) or '（无明细）'}"
-                    ),
+                    detail={
+                        "code": (
+                            "typesafe_spec_partial"
+                            if planned.completeness == "partial"
+                            else "typesafe_spec_no_device"
+                        ),
+                        "completeness": planned.completeness,
+                        "sentence": request.sentence.strip(),
+                        "skipped": list(planned.skipped),
+                        "unknown_tags": list(planned.unknown_tags),
+                        "undelivered": list(planned.undelivered),
+                    },
                 )
             finalized = _finalize_spec_layout(planned.spec)
             layout = materialize_canonical_layout(finalized, document_id=document_id)
@@ -627,6 +640,8 @@ def create_semantic_agent_router(
             "notes": list(planned.notes),
             "skipped": list(planned.skipped),
             "unknown_tags": list(planned.unknown_tags),
+            "completeness": planned.completeness,
+            "undelivered": list(planned.undelivered),
             "model": planned.model,
             "latency_ms": planned.latency_ms,
             "question_count": planned.question_count,

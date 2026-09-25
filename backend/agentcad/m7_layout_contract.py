@@ -1706,6 +1706,20 @@ PHASE_4_PREVIEW_IS_A_REQUEST_FLAG = True
 #: The surface may only create a drawing where none exists. Overwriting a drawing from a
 #: sentence is a redraw, and redraw semantics belong to a later round, not to this flag.
 PHASE_4_REQUIRES_AN_EMPTY_TARGET = True
+#: A committed drawing must be the *whole* sentence. Skipped devices, dropped connections,
+#: unknown tags, unrecognised clauses and catalogue gaps all leave the specification drawable
+#: yet partial, and a partial result can never be reported as success (the synthesis contract's
+#: SESSION_SUCCESS_REQUIRES = ("valid", "complete") predates this surface and binds it).
+PHASE_4_COMMIT_REQUIRES_A_COMPLETE_SPEC = True
+PHASE_4_PARTIAL_MAY_BE_COMMITTED = False
+#: A matched device hint with zero catalogue rows is a catalogue gap, reported and receipted.
+#: The whole catalogue is never offered as a substitute question: choosing a look-alike the
+#: sentence did not name is the substitution the phase-1 rules forbid.
+PHASE_4_CATALOG_GAP_OFFERS_THE_WHOLE_CATALOGUE = False
+#: Every input clause lands in exactly one of two places: delivered (present in the
+#: specification) or receipted (named in the undelivered ledger). There is no third, silent
+#: disappearance between reading the sentence and committing the drawing.
+PHASE_4_EVERY_CLAUSE_IS_DELIVERED_OR_RECEIPTED = True
 
 #: Two versions, for the same reason the layout has two: the materializer is a program and the
 #: digest describes what it digested.
@@ -3590,6 +3604,18 @@ def validate_contract() -> list[str]:
         problems.append("the phase-4 surface must commit through the phase-3 materializer")
     if not PHASE_4_REQUIRES_AN_EMPTY_TARGET:
         problems.append("the phase-4 surface must refuse to overwrite an existing drawing")
+    if not PHASE_4_COMMIT_REQUIRES_A_COMPLETE_SPEC:
+        problems.append("the phase-4 surface must commit only a complete specification")
+    if PHASE_4_PARTIAL_MAY_BE_COMMITTED:
+        problems.append("a partial result can never be reported as success: no partial commit")
+    if PHASE_4_CATALOG_GAP_OFFERS_THE_WHOLE_CATALOGUE:
+        problems.append(
+            "a catalogue gap must be reported, never substituted with the whole catalogue"
+        )
+    if not PHASE_4_EVERY_CLAUSE_IS_DELIVERED_OR_RECEIPTED:
+        problems.append(
+            "every input clause must be delivered or receipted; silent dropping is a hole"
+        )
 
     return problems
 

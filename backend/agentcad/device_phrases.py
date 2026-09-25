@@ -121,16 +121,34 @@ def all_symbol_candidates(registry: SymbolRegistry, *, limit: int = MAX_CANDIDAT
     ][:limit]
 
 
-def candidate_symbols(
-    registry: SymbolRegistry, clause: str, *, limit: int = MAX_CANDIDATES
-) -> list[SymbolCandidate]:
-    """The symbols the clause could mean, narrowed by the hint table and then by name."""
+def matched_hints(clause: str) -> tuple[str, ...]:
+    """The catalogue hint words the clause's device words map to, empty when it names no kind.
+
+    Exposed separately from :func:`candidate_symbols` because a matched hint with zero catalogue
+    rows is a *catalogue gap*, not an invitation to widen the question: the caller must report
+    the gap rather than fall back to the whole catalogue.
+    """
 
     lowered = normalise(clause)
     wanted: list[str] = []
     for phrases, hints in SYMBOL_HINTS:
         if any(phrase in lowered for phrase in phrases):
             wanted.extend(hints)
+    return tuple(wanted)
+
+
+def candidate_symbols(
+    registry: SymbolRegistry, clause: str, *, limit: int = MAX_CANDIDATES
+) -> list[SymbolCandidate]:
+    """The symbols the clause could mean, narrowed by the hint table and then by name.
+
+    A matched hint with zero rows returns *no* candidates: that is a catalogue gap, and the
+    whole catalogue is never offered as a substitute. Choosing a look-alike the sentence did
+    not ask for is the substitution the phase-1 rules forbid; the gap is reported by the
+    caller instead, with ``available_alternatives`` for a human to read.
+    """
+
+    wanted = matched_hints(clause)
     rows: list[SymbolCandidate] = []
     for definition in registry.list():
         haystack = normalise(f"{definition.key} {definition.name} {definition.category}")
@@ -144,11 +162,15 @@ def candidate_symbols(
                 description=definition.description,
             )
         )
-    if wanted and not rows:
-        # The hint matched a phrase but no symbol carries it: the judgement would have nothing to
-        # choose between, so the whole catalogue is offered instead of an empty question.
-        return all_symbol_candidates(registry, limit=limit)
     return rows[:limit]
+
+
+def available_alternatives(
+    registry: SymbolRegistry, *, limit: int = MAX_CANDIDATES
+) -> list[SymbolCandidate]:
+    """What the catalogue does carry, for a gap receipt to show a human. Never a question."""
+
+    return all_symbol_candidates(registry, limit=limit)
 
 
 __all__ = [
@@ -166,4 +188,6 @@ __all__ = [
     "extract_tags",
     "normalise",
     "split_clauses",
+    "available_alternatives",
+    "matched_hints",
 ]

@@ -91,7 +91,7 @@ def test_a_tag_the_sentence_spells_out_is_data_the_model_never_sees() -> None:
     """The tags come from a pattern, so a judgment can neither invent nor mistype one."""
 
     planner = _planner(_Recorder())
-    entities, _connections, unknown = planner.read(SENTENCE)
+    entities, _connections, unknown, _unknown_clauses = planner.read(SENTENCE)
     assert [entity.tag for entity in entities] == ["V-101", "P-101"]
     assert [entity.engineering_id for entity in entities] == ["el_V_101", "el_P_101"]
     # The phrase reaches the judgment as the device words alone: no verb, no tag.
@@ -101,7 +101,7 @@ def test_a_tag_the_sentence_spells_out_is_data_the_model_never_sees() -> None:
 
 def test_an_untagged_device_gets_a_deterministic_positional_tag() -> None:
     planner = _planner(_Recorder())
-    entities, _connections, _unknown = planner.read("添加一台离心泵，添加一个塔")
+    entities, _connections, _unknown, _unknown_clauses = planner.read("添加一台离心泵，添加一个塔")
     assert [entity.tag for entity in entities] == [
         UNTAGGED_TAG_TEMPLATE.format(index=1),
         UNTAGGED_TAG_TEMPLATE.format(index=2),
@@ -112,14 +112,14 @@ def test_a_connection_that_names_two_tags_is_pinned_by_code() -> None:
     """Order is the only thing in the sentence that says which end is the source."""
 
     planner = _planner(_Recorder())
-    entities, clauses, _unknown = planner.read(SENTENCE)
+    entities, clauses, _unknown, _unknown_clauses = planner.read(SENTENCE)
     candidates = planner.connection_candidates(entities, clauses[0])
     assert candidates == (("el_V_101", "el_P_101"),)
 
 
 def test_a_connection_that_names_no_tag_offers_the_ordered_pairs() -> None:
     planner = _planner(_Recorder())
-    entities, clauses, _unknown = planner.read("添加一台泵，添加一个塔，把泵连到塔")
+    entities, clauses, _unknown, _unknown_clauses = planner.read("添加一台泵，添加一个塔，把泵连到塔")
     candidates = planner.connection_candidates(entities, clauses[0])
     assert set(candidates) == {("el_E_01", "el_E_02"), ("el_E_02", "el_E_01")}
 
@@ -128,8 +128,77 @@ def test_a_tag_no_device_declares_is_reported_rather_than_invented() -> None:
     """A typo must be visible. Turning it into a new device would be inventing plant."""
 
     planner = _planner(_Recorder())
-    _entities, _clauses, unknown = planner.read("添加一个过滤器 F-201，把 F-201 接到 P-999")
+    _entities, _clauses, unknown, _unknown_clauses = planner.read("添加一个过滤器 F-201，把 F-201 接到 P-999")
     assert unknown == ("P-999",)
+
+
+# ---------------------------------------------------------------------------------------------
+# The completeness account: coherent is not complete, and no clause disappears silently
+# ---------------------------------------------------------------------------------------------
+
+
+def test_a_fully_delivered_sentence_is_complete() -> None:
+    plan = _planner(_Recorder()).plan(SENTENCE, typesafe_config=_config())
+    assert plan.completeness == "complete"
+    assert plan.undelivered == ()
+
+
+def test_a_skipped_device_makes_the_plan_partial_and_receipts_everything_it_dropped() -> None:
+    recorder = _Recorder({"el_P_101": {"choice": "centrifugal_pump", "confidence": 0.12}})
+    plan = _planner(recorder).plan(SENTENCE, typesafe_config=_config())
+    assert plan.completeness == "partial"
+    # The skipped device and the connection that needed it are both receipted: the ledger
+    # names what the sentence asked for and the spec does not carry.
+    assert any("P-101" in item for item in plan.undelivered)
+    assert any("把 V-101 接到 P-101" in item for item in plan.undelivered)
+    # ...while the spec itself stays structurally coherent, which is exactly the trap: a
+    # coherent spec that is not the whole sentence.
+    assert plan.spec.problems() == []
+
+
+def test_an_unknown_tag_makes_the_plan_partial() -> None:
+    plan = _planner(_Recorder()).plan(
+        "添加一个缓冲罐 V-101，把 V-101 接到 P-999", typesafe_config=_config()
+    )
+    assert plan.unknown_tags == ("P-999",)
+    assert plan.completeness == "partial"
+
+
+def test_an_unknown_clause_is_receipted_not_silently_dropped() -> None:
+    plan = _planner(_Recorder()).plan(SENTENCE + "，说明一下画布", typesafe_config=_config())
+    assert plan.completeness == "partial"
+    assert any("说明一下画布" in item for item in plan.undelivered)
+
+
+def test_a_catalogue_gap_is_reported_never_widened_into_a_judgment() -> None:
+    """「仪表」has no symbol in the catalogue. The gap is receipted, and no question is asked
+    that would let the model pick a look-alike the sentence did not name."""
+
+    recorder = _Recorder()
+    plan = _planner(recorder).plan(
+        "添加一个缓冲罐 V-101，添加一个仪表 FV-101，把 V-101 接到 FV-101",
+        typesafe_config=_config(),
+    )
+    for payload in recorder.payloads:
+        assert "el_FV_101" not in payload["questions"]
+    assert "FV-101" not in [entity.tag for entity in plan.spec.entities]
+    assert plan.completeness == "partial"
+    assert any("目录" in item and "FV-101" in item for item in plan.undelivered)
+
+
+def test_every_clause_is_delivered_or_receipted_in_sentence_order() -> None:
+    """The ledger plus the spec covers the input exactly: three clauses in, three accounted."""
+
+    plan = _planner(_Recorder()).plan(
+        "添加一个塔 T-101，添加一个仪表 FV-101，随便说说", typesafe_config=_config()
+    )
+    assert plan.completeness == "partial"
+    # two receipts: the catalogue-gapped device and the unrecognised clause; the tower is
+    # delivered and must not appear in the ledger.
+    assert any("FV-101" in item for item in plan.undelivered)
+    assert any("随便说说" in item for item in plan.undelivered)
+    assert not any("T-101" in item for item in plan.undelivered)
+    assert [entity.tag for entity in plan.spec.entities] == ["T-101"]
 
 
 # ---------------------------------------------------------------------------------------------

@@ -31,6 +31,10 @@ const DRAW_RESULT = {
   completeness: "complete",
   undelivered: [],
   catalog_gaps: [],
+  spec_digest: "e" + "0".repeat(63),
+  edited_from_revision: null,
+  edited_from_spec_digest: "",
+  replaced_from_materialization_digest: "",
   model: "judge-stub",
   latency_ms: 3,
   question_count: 2,
@@ -132,6 +136,80 @@ test("a committed draw refreshes the canvas to the written revision", async ({
   await expect(result).toContainText("已画入 r1");
   await expect(page.locator(".sync-badge")).toContainText("已同步至 r1");
   await expect.poll(async () => (await workspaceSnapshot(page)).document?.elements?.length).toBe(2);
+});
+
+test("an edit redraws the drawing to the next revision", async ({ page, request }) => {
+  const seeded = await createDocument(request, "E2E NL edit redraw");
+  await openDocument(page, seeded.id);
+  await openProviderSettings(page);
+
+  await page.route("**/agent/text-plan", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ...DRAW_RESULT, document_id: seeded.id, revision: 1, committed: true }),
+    });
+  });
+  await page.route("**/agent/text-edit", async (route) => {
+    const payload = route.request().postDataJSON() as Record<string, unknown>;
+    expect(payload.expected_revision).toBe(1);
+    expect(String(payload.base_spec_digest)).toBe(DRAW_RESULT.spec_digest);
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ...DRAW_RESULT,
+        document_id: seeded.id,
+        revision: 2,
+        committed: true,
+        edited_from_revision: 1,
+        edited_from_spec_digest: payload.base_spec_digest,
+        replaced_from_materialization_digest: "f" + "0".repeat(63),
+        spec: {
+          ...DRAW_RESULT.spec,
+          entities: [
+            ...DRAW_RESULT.spec.entities,
+            { engineering_id: "el_V_102", tag: "V-102", name: "缓冲罐", symbol_key: "buffer_tank" },
+          ],
+        },
+      }),
+    });
+  });
+  let documentReads = 0;
+  await page.route(`**/documents/${seeded.id}`, async (route) => {
+    if (route.request().method() !== "GET") {
+      await route.fallback();
+      return;
+    }
+    documentReads += 1;
+    const revision = documentReads >= 2 ? 2 : 1;
+    const elements =
+      revision === 2
+        ? [
+            symbol("el_v_101", "buffer_tank", { x: 200, y: 200 }, 90, 140, "V-101"),
+            symbol("el_p_101", "fuel_salt_pump", { x: 600, y: 220 }, 80, 70, "P-101"),
+            symbol("el_v_102", "buffer_tank", { x: 200, y: 500 }, 90, 140, "V-102"),
+          ]
+        : [
+            symbol("el_v_101", "buffer_tank", { x: 200, y: 200 }, 90, 140, "V-101"),
+            symbol("el_p_101", "fuel_salt_pump", { x: 600, y: 220 }, 80, 70, "P-101"),
+          ];
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ...seeded, revision, elements }),
+    });
+  });
+
+  await page.getByRole("textbox", { name: "自然语言一句话出图" }).fill(SENTENCE);
+  await page.getByRole("button", { name: "生成图纸" }).click();
+  await expect(page.locator(".nl-draw-result")).toContainText("已画入 r1");
+
+  await page.getByRole("textbox", { name: "自然语言一句话出图" }).fill("再添加一个缓冲罐 V-102");
+  await page.getByRole("button", { name: "改图", exact: true }).click();
+  await expect(page.locator(".nl-draw-result")).toContainText("已画入 r2");
+  await expect(page.locator(".sync-badge")).toContainText("已同步至 r2");
+  await expect.poll(async () => (await workspaceSnapshot(page)).document?.elements?.length).toBe(3);
 });
 
 test("a partial plan is refused with its receipt and changes nothing", async ({ page, request }) => {

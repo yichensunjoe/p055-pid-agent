@@ -134,6 +134,10 @@ export type TextPlanResult = {
   completeness: string;
   undelivered: string[];
   catalog_gaps: Array<Record<string, unknown>>;
+  spec_digest: string;
+  edited_from_revision: number | null;
+  edited_from_spec_digest: string;
+  replaced_from_materialization_digest: string;
   model: string;
   latency_ms: number;
   question_count: number;
@@ -742,6 +746,27 @@ export const api = {
     method: "POST",
     body: JSON.stringify({
       sentence,
+      dry_run: dryRun,
+      base_url: provider.base_url,
+      model: provider.model,
+      api_key: provider.api_key,
+    }),
+    signal,
+  }),
+  editTextDrawing: (
+    id: string,
+    sentence: string,
+    expectedRevision: number,
+    baseSpecDigest: string,
+    provider: { base_url?: string; model?: string; api_key?: string },
+    dryRun: boolean,
+    signal?: AbortSignal,
+  ) => request<TextPlanResult>(`/documents/${id}/agent/text-edit`, {
+    method: "POST",
+    body: JSON.stringify({
+      sentence,
+      expected_revision: expectedRevision,
+      base_spec_digest: baseSpecDigest,
       dry_run: dryRun,
       base_url: provider.base_url,
       model: provider.model,

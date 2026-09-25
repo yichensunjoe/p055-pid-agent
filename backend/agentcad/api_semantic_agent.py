@@ -47,9 +47,22 @@ from .m7_layout_materialization import (
     MaterializationTargetNotEmptyError,
     apply_materialized_layout,
     materialize_canonical_layout,
+    provenance_version_values,
+)
+from .m7_redraw import (
+    RedrawTargetDriftError,
+    apply_redraw,
+    rebuild_expected_materialization,
+)
+from .m7_semantic_specs import (
+    SemanticSourceUnavailableError,
+    SemanticSourceVersionError,
+    build_spec_record,
+    spec_digest,
 )
 from .m7_symbol_geometry import SymbolGeometryError, freeze_symbol_geometry
 from .m7_synthesis_models import build_not_evaluated_evidence, build_proposal_evidence
+from .m7_text_edit import TypesafeSpecEditor
 from .m7_text_planner import TypesafeDiagramSpecPlanner
 from .models import AgentPlan, StrictModel, TransactionRequest, TransactionResult
 from .permissive_semantic_compiler import (
@@ -118,6 +131,26 @@ class TextPlanRequest(StrictModel):
     timeout_seconds: float | None = Field(default=None, gt=0)
 
 
+class TextEditRequest(StrictModel):
+    """One sentence that edits the stored semantic source of an existing drawing.
+
+    Both stale guards travel with the request: ``expected_revision`` is the revision the
+    caller saw, ``base_spec_digest`` is the digest of the source it read. Either one has
+    moved since, the edit is refused -- a sentence must never land on a source the caller
+    did not read.
+    """
+
+    sentence: str = Field(min_length=1, max_length=10_000)
+    expected_revision: int = Field(ge=0)
+    base_spec_digest: str = Field(min_length=16, max_length=128)
+    dry_run: bool = False
+    confidence_floor: float = Field(default=DEFAULT_CONFIDENCE_FLOOR, ge=0, le=1)
+    base_url: str | None = None
+    model: str | None = None
+    api_key: str | None = Field(default=None, repr=False)
+    timeout_seconds: float | None = Field(default=None, gt=0)
+
+
 class TextPlanResult(StrictModel):
     """What the sentence became: the specification, the layout identities, and the write fact."""
 
@@ -135,6 +168,15 @@ class TextPlanResult(StrictModel):
     #: Machine-visible catalogue-gap records (schema = CATALOG_GAP_REQUIRED_FIELDS). The
     #: alternatives are reporting only; they never become judgment candidates.
     catalog_gaps: list[dict] = Field(default_factory=list)
+    #: Redraw lineage edges, present on edit responses: what the edit started from and, on
+    #: a committed redraw, which materialization was replaced. Lineage, not identity axes.
+    #: The digest of the specification this response carries: the edit endpoint binds the
+    #: next edit to exactly this value, so a stale source is a refused request, not a
+    #: drawing edited from something the caller never read.
+    spec_digest: str = ""
+    edited_from_revision: int | None = None
+    edited_from_spec_digest: str = ""
+    replaced_from_materialization_digest: str = ""
     canonical_layout_digest: str
     materialization_digest: str
     notes: list[str]
@@ -617,6 +659,7 @@ def create_semantic_agent_router(
                         "unknown_tags": list(planned.unknown_tags),
                         "undelivered": list(planned.undelivered),
                         "catalog_gaps": [dict(gap) for gap in planned.catalog_gaps],
+                        "spec_digest": spec_digest(planned.spec),
                     },
                 )
             finalized = _finalize_spec_layout(planned.spec)
@@ -647,6 +690,7 @@ def create_semantic_agent_router(
             "completeness": planned.completeness,
             "undelivered": list(planned.undelivered),
             "catalog_gaps": [dict(gap) for gap in planned.catalog_gaps],
+            "spec_digest": spec_digest(planned.spec),
             "model": planned.model,
             "latency_ms": planned.latency_ms,
             "question_count": planned.question_count,
@@ -658,6 +702,14 @@ def create_semantic_agent_router(
         # Read the revision at the last moment and let the writer refuse a raced target: the
         # drawing that was verified belongs to this revision, and a conflict is terminal.
         current = service.get_document(document_id)
+        # The semantic source is committed as this transaction's atomic companion: the
+        # store stamps the row with the committed revision, so nothing here predicts it.
+        semantic_record = build_spec_record(
+            planned.spec,
+            document_id=document_id,
+            revision=current.revision,
+            chain_versions=provenance_version_values(),
+        )
         audit = AuditContext(
             actor="web-user",
             surface="rest",
@@ -679,6 +731,7 @@ def create_semantic_agent_router(
                 expected_revision=current.revision,
                 audit=audit,
                 label=f"NL 出图：{request.sentence.strip()[:40]}",
+                semantic_spec=semantic_record,
             )
         except MaterializationTargetNotEmptyError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -704,6 +757,205 @@ def create_semantic_agent_router(
             )
         return TextPlanResult(
             **{**payload, "committed": True, "revision": applied.document.revision}
+        )
+
+    # -- Natural-language edit: the second sentence edits the stored spec, the drawing is
+    #    replaced whole, in one governed transaction. ------------------------------------------------ #
+
+    @router.post(
+        "/documents/{document_id}/agent/text-edit",
+        response_model=TextPlanResult,
+    )
+    def edit_text_drawing(document_id: str, request: TextEditRequest):
+        """Edit from one sentence: spec N -> spec N+1 -> deterministic redraw, atomically.
+
+        What the sentence edits is the stored semantic source, never the drawing's pixels.
+        The stale guards bind both coordinates of the edit: the revision the caller saw and
+        the digest of the source it read -- either one moved, the edit is refused.
+        """
+
+        started = perf_counter()
+        try:
+            typesafe_config = resolve_typesafe_config(
+                api_key=request.api_key,
+                base_url=request.base_url,
+                model=request.model,
+                timeout_seconds=request.timeout_seconds,
+            )
+            service.get_document(document_id)  # 404 outside the write, no session for a ghost
+            record = service.store.latest_semantic_spec(document_id)
+            if record is None:
+                raise HTTPException(
+                    status_code=422,
+                    detail={
+                        "code": "semantic_source_unavailable",
+                        "message": (
+                            "这张图纸没有可编辑的语义源：它可能早于语义源存储，或不是由"
+                            "自然语言出图创建。v1 不从图元反推语义源。"
+                        ),
+                    },
+                )
+            if record.revision != request.expected_revision:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "semantic_source_stale",
+                        "message": (
+                            f"语义源停在 r{record.revision}，请求基于 r{request.expected_revision}。"
+                            "请基于当前 revision 重新读图后再编辑。"
+                        ),
+                        "current_revision": record.revision,
+                    },
+                )
+            if record.spec_digest != request.base_spec_digest:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "semantic_source_stale",
+                        "message": "base_spec_digest 与当前语义源不符，请求读的源已过期。",
+                        "current_spec_digest": record.spec_digest,
+                    },
+                )
+            # Rebuilt from the stored source under the rules it records; a version mismatch is
+            # a migration, not something to recompute silently.
+            prior_layout = rebuild_expected_materialization(record)
+
+            session = harness.create_session(
+                AgentSessionCreateRequest(
+                    document_id=document_id,
+                    actor="web-user",
+                    provider=typesafe_config.base_url,
+                    model=typesafe_config.model,
+                    metadata={
+                        "surface": "rest",
+                        "workflow": "nl-text-edit",
+                        "dry_run": request.dry_run,
+                    },
+                )
+            )
+            editor = TypesafeSpecEditor(
+                service.symbols, confidence_floor=request.confidence_floor
+            )
+            planned = editor.plan_edit(
+                request.sentence, base_spec=record.spec, typesafe_config=typesafe_config
+            )
+            if not request.dry_run and planned.completeness != "complete":
+                raise HTTPException(
+                    status_code=422,
+                    detail={
+                        "code": (
+                            "typesafe_spec_partial"
+                            if planned.completeness == "partial"
+                            else "typesafe_spec_no_device"
+                        ),
+                        "completeness": planned.completeness,
+                        "sentence": request.sentence.strip(),
+                        "skipped": list(planned.skipped),
+                        "unknown_tags": list(planned.unknown_tags),
+                        "undelivered": list(planned.undelivered),
+                        "catalog_gaps": [dict(gap) for gap in planned.catalog_gaps],
+                        "spec_digest": spec_digest(planned.spec),
+                    },
+                )
+            finalized = _finalize_spec_layout(planned.spec)
+            new_layout = materialize_canonical_layout(finalized, document_id=document_id)
+        except SemanticSourceVersionError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail={"code": exc.code, "message": str(exc)},
+            ) from exc
+        except SemanticSourceUnavailableError as exc:
+            raise HTTPException(
+                status_code=422, detail={"code": exc.code, "message": str(exc)}
+            ) from exc
+        except TypesafeError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail()) from exc
+        except DocumentNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=f"document not found: {exc.args[0]}") from exc
+        except (SemanticTopologyIngressError, SymbolGeometryError) as exc:
+            raise HTTPException(
+                status_code=422,
+                detail=f"这句话规划出的图纸引擎目前画不了：{exc}",
+            ) from exc
+
+        payload: dict[str, Any] = {
+            "document_id": document_id,
+            "committed": False,
+            "revision": None,
+            "spec": planned.spec.model_dump(mode="json"),
+            "canonical_layout_digest": finalized.canonical_layout_digest,
+            "materialization_digest": new_layout.materialization_digest,
+            "notes": list(planned.notes),
+            "skipped": list(planned.skipped),
+            "unknown_tags": list(planned.unknown_tags),
+            "completeness": planned.completeness,
+            "undelivered": list(planned.undelivered),
+            "catalog_gaps": [dict(gap) for gap in planned.catalog_gaps],
+            "spec_digest": spec_digest(planned.spec),
+            "edited_from_revision": record.revision,
+            "edited_from_spec_digest": record.spec_digest,
+            "model": planned.model,
+            "latency_ms": planned.latency_ms,
+            "question_count": planned.question_count,
+            "judgment_count": planned.judgment_count,
+        }
+        if request.dry_run:
+            return TextPlanResult(**payload)
+
+        current = service.get_document(document_id)
+        audit = AuditContext(
+            actor="web-user",
+            surface="rest",
+            tool_name="edit_text_plan",
+            session_id=session.id,
+            provider=typesafe_config.base_url,
+            model=typesafe_config.model,
+            validation_status="valid",
+            metadata={
+                "workflow": "nl-text-edit",
+                "sentence": request.sentence.strip(),
+                "layout_contract_version": M7_LAYOUT_CONTRACT_VERSION,
+            },
+        )
+        try:
+            applied = apply_redraw(
+                service,
+                document_id=document_id,
+                expected_revision=current.revision,
+                prior=prior_layout,
+                new=new_layout,
+                new_spec=planned.spec,
+                base_record=record,
+                audit=audit,
+                label=f"NL 改图：{request.sentence.strip()[:40]}",
+            )
+        except RedrawTargetDriftError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except MaterializationCanvasError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except MaterializationError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+        if diagnostics is not None:
+            diagnostics.emit(
+                "nl.text_edit.completed",
+                document_id=document_id,
+                session_id=session.id,
+                duration_ms=round((perf_counter() - started) * 1000, 2),
+                committed=True,
+                revision=applied.document.revision,
+                entity_count=len(planned.spec.entities),
+                connection_count=len(planned.spec.connections),
+                canonical_layout_digest=finalized.canonical_layout_digest,
+                materialization_digest=new_layout.materialization_digest,
+            )
+        return TextPlanResult(
+            **{
+                **payload,
+                "committed": True,
+                "revision": applied.document.revision,
+                "replaced_from_materialization_digest": prior_layout.materialization_digest,
+            }
         )
 
     @router.post("/documents/{document_id}/agent/plan-v2-stream")

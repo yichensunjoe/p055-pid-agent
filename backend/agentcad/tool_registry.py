@@ -686,6 +686,34 @@ def get_default_tool_registry() -> ToolRegistry:
                 tags=["draw", "natural-language", "m7", "engineering-change"],
             ),
             ToolDefinition(
+                name="edit_text_plan",
+                description=(
+                    "Redraw one existing P&ID from a single natural-language sentence: the "
+                    "stored DiagramSpec is the source the sentence edits (never the drawing's "
+                    "pixels), the frozen deterministic chain recomputes the whole drawing, "
+                    "and one governed transaction replaces the prior materialization "
+                    "exactly -- refused before the write when the revision or source digest "
+                    "is stale, or when the document drifted from the prior materialization. "
+                    "A dry_run previews the edit and the redraw without writing."
+                ),
+                input_schema=_object_schema(
+                    "Document id, the sentence, expected revision, base spec digest, "
+                    "provider config, and the dry_run flag."
+                ),
+                output_schema=_object_schema(
+                    "The committed revision, the full edited specification, layout "
+                    "identities, redraw lineage, and the notes/skipped report."
+                ),
+                permission="allow",
+                risk="engineering_change",
+                has_side_effect=True,
+                preview_supported=True,
+                idempotency="depends_on_revision",
+                audit_event="tool.edit_text_plan",
+                surfaces=["rest"],
+                tags=["draw", "natural-language", "m7", "redraw", "engineering-change"],
+            ),
+            ToolDefinition(
                 name="undo_document",
                 description="Undo the latest document edit at an expected revision.",
                 input_schema=RevisionToolInput.model_json_schema(),

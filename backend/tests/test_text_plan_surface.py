@@ -111,6 +111,16 @@ def test_a_sentence_becomes_a_committed_drawing_with_identity(client: TestClient
         contract.M7_LAYOUT_CONTRACT_VERSION
     )
 
+    # The semantic source is committed as the same transaction's companion: the row is
+    # there, stamped with the committed revision, and digest-matched to the spec that
+    # was drawn -- not to a re-serialization that could drift from what the model read.
+    from agentcad.m7_semantic_specs import spec_digest
+
+    source = service.store.semantic_spec(document_id, 1)
+    assert source is not None, "the first drawing commits its semantic source atomically"
+    assert source.spec_digest == spec_digest(source.spec)
+    assert {entity.tag for entity in source.spec.entities} == {"V-101", "P-101"}
+
 
 def test_dry_run_plans_and_finalizes_without_touching_the_document(client: TestClient) -> None:
     document_id = _new_document(client)

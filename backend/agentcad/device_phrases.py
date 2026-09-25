@@ -46,6 +46,13 @@ CONNECT_VERBS = (
     "接到", "连到", "连接到", "连接", "接入", "管线", "管道", "连线",
     "connect", "pipe", "line to",
 )
+#: Removal clauses name what goes away. A removal target is data, not a judgment: the tag
+#: the sentence spells out is looked up in the current spec, and a tag that is not there is
+#: receipted, never guessed.
+REMOVE_VERBS = (
+    "删除", "删掉", "去掉", "移除", "拿走",
+    "remove", "delete",
+)
 CLAUSE_BREAK = re.compile(r"[，,;；。\n]+")
 
 #: An engineering tag written in the sentence: ``V-101``, ``PT-101``, ``X-301A``. Read by code
@@ -89,6 +96,8 @@ def split_clauses(prompt: str) -> list[Clause]:
             clauses.append(Clause(text=text, kind="connect"))
         elif any(verb in lowered for verb in ADD_VERBS):
             clauses.append(Clause(text=text, kind="add"))
+        elif any(verb in lowered for verb in REMOVE_VERBS):
+            clauses.append(Clause(text=text, kind="remove"))
         else:
             clauses.append(Clause(text=text, kind="unknown"))
     return clauses
@@ -177,6 +186,7 @@ __all__ = [
     "ADD_VERBS",
     "CLAUSE_BREAK",
     "CONNECT_VERBS",
+    "REMOVE_VERBS",
     "MAX_CANDIDATES",
     "MAX_CONNECTION_CANDIDATES",
     "SYMBOL_HINTS",

@@ -23,6 +23,7 @@ from .m6_candidate_models import (
     ReviewDecision,
     SemanticCandidate,
 )
+from .m7_semantic_specs import SemanticSpecRecord, record_from_row, spec_payload
 from .m7_synthesis_models import PROPOSAL_EVIDENCE_TABLE, SynthesisProposalEvidence
 from .models import Document, DocumentSummary, HistoryEntry
 from .project_io import ProjectSettings
@@ -90,6 +91,7 @@ class SQLiteDocumentStore:
         tool_call: ToolCallRecord | None = None,
         approval: ToolApproval | None = None,
         session: AgentSession | None = None,
+        semantic_spec: SemanticSpecRecord | None = None,
     ) -> None:
         """Write the document revision and all of its provenance atomically.
 
@@ -97,6 +99,10 @@ class SQLiteDocumentStore:
         semantic diff), audit record, tool call completion and approval consumption
         are committed in one SQLite transaction. A crash or failure therefore can
         never leave a revision without its evidence, or a half-updated tool call.
+
+        ``semantic_spec`` is the same transaction's companion, never a second write:
+        a drawing revision and its semantic source are committed together or not at
+        all, so the two can never disagree about having happened.
         """
         document = stored.document
         values = (
@@ -172,10 +178,68 @@ class SQLiteDocumentStore:
                     self._write_tool_approval(connection, approval)
                 if session is not None:
                     self._write_agent_session(connection, session)
+                if semantic_spec is not None:
+                    # The row is stamped with the revision this transaction actually
+                    # committed: a caller that had to *predict* the next revision would
+                    # be building the record on a guess, and this write refuses that
+                    # shape by construction.
+                    if semantic_spec.document_id != document.id:
+                        raise StoreRevisionConflictError(
+                            f"semantic spec names document {semantic_spec.document_id!r} "
+                            f"but this transaction commits {document.id!r}"
+                        )
+                    connection.execute(
+                        """
+                        INSERT INTO m7_semantic_specs (
+                            document_id, revision, spec_schema_version, spec_json,
+                            spec_digest, chain_versions_json
+                        ) VALUES (?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            semantic_spec.document_id,
+                            document.revision,
+                            semantic_spec.spec_schema_version,
+                            spec_payload(semantic_spec.spec),
+                            semantic_spec.spec_digest,
+                            self._encode(semantic_spec.chain_versions),
+                        ),
+                    )
                 connection.commit()
             except Exception:
                 connection.rollback()
                 raise
+
+    def semantic_spec(self, document_id: str, revision: int) -> SemanticSpecRecord | None:
+        """The stored source for one revision, or ``None`` when the revision predates it."""
+
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT document_id, revision, spec_schema_version, spec_json,
+                       spec_digest, chain_versions_json
+                FROM m7_semantic_specs
+                WHERE document_id = ? AND revision = ?
+                """,
+                (document_id, revision),
+            ).fetchone()
+        return record_from_row(row)
+
+    def latest_semantic_spec(self, document_id: str) -> SemanticSpecRecord | None:
+        """The newest stored source row: the only version ``text-edit`` may edit."""
+
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT document_id, revision, spec_schema_version, spec_json,
+                       spec_digest, chain_versions_json
+                FROM m7_semantic_specs
+                WHERE document_id = ?
+                ORDER BY revision DESC
+                LIMIT 1
+                """,
+                (document_id,),
+            ).fetchone()
+        return record_from_row(row)
 
     def document_ids(self) -> set[str]:
         with self._lock, self._connect() as connection:

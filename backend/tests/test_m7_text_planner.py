@@ -186,6 +186,44 @@ def test_a_catalogue_gap_is_reported_never_widened_into_a_judgment() -> None:
     assert any("目录" in item and "FV-101" in item for item in plan.undelivered)
 
 
+def test_a_catalogue_gap_carries_the_frozen_machine_visible_record() -> None:
+    """The gap is a structured record with exactly the synthesis contract's frozen fields:
+    what was asked, under which tag, in which clause, and what the catalogue does carry."""
+
+    from agentcad.m7_synthesis_contract import CATALOG_GAP_REQUIRED_FIELDS
+
+    plan = _planner(_Recorder()).plan(
+        "添加一个仪表 FV-101，添加一个塔 T-101",
+        typesafe_config=_config(),
+    )
+    assert len(plan.catalog_gaps) == 1
+    (gap,) = plan.catalog_gaps
+    assert tuple(gap) == CATALOG_GAP_REQUIRED_FIELDS
+    assert gap["requested_type"] == "仪表"
+    assert gap["requested_tag"] == "FV-101"
+    assert gap["source_requirement"] == "添加一个仪表 FV-101"
+    assert gap["available_alternatives"], "the record shows what the catalogue does carry"
+    assert all(set(row) == {"key", "name", "category"} for row in gap["available_alternatives"])
+
+
+def test_a_connection_naming_an_unknown_tag_is_never_substituted() -> None:
+    """The clause names P-999 and only T-101 / V-201 exist. Old behaviour paired the known end
+    with the other declared device -- even deterministically, with no judgment. A named-but-
+    undeclared tag is a requirement, not a wildcard: no candidate, no connection, a receipt."""
+
+    recorder = _Recorder()
+    plan = _planner(recorder).plan(
+        "添加一个塔 T-101，添加一个罐 V-201，把 T-101 接到 P-999",
+        typesafe_config=_config(),
+    )
+    assert plan.unknown_tags == ("P-999",)
+    assert plan.spec.connections == []
+    assert plan.completeness == "partial"
+    assert any("把 T-101 接到 P-999" in item for item in plan.undelivered)
+    for payload in recorder.payloads:
+        assert "cn_1" not in payload["questions"], "no endpoint judgment may be asked"
+
+
 def test_every_clause_is_delivered_or_receipted_in_sentence_order() -> None:
     """The ledger plus the spec covers the input exactly: three clauses in, three accounted."""
 

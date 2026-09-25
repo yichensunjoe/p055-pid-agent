@@ -133,6 +133,7 @@ export type TextPlanResult = {
   unknown_tags: string[];
   completeness: string;
   undelivered: string[];
+  catalog_gaps: Array<Record<string, unknown>>;
   model: string;
   latency_ms: number;
   question_count: number;

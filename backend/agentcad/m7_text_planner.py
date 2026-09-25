@@ -36,6 +36,7 @@ from .device_phrases import (
     MAX_CONNECTION_CANDIDATES,
     Clause,
     SymbolCandidate,
+    available_alternatives,
     candidate_symbols,
     extract_tags,
     matched_hints,
@@ -100,6 +101,9 @@ class PlannedEntity:
     chosen_symbol_key: str = ""
     confidence: float = 1.0
     decided_by: str = "lookup"  # "lookup" | "judgment" | "uncertain"
+    #: The clause this entity was declared by, verbatim. A catalogue-gap receipt names it as the
+    #: source requirement, so the record must carry what the sentence actually said.
+    source_clause: str = ""
     #: The clause named a kind the catalogue does not carry (matched hint, zero rows). This is a
     #: catalogue gap, recorded so completeness can say partial -- never widened into a choice
     #: among symbols the sentence did not ask for.
@@ -152,6 +156,11 @@ class PlannedDiagram:
     completeness: Completeness = "complete"
     #: One receipt per input clause that nothing in the spec honours, in sentence order.
     undelivered: tuple[str, ...] = ()
+    #: The machine-visible catalogue-gap records (schema = the synthesis contract's
+    #: CATALOG_GAP_REQUIRED_FIELDS): what was asked, under which tag, in which clause, and
+    #: what the catalogue does carry. ``available_alternatives`` is reporting only; it never
+    #: flows back into a judgment's candidates.
+    catalog_gaps: tuple[dict, ...] = ()
 
 
 def _slug(text: str) -> str:
@@ -250,6 +259,7 @@ class TypesafeDiagramSpecPlanner:
                     candidates=candidates,
                     chosen_symbol_key=symbol_key,
                     decided_by=decided_by,
+                    source_clause=clause.text,
                     catalog_gap=catalog_gap,
                 )
             )
@@ -273,11 +283,17 @@ class TypesafeDiagramSpecPlanner:
 
         A connection has a direction, and the only thing in the sentence that says which end is
         which is the order the tags were written in -- so a clause naming two tags needs no
-        judgment at all.
+        judgment at all. But a tag the sentence *wrote* that no device declares is a named
+        requirement, not a wildcard: pairing the known end with some other declared device
+        would substitute a connection the user never asked for, so the candidate set is empty
+        and the clause is receipted instead.
         """
 
         by_tag = {entity.tag: entity for entity in entities}
         named = [tag for tag in extract_tags(clause.text) if tag in by_tag]
+        mentioned = extract_tags(clause.text)
+        if any(tag not in by_tag for tag in mentioned):
+            return ()
         if len(named) >= 2:
             return ((by_tag[named[0]].engineering_id, by_tag[named[1]].engineering_id),)
         if len(named) == 1:
@@ -418,11 +434,31 @@ class TypesafeDiagramSpecPlanner:
         # model may not pick a look-alike the sentence did not ask for.
         undelivered: list[str] = [f"无法理解的子句：「{clause.text}」" for clause in unknown_clauses]
         delivered_entities = {entity.engineering_id for entity in spec.entities}
+        catalog_gaps: list[dict] = []
         for entity in entities:
             if entity.engineering_id in delivered_entities:
                 continue
             if entity.catalog_gap:
                 undelivered.append(f"「{entity.phrase}」（位号 {entity.tag}）：目录里没有这类设备的符号。")
+                # The machine-visible record the synthesis contract freezes: what was asked,
+                # under which tag, in which clause, and what the catalogue does carry. The
+                # alternatives are for a human to read into a replan; they never flow back into
+                # a judgment's candidate set.
+                catalog_gaps.append(
+                    {
+                        "requested_type": entity.phrase,
+                        "requested_tag": entity.tag,
+                        "source_requirement": entity.source_clause,
+                        "available_alternatives": [
+                            {
+                                "key": row.key,
+                                "name": row.name,
+                                "category": row.category,
+                            }
+                            for row in available_alternatives(self.symbols)
+                        ],
+                    }
+                )
             else:
                 undelivered.append(f"「{entity.phrase}」（位号 {entity.tag}）没有被兑现。")
         delivered_connections = {connection.engineering_id for connection in spec.connections}
@@ -470,6 +506,7 @@ class TypesafeDiagramSpecPlanner:
             unknown_tags=unknown,
             completeness=completeness,
             undelivered=tuple(undelivered),
+            catalog_gaps=tuple(catalog_gaps),
         )
 
     def _resolve_entity(

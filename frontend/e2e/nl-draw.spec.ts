@@ -30,6 +30,7 @@ const DRAW_RESULT = {
   unknown_tags: [],
   completeness: "complete",
   undelivered: [],
+  catalog_gaps: [],
   model: "judge-stub",
   latency_ms: 3,
   question_count: 2,

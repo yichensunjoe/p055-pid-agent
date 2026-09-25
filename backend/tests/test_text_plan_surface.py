@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 
 from agentcad import m7_layout_contract as contract
 from agentcad.config import Settings
+from agentcad.m7_synthesis_contract import CATALOG_GAP_REQUIRED_FIELDS
 from agentcad.main import create_app
 from agentcad.surface_contract import http_binding
 from agentcad.typesafe import TypesafeClient
@@ -227,6 +228,7 @@ def test_a_partial_plan_cannot_be_committed_and_changes_nothing(client: TestClie
     assert detail["code"] == "typesafe_spec_partial"
     assert detail["completeness"] == "partial"
     assert detail["undelivered"], "the receipt must name what the sentence did not get"
+    assert detail["catalog_gaps"] == [], "no catalogue gap in this scenario"
 
     service = client.app.state.service
     assert service.get_document(document_id).revision == 0
@@ -246,6 +248,32 @@ def test_dry_run_may_be_partial_and_names_what_is_missing(client: TestClient) ->
     assert result["committed"] is False
     assert result["completeness"] == "partial"
     assert any("说明一下布局" in item for item in result["undelivered"])
+    service = client.app.state.service
+    assert service.get_document(document_id).revision == 0
+
+
+def test_dry_run_returns_the_machine_visible_catalogue_gap(client: TestClient) -> None:
+    """A catalogue gap rides the API as the contract's frozen record, not only as prose: a
+    downstream replan can read requested_type/tag/source_requirement and what exists."""
+
+    document_id = _new_document(client)
+    response = _draw(
+        client,
+        document_id,
+        "添加一个缓冲罐 V-101，添加一台燃料盐泵 P-101，添加一个仪表 FV-101，把 V-101 接到 P-101",
+        dry_run=True,
+    )
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result["completeness"] == "partial"
+    assert [entity["tag"] for entity in result["spec"]["entities"]] == ["V-101", "P-101"]
+    assert len(result["spec"]["connections"]) == 1
+    assert len(result["catalog_gaps"]) == 1
+    (gap,) = result["catalog_gaps"]
+    assert tuple(gap) == CATALOG_GAP_REQUIRED_FIELDS
+    assert gap["requested_tag"] == "FV-101"
+    assert gap["source_requirement"] == "添加一个仪表 FV-101"
+    assert gap["available_alternatives"]
     service = client.app.state.service
     assert service.get_document(document_id).revision == 0
 

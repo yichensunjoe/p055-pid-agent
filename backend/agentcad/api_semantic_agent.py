@@ -132,6 +132,9 @@ class TextPlanResult(StrictModel):
     #: through ``undelivered``.
     completeness: str = "complete"
     undelivered: list[str] = Field(default_factory=list)
+    #: Machine-visible catalogue-gap records (schema = CATALOG_GAP_REQUIRED_FIELDS). The
+    #: alternatives are reporting only; they never become judgment candidates.
+    catalog_gaps: list[dict] = Field(default_factory=list)
     canonical_layout_digest: str
     materialization_digest: str
     notes: list[str]
@@ -613,6 +616,7 @@ def create_semantic_agent_router(
                         "skipped": list(planned.skipped),
                         "unknown_tags": list(planned.unknown_tags),
                         "undelivered": list(planned.undelivered),
+                        "catalog_gaps": [dict(gap) for gap in planned.catalog_gaps],
                     },
                 )
             finalized = _finalize_spec_layout(planned.spec)
@@ -642,6 +646,7 @@ def create_semantic_agent_router(
             "unknown_tags": list(planned.unknown_tags),
             "completeness": planned.completeness,
             "undelivered": list(planned.undelivered),
+            "catalog_gaps": [dict(gap) for gap in planned.catalog_gaps],
             "model": planned.model,
             "latency_ms": planned.latency_ms,
             "question_count": planned.question_count,

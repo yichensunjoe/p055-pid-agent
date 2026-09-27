@@ -22,6 +22,26 @@ HIDDEN_BUILTIN_SYMBOL_KEYS: dict[str, frozenset[str]] = {
 }
 
 
+def port_side(width: float, height: float, x: float, y: float) -> str:
+    """Which box side a port sits on: the single canonical side rule.
+
+    Nearest edge wins; a port within ``max(1, 8% of the short side)`` of that edge
+    belongs to it, anything further in is ``interior``. Port selection, the prompt
+    catalog and every renderer read this one implementation -- a second top/side
+    rule is exactly how "left" quietly becomes "top" somewhere else.
+    """
+
+    distances = {
+        "left": abs(x),
+        "right": abs(width - x),
+        "top": abs(y),
+        "bottom": abs(height - y),
+    }
+    side, distance = min(distances.items(), key=lambda item: (item[1], item[0]))
+    tolerance = max(1.0, min(width, height) * 0.08)
+    return side if distance <= tolerance else "interior"
+
+
 class SymbolCatalogLoadError(ValueError):
     def __init__(
         self,
@@ -197,17 +217,6 @@ class SymbolRegistry:
             raise KeyError(f"unknown symbol: {key}") from exc
 
     def as_prompt_catalog(self) -> str:
-        def port_side(symbol: SymbolDefinition, x: float, y: float) -> str:
-            distances = {
-                "left": abs(x),
-                "right": abs(symbol.width - x),
-                "top": abs(y),
-                "bottom": abs(symbol.height - y),
-            }
-            side, distance = min(distances.items(), key=lambda item: (item[1], item[0]))
-            tolerance = max(1.0, min(symbol.width, symbol.height) * 0.08)
-            return side if distance <= tolerance else "interior"
-
         rows = [
             "Catalog and selection contract:",
             "- Match the user's exact equipment and valve function; never use a visually similar generic symbol when an exact catalog symbol exists.",
@@ -222,7 +231,7 @@ class SymbolRegistry:
         for symbol in self.list():
             ports = ", ".join(
                 f"{port.id}:{port.name}[flow={port.direction},medium={port.medium},"
-                f"side={port_side(symbol, port.x, port.y)},offset=({port.x},{port.y})]"
+                f"side={port_side(symbol.width, symbol.height, port.x, port.y)},offset=({port.x},{port.y})]"
                 for port in symbol.ports
             ) or "none"
             capabilities = ", ".join(

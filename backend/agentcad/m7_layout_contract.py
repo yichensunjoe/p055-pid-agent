@@ -1093,6 +1093,14 @@ SYMBOL_GEOMETRY_PORT_FIELDS: tuple[str, ...] = (
     "normalized_y",
 )
 
+#: M7-Q2: the port's own name is frozen alongside the fact and resolves selector
+#: phrases, but it is *selector evidence*, not drawing geometry: it is excluded from
+#: the identity projection, so renaming a port can never move a layout digest, and a
+#: catalogue whose geometry is unchanged keeps byte-identical symbol-geometry identity
+#: across the Q2 boundary. Runtime-only fields must name a source and must never
+#: appear in SYMBOL_GEOMETRY_PORT_FIELDS.
+SYMBOL_GEOMETRY_PORT_RUNTIME_ONLY_FIELDS: tuple[str, ...] = ("name",)
+
 #: 「the symbol itself and where its ports are」 stays on this side of the line.
 SYMBOL_CATALOG_OWNS: tuple[str, ...] = (
     "symbol_key",
@@ -1168,6 +1176,7 @@ SYMBOL_GEOMETRY_FACT_SOURCES: tuple[tuple[str, str, str], ...] = (
 
 SYMBOL_GEOMETRY_PORT_FACT_SOURCES: tuple[tuple[str, str, str], ...] = (
     ("port_id", "ports[].id", "port_identities"),
+    ("name", "ports[].name", "port_identities"),
     ("direction", "ports[].direction", "port_directions"),
     ("medium", "ports[].medium", "port_identities"),
     ("normalized_x", "ports[].x / width", "port_anchors"),
@@ -1306,12 +1315,15 @@ PORT_ROLE_COMPATIBLE_DIRECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("source", ("out", "bidirectional")),
     ("target", ("in", "bidirectional")),
 )
-PORT_BINDING_RESOLUTIONS: tuple[str, ...] = ("explicit", "inferred_unique")
+#: M7-Q2: "selected" -- the sentence named the port through a selector phrase and code
+#: resolved it against the frozen port facts by declared predicates.
+PORT_BINDING_RESOLUTIONS: tuple[str, ...] = ("explicit", "inferred_unique", "selected")
 PORT_BINDING_CODES: tuple[str, ...] = (
     "port_not_found",
     "port_direction_mismatch",
     "no_compatible_port",
     "ambiguous_port_binding",
+    "port_ambiguity",
 )
 PORT_BINDING_IS_RESOLVED_BEFORE_ROUTING = True
 ROUTING_CONSUMES_RESOLVED_BINDINGS_ONLY = True
@@ -2660,15 +2672,29 @@ def validate_contract() -> list[str]:
         problems.append("the snapshot must declare its facts")
     sources = (*SYMBOL_GEOMETRY_FACT_SOURCES, *SYMBOL_GEOMETRY_PORT_FACT_SOURCES)
     sourced_facts = {fact for fact, _, _ in sources}
-    for fact_field in (*SYMBOL_GEOMETRY_FACT_FIELDS, *SYMBOL_GEOMETRY_PORT_FIELDS):
+    for fact_field in (
+        *SYMBOL_GEOMETRY_FACT_FIELDS,
+        *SYMBOL_GEOMETRY_PORT_FIELDS,
+        *SYMBOL_GEOMETRY_PORT_RUNTIME_ONLY_FIELDS,
+    ):
         if fact_field not in sourced_facts:
             problems.append(
                 f"the declared snapshot fact {fact_field!r} names no catalogue source: a fact "
                 "nobody reads from anywhere is a fact nobody checks"
             )
-    for fact, source, owner in sources:
-        if fact not in SYMBOL_GEOMETRY_FACT_FIELDS + SYMBOL_GEOMETRY_PORT_FIELDS:
+    for fact, _source, _owner in sources:
+        if fact not in (
+            *SYMBOL_GEOMETRY_FACT_FIELDS,
+            *SYMBOL_GEOMETRY_PORT_FIELDS,
+            *SYMBOL_GEOMETRY_PORT_RUNTIME_ONLY_FIELDS,
+        ):
             problems.append(f"the snapshot fact source {fact!r} is not a declared fact field")
+    overlap = set(SYMBOL_GEOMETRY_PORT_FIELDS) & set(SYMBOL_GEOMETRY_PORT_RUNTIME_ONLY_FIELDS)
+    if overlap:
+        problems.append(
+            f"runtime-only selector evidence leaked into geometry identity: {sorted(overlap)}"
+        )
+    for fact, source, owner in sources:
         root = source.split(".", 1)[0].split("[", 1)[0]
         if root not in SYMBOL_CATALOG_SOURCE_FIELDS:
             problems.append(
@@ -2865,7 +2891,7 @@ def validate_contract() -> list[str]:
                 f"the {role} rule must accept a bidirectional port: a symbol that can flow both "
                 "ways is not thereby unusable"
             )
-    if sorted(PORT_BINDING_RESOLUTIONS) != ["explicit", "inferred_unique"]:
+    if sorted(PORT_BINDING_RESOLUTIONS) != ["explicit", "inferred_unique", "selected"]:
         problems.append(
             f"port bindings are explicit or uniquely inferred, found {list(PORT_BINDING_RESOLUTIONS)}"
         )
@@ -3657,8 +3683,31 @@ def validate_contract() -> list[str]:
         problems.append(
             "a redraw must prove the target is exactly the prior materialization"
         )
+    if not PHASE_6_SELECTOR_IS_RESOLUTION_INPUT_NOT_IDENTITY:
+        problems.append("a selector is resolution input, never drawing identity")
+    if not PHASE_6_NEVER_DEFAULTS_TO_FIRST_CANDIDATE:
+        problems.append("a port ambiguity must never default to the first candidate")
+    if not PHASE_6_MODEL_IS_NEVER_ASKED_ABOUT_PORTS:
+        problems.append("the model must never be asked about ports")
 
     return problems
+
+
+# --------------------------------------------------------------------------------------
+# §18 Phase 6: governed port ambiguity. A multi-port endpoint the sentence does not name
+#      uniquely refuses with a machine-readable receipt; a fuller sentence resolves by
+#      declared predicates over frozen port facts -- never a default, never the model.
+# --------------------------------------------------------------------------------------
+
+PHASE_6_NAME = "M7 Phase-6 — Governed Port Ambiguity Receipt"
+#: The selector travels beside the specification into resolution; the resolved port is
+#: the identity that enters the spec. No digest may see the phrase.
+PHASE_6_SELECTOR_IS_RESOLUTION_INPUT_NOT_IDENTITY = True
+#: Zero survivors and many survivors are both reported; picking the first candidate is
+#: the forbidden derivation this phase exists to keep reported.
+PHASE_6_NEVER_DEFAULTS_TO_FIRST_CANDIDATE = True
+#: Port questions are never offered to the model; the selector grammar is code.
+PHASE_6_MODEL_IS_NEVER_ASKED_ABOUT_PORTS = True
 
 
 if __name__ == "__main__":  # pragma: no cover - manual review entry point

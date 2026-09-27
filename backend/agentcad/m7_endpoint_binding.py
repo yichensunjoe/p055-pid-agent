@@ -47,7 +47,12 @@ from .m7_symbol_geometry import (
 
 
 class PortBindingError(SymbolGeometryError):
-    """An endpoint whose port cannot be resolved to exactly one real port."""
+    """An endpoint whose port cannot be resolved to exactly one real port.
+
+    ``record`` is the machine-readable M7-Q2 receipt for the ambiguity family of
+    refusals; the human-facing ``code``/``message`` stay exactly what they were, so
+    existing callers and tests see unchanged behaviour.
+    """
 
     def __init__(
         self,
@@ -57,6 +62,7 @@ class PortBindingError(SymbolGeometryError):
         connection_id: str = "",
         role: str = "",
         candidates: tuple[str, ...] = (),
+        record: Any = None,
     ) -> None:
         if code not in PORT_BINDING_CODES:
             raise AssertionError(
@@ -66,6 +72,8 @@ class PortBindingError(SymbolGeometryError):
         self.connection_id = connection_id
         self.role = role
         self.candidates = candidates
+        self.record = record
+
         rendered = message
         if candidates:
             rendered = f"{message} (candidates: {list(candidates)})"
@@ -139,8 +147,14 @@ def bind_endpoint(
     fact: SymbolGeometryFact,
     declared_port_id: str,
     node_kind: str = "",
+    port_selector_raw: str = "",
 ) -> ResolvedEndpointBinding:
-    """The port one endpoint uses, or the refusal that names what is wrong with the reference."""
+    """The port one endpoint uses, or the refusal that names what is wrong with the reference.
+
+    ``port_selector_raw`` is the M7-Q2 selector phrase from the sentence (「V-101 的顶部
+    管口」). It is parsed by code into conjunctive predicates over the frozen port facts;
+    exactly one surviving candidate binds, zero and many are reported -- never a default.
+    """
 
     allowed = compatible_directions(role)
     declared = (declared_port_id or "").strip()
@@ -189,14 +203,82 @@ def bind_endpoint(
             role=role,
         )
     if len(candidates) > 1:
+        from .m7_port_selectors import (
+            REASON_MISSING_SELECTOR,
+            REASON_NO_MATCH,
+            REASON_STILL_AMBIGUOUS,
+            PortAmbiguityRecord,
+            candidate_hints,
+            parse_selector,
+            resolve_with_selector,
+        )
+
+        parsed = parse_selector(port_selector_raw)
+        if parsed is None:
+            # No selector in the sentence: the frozen hard refusal, byte-identical in
+            # code and message -- with the machine-readable receipt attached alongside.
+            raise PortBindingError(
+                "ambiguous_port_binding",
+                f"connection {connection_id!r} {role} names no port, and symbol "
+                f"{fact.symbol_key!r} offers {len(candidates)} compatible ports; a unique inference "
+                "is a derivation and this is not one",
+                connection_id=connection_id,
+                role=role,
+                candidates=candidates,
+                record=PortAmbiguityRecord(
+                    reason=REASON_MISSING_SELECTOR,
+                    source_requirement="",
+                    role=role,
+                    element_tag="",
+                    symbol_key=fact.symbol_key,
+                    selector=None,
+                    candidates=candidate_hints(
+                        ports=tuple(
+                            port for port in fact.ports if port.direction in allowed
+                        ),
+                        width=fact.intrinsic_width,
+                        height=fact.intrinsic_height,
+                    ),
+                ),
+            )
+        surviving, hints = resolve_with_selector(
+            ports=fact.ports,
+            allowed_directions=allowed,
+            selector=parsed,
+            width=fact.intrinsic_width,
+            height=fact.intrinsic_height,
+        )
+        if len(surviving) == 1:
+            port = surviving[0]
+            return ResolvedEndpointBinding(
+                connection_id=connection_id,
+                role=role,
+                node_id=node_id,
+                symbol_key=fact.symbol_key,
+                port_id=port.port_id,
+                direction=port.direction,
+                medium=port.medium,
+                resolution="selected",
+                node_kind=node_kind,
+            )
+        reason = REASON_NO_MATCH if not surviving else REASON_STILL_AMBIGUOUS
         raise PortBindingError(
-            "ambiguous_port_binding",
-            f"connection {connection_id!r} {role} names no port, and symbol "
-            f"{fact.symbol_key!r} offers {len(candidates)} compatible ports; a unique inference "
-            "is a derivation and this is not one",
+            "port_ambiguity",
+            f"connection {connection_id!r} {role}: selector "
+            f"{port_selector_raw!r} on symbol {fact.symbol_key!r} "
+            + ("matched no compatible port" if not surviving else f"still matches {len(surviving)} ports"),
             connection_id=connection_id,
             role=role,
-            candidates=candidates,
+            candidates=tuple(port.port_id for port in surviving),
+            record=PortAmbiguityRecord(
+                reason=reason,
+                source_requirement="",
+                role=role,
+                element_tag="",
+                symbol_key=fact.symbol_key,
+                selector=parsed,
+                candidates=hints,
+            ),
         )
     port = fact.port(candidates[0])
     assert port is not None  # the candidate came from this fact
@@ -218,6 +300,7 @@ def resolve_endpoint_bindings(
     connections: Any,
     nodes: Any,
     snapshot: SymbolGeometrySnapshot,
+    port_selectors: dict[tuple[str, str], str] | None = None,
 ) -> tuple[ResolvedEndpointBinding, ...]:
     """One binding per connection endpoint, sorted so the result is a canonical sequence.
 
@@ -256,6 +339,9 @@ def resolve_endpoint_bindings(
                     fact=facts[node_id],
                     declared_port_id=str(getattr(connection, port_field) or ""),
                     node_kind=node.kind,
+                    port_selector_raw=str(
+                        (port_selectors or {}).get((connection.connection_id, role), "")
+                    ),
                 )
             )
     return tuple(sorted(bindings, key=lambda binding: binding.key))

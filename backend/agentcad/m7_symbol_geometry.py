@@ -243,12 +243,16 @@ class SymbolPortGeometry:
     """One port, as the catalogue states it: identity, semantics, and a normalized anchor."""
 
     port_id: str
+    name: str
     direction: str
     medium: str
     normalized_x: float
     normalized_y: float
 
     def to_projection(self) -> dict[str, Any]:
+        # The identity projection excludes ``name``: port names are selector evidence,
+        # not drawing geometry. Renaming a port must not move any layout identity (the
+        # M7-Q2 gate froze this), so the catalog digest sees exactly what 18ec8c6 saw.
         return {
             "port_id": self.port_id,
             "direction": self.direction,
@@ -436,6 +440,7 @@ def _port_geometry(symbol: Any) -> tuple[SymbolPortGeometry, ...]:
                 port_id=port.id,
                 direction=port.direction,
                 medium=port.medium,
+                name=port.name,
                 normalized_x=_quantize(
                     _finite(float(port.x), symbol_key=symbol.key, what=f"port {port.id!r} x")
                     / width

@@ -2,7 +2,7 @@
 
 > 交接文档：每次开新会话先读本文件。更新规则见 `AGENTS.md`「HANDOFF 交接规则」。
 
-## 当前状态（2026-09-25/26 R34 —— **M7 自然语言纵切三块全部签 CLOSED 并落 main：`origin/main = ba4d447`（Phase-3 `28c4f96` → 第二块 `ad8cc93` → 第三块 `ba4d447`），main CI run `36162146013` 四 job 全绿（签署前 visual baselines 36160238735 同 SHA 已过）。产品纵切完整闭环：一句中文 → 完整 DiagramSpec → 确定性布局 → 受治理落图 r1；第二句中文 → 编辑语义源 S1 → 完整 S2 → 整图确定性重画 → 单事务原子切换 r2 → 既有 DXF/PDF 导出；全程模型无像素/坐标编辑权。未做的遗留（都属引擎 capability 边界，Gate 已裁不阻塞）：无连接图纸拒画、多候选端口符号不猜绑定、删到单设备撞无连接边界**）
+## 当前状态（2026-09-27 R35 —— **M7-Q1 真实模型产品资格验收完成，结论 FAILED—product defect（一处）：正向链与治理负例全 QUALIFIED，DXF 导出腿断**。基线 main @ ba4d447（本地树一致）；真实 UI + 真实 TypeSafe key（仅服务端环境变量，未记录）。句一出图 r1（complete）、句二改图 r2（complete，lineage 正确）、负例 422 receipt + revision 不动、spec store r1/r2 两行旧行未改写、PDF 正常（含图签 REVISION 2）。**缺陷**：`export-v2.dxf` 对 NL 图元（buffer_tank×2+fuel_salt_pump）报 `unsupported_symbol_path / symbol path has invalid coordinates`，空文档导出合法 DXF → 死在符号 path 坐标转换，不在纵切链路。证据包 `reports/q1-evidence/`（QUALIFICATION-REPORT.md + 截图/产物/audit-evidence.json），已回报 Gate 等修复线裁决**）
 
 - **Gate 裁定要点（2026-09-25 读回）**：主体全 PASS（writer 复用 / dry-run / 目标安全 / 审计 / 前端 / CI / 两个引擎边界维持原判）；
   P0-1 = partial 可提交（coherent ≠ complete）→ 已修：planner 出 **clause 级 completeness 账本**

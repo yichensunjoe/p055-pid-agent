@@ -1,0 +1,42 @@
+{
+  "r1": {
+    "m7": {
+      "adapter_topology_digest": "3872495987ce2c58a0601d18a82dcc4144f69a59906dc59c47a69d701b3ebc55",
+      "adapter_topology_digest_version": "m7-adapter-topology-digest/2",
+      "canonical_layout_digest": "b7c3658006677bfb254edc57adf7838dcbe43b796ed3b87965597a0e8f69fb39",
+      "diagram_spec_schema_version": "m7-diagram-spec/2",
+      "diagram_spec_semantic_digest": "9aaaf667df9c32f7d33662210eca340b9461e4798cbb67007800319d535ea1b5",
+      "layout_digest_version": "m7-layout-digest/2",
+      "layout_projection_version": "m7-layout-projection/1",
+      "materialization_digest": "a41401f0e06442524119bd9bab74866f8220774138f92c4edcf70634fa01a48b",
+      "materialization_digest_version": "m7-materialization-digest/1",
+      "materializer_version": "m7-materializer/1",
+      "symbol_geometry_catalog_digest": "7c83bcba22b87b2c557081be886d5d41d939b63bdf73856aacf76adccc9779b7",
+      "symbol_geometry_catalog_digest_version": "m7-symbol-geometry-catalog-digest/1"
+    },
+    "lineage": {},
+    "layout_contract_version": "m7-layout-contract/1"
+  },
+  "r2": {
+    "m7": {
+      "adapter_topology_digest": "dfc9195efdedf447a1b47dff6228eb6a37a0eea1ad92dfea72e7c574ae9549a8",
+      "adapter_topology_digest_version": "m7-adapter-topology-digest/2",
+      "canonical_layout_digest": "bd144824798ecae962115df305ded8a695b7a9aac5be0332021d822937944986",
+      "diagram_spec_schema_version": "m7-diagram-spec/2",
+      "diagram_spec_semantic_digest": "9dcfa4a1abbe802a487e57fae675f2775c5cd7a896f1b6e77732714bab84e01a",
+      "layout_digest_version": "m7-layout-digest/2",
+      "layout_projection_version": "m7-layout-projection/1",
+      "materialization_digest": "050e806392156fcbf9914337a47c9f4043d0fc60d0825ecd205484f30d5a6e4c",
+      "materialization_digest_version": "m7-materialization-digest/1",
+      "materializer_version": "m7-materializer/1",
+      "symbol_geometry_catalog_digest": "7c83bcba22b87b2c557081be886d5d41d939b63bdf73856aacf76adccc9779b7",
+      "symbol_geometry_catalog_digest_version": "m7-symbol-geometry-catalog-digest/1"
+    },
+    "lineage": {
+      "edited_from_revision": "1",
+      "edited_from_spec_digest": "ae19dc6b0c2673bc0839c1658b5f66cb38f76a1b4b3a76ee2a903b2a29eaa949",
+      "replaced_from_materialization_digest": "a41401f0e06442524119bd9bab74866f8220774138f92c4edcf70634fa01a48b"
+    },
+    "layout_contract_version": "m7-layout-contract/1"
+  }
+}

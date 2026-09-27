@@ -497,7 +497,9 @@ def _with_real_sizes(
 
 
 def materialize_semantic_layout(
-    plan: SemanticLayoutPlan, snapshot: SymbolGeometrySnapshot
+    plan: SemanticLayoutPlan,
+    snapshot: SymbolGeometrySnapshot,
+    port_selectors: dict[tuple[str, str], str] | None = None,
 ) -> SemanticLayoutPlan:
     """Step 3a: bind every node to frozen geometry, then keep or reflow the placement.
 
@@ -552,7 +554,10 @@ def materialize_semantic_layout(
 
     nodes = tuple(plan_node(plan, node_id, kind) for node_id, kind in plan.node_kinds)
     bindings = resolve_endpoint_bindings(
-        connections=plan.connections, nodes=nodes, snapshot=snapshot
+        connections=plan.connections,
+        nodes=nodes,
+        snapshot=snapshot,
+        port_selectors=port_selectors,
     )
     return replace(
         plan,

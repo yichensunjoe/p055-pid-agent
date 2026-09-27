@@ -31,6 +31,7 @@ from .m7_text_planner import (
     PlannedEntity,
     TypesafeDiagramSpecPlanner,
     _is_equipment,
+    attach_port_selectors,
 )
 
 
@@ -105,6 +106,7 @@ class TypesafeSpecEditor(TypesafeDiagramSpecPlanner):
             )
             for connection in connections
         ]
+        connections = attach_port_selectors(connections, labels)
 
         spec, undelivered, catalog_gaps = self._apply_edit(
             base_spec=base_spec,

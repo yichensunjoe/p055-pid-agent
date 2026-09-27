@@ -788,7 +788,7 @@ SNAPSHOT_CARRIES_LAYOUT_DECISIONS   = False
 ### 12.2 closure 身份：digest 覆盖的是「这张图用到的符号」，不是整个目录
 
 ```
-SYMBOL_GEOMETRY_CATALOG_DIGEST_VERSION   = m7-symbol-geometry-catalog-digest/1
+SYMBOL_GEOMETRY_CATALOG_DIGEST_VERSION   = m7-symbol-geometry-catalog-digest/2
 SYMBOL_GEOMETRY_DIGEST_INPUT_IS_THE_LAYOUT_CLOSURE = True
 SYMBOL_GEOMETRY_CLOSURE_IS_COMPLETE      = True
 MISSING_SYMBOL_GEOMETRY_IS_A_HARD_FAILURE_BEFORE_ROUTING = True
@@ -944,7 +944,7 @@ TEXT_METRICS_IS_NOT_A_SEPARATE_DIGEST_INPUT = True   （不新增顶层 text_met
 m7-diagram-spec/2
 m7-adapter-topology-digest/2
 m7-semantic-layout-plan-digest/4
-m7-symbol-geometry-catalog-digest/1
+m7-symbol-geometry-catalog-digest/2
 m7-layout-digest/2
 m7-layout-projection/1            （未变：canonical projection 字段集没有变）
 ```
@@ -1781,7 +1781,7 @@ MATERIALIZATION_PROVENANCE_VERSION_FIELDS = <上面所有 version 的去重并�
 ```
 diagram_spec_schema_version              = m7-diagram-spec/2
 adapter_topology_digest_version          = m7-adapter-topology-digest/2
-symbol_geometry_catalog_digest_version   = m7-symbol-geometry-catalog-digest/1
+symbol_geometry_catalog_digest_version   = m7-symbol-geometry-catalog-digest/2
 ```
 
 （其余四个：`layout_digest_version` / `layout_projection_version` / `materializer_version` / `materialization_digest_version`。）

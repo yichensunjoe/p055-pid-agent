@@ -1067,7 +1067,7 @@ PHASE_1_MAY_CHANGE_PRODUCTION_DRAWING_BEHAVIOUR = False
 #: drawings that differ because a symbol definition changed and two that differ because the
 #: spacing rules changed are different events, and a single version number cannot tell them
 #: apart.
-SYMBOL_GEOMETRY_CATALOG_DIGEST_VERSION = "m7-symbol-geometry-catalog-digest/1"
+SYMBOL_GEOMETRY_CATALOG_DIGEST_VERSION = "m7-symbol-geometry-catalog-digest/2"
 
 #: Every fact a frozen symbol carries, in the order the row is written. The list is closed on
 #: purpose: a new fact is a new snapshot version, not an extra key nobody reviews.
@@ -1085,8 +1085,13 @@ SYMBOL_GEOMETRY_FACT_FIELDS: tuple[str, ...] = (
 #: One port's geometry, as the catalogue states it. Anchors are *normalized* (fractions of the
 #: intrinsic size) because the engine may instantiate the symbol larger or smaller: an absolute
 #: anchor would only be correct at the catalogue's own size.
+#: M7-Q2: the port's own name joins the frozen fact. The selector layer resolves
+#: natural-language port references against frozen facts, not the live catalogue, and
+#: the receipt reports names; the digest version bump records that the frozen port
+#: shape changed (m7-symbol-geometry-catalog-digest/1 -> /2).
 SYMBOL_GEOMETRY_PORT_FIELDS: tuple[str, ...] = (
     "port_id",
+    "name",
     "direction",
     "medium",
     "normalized_x",
@@ -1168,6 +1173,7 @@ SYMBOL_GEOMETRY_FACT_SOURCES: tuple[tuple[str, str, str], ...] = (
 
 SYMBOL_GEOMETRY_PORT_FACT_SOURCES: tuple[tuple[str, str, str], ...] = (
     ("port_id", "ports[].id", "port_identities"),
+    ("name", "ports[].name", "port_identities"),
     ("direction", "ports[].direction", "port_directions"),
     ("medium", "ports[].medium", "port_identities"),
     ("normalized_x", "ports[].x / width", "port_anchors"),
@@ -1306,12 +1312,15 @@ PORT_ROLE_COMPATIBLE_DIRECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("source", ("out", "bidirectional")),
     ("target", ("in", "bidirectional")),
 )
-PORT_BINDING_RESOLUTIONS: tuple[str, ...] = ("explicit", "inferred_unique")
+#: M7-Q2: "selected" -- the sentence named the port through a selector phrase and code
+#: resolved it against the frozen port facts by declared predicates.
+PORT_BINDING_RESOLUTIONS: tuple[str, ...] = ("explicit", "inferred_unique", "selected")
 PORT_BINDING_CODES: tuple[str, ...] = (
     "port_not_found",
     "port_direction_mismatch",
     "no_compatible_port",
     "ambiguous_port_binding",
+    "port_ambiguity",
 )
 PORT_BINDING_IS_RESOLVED_BEFORE_ROUTING = True
 ROUTING_CONSUMES_RESOLVED_BINDINGS_ONLY = True
@@ -2865,7 +2874,7 @@ def validate_contract() -> list[str]:
                 f"the {role} rule must accept a bidirectional port: a symbol that can flow both "
                 "ways is not thereby unusable"
             )
-    if sorted(PORT_BINDING_RESOLUTIONS) != ["explicit", "inferred_unique"]:
+    if sorted(PORT_BINDING_RESOLUTIONS) != ["explicit", "inferred_unique", "selected"]:
         problems.append(
             f"port bindings are explicit or uniquely inferred, found {list(PORT_BINDING_RESOLUTIONS)}"
         )
@@ -3657,8 +3666,31 @@ def validate_contract() -> list[str]:
         problems.append(
             "a redraw must prove the target is exactly the prior materialization"
         )
+    if not PHASE_6_SELECTOR_IS_RESOLUTION_INPUT_NOT_IDENTITY:
+        problems.append("a selector is resolution input, never drawing identity")
+    if not PHASE_6_NEVER_DEFAULTS_TO_FIRST_CANDIDATE:
+        problems.append("a port ambiguity must never default to the first candidate")
+    if not PHASE_6_MODEL_IS_NEVER_ASKED_ABOUT_PORTS:
+        problems.append("the model must never be asked about ports")
 
     return problems
+
+
+# --------------------------------------------------------------------------------------
+# §18 Phase 6: governed port ambiguity. A multi-port endpoint the sentence does not name
+#      uniquely refuses with a machine-readable receipt; a fuller sentence resolves by
+#      declared predicates over frozen port facts -- never a default, never the model.
+# --------------------------------------------------------------------------------------
+
+PHASE_6_NAME = "M7 Phase-6 — Governed Port Ambiguity Receipt"
+#: The selector travels beside the specification into resolution; the resolved port is
+#: the identity that enters the spec. No digest may see the phrase.
+PHASE_6_SELECTOR_IS_RESOLUTION_INPUT_NOT_IDENTITY = True
+#: Zero survivors and many survivors are both reported; picking the first candidate is
+#: the forbidden derivation this phase exists to keep reported.
+PHASE_6_NEVER_DEFAULTS_TO_FIRST_CANDIDATE = True
+#: Port questions are never offered to the model; the selector grammar is code.
+PHASE_6_MODEL_IS_NEVER_ASKED_ABOUT_PORTS = True
 
 
 if __name__ == "__main__":  # pragma: no cover - manual review entry point

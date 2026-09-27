@@ -392,6 +392,7 @@ class SymbolPortGeometry:
     """One port, as the catalogue states it: identity, semantics, and a normalized anchor."""
 
     port_id: str
+    name: str
     direction: str
     medium: str
     normalized_x: float
@@ -399,6 +400,7 @@ class SymbolPortGeometry:
 
     def to_projection(self) -> dict[str, Any]:
         return {
+            "name": self.name,
             "port_id": self.port_id,
             "direction": self.direction,
             "medium": self.medium,
@@ -585,6 +587,7 @@ def _port_geometry(symbol: Any) -> tuple[SymbolPortGeometry, ...]:
                 port_id=port.id,
                 direction=port.direction,
                 medium=port.medium,
+                name=port.name,
                 normalized_x=_quantize(
                     _finite(float(port.x), symbol_key=symbol.key, what=f"port {port.id!r} x")
                     / width

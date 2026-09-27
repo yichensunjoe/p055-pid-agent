@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from .device_phrases import (
     MAX_CONNECTION_CANDIDATES,
@@ -125,6 +125,11 @@ class PlannedConnection:
     chosen: tuple[str, str] | None = None
     confidence: float = 1.0
     decided_by: str = "lookup"
+    #: M7-Q2: the raw selector phrase naming each endpoint's port (「V-101 的顶部管口」).
+    #: Travels beside the spec into the binding step; it is an input to resolution, never
+    #: part of the specification or any digest.
+    source_port_selector: str = ""
+    target_port_selector: str = ""
 
 
 @dataclass(frozen=True)
@@ -201,6 +206,61 @@ def _is_bare_kind(phrase: str) -> bool:
 
     lowered = normalise(phrase)
     return any(word == lowered for word in DEVICE_NOUNS)
+
+
+_PORT_SELECTOR_BREAK = ("接到", "连到", "连接到", "连接", "接入", "和", "与", "再", "，", ",", "；")
+
+
+def extract_port_selectors(clause: str) -> dict[str, str]:
+    """「TAG的PHRASE」 per tag: the raw port-selector phrase the sentence wrote for it.
+
+    The phrase runs from the possessive after the tag to the next tag, a connect verb or
+    the clause end. Pure string work, like everything else the sentence-reading half does.
+    """
+
+    selectors: dict[str, str] = {}
+    for tag in extract_tags(clause):
+        match = re.search(re.escape(tag) + r"\s*[的之]\s*(.+)$", clause)
+        if not match:
+            continue
+        phrase = match.group(1)
+        for other in extract_tags(clause):
+            if other != tag:
+                index = phrase.find(other)
+                if index > 0:
+                    phrase = phrase[:index]
+        for breaker in _PORT_SELECTOR_BREAK:
+            index = phrase.find(breaker)
+            if index > 0:
+                phrase = phrase[:index]
+        phrase = phrase.strip(" 的之，,；;。")
+        if phrase:
+            selectors[tag] = phrase
+    return selectors
+
+
+def attach_port_selectors(
+    connections: Sequence[PlannedConnection], labels: Mapping[str, str]
+) -> list[PlannedConnection]:
+    """Resolve each connection's selector phrases to its two endpoints, by the tags the
+    sentence wrote. Endpoints the phrase does not name carry no selector."""
+
+    attached: list[PlannedConnection] = []
+    for connection in connections:
+        if connection.chosen is None:
+            attached.append(connection)
+            continue
+        by_tag = extract_port_selectors(connection.phrase)
+        source_tag = labels.get(connection.chosen[0], "")
+        target_tag = labels.get(connection.chosen[1], "")
+        attached.append(
+            replace(
+                connection,
+                source_port_selector=by_tag.get(source_tag, ""),
+                target_port_selector=by_tag.get(target_tag, ""),
+            )
+        )
+    return attached
 
 
 class TypesafeDiagramSpecPlanner:
@@ -427,6 +487,7 @@ class TypesafeDiagramSpecPlanner:
             )
             for connection in connections
         ]
+        connections = attach_port_selectors(connections, labels)
 
         spec = self._spec(entities, connections)
         # Clause ledger: every declared device the spec does not carry is receipted, with the

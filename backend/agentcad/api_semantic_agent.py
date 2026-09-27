@@ -4,6 +4,7 @@ import asyncio
 import json
 import threading
 from dataclasses import dataclass
+from dataclasses import replace as dataclass_replace
 from time import perf_counter
 from typing import Any
 
@@ -40,6 +41,7 @@ from .harness_models import AgentSessionCreateRequest
 from .llm import PlannerError
 from .m7_diagram_adapter import adapt
 from .m7_diagram_spec import load_diagram_spec
+from .m7_endpoint_binding import PortBindingError
 from .m7_layout_contract import M7_LAYOUT_CONTRACT_VERSION
 from .m7_layout_materialization import (
     MaterializationCanvasError,
@@ -49,6 +51,7 @@ from .m7_layout_materialization import (
     materialize_canonical_layout,
     provenance_version_values,
 )
+from .m7_port_selectors import PORT_SELECTOR_CONTRACT_VERSION
 from .m7_redraw import (
     RedrawTargetDriftError,
     apply_redraw,
@@ -174,6 +177,10 @@ class TextPlanResult(StrictModel):
     #: next edit to exactly this value, so a stale source is a refused request, not a
     #: drawing edited from something the caller never read.
     spec_digest: str = ""
+    #: M7-Q2: structured port-ambiguity receipts. Populated on a partial response whose
+    #: connection clause needs a fuller sentence to name exactly one port -- previewable
+    #: on dry_run, never committable.
+    port_ambiguities: list[dict] = Field(default_factory=list)
     edited_from_revision: int | None = None
     edited_from_spec_digest: str = ""
     replaced_from_materialization_digest: str = ""
@@ -188,18 +195,113 @@ class TextPlanResult(StrictModel):
     judgment_count: int
 
 
-def _finalize_spec_layout(spec) -> Any:
+def _port_selectors_map(planned) -> dict[tuple[str, str], str]:
+    """{(connection_id, role): raw selector phrase} from the planning result. The map
+    travels beside the spec into the binding step; nothing here enters any digest."""
+
+    selectors: dict[tuple[str, str], str] = {}
+    for connection in planned.connections:
+        if connection.chosen is None:
+            continue
+        if connection.source_port_selector:
+            selectors[(connection.engineering_id, "source")] = connection.source_port_selector
+        if connection.target_port_selector:
+            selectors[(connection.engineering_id, "target")] = connection.target_port_selector
+    return selectors
+
+
+def _port_receipt(exc: PortBindingError, planned) -> dict:
+    """The record the binder froze, completed with the planner's facts: the clause that
+    asked, the tag it asked about. Binder-side it is built from frozen geometry only.
+
+    The chain's connection id comes from the specification, whose edit-time ids may
+    differ from the planner's clause ids, so the planner row is matched by endpoints.
+    """
+
+    model = exc.record.model()
+    spec_connection = next(
+        (c for c in planned.spec.connections if c.engineering_id == exc.connection_id),
+        None,
+    )
+    endpoints = (
+        (spec_connection.source_engineering_id, spec_connection.target_engineering_id)
+        if spec_connection is not None
+        else None
+    )
+    connection = next(
+        (
+            c
+            for c in planned.connections
+            if c.chosen is not None and c.chosen == endpoints
+        ),
+        None,
+    ) or next(
+        (c for c in planned.connections if c.engineering_id == exc.connection_id), None
+    )
+    if connection is not None:
+        model["source_requirement"] = connection.phrase
+        if connection.chosen and exc.role in ("source", "target"):
+            end = connection.chosen[0] if exc.role == "source" else connection.chosen[1]
+            model["element_tag"] = {
+                e.engineering_id: e.tag for e in planned.spec.entities
+            }.get(end, "")
+    return model
+
+
+def _resolved_spec_with_ports(spec, finalized):
+    """The specification with every resolved port written back into its connection.
+
+    A port a selector resolved is engineering identity, not conversation context: the
+    stored source must rebind it explicitly, or a later redraw could not rebuild the
+    drawing it claims to replace. Returns the untouched spec when nothing was inferred.
+    """
+
+    resolved_ids = {
+        (binding.connection_id, binding.role): binding.port_id
+        for binding in finalized.endpoint_bindings
+    }
+
+    def with_port(connection):
+        source_port = connection.source_port_id or resolved_ids.get(
+            (connection.engineering_id, "source"), ""
+        )
+        target_port = connection.target_port_id or resolved_ids.get(
+            (connection.engineering_id, "target"), ""
+        )
+        if source_port == connection.source_port_id and target_port == connection.target_port_id:
+            return connection
+        return connection.model_copy(
+            update={"source_port_id": source_port, "target_port_id": target_port}
+        )
+
+    updated = [with_port(connection) for connection in spec.connections]
+    if all(updated[i] is spec.connections[i] for i in range(len(updated))):
+        return spec
+    return spec.model_copy(update={"connections": updated})
+
+
+def _selected_selector_version(finalized) -> str:
+    """Provenance stamp: a selected binding proves a selector was resolved this write."""
+
+    if any(getattr(b, "resolution", "") == "selected" for b in finalized.endpoint_bindings):
+        return PORT_SELECTOR_CONTRACT_VERSION
+    return ""
+
+
+def _finalize_spec_layout(spec, *, port_selectors: dict[tuple[str, str], str] | None = None) -> Any:
     """The frozen deterministic chain, as the phase-2B/3 proofs run it: no coordinates in.
 
     Kept as one helper so the route reads as the pipeline it is; every stage is the proved
     module, and the caller never sees an intermediate layout it could mistake for the result.
+    ``port_selectors`` travels beside the spec, never inside it: the selector is an input
+    to resolution, the resolved port is the identity, and no digest may see the phrase.
     """
 
     topology = adapt(load_diagram_spec(spec.model_dump(mode="json")))
     snapshot = freeze_symbol_geometry(entity.symbol_key for entity in spec.entities)
     staged = plan_semantic_layout(topology)
     placed = place_semantic_layout(staged)
-    materialized = materialize_semantic_layout(placed, snapshot)
+    materialized = materialize_semantic_layout(placed, snapshot, port_selectors=port_selectors)
     routed = route_semantic_layout(materialized, snapshot)
     annotated = annotate_semantic_layout(
         routed, {entity.engineering_id: entity.tag for entity in spec.entities}
@@ -662,8 +764,62 @@ def create_semantic_agent_router(
                         "spec_digest": spec_digest(planned.spec),
                     },
                 )
-            finalized = _finalize_spec_layout(planned.spec)
+            selectors = _port_selectors_map(planned)
+            finalized = _finalize_spec_layout(planned.spec, port_selectors=selectors)
+            selector_version = _selected_selector_version(finalized)
+            if selectors:
+                # Ports a selector resolved become identity: rewrite the spec with the
+                # resolved ports and run the chain again so every digest -- and the
+                # stored source a later edit or redraw reads back -- names the same
+                # drawing. Pass two binds explicitly and cannot disagree with pass one.
+                planned = dataclass_replace(
+                    planned, spec=_resolved_spec_with_ports(planned.spec, finalized)
+                )
+                finalized = _finalize_spec_layout(planned.spec)
             layout = materialize_canonical_layout(finalized, document_id=document_id)
+        except PortBindingError as exc:
+            if exc.record is None:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"这句话规划出的图纸引擎目前画不了：{exc}",
+                ) from exc
+            # M7-Q2: a multi-port endpoint the sentence did not name uniquely. The receipt
+            # names every compatible port and how to name each one; nothing is written.
+            receipt = _port_receipt(exc, planned)
+            if request.dry_run:
+                return TextPlanResult(
+                    document_id=document_id,
+                    committed=False,
+                    revision=None,
+                    spec=planned.spec.model_dump(mode="json"),
+                    canonical_layout_digest="",
+                    materialization_digest="",
+                    notes=list(planned.notes),
+                    skipped=list(planned.skipped),
+                    unknown_tags=list(planned.unknown_tags),
+                    completeness="partial",
+                    undelivered=list(planned.undelivered),
+                    catalog_gaps=[dict(gap) for gap in planned.catalog_gaps],
+                    spec_digest=spec_digest(planned.spec),
+                    port_ambiguities=[receipt],
+                    model=planned.model,
+                    latency_ms=planned.latency_ms,
+                    question_count=planned.question_count,
+                    judgment_count=planned.judgment_count,
+                )
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "port_ambiguity",
+                    "completeness": "partial",
+                    "sentence": request.sentence.strip(),
+                    "skipped": list(planned.skipped),
+                    "unknown_tags": list(planned.unknown_tags),
+                    "undelivered": list(planned.undelivered),
+                    "catalog_gaps": [dict(gap) for gap in planned.catalog_gaps],
+                    "port_ambiguities": [receipt],
+                },
+            ) from exc
         except TypesafeError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.detail()) from exc
         except DocumentNotFoundError as exc:
@@ -724,6 +880,8 @@ def create_semantic_agent_router(
                 "layout_contract_version": M7_LAYOUT_CONTRACT_VERSION,
             },
         )
+        if selector_version:
+            audit.metadata["port_selector_contract_version"] = selector_version
         try:
             applied = apply_materialized_layout(
                 service,
@@ -861,8 +1019,58 @@ def create_semantic_agent_router(
                         "spec_digest": spec_digest(planned.spec),
                     },
                 )
-            finalized = _finalize_spec_layout(planned.spec)
+            selectors = _port_selectors_map(planned)
+            finalized = _finalize_spec_layout(planned.spec, port_selectors=selectors)
+            selector_version = _selected_selector_version(finalized)
+            if selectors:
+                planned = dataclass_replace(
+                    planned, spec=_resolved_spec_with_ports(planned.spec, finalized)
+                )
+                finalized = _finalize_spec_layout(planned.spec)
             new_layout = materialize_canonical_layout(finalized, document_id=document_id)
+        except PortBindingError as exc:
+            if exc.record is None:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"这句话规划出的图纸引擎目前画不了：{exc}",
+                ) from exc
+            receipt = _port_receipt(exc, planned)
+            if request.dry_run:
+                return TextPlanResult(
+                    document_id=document_id,
+                    committed=False,
+                    revision=None,
+                    spec=planned.spec.model_dump(mode="json"),
+                    canonical_layout_digest="",
+                    materialization_digest="",
+                    notes=list(planned.notes),
+                    skipped=list(planned.skipped),
+                    unknown_tags=list(planned.unknown_tags),
+                    completeness="partial",
+                    undelivered=list(planned.undelivered),
+                    catalog_gaps=[dict(gap) for gap in planned.catalog_gaps],
+                    spec_digest=spec_digest(planned.spec),
+                    port_ambiguities=[receipt],
+                    edited_from_revision=record.revision,
+                    edited_from_spec_digest=record.spec_digest,
+                    model=planned.model,
+                    latency_ms=planned.latency_ms,
+                    question_count=planned.question_count,
+                    judgment_count=planned.judgment_count,
+                )
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "port_ambiguity",
+                    "completeness": "partial",
+                    "sentence": request.sentence.strip(),
+                    "skipped": list(planned.skipped),
+                    "unknown_tags": list(planned.unknown_tags),
+                    "undelivered": list(planned.undelivered),
+                    "catalog_gaps": [dict(gap) for gap in planned.catalog_gaps],
+                    "port_ambiguities": [receipt],
+                },
+            ) from exc
         except SemanticSourceVersionError as exc:
             raise HTTPException(
                 status_code=422,
@@ -920,6 +1128,8 @@ def create_semantic_agent_router(
                 "layout_contract_version": M7_LAYOUT_CONTRACT_VERSION,
             },
         )
+        if selector_version:
+            audit.metadata["port_selector_contract_version"] = selector_version
         try:
             applied = apply_redraw(
                 service,

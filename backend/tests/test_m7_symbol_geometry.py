@@ -424,7 +424,7 @@ def test_contract_is_coherent_and_declares_step_3() -> None:
     assert contract.DIGEST_VERSION_CONTRACT.digest_version == contract.LAYOUT_DIGEST_VERSION
     assert (
         contract.SYMBOL_GEOMETRY_CATALOG_DIGEST_VERSION
-        == "m7-symbol-geometry-catalog-digest/1"
+        == "m7-symbol-geometry-catalog-digest/2"
     )
 
 
@@ -474,7 +474,7 @@ def test_annotation_layout_never_measures_fonts() -> None:
 def test_task_book_declares_the_step_3_obligations() -> None:
     text = TASK_BOOK.read_text(encoding="utf-8")
     for token in (
-        "m7-symbol-geometry-catalog-digest/1",
+        "m7-symbol-geometry-catalog-digest/2",
         "m7-layout-digest/2",
         "symbol_geometry_catalog_digest",
         "closure",

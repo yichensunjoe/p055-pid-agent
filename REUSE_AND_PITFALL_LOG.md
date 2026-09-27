@@ -12,6 +12,12 @@
   without_a_companion_negative_test` 会保证合同文件被 live app 实跑——别幻想声明了不被发现。③ 改 e2e 面板后顺手跑
   `typesafe-panel` 这类计数断言（textbox 3→4），视觉快照反而没拍到收起状态的面板。
 - 适用场景：任何给这个项目新增「会写 revision 的端点」的任务——先找齐这五处再动手。
+## 2026-09-27 · 「两套 parser + equality 测试」不等于「一套 grammar」；隔离必须到 token（P055-PID-Agent）
+
+- 场景：Q1 暴露 DXF 缺陷后首版修复加了共享模块 + 42 条路径的「两实现逐点相等」测试。Gate HOLD：相等测试钉的是当前数据，freeze 侧仍留着第二套 parser——未来新增 edge case 仍可能再分叉，恰是本次 defect 的根因类别。
+- 结论做法：真正删掉旧 parser，两侧都委托唯一实现；回归测试改 golden 快照（从已签旧实现一次性捕获、内嵌测试文件）——证明「提取零语义漂移」，而不是养一个活第二 parser。Gate 明确要求 amend 单 commit 不叠 repair。
+- 踩坑点：① 冻结语义的边角（arc 端点重复记点、Z 无条件记点）是**有意的**，搬运时不能顺手「清理」，要和旧实现逐点比对。② 隔离报告里的符号名要核（真实模型选的是 positive_displacement_pump，我凭记忆写 fuel_salt_pump 被 Gate 抓到更正）。③ 给 ChatGPT 会话传证据：隐藏 file input 用 JS 强制可见后 bsk upload 可绕过。
+- 适用场景：任何「抽共享 helper」的重构——判断标准是删完旧实现后系统还能不能工作，而不是加了相等测试。
 
 ## 2026-09-24 · 冻结链有两个诚实的引擎边界，surface 只能映射不能擅自放开（P055-PID-Agent）
 

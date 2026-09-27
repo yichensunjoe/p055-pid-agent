@@ -2,7 +2,7 @@
 
 > 交接文档：每次开新会话先读本文件。更新规则见 `AGENTS.md`「HANDOFF 交接规则」。
 
-## 当前状态（2026-09-27 R35 —— **M7-Q1 真实模型产品资格验收完成，结论 FAILED—product defect（一处）：正向链与治理负例全 QUALIFIED，DXF 导出腿断**。基线 main @ ba4d447（本地树一致）；真实 UI + 真实 TypeSafe key（仅服务端环境变量，未记录）。句一出图 r1（complete）、句二改图 r2（complete，lineage 正确）、负例 422 receipt + revision 不动、spec store r1/r2 两行旧行未改写、PDF 正常（含图签 REVISION 2）。**缺陷**：`export-v2.dxf` 对 NL 图元（buffer_tank×2+fuel_salt_pump）报 `unsupported_symbol_path / symbol path has invalid coordinates`，空文档导出合法 DXF → 死在符号 path 坐标转换，不在纵切链路。证据包 `reports/q1-evidence/`（QUALIFICATION-REPORT.md + 截图/产物/audit-evidence.json），已回报 Gate 等修复线裁决**）
+## 当前状态（2026-09-27 R36 —— **M7-Q1 正式升格 QUALIFIED WITH REPAIR @ `18ec8c62bfd7a8cf8af343357ce20c751ffd72d5`，已推 main（ba4d447 → 18ec8c6），main CI run `36307172915` 四绿**。DXF-Q1 修复线完整闭环：真实资格测试在 ba4d447 暴露 DXF 缺陷（buffer_tank 的 A 命令 path 被 exporter 的窄语法拒绝）→ 根因 A 类（合法 catalogue path、parser 语法过窄）→ 修复 = 唯一共享 grammar `symbol_paths.py`（M7 freeze 与 DXF sampling 同走一份，golden 快照 40 条钉死提取前后 frozen semantics 零变化，arc 端点/Z 的有意重复记点原样保留）→ 修复后同一 Q1 r2 文档重导出 SHA-256 逐字节不变（26d5a795…）→ Gate 两轮复核（第二轮抓到「m7 仍留第二套 parser」的架构 blocker，amend 去重后过签）。Q1 资格链全闭：真实模型出图/第二句重画/治理负例/PDF/DXF 全通，历史保留 ba4d447 DXF FAILED → 18ec8c6 CLOSED。路线（Gate 定）：M7-Q1 完成 → 真实缺陷/能力边界定向修复（未开工，多端口 hard fail 保持）→ M8 Engineering Coverage（真实工程 corpus 驱动 catalogue/instrumentation/scale，未开工）**）
 
 - **Gate 裁定要点（2026-09-25 读回）**：主体全 PASS（writer 复用 / dry-run / 目标安全 / 审计 / 前端 / CI / 两个引擎边界维持原判）；
   P0-1 = partial 可提交（coherent ≠ complete）→ 已修：planner 出 **clause 级 completeness 账本**

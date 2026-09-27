@@ -3,8 +3,9 @@ from __future__ import annotations
 from math import atan2, cos, pi, radians, sin
 from typing import Any
 
-from .dxf_core import _PATH_TOKEN, DxfExportError, _Builder, _clean_text
+from .dxf_core import DxfExportError, _Builder, _clean_text
 from .models import Element, Point, SymbolElement
+from .symbol_paths import SymbolPathError, sample_symbol_path
 from .symbols import SymbolRegistry
 
 
@@ -44,55 +45,17 @@ def _rounded_rectangle_points(x: float, y: float, width: float, height: float, r
 
 
 def _sample_symbol_path(path: str) -> list[tuple[float, float]]:
-    tokens = [match.group(1) or match.group(2) for match in _PATH_TOKEN.finditer(path)]
-    if "".join(tokens).replace(".", "").replace("-", "").isdigit():
-        raise DxfExportError("unsupported_symbol_path", "symbol path is missing commands")
-    index = 0
-    command = ""
-    current = (0.0, 0.0)
-    start = current
-    points: list[tuple[float, float]] = []
+    """Polyline points along a symbol path, under the shared catalogue grammar.
 
-    def number() -> float:
-        nonlocal index
-        if index >= len(tokens) or tokens[index] in {"M", "L", "Q", "Z"}:
-            raise DxfExportError("unsupported_symbol_path", "symbol path has invalid coordinates")
-        value = float(tokens[index])
-        index += 1
-        return value
+    The path semantics are owned by :mod:`symbol_paths` -- the same grammar the M7
+    symbol-geometry freeze measures -- so a path legal for layout can never be rejected
+    here for "another grammar". Only genuinely uninterpretable paths raise.
+    """
 
-    while index < len(tokens):
-        if tokens[index] in {"M", "L", "Q", "Z"}:
-            command = tokens[index]
-            index += 1
-        if command == "M":
-            current = (number(), number())
-            start = current
-            points.append(current)
-            command = "L"
-        elif command == "L":
-            current = (number(), number())
-            points.append(current)
-        elif command == "Q":
-            control = (number(), number())
-            target = (number(), number())
-            origin = current
-            for step in range(1, 9):
-                t = step / 8
-                points.append(
-                    (
-                        (1 - t) ** 2 * origin[0] + 2 * (1 - t) * t * control[0] + t**2 * target[0],
-                        (1 - t) ** 2 * origin[1] + 2 * (1 - t) * t * control[1] + t**2 * target[1],
-                    )
-                )
-            current = target
-        elif command == "Z":
-            if points and points[-1] != start:
-                points.append(start)
-            command = ""
-        else:
-            raise DxfExportError("unsupported_symbol_path", f"unsupported symbol path command: {command}")
-    return points
+    try:
+        return sample_symbol_path(path)
+    except SymbolPathError as exc:
+        raise DxfExportError("unsupported_symbol_path", str(exc)) from exc
 
 
 def _path_point(points: list[Point], fraction: float) -> tuple[Point, float]:

@@ -1068,3 +1068,10 @@
 - 结论做法：①**调用方的绑定值要从入口直达 writer**，"写前最后瞬间重读"只能用于原子 race 检测（expected_revision 语义），不能用来替换调用方语义；文档中途前进 → 收进 drift 门统一 409。②**destructive 替换要有独立的安全对账**：对将被销毁的对象做全量持久化状态全等（model_dump），它宽于 canonical identity 对账、且**不进 digest**（安全对账 ≠ 新身份轴）。③**新写路径要逐一继承旧写路径的写前闸清单**（empty target / canvas / drift），漏一个就是一个 blocker。
 - 踩坑点：行级 canonical 对账只覆盖物化写的元素种类——foreign rectangle/note 不产生行；same-id 字段改动行内容不变。两层盲区要两层独立的检查。另外 bsk 操作 ChatGPT 发送：execCommand insertText 后**必须点 aria-label=「发送」按钮**，JS 派 Enter 常常只清空草稿不发送（截图验证过一次教训）。
 - 适用场景：任何"替换/重画/覆盖"类写路径的审查清单；任何用 bsk 发消息的自动化。
+
+## 2026-09-27 · 「给 frozen fact 加字段」先问 identity 归谁；解析成功 ≠ 匹配成功（P055-PID-Agent）
+
+- 场景：Q2 给冻结 port fact 加 name 一箭双雕（selector 证据+receipt），顺手 bump 了 catalog digest 版本——Gate HOLD：全部已存语义源因 chain version 不匹配而拒绝编辑；且 port 中文改名会移动 layout 身份。另一个：semantic 词表「回流→reflux」解析成功但匹配逻辑拿英文值查中文名，恒 False。
+- 结论做法：①加字段前先分类：是 **geometry identity**（进 projection、动 digest、全链版本联动）还是 **runtime-only evidence**（随 fact 冻结但不进 identity projection——合同用两个字段表声明并查重叠）。②semantic 谓词必须经**声明的 surface-token 反查**（canonical 值↔中文闭集），解析测试不等于匹配测试，要拿真实符号逐口断言。
+- 踩坑点：「顺手 bump 版本」是最贵的省事——存储侧 chain_versions 是写死的兼容闸，bump=全员迁移。局部 selector 不能把全图 inferred 事实升级为用户语义（selected-only 持久化边界）。
+- 适用场景：任何向 frozen model/digest 投影加字段的工作。

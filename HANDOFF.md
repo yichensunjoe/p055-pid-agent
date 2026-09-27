@@ -2,7 +2,7 @@
 
 > 交接文档：每次开新会话先读本文件。更新规则见 `AGENTS.md`「HANDOFF 交接规则」。
 
-## 当前状态（2026-09-27 R36 —— **M7-Q1 正式升格 QUALIFIED WITH REPAIR @ `18ec8c62bfd7a8cf8af343357ce20c751ffd72d5`，已推 main（ba4d447 → 18ec8c6），main CI run `36307172915` 四绿**。DXF-Q1 修复线完整闭环：真实资格测试在 ba4d447 暴露 DXF 缺陷（buffer_tank 的 A 命令 path 被 exporter 的窄语法拒绝）→ 根因 A 类（合法 catalogue path、parser 语法过窄）→ 修复 = 唯一共享 grammar `symbol_paths.py`（M7 freeze 与 DXF sampling 同走一份，golden 快照 40 条钉死提取前后 frozen semantics 零变化，arc 端点/Z 的有意重复记点原样保留）→ 修复后同一 Q1 r2 文档重导出 SHA-256 逐字节不变（26d5a795…）→ Gate 两轮复核（第二轮抓到「m7 仍留第二套 parser」的架构 blocker，amend 去重后过签）。Q1 资格链全闭：真实模型出图/第二句重画/治理负例/PDF/DXF 全通，历史保留 ba4d447 DXF FAILED → 18ec8c6 CLOSED。路线（Gate 定）：M7-Q1 完成 → 真实缺陷/能力边界定向修复（未开工，多端口 hard fail 保持）→ M8 Engineering Coverage（真实工程 corpus 驱动 catalogue/instrumentation/scale，未开工）**）
+## 当前状态（2026-09-27 R37 —— **M7-Q2 Governed Port Ambiguity Recovery 签 CLOSED @ `1afeccab35dce72c7e213cf46b421956d7dba81a`，已推 main（18ec8c6 → 1afecca），main CI run `36333697135` 四绿**。三轮 Gate 修复全过：①identity 恢复（digest /1→/2 撤销，port name=runtime-only selector evidence 不进 geometry identity projection，同 catalogue digest 与 18ec8c6 逐字节一致 golden 钉死）；②semantic selector 真匹配（声明 surface-token 反查：回流→回流入口、塔顶气相→塔顶气相出口）；③selected-only 持久化（inferred_unique 不升级为用户语义，混合回归锁死）。Q2 纪律全链闭合：多端口歧义→不猜→机器可读 receipt→完整重述→确定性 selector→concrete port_id→仅 selected 进存储语义→governed write。工作分支无 Q2 代码（在 review 线），docs 需同步处见下。**下一站在 Gate 路线：M8 Engineering Coverage & Qualification 设计（先做设计不扩 catalogue）**）
 
 - **Gate 裁定要点（2026-09-25 读回）**：主体全 PASS（writer 复用 / dry-run / 目标安全 / 审计 / 前端 / CI / 两个引擎边界维持原判）；
   P0-1 = partial 可提交（coherent ≠ complete）→ 已修：planner 出 **clause 级 completeness 账本**

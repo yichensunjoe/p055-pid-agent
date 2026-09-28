@@ -243,3 +243,66 @@ def test_connection_id_remap_carries_port_selectors_with_the_connection() -> Non
     reflux_loop = planned_by_endpoints[("el_E_101", "el_T_101")]
     assert "工艺出" in reflux_loop.source_port_selector
     assert "回流" in reflux_loop.target_port_selector
+
+
+def test_condenser_names_its_own_symbol_through_a_precise_hint() -> None:
+    """Q2-2(a): 「冷凝器」must narrow to the condenser symbol, never the open catalogue."""
+
+    plan = _editor(_Recorder()).plan_edit(
+        "添加一个冷凝器 E-101", base_spec=BASE, typesafe_config=_config()
+    )
+    condenser = next(entity for entity in plan.spec.entities if entity.tag == "E-101")
+    assert condenser.symbol_key == "condenser"
+    assert plan.completeness == "complete"
+
+
+def test_dev6_edit_binds_condenser_process_ports_through_selectors() -> None:
+    """Q2-2(a) acceptance on the DEV-6 shape: condenser chosen, selectors attached, and
+    the Q2R1 connection-id/selector alignment must not regress."""
+
+    base = DiagramSpec(
+        label="base",
+        systems=[DiagramSystem(system_id="S_main", name="主工艺系统", order=0)],
+        entities=[
+            DiagramEntity(
+                engineering_id="el_P_101",
+                kind="equipment",
+                system_id="S_main",
+                tag="P-101",
+                name="进料泵",
+                equipment_class="pump",
+                symbol_key="centrifugal_pump",
+            ),
+            DiagramEntity(
+                engineering_id="el_T_101",
+                kind="equipment",
+                system_id="S_main",
+                tag="T-101",
+                name="精馏塔",
+                equipment_class="column",
+                symbol_key="fractionation_column",
+            ),
+        ],
+        connections=[
+            DiagramConnection(
+                engineering_id="cn_1",
+                source_engineering_id="el_P_101",
+                target_engineering_id="el_T_101",
+                medium="",
+                tag="",
+            )
+        ],
+    )
+    plan = _editor(_Recorder()).plan_edit(
+        "添加一个冷凝器 E-101，把 T-101 的塔顶气相出口接到 E-101 的工艺入口，"
+        "把 E-101 的工艺出口接到 T-101 的回流入口",
+        base_spec=base,
+        typesafe_config=_config(),
+    )
+
+    condenser = next(entity for entity in plan.spec.entities if entity.tag == "E-101")
+    assert condenser.symbol_key == "condenser"  # never a generic in/top-port symbol
+    planned_by_endpoints = {c.chosen: c for c in plan.connections if c.chosen is not None}
+    assert planned_by_endpoints[("el_T_101", "el_E_101")].target_port_selector == "工艺入口"
+    assert planned_by_endpoints[("el_E_101", "el_T_101")].source_port_selector == "工艺出口"
+    assert {c.engineering_id for c in planned_by_endpoints.values()} == {"cn_2", "cn_3"}

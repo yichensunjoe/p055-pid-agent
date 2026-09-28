@@ -459,3 +459,93 @@ def test_transmitter_visibility_matrix_is_unchanged_elsewhere() -> None:
     # 8d82f75 removed pressure_transmitter from the hidden list and the symbol itself is
     # now absent from the catalogue data: exists() is False and it must stay that way.
     assert REGISTRY.exists("pressure_transmitter") is False
+
+
+def test_instruments_attach_to_the_host_the_sentence_names() -> None:
+    """Q2R3-A: 「给 <HOST> 添加 <仪表>」 becomes a formal spec relation (DEV-4 shape)."""
+
+    plan = _planner(_Recorder()).plan(
+        "添加一个缓冲罐 V-101，给 V-101 添加一台液位计 LIT-101、一台压力表 PIT-101 和一台温度变送器 TT-101",
+        typesafe_config=_config(),
+    )
+    assert plan.spec.problems() == []
+    by_tag = {entity.tag: entity for entity in plan.spec.entities}
+    assert by_tag["V-101"].kind == "equipment"
+    assert by_tag["V-101"].host_engineering_id is None
+    for tag, key in (("LIT-101", None), ("PIT-101", None), ("TT-101", "temperature_transmitter")):
+        instrument = by_tag[tag]
+        assert instrument.kind == "instrument"
+        assert instrument.host_engineering_id == "el_V_101"
+        if key:
+            assert instrument.symbol_key == key
+    # The relation is part of the semantic record the digest reads.
+    assert "host_engineering_id" in plan.spec.model_dump()["entities"][1]
+
+
+def test_equipment_never_carries_a_host() -> None:
+    """An explicit 「给 <HOST> 添加 <设备>」 with an equipment names no attachment."""
+
+    plan = _planner(_Recorder()).plan(
+        "添加一个缓冲罐 V-101，给 V-101 添加一个泵 P-101",
+        typesafe_config=_config(),
+    )
+    pump = next(entity for entity in plan.spec.entities if entity.tag == "P-101")
+    assert pump.kind == "equipment"
+    assert pump.host_engineering_id is None
+    assert plan.spec.problems() == []
+
+
+def test_undeclared_host_is_receipted_not_guessed() -> None:
+    """The instrument is still delivered; the attachment is a structured receipt."""
+
+    plan = _planner(_Recorder()).plan(
+        "添加一个缓冲罐 V-101，给 V-999 添加一台温度变送器 TT-101",
+        typesafe_config=_config(),
+    )
+    instrument = next(entity for entity in plan.spec.entities if entity.tag == "TT-101")
+    assert instrument.host_engineering_id is None
+    assert plan.completeness == "partial"
+    assert any("V-999" in item and "宿主" in item for item in plan.undelivered)
+
+
+def test_spec_problems_reject_illegal_host_relations() -> None:
+    """Validator invariants: equipment cannot carry a host; an instrument's host must be
+    declared, must not be itself, and must be equipment -- never a process-port accident."""
+
+
+    def entity(eid, kind, host=None):
+        return type(plan_spec.entities[0])(
+            engineering_id=eid,
+            kind=kind,
+            system_id="S_main",
+            tag=eid,
+            symbol_key="buffer_tank" if kind == "equipment" else "temperature_transmitter",
+            host_engineering_id=host,
+        )
+
+    plan_spec = _planner(_Recorder()).plan(
+        "添加一个缓冲罐 V-101", typesafe_config=_config()
+    ).spec
+    base_entities = list(plan_spec.entities)
+    equipment_hosting = plan_spec.model_copy(
+        update={"entities": [*base_entities, entity("el_P_101", "equipment", "el_V_101")]}
+    )
+    assert any("not an instrument" in p for p in equipment_hosting.problems())
+    instrument_unknown_host = plan_spec.model_copy(
+        update={"entities": [*base_entities, entity("el_TT_101", "instrument", "el_NOPE")]}
+    )
+    assert any("undeclared host" in p for p in instrument_unknown_host.problems())
+    instrument_self_host = plan_spec.model_copy(
+        update={"entities": [*base_entities, entity("el_TT_101", "instrument", "el_TT_101")]}
+    )
+    assert any("its own host" in p for p in instrument_self_host.problems())
+    instrument_on_instrument = plan_spec.model_copy(
+        update={
+            "entities": [
+                *base_entities,
+                entity("el_TT_101", "instrument", None),
+                entity("el_TT_102", "instrument", "el_TT_101"),
+            ]
+        }
+    )
+    assert any("not equipment" in p for p in instrument_on_instrument.problems())

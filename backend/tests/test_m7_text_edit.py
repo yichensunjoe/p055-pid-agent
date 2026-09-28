@@ -461,3 +461,46 @@ def test_edit_connection_judgment_labels_resolve_across_base_entities() -> None:
     assert plan.completeness in {"partial", "complete"}
     questioned = [key for payload in recorder.payloads for key in payload["questions"]]
     assert not any(key == "el_T_101" for key in questioned)  # no question for a base entity
+
+
+def _hosted_base() -> DiagramSpec:
+    """A base spec whose V-101 hosts an attached instrument (Q2R3-A relation)."""
+
+    base = _dev6_base()  # el_T_101 stands in as the host
+    instrument = DiagramEntity(
+        engineering_id="el_TT_101",
+        kind="instrument",
+        system_id="S_main",
+        tag="TT-101",
+        name="温度变送器",
+        equipment_class="instrument",
+        symbol_key="temperature_transmitter",
+        host_engineering_id="el_T_101",
+    )
+    return base.model_copy(update={"entities": [*base.entities, instrument]})
+
+
+def test_host_with_attached_instruments_cannot_be_deleted() -> None:
+    """Q2R3-B1 deletion guard: refuse + receipt; no cascade, no silent detach."""
+
+    plan = _editor(_Recorder()).plan_edit(
+        "删除 T-101", base_spec=_hosted_base(), typesafe_config=_config()
+    )
+    tags = {entity.tag for entity in plan.spec.entities}
+    assert "T-101" in tags  # the host survives
+    assert "TT-101" in tags  # the instrument survives unattached-to-nothing
+    assert any("attachment_host_has_dependents" in item for item in plan.undelivered)
+    tt = next(e for e in plan.spec.entities if e.tag == "TT-101")
+    assert tt.host_engineering_id == "el_T_101"
+
+
+def test_deleting_host_and_all_dependents_together_is_allowed() -> None:
+    plan = _editor(_Recorder()).plan_edit(
+        "删除 T-101，删除 TT-101",
+        base_spec=_hosted_base(),
+        typesafe_config=_config(),
+    )
+    tags = {entity.tag for entity in plan.spec.entities}
+    assert "T-101" not in tags
+    assert "TT-101" not in tags
+    assert not any("attachment_host_has_dependents" in item for item in plan.undelivered)

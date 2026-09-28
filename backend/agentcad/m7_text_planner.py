@@ -47,6 +47,7 @@ from .device_phrases import (
     normalise,
     split_clauses,
 )
+from .m7_attachment_targets import resolve_attachment_target
 from .m7_diagram_spec import (
     DiagramConnection,
     DiagramEntity,
@@ -174,6 +175,11 @@ class PlannedDiagram:
     #: what the catalogue does carry. ``available_alternatives`` is reporting only; it never
     #: flows back into a judgment's candidates.
     catalog_gaps: tuple[dict, ...] = ()
+    #: Q2R3-B1: machine-readable attachment resolutions that did not resolve to a
+    #: governed tap port (``instrument_attachment_ambiguity``). The prose twin rides
+    #: ``undelivered``; the record stays testable and future-surface-ready without a
+    #: second state machine.
+    attachment_gaps: tuple[dict, ...] = ()
 
 
 def _slug(text: str) -> str:
@@ -731,6 +737,8 @@ class TypesafeDiagramSpecPlanner:
             if connection.engineering_id not in delivered_connections:
                 undelivered.append(f"「{connection.phrase}」没有被兑现。")
 
+        attachment_gaps, attachment_receipts = self._attachment_ledger(spec)
+        undelivered.extend(attachment_receipts)
         resolved_count = len(spec.entities)
         if resolved_count == 0:
             completeness: Completeness = "empty"
@@ -772,7 +780,51 @@ class TypesafeDiagramSpecPlanner:
             completeness=completeness,
             undelivered=tuple(undelivered),
             catalog_gaps=tuple(catalog_gaps),
+            attachment_gaps=attachment_gaps,
         )
+
+    def _attachment_ledger(
+        self, spec: DiagramSpec
+    ) -> tuple[tuple[dict, ...], list[str]]:
+        """Q2R3-B1: run the governed-tap resolver over every attached instrument.
+
+        A host without a governed tap port is the honest terminal state under the
+        current catalogue: the instrument stays delivered, the attachment becomes a
+        machine-readable ambiguity record plus its prose receipt, and nothing guesses
+        a process port. Resolved instruments leave no trace here (B2's lane).
+        """
+
+        by_id = {entity.engineering_id: entity for entity in spec.entities}
+        records: list[dict] = []
+        receipts: list[str] = []
+        for entity in spec.entities:
+            if entity.kind != "instrument" or not entity.host_engineering_id:
+                continue
+            host = by_id.get(entity.host_engineering_id)
+            if host is None:
+                continue
+            host_ports: tuple[str, ...] = ()
+            try:
+                host_ports = tuple(
+                    port.id for port in self.symbols.get(host.symbol_key).ports
+                )
+            except KeyError:
+                host_ports = ()
+            resolution = resolve_attachment_target(
+                instrument_tag=entity.tag,
+                instrument_symbol_key=entity.symbol_key,
+                host_tag=host.tag,
+                host_symbol_key=host.symbol_key,
+                host_port_ids=host_ports,
+            )
+            if resolution.resolved:
+                continue
+            records.append(resolution.receipt())
+            receipts.append(
+                f"「{entity.tag}」挂接于 {host.tag}：{resolution.reason}"
+                f"（{host.symbol_key} 没有受治理的仪表取压口），挂接未建立。"
+            )
+        return tuple(records), receipts
 
     def _resolve_entity(
         self,

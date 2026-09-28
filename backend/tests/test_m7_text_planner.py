@@ -549,3 +549,22 @@ def test_spec_problems_reject_illegal_host_relations() -> None:
         }
     )
     assert any("not equipment" in p for p in instrument_on_instrument.problems())
+
+
+def test_attached_instruments_without_governed_tap_get_machine_readable_gaps() -> None:
+    """Q2R3-B1 (DEV-4 shape): instruments attach semantically; with no governed tap port
+    in the current catalogue the honest terminal state is partial + structured receipt."""
+
+    plan = _planner(_Recorder()).plan(
+        "添加一个缓冲罐 V-101，给 V-101 添加一台液位计 LIT-101、一台压力表 PIT-101 和一台温度变送器 TT-101",
+        typesafe_config=_config(),
+    )
+    assert plan.completeness == "partial"
+    records = list(plan.attachment_gaps)
+    assert {record["instrument_tag"] for record in records} == {"LIT-101", "PIT-101", "TT-101"}
+    for record in records:
+        assert record["code"] == "instrument_attachment_ambiguity"
+        assert record["reason"] == "no_governed_tap_port"
+        assert record["host_tag"] == "V-101"
+    # instruments are still delivered; nothing crashed into the layout stage
+    assert {entity.tag for entity in plan.spec.entities} >= {"V-101", "LIT-101", "PIT-101", "TT-101"}

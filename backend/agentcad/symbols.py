@@ -14,7 +14,6 @@ HIDDEN_BUILTIN_SYMBOL_KEYS: dict[str, frozenset[str]] = {
     "standard_symbols.json": frozenset(
         {
             "off_page_connector",
-            "temperature_transmitter",
             "flow_transmitter",
             "level_transmitter",
         }

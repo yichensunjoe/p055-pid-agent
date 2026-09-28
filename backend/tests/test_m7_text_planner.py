@@ -72,6 +72,30 @@ def _planner(recorder: _Recorder, **kwargs) -> TypesafeDiagramSpecPlanner:
     )
 
 
+
+
+class _RegistryWithoutTT:
+    """The live catalogue minus temperature_transmitter: with TT visible, every hint
+    group now matches at least one row, so the catalogue-gap path is unreachable through
+    real device words. These two tests exercise the gap RECORD machinery, so they pin the
+    pre-unhide catalogue shape rather than depending on an accidental hole in the data."""
+
+    def __init__(self, inner):
+        self._inner = inner
+
+    def list(self):
+        return [s for s in self._inner.list() if s.key != "temperature_transmitter"]
+
+    def get(self, key):
+        return self._inner.get(key)
+
+
+def _planner_without_tt(recorder):
+    return TypesafeDiagramSpecPlanner(
+        _RegistryWithoutTT(REGISTRY), client_factory=lambda config: TypesafeClient(config, transport=recorder)
+    )
+
+
 def _config() -> TypesafeConfig:
     return TypesafeConfig(api_key="test-key")
 
@@ -175,7 +199,7 @@ def test_a_catalogue_gap_is_reported_never_widened_into_a_judgment() -> None:
     that would let the model pick a look-alike the sentence did not name."""
 
     recorder = _Recorder()
-    plan = _planner(recorder).plan(
+    plan = _planner_without_tt(recorder).plan(
         "添加一个缓冲罐 V-101，添加一个仪表 FV-101，把 V-101 接到 FV-101",
         typesafe_config=_config(),
     )
@@ -192,7 +216,7 @@ def test_a_catalogue_gap_carries_the_frozen_machine_visible_record() -> None:
 
     from agentcad.m7_synthesis_contract import CATALOG_GAP_REQUIRED_FIELDS
 
-    plan = _planner(_Recorder()).plan(
+    plan = _planner_without_tt(_Recorder()).plan(
         "添加一个仪表 FV-101，添加一个塔 T-101",
         typesafe_config=_config(),
     )
@@ -227,7 +251,7 @@ def test_a_connection_naming_an_unknown_tag_is_never_substituted() -> None:
 def test_every_clause_is_delivered_or_receipted_in_sentence_order() -> None:
     """The ledger plus the spec covers the input exactly: three clauses in, three accounted."""
 
-    plan = _planner(_Recorder()).plan(
+    plan = _planner_without_tt(_Recorder()).plan(
         "添加一个塔 T-101，添加一个仪表 FV-101，随便说说", typesafe_config=_config()
     )
     assert plan.completeness == "partial"
@@ -390,3 +414,45 @@ def test_the_planner_does_not_import_the_layout_chain_or_the_legacy_semantic_pla
         "SemanticTransaction",
     ):
         assert forbidden not in source
+
+
+def test_temperature_transmitter_is_the_exact_candidate_and_only_candidate() -> None:
+    """Q2-1R2: 温度变送器 names temperature_transmitter exactly.
+
+    The generic transmitter hint would also match pressure_transmitter (both keys
+    contain "transmitter"); the exact-phrase table must win and the candidate set must
+    be exactly the one symbol -- no indicator/element lookalikes either.
+    """
+
+    # Corpus-shaped sentence: the G2 enumeration decomposition isolates TT-101's own tag.
+    planner = _planner(_Recorder())
+    entities, _connections, _unknown, _unknown_clauses = planner.read(
+        "添加一个缓冲罐 V-101，给 V-101 添加一台液位计 LIT-101、一台压力表 PIT-101 和一台温度变送器 TT-101"
+    )
+    tt = next(entity for entity in entities if entity.tag == "TT-101")
+    assert [candidate.key for candidate in tt.candidates] == ["temperature_transmitter"]
+    assert tt.catalog_gap is False
+
+    # The exact phrase wins over the generic transmitter hint on any clause shape.
+    keys = {candidate.key for candidate in candidate_symbols(REGISTRY, "添加一台温度变送器 TT-101")}
+    assert keys == {"temperature_transmitter"}
+    assert "temperature_indicator" not in keys
+    assert "temperature_element" not in keys
+    # pressure_transmitter was unhidden by 8d82f75 but does not exist in the catalogue at
+    # all (verified against the data file), so it cannot leak in; the exact-phrase guard
+    # is what keeps any future transmitter lookalike out.
+
+
+def test_transmitter_visibility_matrix_is_unchanged_elsewhere() -> None:
+    """Q2-1R2 guards: FT/LT stay hidden, PT stays visible, TT is now visible."""
+
+    visible = {symbol.key for symbol in REGISTRY.list()}
+    assert "temperature_transmitter" in visible
+    assert "flow_transmitter" not in visible
+    assert "level_transmitter" not in visible
+    assert REGISTRY.is_hidden("flow_transmitter") is True
+    assert REGISTRY.is_hidden("level_transmitter") is True
+    assert REGISTRY.is_hidden("temperature_transmitter") is False
+    # 8d82f75 removed pressure_transmitter from the hidden list, but the symbol itself is
+    # absent from the catalogue data: exists() is False and it must stay that way.
+    assert REGISTRY.exists("pressure_transmitter") is False

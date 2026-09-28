@@ -42,6 +42,15 @@ SYMBOL_HINTS: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
     (("过滤", "filter", "床"), ("filter", "bed")),
 )
 
+#: Exact device phrases bypass the generic hint table. An exact phrase names one symbol
+#: and only that symbol may be offered: 温度变送器 must not pull pressure_transmitter
+#: into the candidate set merely because both keys contain "transmitter". A hit is
+#: honoured only when exactly one exact phrase matches -- two exact phrases in one
+#: clause fall back to the generic table rather than silently picking one.
+EXACT_DEVICE_HINTS: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
+    (("温度变送器", "temperature transmitter"), ("temperature_transmitter",)),
+)
+
 ADD_VERBS = (
     "添加", "新增", "加一个", "加个", "放置", "放一个", "画一个", "画个", "建立", "新建",
     "add", "place", "draw", "create",
@@ -143,6 +152,11 @@ def matched_hints(clause: str) -> tuple[str, ...]:
     """
 
     lowered = normalise(clause)
+    exact_hits = [
+        hints for phrases, hints in EXACT_DEVICE_HINTS if any(phrase in lowered for phrase in phrases)
+    ]
+    if len(exact_hits) == 1:
+        return exact_hits[0]
     wanted: list[str] = []
     for phrases, hints in SYMBOL_HINTS:
         if any(phrase in lowered for phrase in phrases):

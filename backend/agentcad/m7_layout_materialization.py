@@ -84,7 +84,8 @@ from .models import (
     TextElement,
     TransactionRequest,
 )
-from .service import DocumentService
+from .service import DocumentService, PrecommitValidationError
+from .symbols import SymbolRegistry
 
 #: The annotation role an editable symbol label carries. Read from the tag resolver's vocabulary
 #: rather than retyped: a second spelling of this string would produce a label no report sees.
@@ -174,6 +175,58 @@ def _canonical(value: Any) -> str:
 def _quantize(value: float) -> float:
     number = round(float(value), 6)
     return 0.0 if number == 0 else number
+
+
+_SYMBOL_REGISTRY: SymbolRegistry | None = None
+
+
+def _default_symbol_registry() -> SymbolRegistry:
+    global _SYMBOL_REGISTRY
+    if _SYMBOL_REGISTRY is None:
+        _SYMBOL_REGISTRY = SymbolRegistry()
+    return _SYMBOL_REGISTRY
+
+
+def _port_exact_anchor(
+    symbol_rows: Mapping[str, Mapping[str, Any]],
+    node_id: str,
+    port_id: str,
+    registry: SymbolRegistry,
+) -> Point | None:
+    """The exact declared anchor of a connector endpoint, or None when it cannot be derived.
+
+    Goes through :func:`drafting_geometry.symbol_port_point` -- the single implementation of
+    the port mapping that the governed writer recomputes at commit time -- so the canonical
+    record and the staged document read one coordinate from one formula. ``model_construct``
+    is deliberate: the probe element only needs the geometry fields the formula reads, and a
+    validated element would drag labels and styles into a record that stays out of the
+    document.
+    """
+
+    from .drafting_geometry import symbol_port_point
+
+    row = symbol_rows.get(node_id)
+    if row is None:
+        return None
+    try:
+        definition = registry.get(str(row["symbol_key"]))
+    except KeyError:
+        return None
+    port = next((item for item in definition.ports if item.id == port_id), None)
+    if port is None:
+        return None
+    element = SymbolElement.model_construct(
+        id=f"anchor-probe-{node_id}-{port_id}",
+        layer_id="anchor_probe",
+        system_id=str(row["system_id"]),
+        type="symbol",
+        symbol_key=str(row["symbol_key"]),
+        position=Point(x=float(row["x"]), y=float(row["y"])),
+        width=float(row["width"]),
+        height=float(row["height"]),
+        rotation=0.0,
+    )
+    return symbol_port_point(element, port, definition)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -534,6 +587,8 @@ def _plan_rows(plan: SemanticLayoutPlan) -> tuple[dict[str, Any], ...]:
             }
         )
 
+    symbol_rows = {str(r["engineering_id"]): r for r in rows if r["kind"] == "symbol"}
+    registry = _default_symbol_registry()
     for row in plan.routing:
         connection_id = str(row["engineering_id"])
         connection = next(
@@ -550,10 +605,29 @@ def _plan_rows(plan: SemanticLayoutPlan) -> tuple[dict[str, Any], ...]:
                 f"connection {connection_id!r} has no resolved endpoint binding: a route with an "
                 "unresolved end is a pipe into nothing"
             )
-        points = [
-            [_quantize(row["x"]), _quantize(row["y"])],
-            *[[_quantize(point[0]), _quantize(point[1])] for point in row["ordered_waypoints"]],
+        engine_points = [
+            Point(x=_quantize(row["x"]), y=_quantize(row["y"])),
+            *[
+                Point(x=_quantize(point[0]), y=_quantize(point[1]))
+                for point in row["ordered_waypoints"]
+            ],
         ]
+        # G7 route parity: the engine's endpoint arithmetic carries float residue off the
+        # declared port anchor (its normalized port ratios are rounded), while the governed
+        # writer recomputes endpoints through the single port mapping and re-binds the route
+        # to them -- so rows that keep the residue describe a different route than the writer
+        # saves. Canonicalize the record: endpoints become the exact port anchors, interior
+        # waypoints keep the engine's shape through the writer's own binding rule (idempotent
+        # on an already-canonical route). Anchors derive from the same symbol rows that go
+        # into the document, so "what the layout decided" and "what the writer saves" are one
+        # route with endpoints exactly on the declared ports.
+        exact_source = _port_exact_anchor(symbol_rows, str(source.node_id), str(source.port_id), registry)
+        exact_target = _port_exact_anchor(symbol_rows, str(target.node_id), str(target.port_id), registry)
+        if exact_source is not None and exact_target is not None:
+            bound = DocumentService._bind_manual_endpoints(engine_points, exact_source, exact_target)
+            points = [[_quantize(point.x), _quantize(point.y)] for point in bound]
+        else:
+            points = [[point.x, point.y] for point in engine_points]
         rows.append(
             {
                 "kind": "connector",
@@ -1053,17 +1127,25 @@ def apply_materialized_layout(
     require_empty_target(current)
     require_document_canvas(current, layout)
     # The identity chain is attached here rather than accepted from the caller: a caller-supplied
-    # chain could be omitted, and an omitted chain is a committed revision nobody can trace back to
-    # the specification it came from. Refused before the write, so nothing is committed.
+    # chain could be omitted, and an omitted chain is a committed revision nobody can trace back
+    # to the specification it came from.
     context = with_materialization_provenance(layout, audit)
     request = materialized_transaction(layout, expected_revision=expected_revision, label=label)
-    result = service.apply_transaction(
-        layout.document_id,
-        request,
-        source="system",
-        audit=context,
-        semantic_spec=semantic_spec,
-    )
+    try:
+        result = service.apply_transaction(
+            layout.document_id,
+            request,
+            source="system",
+            audit=context,
+            semantic_spec=semantic_spec,
+            precommit_validator=lambda working: materialization_matches_document(layout, working),
+        )
+    except PrecommitValidationError as exc:
+        # B' refusal: the staged document failed the same reconciliation the post-write check
+        # runs, but nothing reached the store -- translate to the protocol's refusal type.
+        raise MaterializationDocumentError(
+            "the committed document does not cover the layout: " + str(exc)
+        ) from exc
     problems = materialization_matches_document(layout, result.document)
     if problems:
         raise MaterializationDocumentError(

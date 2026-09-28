@@ -31,7 +31,6 @@ LEGACY_KEYS = {
 HIDDEN_BUILTIN_KEYS = {
     "system_interface",
     "off_page_connector",
-    "temperature_transmitter",
     "flow_transmitter",
     "level_transmitter",
 }

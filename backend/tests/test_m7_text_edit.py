@@ -74,6 +74,19 @@ def _editor(recorder: _Recorder) -> TypesafeSpecEditor:
     )
 
 
+def _editor_without_tt(recorder: _Recorder) -> TypesafeSpecEditor:
+    """The TT-less catalogue: with temperature_transmitter visible, the generic 仪表
+    trigger resolves through it and the gap ledger this test pins stops triggering. The
+    test exercises the gap LEDGER, so it pins the pre-unhide catalogue shape."""
+
+    from test_m7_text_planner import _RegistryWithoutTT
+
+    return TypesafeSpecEditor(
+        _RegistryWithoutTT(REGISTRY),
+        client_factory=lambda config: TypesafeClient(config, transport=recorder),
+    )
+
+
 def _config() -> TypesafeConfig:
     return TypesafeConfig(api_key="test-key")
 
@@ -144,7 +157,7 @@ def test_an_edit_connection_naming_an_unknown_tag_is_not_substituted() -> None:
 
 def test_every_edit_clause_is_delivered_or_receipted() -> None:
     recorder = _Recorder()
-    plan = _editor(recorder).plan_edit(
+    plan = _editor_without_tt(recorder).plan_edit(
         "添加一个仪表 FV-101，顺便把布局说清楚", base_spec=BASE, typesafe_config=_config()
     )
     assert plan.completeness == "partial"

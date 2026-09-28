@@ -769,29 +769,43 @@ def _attachment_tap_rows(
         host_id = fact.host_engineering_id
         if fact.kind != "instrument" or not host_id:
             continue
+        # Fail-closed carrier exit: an attachment relation that exists in the plan
+        # MUST be materialized below. Every silent skip here would mint a drawing
+        # that quietly dropped a declared relation -- the one thing this layer may
+        # never do.
+        def _fail(
+            reason: str,
+            *,
+            _fact=fact,
+            _host_id=host_id,
+        ) -> None:
+            raise MaterializationError(
+                f"instrument {_fact.engineering_id!r} declares attachment host {_host_id!r} "
+                f"but {reason}"
+            )
+
         host_fact = facts.get(host_id)
+        if host_fact is None:
+            _fail("the host is not an engineering fact of this plan")
         host_row = symbol_rows.get(host_id)
         instrument_row = symbol_rows.get(fact.engineering_id)
+        if host_row is None or instrument_row is None:
+            _fail("the host or the instrument was not placed")
         host_symbol = str(node_symbols.get(host_id, ""))
         instrument_symbol = str(node_symbols.get(fact.engineering_id, ""))
-        if (
-            host_fact is None
-            or host_row is None
-            or instrument_row is None
-            or not host_symbol
-            or not instrument_symbol
-        ):
-            continue
+        if not host_symbol or not instrument_symbol:
+            _fail("a symbol binding is missing")
         try:
-            host_ports = tuple(port.id for port in registry.get(host_symbol).ports)
+            host_definition = registry.get(host_symbol)
         except KeyError:
-            continue
+            _fail(f"symbol {host_symbol!r} is not in the registry")
+        host_ports = tuple(port.id for port in host_definition.ports)
         try:
             instrument_port_ids = tuple(
                 port.id for port in registry.get(instrument_symbol).ports
             )
         except KeyError:
-            instrument_port_ids = ()
+            _fail(f"symbol {instrument_symbol!r} is not in the registry")
         resolution = resolve_attachment_target(
             instrument_tag=fact.tag,
             instrument_symbol_key=instrument_symbol,
@@ -801,21 +815,16 @@ def _attachment_tap_rows(
             instrument_port_ids=instrument_port_ids,
         )
         if not resolution.resolved:
-            continue
+            _fail(f"the governed tap did not resolve ({resolution.reason})")
         land_port = _instrument_land_port(registry, instrument_symbol)
         if not land_port:
-            # Fail-closed: a resolved attachment whose instrument cannot land one is
-            # receipted by the planner ledger before layout; arriving here means the
-            # relation was built outside that path, and silence would mint a drawing
-            # that dropped a declared attachment.
-            raise MaterializationError(
-                f"instrument {fact.engineering_id!r} declares an attachment but its "
-                f"symbol {instrument_symbol!r} has no process land port"
+            _fail(
+                f"its symbol {instrument_symbol!r} has no process land port"
             )
         start = _port_exact_anchor(symbol_rows, host_id, resolution.resolved_port_id, registry)
         end = _port_exact_anchor(symbol_rows, fact.engineering_id, land_port, registry)
         if start is None or end is None:
-            continue
+            _fail("the endpoint anchors cannot be derived from the placed symbols")
         waypoints: list[list[float]] = []
         if start.x != end.x and start.y != end.y:
             waypoints = [[_quantize(end.x), _quantize(start.y)]]

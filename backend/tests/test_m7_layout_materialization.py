@@ -1282,15 +1282,17 @@ def test_attachment_materialization_is_deterministic() -> None:
     assert tap_first, "the tap row must exist in both runs"
 
 
-def test_attachment_without_a_land_port_guesses_nothing() -> None:
-    """Q2R3-B2 hard lock: an instrument whose symbol has no process port produces no
-    tap connector at all -- the resolver fails closed before any landing choice, so
-    there is no "first bidirectional" default to leak into the drawing."""
+def test_attachment_without_a_land_port_refuses_instead_of_dropping() -> None:
+    """Q2R3-B2 hard lock: an attachment relation that cannot materialize must fail
+    loud -- no silent tap-row drop, and never a "first bidirectional" default."""
+
+    import pytest
 
     from agentcad.api_semantic_agent import _finalize_spec_layout
+    from agentcad.m7_layout_materialization import MaterializationError
 
     spec = _tap_probe_spec()
     spec.entities[2] = spec.entities[2].model_copy(update={"symbol_key": "level_gauge"})
     finalized = _finalize_spec_layout(spec)
-    layout = materialize_canonical_layout(finalized, document_id="doc_loud")
-    assert not [row for row in layout.rows if str(row["engineering_id"]).startswith("tap_")]
+    with pytest.raises(MaterializationError, match="no_instrument_land_port"):
+        materialize_canonical_layout(finalized, document_id="doc_loud")

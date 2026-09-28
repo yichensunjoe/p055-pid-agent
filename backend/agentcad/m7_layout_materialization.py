@@ -839,8 +839,11 @@ def _attachment_tap_rows(
                 "y": _quantize(bound[0].y),
                 "width": 0.0,
                 "height": 0.0,
+                # Connector rows carry every point after the first, the endpoint
+                # included -- the ops builder and the reconciliation both read the row
+                # that way (an interior-only list would leave the route open).
                 "waypoints": [
-                    [_quantize(point.x), _quantize(point.y)] for point in bound[1:-1]
+                    [_quantize(point.x), _quantize(point.y)] for point in bound[1:]
                 ],
             }
         )

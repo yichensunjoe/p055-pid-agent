@@ -112,6 +112,10 @@ class PlannedEntity:
     #: catalogue gap, recorded so completeness can say partial -- never widened into a choice
     #: among symbols the sentence did not ask for.
     catalog_gap: bool = False
+    #: Q2R3-A: the host tag from an explicit 「给 <HOST> 添加 <仪表>」. Tag form at plan time;
+    #: :meth:`_spec` resolves it to the host's engineering id (instruments only -- equipment
+    #: never carries a host, and a process port is never silently promoted to a tap).
+    host_tag: str = ""
 
     @property
     def resolved(self) -> bool:
@@ -181,6 +185,20 @@ def _entity_id(index: int, tag: str, symbol_key: str) -> str:
     """A stable engineering id. Derived from the tag when there is one, from the position if not."""
 
     return f"el_{_slug(tag)}" if tag else f"el_{index}_{_slug(symbol_key)}"
+
+
+_HOST_PREFIX = re.compile(r"给\s*(?P<tag>[A-Za-z]{1,5}-?\d{1,5}[A-Za-z]?)")
+
+
+def _host_tag_of(clause_text: str) -> str:
+    """The host tag an explicit 「给 <HOST> 添加 …」 names, upper-cased, or "".
+
+    The tag is data read by a pattern, not a judgment; anything the sentence does not
+    spell out stays empty, and an empty host means no attachment is claimed.
+    """
+
+    match = _HOST_PREFIX.search(clause_text or "")
+    return match.group("tag").upper() if match else ""
 
 
 def _device_phrase(clause: str) -> str:
@@ -413,7 +431,14 @@ class TypesafeDiagramSpecPlanner:
         known_tags: list[str] = []
         for index, clause in enumerate(add_clauses, start=1):
             tags = extract_tags(clause.text)
-            tag = tag_overrides.get(id(clause)) or (tags[0] if tags else UNTAGGED_TAG_TEMPLATE.format(index=index))
+            host_tag = _host_tag_of(clause.text)
+            if host_tag and len(tags) >= 2:
+                # 「给 <HOST> 添加 <设备> <TAG>」: the first tag names the host, the last
+                # names the device. Reading the host as the device would mint a wrong tag
+                # and corrupt the attachment relation built from it.
+                tag = tag_overrides.get(id(clause)) or tags[-1]
+            else:
+                tag = tag_overrides.get(id(clause)) or (tags[0] if tags else UNTAGGED_TAG_TEMPLATE.format(index=index))
             phrase = _device_phrase(clause.text) or clause.text
             candidates = tuple(candidate_symbols(self.symbols, clause.text))
             catalog_gap = bool(matched_hints(clause.text)) and not candidates
@@ -434,6 +459,7 @@ class TypesafeDiagramSpecPlanner:
                     decided_by=decided_by,
                     source_clause=clause.text,
                     catalog_gap=catalog_gap,
+                    host_tag=host_tag,
                 )
             )
             known_tags.append(tag)
@@ -652,6 +678,19 @@ class TypesafeDiagramSpecPlanner:
         # catalogue gap named as its own reason. A gap is never widened into a judgment -- the
         # model may not pick a look-alike the sentence did not ask for.
         undelivered: list[str] = [f"无法理解的子句：「{clause.text}」" for clause in unknown_clauses]
+        # Q2R3-A: an instrument whose named host is not declared keeps its own device but
+        # loses the attachment, receipted -- never guessed onto whatever device is near.
+        host_labels = {entity.tag: entity.engineering_id for entity in entities}
+        for entity in entities:
+            if (
+                entity.host_tag
+                and entity.host_tag not in host_labels
+                and not _is_equipment(entity.chosen_symbol_key, self.symbols)
+            ):
+                undelivered.append(
+                    f"「{entity.source_clause or entity.phrase}」的宿主 {entity.host_tag} "
+                    "未声明，仪表挂接未建立。"
+                )
         # System declarations are recognized but unsupported: receipted, never drawn, and the
         # sentence stays partial. The receipt names the unsupported feature so the gap is
         # attributable instead of being silently minted as phantom equipment.
@@ -783,6 +822,7 @@ class TypesafeDiagramSpecPlanner:
             decided_by="judgment",
             source_clause=entity.source_clause,
             catalog_gap=entity.catalog_gap,
+            host_tag=entity.host_tag,
         )
 
     def _resolve_connection(
@@ -833,6 +873,7 @@ class TypesafeDiagramSpecPlanner:
     ) -> DiagramSpec:
         resolved = [entity for entity in entities if entity.resolved]
         kept = {entity.engineering_id for entity in resolved}
+        labels = {entity.tag: entity.engineering_id for entity in resolved}
         return DiagramSpec(
             label="自然语言生成的图纸",
             systems=[DiagramSystem(system_id=self.system_id, name=self.system_name, order=0)],
@@ -845,6 +886,12 @@ class TypesafeDiagramSpecPlanner:
                     name=entity.phrase,
                     equipment_class=_category_of(entity.chosen_symbol_key, self.symbols),
                     symbol_key=entity.chosen_symbol_key,
+                    host_engineering_id=(
+                        labels.get(entity.host_tag)
+                        if entity.host_tag
+                        and not _is_equipment(entity.chosen_symbol_key, self.symbols)
+                        else None
+                    ),
                 )
                 for entity in resolved
             ],

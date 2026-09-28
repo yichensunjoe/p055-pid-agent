@@ -231,19 +231,35 @@ class TypesafeSpecEditor(TypesafeDiagramSpecPlanner):
             undelivered.append(f"「{additions[[e.tag for e in additions].index(tag)].phrase}」（位号 {tag}）：图纸里已有这个位号。")
             skipped.append(f"位号 {tag} 已存在，未重复添加。")
         system_id = base_spec.entities[0].system_id if base_spec.entities else self.system_id
-        new_entities = [
-            DiagramEntity(
-                engineering_id=entity.engineering_id,
-                kind="equipment" if _is_equipment(entity.chosen_symbol_key, self.symbols) else "instrument",
-                system_id=system_id,
-                tag=entity.tag,
-                name=entity.phrase,
-                equipment_class=self._category(entity.chosen_symbol_key),
-                symbol_key=entity.chosen_symbol_key,
+        new_entities: list[DiagramEntity] = []
+        for entity in additions:
+            if entity.tag in duplicate_tags:
+                continue
+            instrument = not _is_equipment(entity.chosen_symbol_key, self.symbols)
+            host: str | None = None
+            if instrument and entity.host_tag:
+                pool_labels = {
+                    e.tag: e.engineering_id
+                    for e in [*kept_entities, *new_entities]
+                }
+                host = pool_labels.get(entity.host_tag)
+                if host is None:
+                    undelivered.append(
+                        f"「{entity.source_clause or entity.phrase}」的宿主 {entity.host_tag} "
+                        "未声明，仪表挂接未建立。"
+                    )
+            new_entities.append(
+                DiagramEntity(
+                    engineering_id=entity.engineering_id,
+                    kind="equipment" if _is_equipment(entity.chosen_symbol_key, self.symbols) else "instrument",
+                    system_id=system_id,
+                    tag=entity.tag,
+                    name=entity.phrase,
+                    equipment_class=self._category(entity.chosen_symbol_key),
+                    symbol_key=entity.chosen_symbol_key,
+                    host_engineering_id=host,
+                )
             )
-            for entity in additions
-            if entity.tag not in duplicate_tags
-        ]
 
         new_connection_ids = {c.engineering_id for c in kept_connections}
         new_connections = list(kept_connections)

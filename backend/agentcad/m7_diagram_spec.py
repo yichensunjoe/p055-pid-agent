@@ -151,6 +151,11 @@ class DiagramEntity(StrictModel):
     #: Required, and required to be *something*: an empty value would let a node reach the
     #: engine with no renderer binding at all, which step 3 would then have to refuse anyway.
     symbol_key: str = Field(min_length=1)
+    #: Q2R3-A: an instrument's attachment host, by engineering id. Only instruments carry
+    #: one, only from an explicit 「给 <HOST> 添加 <仪表>」, and the host is always
+    #: equipment -- a process inlet/outlet is never silently promoted to a tap. None means
+    #: no attachment, which is the backward-compatible default for every existing spec.
+    host_engineering_id: str | None = None
 
 
 class DiagramConnection(StrictModel):
@@ -221,6 +226,31 @@ class DiagramSpec(StrictModel):
                     f"{entity.system_id!r}"
                 )
         declared = set(entity_ids)
+        by_id = {entity.engineering_id: entity for entity in self.entities}
+        for entity in self.entities:
+            if entity.host_engineering_id is None:
+                continue
+            if entity.kind != "instrument":
+                problems.append(
+                    f"entity {entity.engineering_id!r} carries a host but is not an instrument"
+                )
+                continue
+            host = by_id.get(entity.host_engineering_id)
+            if host is None:
+                problems.append(
+                    f"instrument {entity.engineering_id!r} names an undeclared host "
+                    f"{entity.host_engineering_id!r}"
+                )
+            else:
+                if host.engineering_id == entity.engineering_id:
+                    problems.append(
+                        f"instrument {entity.engineering_id!r} is its own host"
+                    )
+                if host.kind != "equipment":
+                    problems.append(
+                        f"instrument {entity.engineering_id!r} hosts on "
+                        f"{host.engineering_id!r}, which is not equipment"
+                    )
         connection_ids = [connection.engineering_id for connection in self.connections]
         if len(connection_ids) != len(set(connection_ids)):
             problems.append("connection ids must be unique")

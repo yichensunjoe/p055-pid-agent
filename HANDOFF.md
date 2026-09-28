@@ -4,7 +4,7 @@
 
 ## 当前状态（2026-09-29，**M8-Q2 OVERALL GATE = PASS / CLOSED；main = `7f39d92`（#56–#65 十个 squash 全合）**）
 
-- **M8 Engineering Coverage & Qualification 已全部收口**：M8-Q1 测量完整性（P1 B' 原子性/G7 route parity/G2 子句分解/系统声明 fail-closed）→ M8-Q2 catalogue correction/expansion 全链（TT visibility、condenser hint、内嵌添加、label pool、instrument attachment 语义→受治理 tap→物化、零连接窄批）。逐子阶段 CLOSED 状态、冻结的 fail-closed 契约清单、关键场景终态与 deferred future scope 见 **reports/m8-q2-closeout.md**（封账 artifact）；批间设计往返全记录在文档分支 `m7-semantic-first-synthesis` 的 `reports/m8-q2-design.md`。
+- **M8-Q1/Q2 当前已授权范围已收口（M8-Q2 Catalogue Correction / Expansion 封账）**：M8-Q1 测量完整性（P1 B' 原子性/G7 route parity/G2 子句分解/系统声明 fail-closed）→ M8-Q2 catalogue correction/expansion 全链（TT visibility、condenser hint、内嵌添加、label pool、instrument attachment 语义→受治理 tap→物化、零连接窄批）。逐子阶段 CLOSED 状态、冻结的 fail-closed 契约清单、关键场景终态与 deferred future scope 见 **reports/m8-q2-closeout.md**（封账 artifact）；批间设计往返全记录在文档分支 `m7-semantic-first-synthesis` 的 `reports/m8-q2-design.md`。
 - **关键终态**：DEV-6 全三句 complete；DEV-4 = partial + 唯一 receipt（LIT 双口语义属已签能力边界，非 blocker）；HOLDOUT-2 双 complete。
 - **下一项工程工作不要自动开始**：LIT 双 tap / HOLDOUT phase / G4 router 分别等新 Design Gate（远端明示）。
 - 本文件 2026-09-21 及更早的 M5/M4 历史段落保留在下供考古；它们描述的是旧基线（`1ba141c` 时代），已被上述状态取代。

@@ -1,7 +1,7 @@
 # M8-Q2 Catalogue Correction / Expansion · 收口报告
 
 > 签署：M8-Q2 OVERALL GATE = PASS / CLOSED（Gate 会话「方案落地顺序裁决」2026-09-29 裁定）。
-> 最终基线：**main = `7f39d92`**（#56–#65 十个 squash PR 全合，main CI 逐 PR exact-head 四绿）。
+> 最终基线：**main = `7f39d92`**（#56–#65 十个 squash PR 全合，#56–#65 各 PR exact-head CI 四绿）。
 > 过程设计文档（批间往返全记录）：`reports/m8-q2-design.md`（文档分支 `m7-semantic-first-synthesis`）；本文件是 main 线上的封账 artifact。
 
 ## 一、各子阶段最终状态（全部 CLOSED）
@@ -43,7 +43,8 @@
 1. LIT 双口双 tap 设计（level_gauge upper/lower 双挂接语义）。
 2. HOLDOUT-1「换成」替换语法。
 3. G4 泄放支路 router 绕障。
-4. 真实 system declaration 支持（当前为诚实 receipt）。
+
+（system declaration 支持是 §2 第 4 条已记录的 fail-closed 能力边界，不属于 deferred engineering item。）
 
 ## 五、Digest / 版本基线
 

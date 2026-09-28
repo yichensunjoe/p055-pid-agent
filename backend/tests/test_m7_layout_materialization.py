@@ -1296,3 +1296,49 @@ def test_attachment_without_a_land_port_refuses_instead_of_dropping() -> None:
     finalized = _finalize_spec_layout(spec)
     with pytest.raises(MaterializationError, match="no_instrument_land_port"):
         materialize_canonical_layout(finalized, document_id="doc_loud")
+
+
+def test_attachment_only_drawing_routes_materializes_and_commits(tmp_path: Path) -> None:
+    """Q2R3-B3: a drawing with no process connections but a verified attachment
+    relation routes (zero process rows), materializes its governed tap, and commits
+    with reconciliation -- the DEV-4 first-sentence shape end to end."""
+
+    from agentcad.api_semantic_agent import _finalize_spec_layout
+
+    spec = _tap_probe_spec()
+    spec = spec.model_copy(update={"connections": ()})
+    finalized = _finalize_spec_layout(spec)
+    layout = materialize_canonical_layout(finalized, document_id="doc_b3")
+    process_rows = [
+        row
+        for row in layout.rows
+        if row["kind"] == "connector" and not str(row["engineering_id"]).startswith("tap_")
+    ]
+    assert process_rows == []
+    tap_rows = [row for row in layout.rows if str(row["engineering_id"]).startswith("tap_")]
+    assert [row["engineering_id"] for row in tap_rows] == ["tap_el_TT_101"]
+
+    service = make_service(tmp_path)
+    document_id = seed_document(service, layout)
+    request = materialized_transaction(
+        replace(layout, document_id=document_id), expected_revision=0
+    )
+    result = service.apply_transaction(document_id, request, source="system")
+    assert materialization_matches_document(layout, result.document) == []
+    assert any(
+        element.id == "el_connector_tap_el_TT_101" for element in result.document.elements
+    )
+
+
+def test_connectionless_drawing_without_attachments_is_still_refused() -> None:
+    """Q2R3-B3 hard lock: the attachment-only exception never leaks -- a drawing with
+    neither connections nor attachments keeps the frozen refusal byte-identical."""
+
+    import pytest
+
+    from agentcad.api_semantic_agent import _finalize_spec_layout
+    from agentcad.auto_layout_geometry import StepThreeError
+
+    spec = _tap_probe_spec(hosted=False).model_copy(update={"connections": ()})
+    with pytest.raises(StepThreeError, match="would have to guess ports"):
+        _finalize_spec_layout(spec)

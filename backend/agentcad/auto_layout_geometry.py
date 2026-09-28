@@ -646,9 +646,20 @@ def route_semantic_layout(
             f"routing takes the materialized plan, not one produced at {plan.produced_at_step!r}"
         )
     if not plan.endpoint_bindings:
-        raise StepThreeError(
-            "routing needs resolved endpoint bindings: without them it would have to guess ports"
+        # B3 attachment-only exception: a drawing with NO semantic process connections
+        # has no process edge whose ports the router would have to guess -- the refused
+        # guessing case does not exist. When at least one verified attachment relation
+        # is present, the governed taps are materialized downstream from the relation,
+        # so routing may proceed and produce zero process rows. A drawing with neither
+        # connections nor attachments is still refused unchanged.
+        has_attachments = any(
+            fact.kind == "instrument" and fact.host_engineering_id
+            for fact in plan.engineering_entities
         )
+        if plan.connections or not has_attachments:
+            raise StepThreeError(
+                "routing needs resolved endpoint bindings: without them it would have to guess ports"
+            )
     _require_matching_snapshot(plan, snapshot)
     rects = _rects_from_rows(plan.placement)
     bindings = binding_index(plan.endpoint_bindings)

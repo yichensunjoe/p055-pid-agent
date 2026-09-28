@@ -81,7 +81,7 @@ LAYOUT_RULES_VERSION = "deterministic-layout-rules/1"
 #: the engineering facts the ingress received, recorded so step 5 can rebuild the same digest
 #: from the plan's own live fields and compare it with the topology it came from. Without the
 #: record, "the layout did not change the tag" is a sentence; with it, it is a digest comparison.
-SEMANTIC_LAYOUT_PLAN_DIGEST_VERSION = "m7-semantic-layout-plan-digest/7"
+SEMANTIC_LAYOUT_PLAN_DIGEST_VERSION = "m7-semantic-layout-plan-digest/8"
 
 #: One rules version governs the spacing policy, the node sizes and the rank rules. A separate
 #: spacing-policy version would be a second source of truth about the same drawing, which is
@@ -285,6 +285,10 @@ class PlanEngineeringFact:
     equipment_class: str
     instrument_type: str
     measurement: str
+    #: Q2R3-B2 carrier: the attachment host, verbatim from the topology. Part of the
+    #: engineering record the canonical identity is reconstructed from: a layout that
+    #: rewrote an attachment is caught by the digest comparison, not by a reviewer.
+    host_engineering_id: str | None = None
 
     def to_projection(self) -> dict[str, Any]:
         return {
@@ -296,6 +300,7 @@ class PlanEngineeringFact:
             "equipment_class": self.equipment_class,
             "instrument_type": self.instrument_type,
             "measurement": self.measurement,
+            "host_engineering_id": self.host_engineering_id,
         }
 
 
@@ -583,6 +588,7 @@ def plan_semantic_layout(topology: SemanticTopology) -> SemanticLayoutPlan:
                 equipment_class=node.equipment_class,
                 instrument_type=node.instrument_type,
                 measurement=node.measurement,
+                host_engineering_id=node.host_engineering_id,
             )
             for node in sorted(topology.nodes, key=lambda item: item.engineering_id)
         ),

@@ -657,6 +657,8 @@ def _plan_rows(plan: SemanticLayoutPlan) -> tuple[dict[str, Any], ...]:
             }
         )
 
+    rows.extend(_attachment_tap_rows(plan, symbol_rows, registry))
+
     annotated = {str(row["engineering_id"]) for row in plan.annotations}
     for node_id in sorted(annotated):
         if node_id not in kinds:
@@ -721,6 +723,103 @@ def _plan_rows(plan: SemanticLayoutPlan) -> tuple[dict[str, Any], ...]:
         )
     rows.sort(key=lambda row: (MATERIALIZATION_ROW_ORDER.index(str(row["kind"])), str(row["engineering_id"])))
     return tuple(rows)
+
+
+def _instrument_land_port(registry: SymbolRegistry, symbol_key: str) -> str:
+    """The instrument-side port a governed tap connector lands on.
+
+    ``process`` when the symbol declares one; otherwise the first bidirectional port
+    (level gauges expose upper/lower instead of a named process port). Deterministic:
+    the catalogue's declared order, first match. Empty means there is no port to land
+    on and no tap row may be synthesized.
+    """
+
+    try:
+        definition = registry.get(symbol_key)
+    except KeyError:
+        return ""
+    for port in definition.ports:
+        if port.id == "process":
+            return port.id
+    for port in definition.ports:
+        if port.direction == "bidirectional":
+            return port.id
+    return ""
+
+
+def _attachment_tap_rows(
+    plan: Any,
+    symbol_rows: Mapping[str, Mapping[str, Any]],
+    registry: SymbolRegistry,
+) -> list[dict[str, Any]]:
+    """Q2R3-B2: synthesize the governed tap connectors attachment relations imply.
+
+    One deterministic connector row per attached instrument whose governed tap resolved:
+    host tap port -> instrument land port, elbow-routed in placement space, id
+    ``tap_<instrument_eid>``. These rows are materialization-derived: they never enter
+    ``spec.connections`` and never touch process routing. Unresolved attachments are the
+    planner ledger's receipts, not this layer's -- nothing here guesses.
+    """
+
+    from .m7_attachment_targets import resolve_attachment_target
+
+    facts = {fact.engineering_id: fact for fact in plan.engineering_entities}
+    tap_rows: list[dict[str, Any]] = []
+    for fact in plan.engineering_entities:
+        host_id = fact.host_engineering_id
+        if fact.kind != "instrument" or not host_id:
+            continue
+        host_fact = facts.get(host_id)
+        host_row = symbol_rows.get(host_id)
+        instrument_row = symbol_rows.get(fact.engineering_id)
+        if host_fact is None or host_row is None or instrument_row is None:
+            continue
+        try:
+            host_ports = tuple(port.id for port in registry.get(host_fact.symbol_key).ports)
+        except KeyError:
+            continue
+        resolution = resolve_attachment_target(
+            instrument_tag=fact.tag,
+            instrument_symbol_key=fact.symbol_key,
+            host_tag=host_fact.tag,
+            host_symbol_key=host_fact.symbol_key,
+            host_port_ids=host_ports,
+        )
+        if not resolution.resolved:
+            continue
+        land_port = _instrument_land_port(registry, fact.symbol_key)
+        if not land_port:
+            continue
+        start = _port_exact_anchor(symbol_rows, host_id, resolution.resolved_port_id, registry)
+        end = _port_exact_anchor(symbol_rows, fact.engineering_id, land_port, registry)
+        if start is None or end is None:
+            continue
+        waypoints: list[list[float]] = []
+        if start.x != end.x and start.y != end.y:
+            waypoints = [[_quantize(end.x), _quantize(start.y)]]
+        tap_rows.append(
+            {
+                "kind": "connector",
+                "engineering_id": f"tap_{fact.engineering_id}",
+                "element_id_role": CONNECTOR_ELEMENT_ROLE,
+                "system_id": fact.system_id,
+                "tag": "",
+                "symbol_key": "",
+                "label": "",
+                "medium": "instrument",
+                "source": {"node_id": host_id, "port_id": resolution.resolved_port_id},
+                "target": {"node_id": fact.engineering_id, "port_id": land_port},
+                "flow_direction": "none",
+                "x": _quantize(start.x),
+                "y": _quantize(start.y),
+                "width": 0.0,
+                "height": 0.0,
+                "waypoints": waypoints,
+            }
+        )
+    return tap_rows
+
+
 
 
 def _operations(

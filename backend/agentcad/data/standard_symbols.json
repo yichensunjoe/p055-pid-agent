@@ -4077,6 +4077,22 @@
           "y": 50,
           "direction": "out",
           "medium": "process"
+        },
+        {
+          "id": "tap_pt",
+          "name": "压力温度取压口",
+          "x": 35,
+          "y": 0,
+          "direction": "bidirectional",
+          "medium": "instrument"
+        },
+        {
+          "id": "tap_level",
+          "name": "液位计接口",
+          "x": 70,
+          "y": 38,
+          "direction": "bidirectional",
+          "medium": "instrument"
         }
       ],
       "shapes": [

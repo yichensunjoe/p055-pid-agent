@@ -37,3 +37,18 @@
 2. Q2-2(a) 明确解禁 m7_port_selectors.py 的词表数据部分；Q2-2(b) selector 提取缺陷请路由；
 3. Q2-3 G6 请确认 CLOSE；
 4. Q2 实现白名单与 digest bump 机制在获批后随实现计划一并提交。
+
+## Q2-1R 设计修订（visibility + language-match，按 Gate 分类重报；暂不动代码）
+
+**Exact evidence 补全**：
+1. `temperature_transmitter` 存在于 standard_symbols.json（name=温度变送器，category=仪表，ports=process 过程接口(in)/signal 信号接口(out)），但被 `HIDDEN_BUILTIN_SYMBOL_KEYS`（symbols.py:14-21）抑制：`registry.list()` 不含它 → 候选池为零 → DEV-4 误报 catalogue gap。
+2. 隐藏历史：`117a8f7`（2026-07-27「harden web agent P&ID workflow」）一次性隐藏 pressure/temperature/flow/level 四个变送器；`8d82f75`（2026-08-06）把 **pressure_transmitter 单拎解禁**——frozenset 删一行，无其他仪式 = 直接先例。代码中未记录继续隐藏 TT 的约束；唯一的"约束"是审计契约把 hidden 视为 **"withheld, one-line fix behind this verdict"**（test_m7_proposal_accountability.py:913 用 flow_transmitter 作 hidden 判定的范例）——即代码库预期解禁就是修法本身。
+3. 语言匹配复核：**TT 解禁后现有英文 hint 已足够精确**——haystack「temperature_transmitter 温度变送器 仪表」含 "transmitter"（key 自带），而 temperature_indicator/element 的 haystack 均不含 → 候选恰好 [temperature_transmitter]，lookalake 进不来。中文 hint 补丁非必要（ Gate 说"可以补但不是靠宽泛仪表拉 lookalikes"——现状已满足）。
+
+**设计（修订后）**：
+- 只解禁 **temperature_transmitter** 一项（frozenset 删一行，沿 8d82f75 先例）；**FT/LT 不动**（无独立证据；且审计测试需要至少一个 hidden 范例，FT 正是该范例）。
+- 同步改 `test_symbol_library.py` 的 `HIDDEN_BUILTIN_KEYS` 期望集（去 TT）；审计范例测试不动（用 FT）。
+- **identity 影响如实记录**：symbol 数据不动 → 既有图纸的 geometry/identity digest 不变；但 visible catalogue/candidate surface 变化（list() 多一项）→ 未来含 TT 的 judgment 候选集变化。这正是 correction 的目的，非副作用。
+- **风险与验证项**：TT 的 process(in)/signal(out) 端口模型与「给 V-101 添加」宿主挂接语义的端到端配合（DEV-4 重跑验证：TT-101 挂到 V-101、LIT/PIT 行为不变）；若宿主挂接受阻，回报 Gate 再定（可能涉及 instrument attachment 语义，不属于本 correction）。
+- 测试矩阵：①DEV-4 句一重跑三仪表全 resolved 且 TT-101→temperature_transmitter（断言精确 key，非 indicator/element）；②HIDDEN_BUILTIN_KEYS 期望集更新；③FT/LT 仍 hidden（负守卫）；④既有 symbol_library/audit 测试全绿。
+- 改动面：`backend/agentcad/symbols.py`（一行）+ `backend/tests/test_symbol_library.py`（期望集）。digest 无 bump。

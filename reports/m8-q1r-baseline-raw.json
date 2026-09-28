@@ -1,0 +1,83 @@
+{
+ "provenance": {
+  "git_rev_parse_HEAD": "1afeccab35dce72c7e213cf46b421956d7dba81a",
+  "git_status_porcelain": "",
+  "server_cwd": "/Users/joe/ai/reasonix/projects/active/P055-PID-Agent-q1r",
+  "agentcad___file__": "/Users/joe/ai/reasonix/projects/active/P055-PID-Agent-q1r/backend/agentcad/__init__.py",
+  "python_executable": "/Users/joe/ai/reasonix/projects/active/P055-PID-Agent/.venv/bin/python"
+ },
+ "probes": {
+  "g1_dev2_selector": {
+   "document_id": "doc_9eb1cd062eae",
+   "step1_receipt": {
+    "http": 422,
+    "code": "port_ambiguity",
+    "ambiguities": [
+     "missing_selector"
+    ]
+   },
+   "step2_restate": {
+    "http": 409,
+    "outcome": null,
+    "completeness": null,
+    "revision": null,
+    "spec_digest": ""
+   }
+  },
+  "g5_dev1_dxf": {
+   "document_id": "doc_4e68f4e43b67",
+   "plan": {
+    "http": 200,
+    "completeness": "complete",
+    "revision": 1
+   },
+   "dxf": {
+    "http": 200,
+    "bytes": 4372,
+    "kinds": {
+     "line": 3,
+     "circle": 3,
+     "polyline": 2,
+     "fill": 1,
+     "text": 2
+    }
+   }
+  },
+  "p1_holdout2_atomicity": {
+   "document_id": "doc_9a13437edc9a",
+   "http": 409,
+   "detail": "the committed document does not cover the layout: el_connector_cn_1 was routed differently in the document than the layout decided; el_connector_cn_2 was routed differently in the document than the layout decided",
+   "before": {
+    "http": 200,
+    "revision": 0,
+    "n_elements": 0,
+    "systems": [
+     "Default"
+    ]
+   },
+   "after": {
+    "http": 200,
+    "revision": 1,
+    "n_elements": 15,
+    "systems": [
+     "Default",
+     "主工艺系统"
+    ]
+   },
+   "state_invariant": false
+  },
+  "p2_iso_guard": {
+   "document_id": "doc_6c0a0aa4a84e",
+   "http": 200,
+   "after": {
+    "http": 200,
+    "revision": 1,
+    "n_elements": 5,
+    "systems": [
+     "Default",
+     "主工艺系统"
+    ]
+   }
+  }
+ }
+}

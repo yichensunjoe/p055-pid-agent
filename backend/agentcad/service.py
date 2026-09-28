@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any
@@ -137,6 +137,16 @@ class RevisionConflictError(RuntimeError):
 
 class InvalidOperationError(ValueError):
     pass
+
+
+class PrecommitValidationError(RuntimeError):
+    """A staged mutation failed its pre-commit check: nothing was persisted.
+
+    Raised after ``_stage_mutation()`` produced the exact working document but before
+    any store save, so a refused transaction leaves the stored revision, history and
+    semantic source untouched. Callers that speak the materialization protocol
+    translate this into their own refusal type at their boundary.
+    """
 
 
 class DocumentService:
@@ -502,6 +512,7 @@ class DocumentService:
         audit: AuditContext | None = None,
         state: ProvenanceState | None = None,
         semantic_spec: SemanticSpecRecord | None = None,
+        precommit_validator: Callable[[Document], Sequence[str]] | None = None,
     ) -> TransactionResult:
         stored = self._get_stored(document_id)
         current = stored.document
@@ -511,6 +522,13 @@ class DocumentService:
             )
 
         working = self._stage_mutation(current, transaction.operations)
+        if precommit_validator is not None:
+            # B' exact-staged validation: the check runs against the same working document
+            # the store would receive, and a failure refuses the whole transaction before
+            # store.save() -- never write-then-compensate.
+            problems = list(precommit_validator(working))
+            if problems:
+                raise PrecommitValidationError("; ".join(problems))
         undo_stack = [*stored.undo_stack, current.model_dump(mode="json")][-self.history_limit :]
         if audit is None:
             audit = AuditContext(

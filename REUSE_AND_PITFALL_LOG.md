@@ -1,3 +1,10 @@
+## 2026-09-28 · 边界外调用方会打断签名变更；「假 complete」比诚实 422 更危险（P055-PID-Agent）
+
+- 场景：Q1R2 给 planner.read() 加返回值（系统声明通道），全量测试全绿——但只跑了后端单测；m7_text_edit.py（白名单外）也解包 read() 的 4 元组，跑到它时才炸。另一个坑：Gate 拒收 DEV-5 的「phantom E-01 假 complete」——未支持的能力被静默吞成杂牌设备还宣称 complete，比诚实 receipt 危害大得多。
+- 结论做法：① 改内部函数签名前先 grep 全部解包点，且"白名单内改动"绝不能迫使白名单外文件跟着改——改用实例属性/属性传出（read() 保持 4 元组，`self.last_system_declarations`）。② 未支持的语法形态（「添加一个XX系统」）要 fail-closed：形状判定（正则 + 无位号 + 短语后缀）隔离出设备路径，进 skipped 账本，completeness=partial。
+- 踩坑点：① shell 里 `cd X && cmd &` 的 `&` 会把整条列表后台化，前台 cwd 没变——后面相对路径跑的是旧副本（证据写错仓库）。② 证据文件自身会让 `git status` 变脏：provenance 要在写证据**之前**捕获，或把证据写到树外。③ amend 后旧 commit 远端不可寻，报告里别写"HEAD 已核"，要写"runtime HEAD X（已 amend），final tip Y，期间无产品代码变更"。
+- 适用场景：多模块共享的内部 API 演进；测量/验收型任务里「不支持的能力」的处置设计；任何带 provenance 门禁的证据生成。
+
 ## 2026-09-28 · 测量基线自证：报告写的基线≠进程 import 的代码；「默认系统名」别误读成跨文档泄漏（P055-PID-Agent）
 
 - 场景：M8-Q1 只读运行回报写「基线 origin/main @ 1afeccab」，但 scratch 后端是在切到平行分支 `m7-semantic-first-synthesis`

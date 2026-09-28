@@ -571,9 +571,10 @@ def test_attached_instruments_without_governed_tap_get_machine_readable_gaps() -
     assert {entity.tag for entity in plan.spec.entities} >= {"V-101", "LIT-101", "PIT-101", "TT-101"}
 
 
-def test_dev4_shape_with_pinned_symbols_resolves_all_taps() -> None:
-    """Q2R3-B2 hard lock: with real instrument symbols the attachment receipts vanish
-    and the DEV-4 sentence is complete at the semantic layer."""
+def test_dev4_shape_with_pinned_symbols_materializes_tt_and_pit() -> None:
+    """Q2R3-B2 hard lock: TT/PIT resolve and leave no receipt; LIT lands on the
+    level-gauge pair-port semantics which are a separate design, so it receipts with
+    no_instrument_land_port -- never a hidden first-bidirectional default."""
 
     answers = {
         "el_LIT_101": {"choice": "level_gauge", "confidence": 0.9},
@@ -583,5 +584,8 @@ def test_dev4_shape_with_pinned_symbols_resolves_all_taps() -> None:
         "添加一个缓冲罐 V-101，给 V-101 添加一台液位计 LIT-101、一台压力表 PIT-101 和一台温度变送器 TT-101",
         typesafe_config=_config(),
     )
-    assert plan.completeness == "complete"
-    assert plan.attachment_gaps == ()
+    records = {record["instrument_tag"]: record for record in plan.attachment_gaps}
+    assert "TT-101" not in records
+    assert "PIT-101" not in records
+    assert records["LIT-101"]["reason"] == "no_instrument_land_port"
+    assert plan.completeness == "partial"

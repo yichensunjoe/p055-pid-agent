@@ -726,12 +726,14 @@ def _plan_rows(plan: SemanticLayoutPlan) -> tuple[dict[str, Any], ...]:
 
 
 def _instrument_land_port(registry: SymbolRegistry, symbol_key: str) -> str:
-    """The instrument-side port a governed tap connector lands on.
+    """The instrument-side port a governed tap connector lands on: the symbol's
+    ``process`` port, nothing else.
 
-    ``process`` when the symbol declares one; otherwise the first bidirectional port
-    (level gauges expose upper/lower instead of a named process port). Deterministic:
-    the catalogue's declared order, first match. Empty means there is no port to land
-    on and no tap row may be synthesized.
+    There is deliberately no bidirectional fallback: level gauges expose an
+    upper/lower pair whose dual-tap semantics are a separate design, and "the first
+    bidirectional port" would be a hidden default. An instrument without a ``process``
+    port cannot be tap-materialized; the planner ledger receipts it long before this
+    layer, and reaching here with one is a loud error, not a silent skip.
     """
 
     try:
@@ -740,9 +742,6 @@ def _instrument_land_port(registry: SymbolRegistry, symbol_key: str) -> str:
         return ""
     for port in definition.ports:
         if port.id == "process":
-            return port.id
-    for port in definition.ports:
-        if port.direction == "bidirectional":
             return port.id
     return ""
 
@@ -787,18 +786,32 @@ def _attachment_tap_rows(
             host_ports = tuple(port.id for port in registry.get(host_symbol).ports)
         except KeyError:
             continue
+        try:
+            instrument_port_ids = tuple(
+                port.id for port in registry.get(instrument_symbol).ports
+            )
+        except KeyError:
+            instrument_port_ids = ()
         resolution = resolve_attachment_target(
             instrument_tag=fact.tag,
             instrument_symbol_key=instrument_symbol,
             host_tag=host_fact.tag,
             host_symbol_key=host_symbol,
             host_port_ids=host_ports,
+            instrument_port_ids=instrument_port_ids,
         )
         if not resolution.resolved:
             continue
         land_port = _instrument_land_port(registry, instrument_symbol)
         if not land_port:
-            continue
+            # Fail-closed: a resolved attachment whose instrument cannot land one is
+            # receipted by the planner ledger before layout; arriving here means the
+            # relation was built outside that path, and silence would mint a drawing
+            # that dropped a declared attachment.
+            raise MaterializationError(
+                f"instrument {fact.engineering_id!r} declares an attachment but its "
+                f"symbol {instrument_symbol!r} has no process land port"
+            )
         start = _port_exact_anchor(symbol_rows, host_id, resolution.resolved_port_id, registry)
         end = _port_exact_anchor(symbol_rows, fact.engineering_id, land_port, registry)
         if start is None or end is None:

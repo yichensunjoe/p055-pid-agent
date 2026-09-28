@@ -804,9 +804,13 @@ class TypesafeDiagramSpecPlanner:
             if host is None:
                 continue
             host_ports: tuple[str, ...] = ()
+            instrument_ports: tuple[str, ...] = ()
             try:
                 host_ports = tuple(
                     port.id for port in self.symbols.get(host.symbol_key).ports
+                )
+                instrument_ports = tuple(
+                    port.id for port in self.symbols.get(entity.symbol_key).ports
                 )
             except KeyError:
                 host_ports = ()
@@ -816,6 +820,7 @@ class TypesafeDiagramSpecPlanner:
                 host_tag=host.tag,
                 host_symbol_key=host.symbol_key,
                 host_port_ids=host_ports,
+                instrument_port_ids=instrument_ports,
             )
             if resolution.resolved:
                 continue
@@ -825,6 +830,7 @@ class TypesafeDiagramSpecPlanner:
                 "unsupported_instrument_type": "该仪表类型没有挂接选型规则",
                 "no_matching_governed_tap_port": f"{host.symbol_key} 没有该仪表类型对应的受治理取压口",
                 "multiple_governed_tap_ports": f"{host.symbol_key} 有多个可接受的受治理取压口，无法唯一确定",
+                "no_instrument_land_port": f"{entity.symbol_key} 没有可承接挂接的 process 口（双口仪表的挂接语义需单独设计）",
             }.get(resolution.reason, resolution.reason)
             receipts.append(
                 f"「{entity.tag}」挂接于 {host.tag}：{resolution.reason}"

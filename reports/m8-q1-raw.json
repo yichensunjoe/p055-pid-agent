@@ -1,0 +1,329 @@
+{
+ "DEV-1": {
+  "document_id": "doc_702d37031d44",
+  "steps": [
+   {
+    "kind": "plan",
+    "sentence": "添加一个缓冲罐 V-101，添加一台燃料盐泵 P-101，把 V-101 接到 P-101",
+    "outcome": "committed",
+    "revision": 1,
+    "completeness": "complete",
+    "entities": [
+     "V-101",
+     "P-101"
+    ],
+    "connections": 1,
+    "spec_digest": "ae19dc6b0c2673bc",
+    "port_ambiguities": 0,
+    "http": 200
+   },
+   {
+    "kind": "edit",
+    "sentence": "再添加一个缓冲罐 V-102，把 P-101 的出口接到 V-102 的入口",
+    "outcome": "committed",
+    "revision": 2,
+    "completeness": "complete",
+    "entities": [
+     "V-101",
+     "P-101",
+     "V-102"
+    ],
+    "connections": 2,
+    "spec_digest": "be1af3e9ecf512e9",
+    "port_ambiguities": 0,
+    "http": 200
+   }
+  ],
+  "exports": {
+   "pdf": {
+    "http": 200,
+    "bytes": 18735
+   },
+   "dxf": {
+    "http": 422,
+    "bytes": 0
+   }
+  }
+ },
+ "DEV-2": {
+  "document_id": "doc_517e8cf533a1",
+  "steps": [
+   {
+    "kind": "expect-receipt",
+    "sentence": "添加一个缓冲罐 V-101，添加一台离心泵 P-101，添加一个管壳式换热器 E-101，把 V-101 接到 P-101，把 P-101 接到 E-101",
+    "outcome": "422:port_ambiguity",
+    "completeness": "partial",
+    "undelivered": [],
+    "catalog_gaps": [],
+    "port_ambiguities": [
+     "missing_selector:heat_exchanger"
+    ],
+    "http": 422
+   },
+   {
+    "kind": "plan",
+    "sentence": "添加一个缓冲罐 V-101，添加一台离心泵 P-101，添加一个管壳式换热器 E-101，把 V-101 接到 P-101，把 P-101 接到 E-101 的管程入口",
+    "outcome": "422:port_ambiguity",
+    "completeness": "partial",
+    "undelivered": [],
+    "catalog_gaps": [],
+    "port_ambiguities": [
+     "selector_no_match:heat_exchanger"
+    ],
+    "http": 422
+   }
+  ],
+  "exports": {
+   "pdf": {
+    "http": 200,
+    "bytes": 18084
+   },
+   "dxf": {
+    "http": 200,
+    "bytes": 991,
+    "kinds": {}
+   }
+  }
+ },
+ "DEV-3": {
+  "document_id": "doc_6a404a51e869",
+  "steps": [
+   {
+    "kind": "plan",
+    "sentence": "添加一台离心泵 P-101，添加一个闸阀 XV-101，添加一个控制阀 FCV-101，添加一个缓冲罐 V-101，把 P-101 接到 XV-101，把 XV-101 接到 FCV-101，把 FCV-101 接到 V-101",
+    "outcome": "committed",
+    "revision": 1,
+    "completeness": "complete",
+    "entities": [
+     "P-101",
+     "XV-101",
+     "FCV-101",
+     "V-101"
+    ],
+    "connections": 3,
+    "spec_digest": "660825beed32fe59",
+    "port_ambiguities": 0,
+    "http": 200
+   },
+   {
+    "kind": "edit",
+    "sentence": "再添加一个安全阀 PSV-101，把 P-101 的出口接到 PSV-101 的入口，把 PSV-101 的出口接到 V-101 的顶部管口",
+    "outcome": "preview",
+    "revision": null,
+    "completeness": null,
+    "entities": [],
+    "connections": 0,
+    "spec_digest": "",
+    "port_ambiguities": 0,
+    "http": 422
+   }
+  ],
+  "exports": {
+   "pdf": {
+    "http": 200,
+    "bytes": 20063
+   },
+   "dxf": {
+    "http": 422,
+    "bytes": 0
+   }
+  }
+ },
+ "DEV-4": {
+  "document_id": "doc_0c9af3202685",
+  "steps": [
+   {
+    "kind": "expect-receipt",
+    "sentence": "添加一个缓冲罐 V-101，给 V-101 添加一台液位计 LIT-101、一台压力表 PIT-101 和一台温度变送器 TT-101",
+    "outcome": "422:typesafe_spec_partial",
+    "completeness": "partial",
+    "undelivered": [],
+    "catalog_gaps": [],
+    "port_ambiguities": [],
+    "http": 422
+   },
+   {
+    "kind": "edit",
+    "sentence": "添加一台离心泵 P-101，把 V-101 接到 P-101，在 P-101 的出口加一台流量计 FIT-101",
+    "outcome": "preview",
+    "revision": null,
+    "completeness": null,
+    "entities": [],
+    "connections": 0,
+    "spec_digest": "",
+    "port_ambiguities": 0,
+    "http": 422
+   }
+  ],
+  "exports": {
+   "pdf": {
+    "http": 200,
+    "bytes": 18652
+   },
+   "dxf": {
+    "http": 200,
+    "bytes": 991,
+    "kinds": {}
+   }
+  }
+ },
+ "DEV-5": {
+  "document_id": "doc_f628f1a19c93",
+  "steps": [
+   {
+    "kind": "expect-receipt",
+    "sentence": "添加一个主工艺系统，添加一个缓冲罐 V-101，添加一台离心泵 P-101，添加一个管壳式换热器 E-101，把 V-101 接到 P-101，把 P-101 接到 E-101 的管程入口",
+    "outcome": "422:port_ambiguity",
+    "completeness": "partial",
+    "undelivered": [],
+    "catalog_gaps": [],
+    "port_ambiguities": [
+     "selector_no_match:heat_exchanger"
+    ],
+    "http": 422
+   }
+  ],
+  "exports": {
+   "pdf": {
+    "http": 200,
+    "bytes": 18429
+   },
+   "dxf": {
+    "http": 200,
+    "bytes": 991,
+    "kinds": {}
+   }
+  }
+ },
+ "DEV-6": {
+  "document_id": "doc_b3fca826004e",
+  "steps": [
+   {
+    "kind": "plan",
+    "sentence": "添加一台进料泵 P-101，添加一个精馏塔 T-101，把 P-101 接到 T-101 的原料进料口",
+    "outcome": "422:port_ambiguity",
+    "completeness": "partial",
+    "undelivered": [],
+    "catalog_gaps": [],
+    "port_ambiguities": [
+     "selector_no_match:fractionation_column"
+    ],
+    "http": 422
+   },
+   {
+    "kind": "edit",
+    "sentence": "添加一个冷凝器 E-101，把 T-101 的塔顶气相出口接到 E-101 的工艺入口，把 E-101 的工艺出口接到 T-101 的回流入口",
+    "outcome": "preview",
+    "revision": null,
+    "completeness": null,
+    "entities": [],
+    "connections": 0,
+    "spec_digest": "",
+    "port_ambiguities": 0,
+    "http": 422
+   },
+   {
+    "kind": "edit",
+    "sentence": "把 T-101 的侧线采出口接到一个缓冲罐 V-102",
+    "outcome": "preview",
+    "revision": null,
+    "completeness": null,
+    "entities": [],
+    "connections": 0,
+    "spec_digest": "",
+    "port_ambiguities": 0,
+    "http": 422
+   }
+  ],
+  "exports": {
+   "pdf": {
+    "http": 200,
+    "bytes": 18353
+   },
+   "dxf": {
+    "http": 200,
+    "bytes": 991,
+    "kinds": {}
+   }
+  }
+ },
+ "HOLDOUT-1": {
+  "document_id": "doc_7c2935b66f7a",
+  "steps": [
+   {
+    "kind": "plan",
+    "sentence": "添加一个缓冲罐 V-101，添加一台离心泵 P-101，添加一个管壳式换热器 E-101，添加一个控制阀 FCV-101，添加一个缓冲罐 V-102，把 V-101 接到 P-101，把 P-101 接到 E-101 的管程入口，把 E-101 的管程出口接到 FCV-101，把 FCV-101 接到 V-102",
+    "outcome": "422:port_ambiguity",
+    "completeness": "partial",
+    "undelivered": [],
+    "catalog_gaps": [],
+    "port_ambiguities": [
+     "selector_no_match:heat_exchanger"
+    ],
+    "http": 422
+   },
+   {
+    "kind": "edit",
+    "sentence": "把 FCV-101 换成一个闸阀",
+    "outcome": "preview",
+    "revision": null,
+    "completeness": null,
+    "entities": [],
+    "connections": 0,
+    "spec_digest": "",
+    "port_ambiguities": 0,
+    "http": 422
+   }
+  ],
+  "exports": {
+   "pdf": {
+    "http": 200,
+    "bytes": 18891
+   },
+   "dxf": {
+    "http": 200,
+    "bytes": 991,
+    "kinds": {}
+   }
+  }
+ },
+ "HOLDOUT-2": {
+  "document_id": "doc_7bbfa0c4d621",
+  "steps": [
+   {
+    "kind": "plan",
+    "sentence": "添加一个缓冲罐 V-101，添加一台离心泵 P-101，添加一台离心泵 P-102，添加一个单向阀 CV-101，添加一个缓冲罐 V-102，把 V-101 接到 P-101，把 V-101 接到 P-102，把 P-101 接到 CV-101，把 P-102 接到 CV-101，把 CV-101 接到 V-102",
+    "outcome": "preview",
+    "revision": null,
+    "completeness": null,
+    "entities": [],
+    "connections": 0,
+    "spec_digest": "",
+    "port_ambiguities": 0,
+    "http": 409
+   },
+   {
+    "kind": "edit",
+    "sentence": "删除 P-102",
+    "outcome": "preview",
+    "revision": null,
+    "completeness": null,
+    "entities": [],
+    "connections": 0,
+    "spec_digest": "",
+    "port_ambiguities": 0,
+    "http": 422
+   }
+  ],
+  "exports": {
+   "pdf": {
+    "http": 200,
+    "bytes": 19986
+   },
+   "dxf": {
+    "http": 422,
+    "bytes": 0
+   }
+  }
+ }
+}

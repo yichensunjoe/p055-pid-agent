@@ -2,47 +2,12 @@
 
 > 交接文档：每次开新会话先读本文件。更新规则见 `AGENTS.md`「HANDOFF 交接规则」。
 
-## 当前状态（2026-09-21 R7，最新轮次：**A5 corpus identity closeout 本地做完（未 commit、未 push），等远端签 Gate**）
+## 当前状态（2026-09-29，**M8-Q2 OVERALL GATE = PASS / CLOSED；main = `7f39d92`（#56–#65 十个 squash 全合）**）
 
-- **基线**：`origin/main = 1ba141c`（R6 已 push 并验证，v3 冻结 anchor）；本轮按远端 `reply19` 的 A5 授权做。
-  改动已落成本地提交（`feat(m5): give the frozen corpus an identity that does not move with the interpreter`，
-  直接在 `1ba141c` 之上，单提交，5 个源码文件 + 2 个新测试文件 + 测试/CI/文档/证据），**未 push**。
-- **A5 做了什么（identity-layer additive fix，不动语料）**：
-  - **新增 `core_corpus_digest(version=None)`**：跨解释器恒定的语料身份 = manifest 去掉
-    `CORPUS_IDENTITY_EXCLUDED_KEYS = (spec_fingerprint, generator_fingerprint)` 后取 canonical SHA-256。
-    golden：v3 `a60e07f11d55…`、归档 v2 `acb4a3bde4ed…`（**A5 之后派生出来的 archival 身份**，v2 从未发布过该字段）。
-  - `core_corpus_manifest("2")` 从冻结的 v2 spec body 重放（19 operator / 16 带 code / 72 case）；
-    v2 manifest **没有** `generator_fingerprint`（v2 operator 字节码已随代码消失，缺席而非伪造）。
-  - **`core_corpus_fingerprint()` 未改、未删**：仍是 runtime provenance（本机 3.12 `c85995d2…` /
-    3.11 `82b37b04…`，允许不同）。
-  - 结果 payload 新增 `corpus_version` + `core_corpus_digest`（**故意不发布** `core_corpus_fingerprint`）；
-    两个名字同时进了 `REPAIR_SEMANTIC_EXCLUDED_FIELDS` 与 `REPAIR_LEGACY_HASH_EXCLUDES`。
-  - `quality-harness` 的 self-repair contract 发布 `corpus_version`/`core_corpus_digest`，并新增断言：
-    identity 输入里不得出现环境键（否则同一语料会在两个解释器上身份不同）。
-  - **CI 的 M5 job 新增 `repair-coverage` 步骤**（exit 非 0 即红），报告进 evidence artifact。
-  - **版本轴全未动**：spec_version 3 / corpus_version 3 / oracle_version 1 / payload version 1。
-- **新增测试**：`tests/test_core_corpus_identity.py`（7 条：两个 golden、v2 重放、未知版本抛错、
-  identity vs provenance 对比、payload 发布后两个哈希不变、冻结 v3/v2 evidence 仍可复算）；
-  `tests/test_retired_extension_evidence.py`（5 条：extension 四个 pin + 四 case/三 unreachable 可读）。
-- **本地门禁（全绿）**：`ruff` 全过；`pytest -q` **863 passed**（851 → +12）；harness **9/9**；
-  **acceptance 72/72**（S@5 1.0、六 family 1.0、八门全 true、`gate_failures []`、safety 13/13、
-  `evidence_verified true`）；`repair-coverage` **exit 0**（promoted 4/4 manifested、unreachable 3、
-  `became_reachable []`、负向全红、`ledger_digest 30a50779…`）；`repair-scale` **exit 0**；
-  `repair-qualification` **exit 3**（无凭据，non-blocking）。
-- **跨解释器实测（不是断言）**：identity 的输入以纯 JSON 发布（`reports/m5-closeout/corpus-identity-inputs.json`），
-  `scripts/m5_closeout_identity_311_check.py` 不 import 任何 `agentcad` 代码、只用标准库，
-  在 **CPython 3.11.15 与 3.12.13** 上各跑一次，两个 corpus（v3 / v2）都得到与记录相同的 digest
-  （输出：`reports/m5-closeout/corpus-identity-3.11.txt` / `-3.12.txt`）；push 后 CI 的 3.11 会再用真代码算一次。
-- **pre/post-A5 兼容实测**：candidate `1ba141c` 的 **post-A5 live run** 与 pre-A5 的 CI 35579988999
-  得到**同一个** `benchmark_semantic_hash`（`d719c89b…`）；冻结 v3 evidence 的 legacy `17be0e45…` /
-  semantic `530e56f1…` 在“发布态”与“加上语料坐标”两种情况下复算一致（legacy 需先把两个哈希字段置空，
-  与 runner 的做法一致）。
-- **证据与脚本**：`reports/m5-closeout/**`（`corpus-identity.txt` / `.json`、`acceptance-closeout(-summary).json`、
-  `coverage-closeout(-summary).json`、`scale-closeout.json`）由 `scripts/m5_closeout_identity.py` 与 CLI 生成；
-  **`reports/m5/**` 与 `reports/m5-promotion/**` 一字节未改**。
-- **下一步**：把 A5 汇报给远端（reply19 列的 1–7 项）→ 签 Gate 后 push → CI/Visual 上核对 3.11 的
-  `core_corpus_digest` 与本机一致（应该一致：纯数据），并确认 CI 新的 `repair-coverage` 步骤绿；
-  随后 **B（F6 首答/注入契约）**。
+- **M8-Q1/Q2 当前已授权范围已收口（M8-Q2 Catalogue Correction / Expansion 封账）**：M8-Q1 测量完整性（P1 B' 原子性/G7 route parity/G2 子句分解/系统声明 fail-closed）→ M8-Q2 catalogue correction/expansion 全链（TT visibility、condenser hint、内嵌添加、label pool、instrument attachment 语义→受治理 tap→物化、零连接窄批）。逐子阶段 CLOSED 状态、冻结的 fail-closed 契约清单、关键场景终态与 deferred future scope 见 **reports/m8-q2-closeout.md**（封账 artifact）；批间设计往返全记录在文档分支 `m7-semantic-first-synthesis` 的 `reports/m8-q2-design.md`。
+- **关键终态**：DEV-6 全三句 complete；DEV-4 = partial + 唯一 receipt（LIT 双口语义属已签能力边界，非 blocker）；HOLDOUT-2 双 complete。
+- **下一项工程工作不要自动开始**：LIT 双 tap / HOLDOUT phase / G4 router 分别等新 Design Gate（远端明示）。
+- 本文件 2026-09-21 及更早的 M5/M4 历史段落保留在下供考古；它们描述的是旧基线（`1ba141c` 时代），已被上述状态取代。
 
 ## 上一状态（2026-09-21 R6：**coverage-promotion 已 push 并验证（`origin/main = 1ba141c`），v3 冻结；远端已授权 A5**）
 

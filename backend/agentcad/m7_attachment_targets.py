@@ -26,6 +26,8 @@ from dataclasses import dataclass
 
 AMBIGUITY_CODE = "instrument_attachment_ambiguity"
 REASON_NO_GOVERNED_TAP_PORT = "no_governed_tap_port"
+REASON_UNSUPPORTED_INSTRUMENT_TYPE = "unsupported_instrument_type"
+REASON_NO_MATCHING_GOVERNED_TAP_PORT = "no_matching_governed_tap_port"
 REASON_MULTIPLE_GOVERNED_TAP_PORTS = "multiple_governed_tap_ports"
 
 #: The governed attachment-port class: a port id in this namespace is an
@@ -109,13 +111,31 @@ def resolve_attachment_target(
             ambiguity_code=AMBIGUITY_CODE,
             reason=REASON_NO_GOVERNED_TAP_PORT,
         )
-    candidates = tuple(p for p in governed if not wanted or p == wanted)
-    if len(candidates) != 1:
+    if not wanted:
+        # No selection rule for this instrument type: never fall back to "the only tap"
+        # -- an unknown type is a receipt, not a guess.
+        return AttachmentResolution(
+            **base,
+            resolved_port_id=None,
+            ambiguity_code=AMBIGUITY_CODE,
+            reason=REASON_UNSUPPORTED_INSTRUMENT_TYPE,
+            candidates=governed,
+        )
+    matching = tuple(p for p in governed if p == wanted)
+    if not matching:
+        return AttachmentResolution(
+            **base,
+            resolved_port_id=None,
+            ambiguity_code=AMBIGUITY_CODE,
+            reason=REASON_NO_MATCHING_GOVERNED_TAP_PORT,
+            candidates=governed,
+        )
+    if len(matching) > 1:
         return AttachmentResolution(
             **base,
             resolved_port_id=None,
             ambiguity_code=AMBIGUITY_CODE,
             reason=REASON_MULTIPLE_GOVERNED_TAP_PORTS,
-            candidates=candidates or governed,
+            candidates=matching,
         )
-    return AttachmentResolution(**base, resolved_port_id=candidates[0])
+    return AttachmentResolution(**base, resolved_port_id=matching[0])

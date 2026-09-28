@@ -6,8 +6,9 @@ never enter the candidate set, and no rule ever guesses from geometry.
 """
 
 from agentcad.m7_attachment_targets import (
-    REASON_MULTIPLE_GOVERNED_TAP_PORTS,
     REASON_NO_GOVERNED_TAP_PORT,
+    REASON_NO_MATCHING_GOVERNED_TAP_PORT,
+    REASON_UNSUPPORTED_INSTRUMENT_TYPE,
     resolve_attachment_target,
 )
 
@@ -60,17 +61,33 @@ def test_instrument_type_selects_its_governed_tap_deterministically() -> None:
         assert result.resolved_port_id == expected, instrument_key
 
 
-def test_ambiguity_never_picks_nearest_or_first() -> None:
-    """Unknown instrument type (no selection rule) with two governed ports: receipt,
-    never a silent pick."""
+def test_unknown_instrument_type_never_guesses_even_with_a_single_tap() -> None:
+    """The fail-closed hole: an unmapped instrument type must receipt even when the host
+    has exactly one governed port -- 'the only tap' is never an implicit answer."""
 
     result = resolve_attachment_target(
         instrument_tag="FT-101",
         instrument_symbol_key="flow_transmitter",
         host_tag="V-101",
         host_symbol_key="buffer_tank",
-        host_port_ids=("tap_level", "tap_pt"),
+        host_port_ids=("tap_pt",),
     )
     assert not result.resolved
-    assert result.reason == REASON_MULTIPLE_GOVERNED_TAP_PORTS
-    assert set(result.candidates) == {"tap_level", "tap_pt"}
+    assert result.reason == REASON_UNSUPPORTED_INSTRUMENT_TYPE
+    assert result.candidates == ("tap_pt",)
+
+
+def test_known_type_without_its_tap_is_no_matching_not_multiple() -> None:
+    """TT needs tap_pt; a host carrying only tap_level is a missing match, never a
+    'multiple' receipt."""
+
+    result = resolve_attachment_target(
+        instrument_tag="TT-101",
+        instrument_symbol_key="temperature_transmitter",
+        host_tag="V-101",
+        host_symbol_key="buffer_tank",
+        host_port_ids=("in", "out", "tap_level"),
+    )
+    assert not result.resolved
+    assert result.reason == REASON_NO_MATCHING_GOVERNED_TAP_PORT
+    assert result.candidates == ("tap_level",)

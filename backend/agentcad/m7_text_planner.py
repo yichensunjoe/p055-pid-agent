@@ -820,9 +820,15 @@ class TypesafeDiagramSpecPlanner:
             if resolution.resolved:
                 continue
             records.append(resolution.receipt())
+            reason_text = {
+                "no_governed_tap_port": f"{host.symbol_key} 没有任何受治理的仪表取压口",
+                "unsupported_instrument_type": "该仪表类型没有挂接选型规则",
+                "no_matching_governed_tap_port": f"{host.symbol_key} 没有该仪表类型对应的受治理取压口",
+                "multiple_governed_tap_ports": f"{host.symbol_key} 有多个可接受的受治理取压口，无法唯一确定",
+            }.get(resolution.reason, resolution.reason)
             receipts.append(
                 f"「{entity.tag}」挂接于 {host.tag}：{resolution.reason}"
-                f"（{host.symbol_key} 没有受治理的仪表取压口），挂接未建立。"
+                f"（{reason_text}），挂接未建立。"
             )
         return tuple(records), receipts
 

@@ -20,6 +20,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from test_m7_layout_materialization import make_service, seed_document
 
 from agentcad.api_semantic_agent import _finalize_spec_layout
 from agentcad.audit import AuditContext
@@ -40,7 +41,6 @@ from agentcad.m7_layout_materialization import (
 from agentcad.service import DocumentService
 from agentcad.store import SQLiteDocumentStore
 from agentcad.symbols import SymbolRegistry
-from test_m7_layout_materialization import make_service, seed_document
 
 
 def dev2_spec() -> DiagramSpec:

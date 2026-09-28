@@ -8,10 +8,11 @@ order, so each instrument's real candidate set (or structured gap) can be accoun
 separately.
 """
 
+from test_m7_text_planner import REGISTRY, _Recorder
+
 from agentcad.m7_text_planner import TypesafeDiagramSpecPlanner
 from agentcad.symbols import SymbolRegistry
 from agentcad.typesafe import TypesafeClient, TypesafeConfig
-from test_m7_text_planner import REGISTRY, _Recorder
 
 
 def make_planner() -> TypesafeDiagramSpecPlanner:

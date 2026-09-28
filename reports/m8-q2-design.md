@@ -118,3 +118,29 @@
 ①B1：无 tap 口的宿主 → ambiguity receipt + partial + 不 crash；②B2 获批后：LIT/PIT/TT 各自确定性落到声明的 tap port、target identity 稳定（坐标重推导不变）、materialization/redraw PASS、DEV-4 端到端 complete；③负守卫：process 口仍不可作为 tap（validator 层 invariant 保持）；规则外仪表类型 → receipt；④删除宿主（挂有仪表）→ 拒绝 + receipt；⑤frozen corpus 重跑。
 
 **请求**：B1 实现 GO；B2 catalogue 白名单（symbol JSON tap port + digest bump + fixture）与否的裁定；删除语义三选一确认。
+
+## M8-Q2R3-B2 冻结事实（送 Gate：批准后即申请 CODE GO）
+
+### 事实一：tap_level / tap_pt 的 exact normalized geometry
+
+buffer_tank 现状（standard_symbols.json，逐字节核）：canvas 70×100；罐体为全高胶囊——上弧圆心 (35,35) r=35（y∈[0,35]）、直壁段 y∈[35,65]、下弧圆心 (35,65) r=35（y∈[65,100]）；in=(0,50) 左直壁、out=(70,50) 右直壁，medium=process。
+
+新增端口（direction="bidirectional"、medium="instrument"——SymbolPort 模型原生支持，不改 schema）：
+
+| port_id | x | y | 几何依据 | 与 in/out 关系 |
+| --- | --- | --- | --- | --- |
+| tap_pt | 35 | 0 | **精确在上弧顶点**：距弧心 (35,35) = 35.000（计算验证），P&ID 惯例压力/温度取压点在罐顶，引出方向向上 | 距 in/out 各 61.0px，无重叠 |
+| tap_level | 70 | 38 | **精确在右直壁段**（x=70、y∈[35,65] 直壁区间），液位计侧装上法兰惯例，位于出口上方 | 距 out 12.0px、距 in 71.0px；端口为声明式身份，几何邻近不产生伪 process 端点 |
+
+两条均满足冻结要求：具体 x/y 给出、相对 body 几何依据给出、与现有 in/out 不重叠（分处直壁/弧顶、方向与 medium 标记 instrument 类）。fingerprint 变化走既有 digest bump 契约 + frozen fixture 显式更新（不忽略）。
+
+### 事实二：物化 operation contract
+
+1. **结构**：host tap port → instrument process port 的**直连 connector，v1 无 root valve**；LIT/PIT/TT 同一物化结构（都是由 governed tap port 引出的单条 instrument 连接线）。理由：最小受治理面；corpus 未要求阀；root valve 若将来需要是独立的 catalogue+ID 面扩展。
+2. **ID 稳定生成**：tap connector 的 engineering id = 确定性函数 `tap_<instrument_eid>`（slug 化）；instrument 元素 id 沿用 materialized_element_id 既有身份方案。所有 id 均为 spec 身份的纯函数 → **同 spec 同图，redraw 可重复**（接入既有确定性链）。
+3. **signal port 保持未连接**（合法终态，不产生 gap）。
+4. **不动正常 process routing**：tap connector 是物化层由 attachment 关系合成的独立行类（不进 spec.connections、不参与 process 绑定/走线对账的 process 集合）。
+5. **与 legacy 的语义差异显式记录**：InstrumentTapOperation 是"在已有 connector 上开三通"（需 main_connector_id + junction_point 几何量）；M7 tap 从宿主 governed 喷嘴直连引出，不需要先有管线。
+6. **同 (host, tap_port) 多台仪表**：connector id 含 instrument id 故身份不冲突；几何上同锚点并线由 router 按既有规则处理，合同上允许。
+
+**实现面预告（批准后申报白名单）**：standard_symbols.json（buffer_tank 两端口，已获批数据面）+ digest fixture 更新 + m7 绑定/物化层（attachment → tap connector 行类合成）+ 既有 resolver 无需改（tap_ 类已识别）+ 测试（Gate 七条硬锁：in/out 不变/tap 不进 process 端点/LIT 只落 tap_level/PIT/TT 只落 tap_pt/unsupported→receipt/port id redraw 后稳定/fingerprint 显式更新/DEV-4 升 complete）。

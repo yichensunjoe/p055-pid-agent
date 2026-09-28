@@ -75,10 +75,12 @@ def _planner(recorder: _Recorder, **kwargs) -> TypesafeDiagramSpecPlanner:
 
 
 class _RegistryWithoutTT:
-    """The live catalogue minus temperature_transmitter: with TT visible, every hint
-    group now matches at least one row, so the catalogue-gap path is unreachable through
-    real device words. These two tests exercise the gap RECORD machinery, so they pin the
-    pre-unhide catalogue shape rather than depending on an accidental hole in the data."""
+    """The live catalogue minus temperature_transmitter: with TT visible, the current
+    built-in catalogue plus the built-in phrase vocabulary has no natural sample that
+    triggers a catalogue gap (every hint group matches at least one row). The gap record
+    is frozen contract, though -- an external catalogue override or a future hint can
+    produce one again -- so these tests exercise the RECORD machinery against the
+    pre-unhide catalogue shape rather than deleting the contract test."""
 
     def __init__(self, inner):
         self._inner = inner
@@ -444,7 +446,8 @@ def test_temperature_transmitter_is_the_exact_candidate_and_only_candidate() -> 
 
 
 def test_transmitter_visibility_matrix_is_unchanged_elsewhere() -> None:
-    """Q2-1R2 guards: FT/LT stay hidden, PT stays visible, TT is now visible."""
+    """Q2-1R2 guards: FT/LT remain hidden; TT becomes visible; PT remains absent from the
+    current catalogue (it was removed from the data, not merely hidden)."""
 
     visible = {symbol.key for symbol in REGISTRY.list()}
     assert "temperature_transmitter" in visible
@@ -453,6 +456,6 @@ def test_transmitter_visibility_matrix_is_unchanged_elsewhere() -> None:
     assert REGISTRY.is_hidden("flow_transmitter") is True
     assert REGISTRY.is_hidden("level_transmitter") is True
     assert REGISTRY.is_hidden("temperature_transmitter") is False
-    # 8d82f75 removed pressure_transmitter from the hidden list, but the symbol itself is
-    # absent from the catalogue data: exists() is False and it must stay that way.
+    # 8d82f75 removed pressure_transmitter from the hidden list and the symbol itself is
+    # now absent from the catalogue data: exists() is False and it must stay that way.
     assert REGISTRY.exists("pressure_transmitter") is False

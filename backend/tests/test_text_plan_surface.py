@@ -266,13 +266,25 @@ def test_dry_run_returns_the_machine_visible_catalogue_gap(client: TestClient) -
     """A catalogue gap rides the API as the contract's frozen record, not only as prose: a
     downstream replan can read requested_type/tag/source_requirement and what exists."""
 
-    document_id = _new_document(client)
-    response = _draw(
-        client,
-        document_id,
-        "添加一个缓冲罐 V-101，添加一台燃料盐泵 P-101，添加一个仪表 FV-101，把 V-101 接到 P-101",
-        dry_run=True,
-    )
+    # The gap contract stays frozen even though the current built-in catalogue plus the
+    # built-in phrase vocabulary happens to leave no natural gap trigger: an external
+    # catalogue override or a future visibility change can produce one again. Pin the
+    # pre-unhide catalogue shape by hiding temperature_transmitter for this request only.
+    from test_m7_text_planner import _RegistryWithoutTT
+
+    service = client.app.state.service
+    real_symbols = service.symbols
+    service.symbols = _RegistryWithoutTT(real_symbols)
+    try:
+        document_id = _new_document(client)
+        response = _draw(
+            client,
+            document_id,
+            "添加一个缓冲罐 V-101，添加一台燃料盐泵 P-101，添加一个仪表 FV-101，把 V-101 接到 P-101",
+            dry_run=True,
+        )
+    finally:
+        service.symbols = real_symbols
     assert response.status_code == 200, response.text
     result = response.json()
     assert result["completeness"] == "partial"

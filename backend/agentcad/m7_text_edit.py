@@ -142,6 +142,8 @@ class TypesafeSpecEditor(TypesafeDiagramSpecPlanner):
         ]
 
         resolved_count = len(spec.entities)
+        attachment_gaps, attachment_receipts = self._attachment_ledger(spec)
+        undelivered.extend(attachment_receipts)
         if resolved_count == 0:
             completeness: Completeness = "empty"
         elif skipped or unknown_tags or undelivered:
@@ -168,6 +170,7 @@ class TypesafeSpecEditor(TypesafeDiagramSpecPlanner):
             completeness=completeness,
             undelivered=tuple(undelivered),
             catalog_gaps=tuple(catalog_gaps),
+            attachment_gaps=attachment_gaps,
         )
 
     # -- applying the edit to the base spec -------------------------------------------- #
@@ -201,6 +204,31 @@ class TypesafeSpecEditor(TypesafeDiagramSpecPlanner):
                     undelivered.append(f"「{clause.text}」：位号 {tag} 不在当前图纸里。")
                 else:
                     removed_ids.add(match.engineering_id)
+
+        # Q2R3-B1 host-deletion guard, evaluated on the semantic final state before the
+        # removal set takes effect: a host with surviving attached instruments is NOT
+        # removed. No cascade delete, no silent detach, no rehost -- the delete clause
+        # receipts with the machine code and named dependents. Deleting every dependent
+        # instrument together with the host in one request stays allowed.
+        blocked_hosts: dict[str, list[str]] = {}
+        for entity in base_spec.entities:
+            if (
+                entity.engineering_id not in removed_ids
+                and entity.kind == "instrument"
+                and entity.host_engineering_id
+                and entity.host_engineering_id in removed_ids
+            ):
+                blocked_hosts.setdefault(entity.host_engineering_id, []).append(entity.tag)
+        for host_id, dependent_tags in sorted(blocked_hosts.items()):
+            removed_ids.discard(host_id)
+            host_tag = next(
+                (entity.tag for entity in base_spec.entities if entity.engineering_id == host_id),
+                host_id,
+            )
+            undelivered.append(
+                f"attachment_host_has_dependents：宿主 {host_tag}（{host_id}）仍挂有仪表 "
+                f"{list(dependent_tags)}，删除未执行。"
+            )
 
         kept_entities = [
             entity for entity in base_spec.entities if entity.engineering_id not in removed_ids

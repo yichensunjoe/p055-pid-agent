@@ -35,16 +35,21 @@ def call(method, path, payload=None, raw=False):
         except Exception:
             return e.code, {"raw": body.decode(errors="replace")[:300]}
 
-def summarize(result):
-    if isinstance(result, dict) and "detail" in result and isinstance(result["detail"], dict):
+def summarize(status, result):
+    if isinstance(result, dict) and isinstance(result.get("detail"), dict):
         d = result["detail"]
         return {
-            "outcome": f"422:{d.get('code')}",
+            "outcome": f"{status}:{d.get('code')}",
             "completeness": d.get("completeness"),
+            "skipped": d.get("skipped", [])[:4],
             "undelivered": d.get("undelivered", [])[:4],
             "catalog_gaps": [g.get("requested_type") + "/" + g.get("requested_tag", "") for g in d.get("catalog_gaps", [])],
             "port_ambiguities": [a.get("reason") + ":" + a.get("symbol_key", "") for a in d.get("port_ambiguities", [])],
         }
+    if isinstance(result, dict) and "detail" in result:
+        # Structured 4xx bodies whose detail is a plain message (layout refusal, validation):
+        # keep the full reason instead of collapsing to a contentless "preview".
+        return {"outcome": f"{status}:error", "detail": str(result["detail"])[:400]}
     return {
         "outcome": "committed" if result.get("committed") else "preview",
         "revision": result.get("revision"),
@@ -54,6 +59,11 @@ def summarize(result):
         "spec_digest": result.get("spec_digest", "")[:16],
         "port_ambiguities": len(result.get("port_ambiguities", [])),
     }
+
+#: Frozen corpus lock (Gate-ordered): the runner may not silently drift from the approved corpus.
+CORPUS_SOURCE_COMMIT = "25219f8e4759ace7c1c0084d4ba4edf1e65e0713"
+CORPUS_BLOB_SHA = "c444248208831b559704ab57ac6ef0cda56b6235"
+EXPECTED_STEPS = 17
 
 SCENARIOS = [
     ("DEV-1", [
@@ -74,6 +84,7 @@ SCENARIOS = [
     ]),
     ("DEV-5", [
         ("expect-receipt", "添加一个主工艺系统，添加一个缓冲罐 V-101，添加一台离心泵 P-101，添加一个管壳式换热器 E-101，把 V-101 接到 P-101，把 P-101 接到 E-101 的管程入口"),
+        ("edit", "添加一个公用工程系统，添加一台冷却水泵 P-201，把 P-201 接到 E-101 的壳程入口"),
     ]),
     ("DEV-6", [
         ("plan", "添加一台进料泵 P-101，添加一个精馏塔 T-101，把 P-101 接到 T-101 的原料进料口"),
@@ -91,12 +102,14 @@ SCENARIOS = [
 ]
 
 results = {}
+actual_steps = 0
 for scenario_id, steps in SCENARIOS:
     _, doc = call("POST", "/documents", {"name": f"m8-{scenario_id}"})
     document_id = doc["id"]
     entry = {"document_id": document_id, "steps": []}
     last_digest, last_revision = "", 0
     for kind, sentence in steps:
+        actual_steps += 1
         if kind in ("plan", "expect-receipt"):
             status, body = call("POST", f"/documents/{document_id}/agent/text-plan",
                                 {"sentence": sentence})
@@ -104,7 +117,7 @@ for scenario_id, steps in SCENARIOS:
             status, body = call("POST", f"/documents/{document_id}/agent/text-edit",
                                 {"sentence": sentence, "expected_revision": last_revision,
                                  "base_spec_digest": last_digest})
-        summary = summarize(body) if status != 200 or isinstance(body, dict) else {"raw": str(body)[:200]}
+        summary = summarize(status, body) if isinstance(body, dict) else {"raw": str(body)[:400]}
         summary["http"] = status
         entry["steps"].append({"kind": kind, "sentence": sentence, **summary})
         if status == 200 and body.get("committed"):
@@ -126,6 +139,33 @@ for scenario_id, steps in SCENARIOS:
     entry["exports"] = exports
     results[scenario_id] = entry
     print(f"== {scenario_id}: " + json.dumps([s["outcome"] for s in entry["steps"]], ensure_ascii=False))
+
+# Corpus lock: the frozen corpus is 8 scenarios / 17 steps. A drift here is a measurement
+# failure, not a reporting detail -- refuse to write evidence for the wrong corpus.
+assert actual_steps == EXPECTED_STEPS, f"corpus drift: ran {actual_steps} steps, expected {EXPECTED_STEPS}"
+results = {
+    "corpus_lock": {
+        "corpus_source_commit": CORPUS_SOURCE_COMMIT,
+        "corpus_blob_sha": CORPUS_BLOB_SHA,
+        "expected_steps": EXPECTED_STEPS,
+        "actual_steps": actual_steps,
+    },
+    "scenarios": results,
+}
+
+# Provenance is captured BEFORE any evidence file is written, so the recorded tree state
+# is the one the measurement actually ran against, not one dirtied by the evidence itself.
+import subprocess, sys as _sys
+def _sh(command):
+    return subprocess.run(command, shell=True, capture_output=True, text=True, cwd=REPO_ROOT).stdout.strip()
+import agentcad as _agentcad
+results["provenance"] = {
+    "git_rev_parse_HEAD": _sh("git rev-parse HEAD"),
+    "git_status_porcelain_before_evidence": _sh("git status --porcelain"),
+    "server_code_root": str(REPO_ROOT),
+    "agentcad___file__": _agentcad.__file__,
+    "python_executable": _sys.executable,
+}
 
 out = str(REPO_ROOT / "reports" / "m8-q1-raw.json")
 json.dump(results, open(out, "w"), ensure_ascii=False, indent=1)

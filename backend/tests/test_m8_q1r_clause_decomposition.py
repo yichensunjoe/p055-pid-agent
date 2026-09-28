@@ -10,10 +10,42 @@ separately.
 
 from agentcad.m7_text_planner import TypesafeDiagramSpecPlanner
 from agentcad.symbols import SymbolRegistry
+from agentcad.typesafe import TypesafeClient, TypesafeConfig
+from test_m7_text_planner import REGISTRY, _Recorder
 
 
 def make_planner() -> TypesafeDiagramSpecPlanner:
     return TypesafeDiagramSpecPlanner(SymbolRegistry())
+
+
+def test_system_declaration_is_receipted_not_drawn() -> None:
+    planner = make_planner()
+    entities, _connect, _unknown, _unknown_clauses = planner.read(
+        "添加一个主工艺系统，添加一个缓冲罐 V-101"
+    )
+
+    # The system clause is recognized and separated; the device clause is untouched.
+    assert [entity.tag for entity in entities] == ["V-101"]
+    assert len(planner.last_system_declarations) == 1
+    assert "主工艺系统" in planner.last_system_declarations[0].text
+
+
+def test_system_declaration_never_becomes_phantom_equipment() -> None:
+    recorder = _Recorder()
+    planner = TypesafeDiagramSpecPlanner(
+        REGISTRY,
+        client_factory=lambda config: TypesafeClient(config, transport=recorder),
+    )
+    plan = planner.plan(
+        "添加一个主工艺系统，添加一个缓冲罐 V-101，添加一台燃料盐泵 P-101，把 V-101 接到 P-101",
+        typesafe_config=TypesafeConfig(api_key="test-key"),
+    )
+
+    tags = [entity.tag for entity in plan.spec.entities]
+    assert "E-01" not in tags  # the phantom equipment the fail-open path used to mint
+    assert tags == ["V-101", "P-101"]
+    assert any("系统声明暂不支持" in note for note in plan.skipped)
+    assert plan.completeness == "partial"  # honest, not a fake complete
 
 
 def test_dev4_enumeration_becomes_three_independent_devices() -> None:

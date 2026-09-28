@@ -270,6 +270,24 @@ def attach_port_selectors(
 #: phrase as one of these is not part of the enumeration grammar and must not be split.
 _ENUM_MEASURE_WORDS = ("一台", "一个", "一只", "一款", "一台套")
 
+#: A system declaration reads as 「…系统」 with no tag: shape-tested, not judged. Such a clause
+#: names no device the catalogue could carry, so it must never become phantom equipment.
+_SYSTEM_DECLARATION = re.compile(r"^[\u4e00-\u9fff]{1,8}系统$")
+
+
+def _system_declaration_clause(clause: Clause) -> bool:
+    """Whether an add clause declares a system rather than a device.
+
+    Fail-closed gate: system declarations are receipted (and the sentence stays partial)
+    until the planner actually supports them. The alternative -- letting the clause through
+    the device path -- minted an untagged phantom E-01 and still claimed the sentence was
+    complete, which is exactly the measurement-integrity failure this gate exists to close.
+    """
+
+    if clause.kind != "add" or extract_tags(clause.text):
+        return False
+    return bool(_SYSTEM_DECLARATION.fullmatch(_device_phrase(clause.text)))
+
 
 def _expand_device_add_enumeration(clause: Clause) -> list[tuple[Clause, str | None]]:
     """Split one add clause's device enumeration into ordered per-device clauses (G2).
@@ -337,6 +355,17 @@ class TypesafeDiagramSpecPlanner:
         self.confidence_floor = confidence_floor
         self.system_id = system_id
         self.system_name = system_name
+        self._last_system_declarations: list[Clause] = []
+
+    @property
+    def last_system_declarations(self) -> tuple[Clause, ...]:
+        """System declarations separated by the most recent :meth:`read`.
+
+        Recognized but unsupported: :meth:`plan` receipts them, and the device path never
+        sees them -- a system declaration must not mint phantom equipment.
+        """
+
+        return tuple(self._last_system_declarations)
 
     # -- the code half: read the sentence, build the candidates -------------------------------- #
 
@@ -347,7 +376,10 @@ class TypesafeDiagramSpecPlanner:
 
         ``unknown_clauses`` is returned rather than dropped: a clause the verb table cannot
         classify is a receipt the completeness account must carry, not text that silently
-        vanishes between reading and planning.
+        vanishes between reading and planning. System declarations (add clauses that declare
+        a system rather than a device) are recognized here, kept out of the device path so
+        they can never become phantom equipment, and exposed through
+        :attr:`last_system_declarations` for :meth:`plan` to receipt.
         """
 
         expanded_adds = [
@@ -356,10 +388,20 @@ class TypesafeDiagramSpecPlanner:
             if clause.kind == "add"
             for expanded in _expand_device_add_enumeration(clause)
         ]
-        add_clauses = [clause for clause, _tag_override in expanded_adds]
+        device_adds = [
+            (clause, tag_override)
+            for clause, tag_override in expanded_adds
+            if not _system_declaration_clause(clause)
+        ]
+        self._last_system_declarations = [
+            clause
+            for clause, _tag_override in expanded_adds
+            if _system_declaration_clause(clause)
+        ]
+        add_clauses = [clause for clause, _tag_override in device_adds]
         tag_overrides = {
             id(clause): tag_override
-            for clause, tag_override in expanded_adds
+            for clause, tag_override in device_adds
             if tag_override is not None
         }
         connect_clauses = [clause for clause in split_clauses(prompt) if clause.kind == "connect"]
@@ -510,6 +552,7 @@ class TypesafeDiagramSpecPlanner:
         """Read the sentence, ask what code cannot decide, and assemble the specification."""
 
         entities, connect_clauses, unknown, unknown_clauses = self.read(prompt)
+        system_declarations = list(self._last_system_declarations)
         if not entities:
             raise DiagramSpecPlanningError(
                 "typesafe_spec_no_device",
@@ -562,6 +605,13 @@ class TypesafeDiagramSpecPlanner:
         # catalogue gap named as its own reason. A gap is never widened into a judgment -- the
         # model may not pick a look-alike the sentence did not ask for.
         undelivered: list[str] = [f"无法理解的子句：「{clause.text}」" for clause in unknown_clauses]
+        # System declarations are recognized but unsupported: receipted, never drawn, and the
+        # sentence stays partial. The receipt names the unsupported feature so the gap is
+        # attributable instead of being silently minted as phantom equipment.
+        for clause in system_declarations:
+            skipped.append(
+                f"「{clause.text}」：系统声明暂不支持，已记录、未生成设备。"
+            )
         delivered_entities = {entity.engineering_id for entity in spec.entities}
         catalog_gaps: list[dict] = []
         for entity in entities:

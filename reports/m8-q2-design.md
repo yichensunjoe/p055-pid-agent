@@ -89,3 +89,32 @@
 **测试矩阵**：①三 targeted case 端到端 complete；②attachment 一致性（host 未声明 → 422 receipt）；③负守卫：process 口不得被当 tap（构造无 attachment 字段的 instrument spec 断言 validator 拒）；④signal 口未连接不产生 gap/undelivered；⑤edit 第二句再加仪表 → 关系进 revision 2，redraw 对账 PASS；⑥frozen corpus DEV-4 重跑三仪表 complete。
 
 **改动面（实现获批后申报）**：m7_diagram_spec.py（字段+validator+problems）、m7_text_planner（read 解析宿主填字段）、m7 绑定/物化层（tap 规则 + 三件套物化）、digest projection、对应测试。**禁改**：m7_port_selectors.py 词表、catalogue、frozen corpus。
+
+## M8-Q2R3-B 设计：attachment-target resolver（DESIGN GO ACTIVE；实现待审）
+
+**摸底事实（catalogue 全量扫描，证据级）**：
+1. 全部符号**没有任何 instrument/tap/nozzle 类端口**——挂接口在目录里不存在。
+2. 罐/塔类宿主只有工艺口（buffer_tank: in/out；cylinder_vessel: top/bottom/in/out；fractionation_column: feed/reflux/overhead/bottom/side_draw）——按冻结 invariant **一律不得**静默充当测量取压口。
+3. DEV-4 句一的 V-101 是**孤立罐（无任何连接）**——legacy instrument_tap 的"在主管线上开三通"路径（需 main_connector_id）也不可用。
+
+**结论：当前不存在合法 attachment target。诚实的 resolver 答案今天是 `instrument_attachment_ambiguity` structured receipt，不是几何猜测。** 因此拆两层：
+
+### B1：resolver + receipt（不动 catalogue）
+- resolver 输入：instrument 实体 + host 实体（经 host_engineering_id）+ host 符号的端口表。
+- 判定：host 符号声明了 instrument 可挂的专用口（下一节的 tap port）→ 输出 target；否则 → `instrument_attachment_ambiguity` receipt（机器可读：instrument_id、host_id、host_symbol_key、reason=no_governed_tap、available=宿主端口清单）。
+- layout 在 binding 前消费 resolver 结果：无 target 的 instrument 使句子 partial（仪表本体已交付，挂接 receipt），**不 crash、不猜**。
+- 今天 B1 落地后 DEV-4 的诚实终态 = partial + receipt（与"不知道扎哪就停住"的冻结要求一致）。
+
+### B2：governed tap port（catalogue correction/expansion，**需您单独批 catalogue 白名单**）
+- 为容器/塔类符号新增**专用 instrument tap 口**（独立 identity，如 buffer_tank + `tap_level`（上侧）/`tap_pt`（顶部）；fractionation_column 同理），端口方向 bidirectional、medium=instrument。这是对 frozen geometry 的数据增补 → 走 digest bump 契约 + frozen fixture 更新（M7-Q2 既有机制）。
+- **确定性选型规则表**（数据/契约，不进代码分支）：LIT（液位）→ tap_level；PIT/TT（压力/温度）→ tap_pt；FT（流量）→ 不接罐（流量取压在管线上，宿主是管线场景属未来批次）——规则外一律 receipt。
+- **稳定 target identity**：target = (host element id, tap port_id)——端口 id 是声明式身份，**不是浮点坐标**；锚点坐标由唯一端口映射公式（drafting_geometry.symbol_port_point）从 symbol 实例导出，坐标变、身份不变。
+- **物化输出**：target 足以构造 M7 物化层的新 layout 行（tap assembly：instrument 实例 + 可选 root valve + 挂接线），**M7 语义与 legacy 的差异显式记录**：legacy instrument_tap 开在已有 connector（main_connector_id + junction_point 几何量）；M7 tap 开在宿主 governed 喷嘴上，不需要先有管线——这正是"不得拿 process 口冒充"的正面解。
+
+### 删除语义（您点名的边界，随 B 批冻结）
+宿主 equipment 被删除而其上挂有 instrument 时，三案：**拒绝删除 + structured receipt**（推荐：可逆、最保守；删除子句 undelivered 并点名"删除它将遗留挂接待处理的仪表 X/Y"）／级联解除 attachment（instrument 保留、host=None + receipt）／显式级联删除仪表（危险，不推荐）。建议采纳拒绝删除案；当前 problems() fail-closed 行为作为兜底保留。
+
+### 测试矩阵
+①B1：无 tap 口的宿主 → ambiguity receipt + partial + 不 crash；②B2 获批后：LIT/PIT/TT 各自确定性落到声明的 tap port、target identity 稳定（坐标重推导不变）、materialization/redraw PASS、DEV-4 端到端 complete；③负守卫：process 口仍不可作为 tap（validator 层 invariant 保持）；规则外仪表类型 → receipt；④删除宿主（挂有仪表）→ 拒绝 + receipt；⑤frozen corpus 重跑。
+
+**请求**：B1 实现 GO；B2 catalogue 白名单（symbol JSON tap port + digest bump + fixture）与否的裁定；删除语义三选一确认。

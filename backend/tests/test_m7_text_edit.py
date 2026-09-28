@@ -175,3 +175,71 @@ def test_the_editor_is_a_planner_with_the_same_no_geometry_boundary() -> None:
     for forbidden in ("auto_layout_semantic", "m7_layout_contract", "agent_semantic_models"):
         assert forbidden not in source
     assert issubclass(TypesafeSpecEditor, TypesafeDiagramSpecPlanner)
+
+
+def test_connection_id_remap_carries_port_selectors_with_the_connection() -> None:
+    """Q2R1: base cn_1 + an edit declaring two connections -> final cn_2/cn_3.
+
+    The merged spec remints connection ids to avoid the base's cn_1; the port-selector
+    map is keyed by the planner's connection ids, so a remap that loses the correspondence
+    hands the first new connection the second connection's selectors (observed on DEV-6:
+    the tower-side requirement carried the condenser's 「工艺出口」 selector).
+    """
+
+    base = DiagramSpec(
+        label="base",
+        systems=[DiagramSystem(system_id="S_main", name="主工艺系统", order=0)],
+        entities=[
+            DiagramEntity(
+                engineering_id="el_P_101",
+                kind="equipment",
+                system_id="S_main",
+                tag="P-101",
+                name="进料泵",
+                equipment_class="pump",
+                symbol_key="centrifugal_pump",
+            ),
+            DiagramEntity(
+                engineering_id="el_T_101",
+                kind="equipment",
+                system_id="S_main",
+                tag="T-101",
+                name="精馏塔",
+                equipment_class="column",
+                symbol_key="fractionation_column",
+            ),
+        ],
+        connections=[
+            DiagramConnection(
+                engineering_id="cn_1",
+                source_engineering_id="el_P_101",
+                target_engineering_id="el_T_101",
+                medium="",
+                tag="",
+            )
+        ],
+    )
+    plan = _editor(_Recorder()).plan_edit(
+        "添加一个冷凝器 E-101，把 T-101 的塔顶气相出口接到 E-101 的工艺入口，"
+        "把 E-101 的工艺出口接到 T-101 的回流入口",
+        base_spec=base,
+        typesafe_config=_config(),
+    )
+
+    spec_ids = {c.engineering_id for c in plan.spec.connections}
+    assert "cn_1" in spec_ids  # the base connection keeps its id
+    new_spec = [c for c in plan.spec.connections if c.engineering_id != "cn_1"]
+    assert [c.engineering_id for c in new_spec] == ["cn_2", "cn_3"]
+
+    # The planned (delta) connections must carry the remapped ids, so the selector map
+    # keys line up with the spec the binder reads.
+    planned_by_endpoints = {c.chosen: c for c in plan.connections if c.chosen is not None}
+    assert {c.engineering_id for c in planned_by_endpoints.values()} == {"cn_2", "cn_3"}
+    assert all(c.engineering_id in spec_ids for c in planned_by_endpoints.values())
+
+    overhead_to_condenser = planned_by_endpoints[("el_T_101", "el_E_101")]
+    assert "塔顶" in overhead_to_condenser.source_port_selector
+    assert "工艺入" in overhead_to_condenser.target_port_selector
+    reflux_loop = planned_by_endpoints[("el_E_101", "el_T_101")]
+    assert "工艺出" in reflux_loop.source_port_selector
+    assert "回流" in reflux_loop.target_port_selector

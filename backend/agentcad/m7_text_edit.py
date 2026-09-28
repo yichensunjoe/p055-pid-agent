@@ -22,6 +22,8 @@ committed by the surface.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from .device_phrases import Clause, available_alternatives, extract_tags, split_clauses
 from .m7_diagram_spec import DiagramConnection, DiagramEntity, DiagramSpec
 from .m7_synthesis_contract import Completeness
@@ -108,7 +110,7 @@ class TypesafeSpecEditor(TypesafeDiagramSpecPlanner):
         ]
         connections = attach_port_selectors(connections, labels)
 
-        spec, undelivered, catalog_gaps = self._apply_edit(
+        spec, undelivered, catalog_gaps, connection_id_remap = self._apply_edit(
             base_spec=base_spec,
             delta_entities=delta_entities,
             delta_connections=connections,
@@ -121,6 +123,20 @@ class TypesafeSpecEditor(TypesafeDiagramSpecPlanner):
         problems = spec.problems()
         if problems:
             raise self._incoherent(problems)
+
+        # The merged spec remints connection ids so they never collide with the base's
+        # (delta cn_1/cn_2 become cn_2/cn_3 when the base already holds a cn_1). The
+        # selector map downstream is keyed by the *planner's* connection ids, so the
+        # planned connections must carry the remapped ids -- otherwise the first new
+        # connection silently inherits the second connection's selectors.
+        connections = [
+            replace(connection, engineering_id=connection_id_remap.get(
+                connection.engineering_id, connection.engineering_id
+            ))
+            if connection.chosen is not None and connection.engineering_id in connection_id_remap
+            else connection
+            for connection in connections
+        ]
 
         resolved_count = len(spec.entities)
         if resolved_count == 0:
@@ -228,6 +244,7 @@ class TypesafeSpecEditor(TypesafeDiagramSpecPlanner):
 
         new_connection_ids = {c.engineering_id for c in kept_connections}
         new_connections = list(kept_connections)
+        connection_id_remap: dict[str, str] = {}
         for connection in delta_connections:
             if connection.chosen is None:
                 continue
@@ -243,6 +260,9 @@ class TypesafeSpecEditor(TypesafeDiagramSpecPlanner):
             while connection_id in new_connection_ids:
                 connection_id = f"cn_{int(connection_id[3:]) + 1}"
             new_connection_ids.add(connection_id)
+            # The selector map is keyed by the planner's clause id; record where this
+            # clause's connection landed in the merged spec so the caller can rekey it.
+            connection_id_remap[connection.engineering_id] = connection_id
             new_connections.append(
                 DiagramConnection(
                     engineering_id=connection_id,
@@ -285,7 +305,7 @@ class TypesafeSpecEditor(TypesafeDiagramSpecPlanner):
                 undelivered.append(f"「{entity.phrase}」（位号 {entity.tag}）没有被兑现。")
         if unknown_tags:
             skipped.append(f"连接短语提到的位号 {list(unknown_tags)} 没有任何设备声明，已跳过。")
-        return spec, undelivered, catalog_gaps
+        return spec, undelivered, catalog_gaps, connection_id_remap
 
     def _category(self, symbol_key: str) -> str:
         try:

@@ -36,7 +36,7 @@ from .models import StrictModel
 #: *what* the device is; the symbol key says *how it is drawn*, and those are two facts that
 #: happen to coincide today. Keeping them separate is what lets one class have several legal
 #: graphics later, and what keeps a renderer-only change out of the engineering digest.
-SPEC_SCHEMA = "m7-diagram-spec/2"
+SPEC_SCHEMA = "m7-diagram-spec/3"
 
 EntityKind = Literal["equipment", "instrument"]
 Orientation = Literal["landscape", "portrait"]

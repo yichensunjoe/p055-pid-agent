@@ -552,19 +552,40 @@ def test_spec_problems_reject_illegal_host_relations() -> None:
 
 
 def test_attached_instruments_without_governed_tap_get_machine_readable_gaps() -> None:
-    """Q2R3-B1 (DEV-4 shape): instruments attach semantically; with no governed tap port
-    in the current catalogue the honest terminal state is partial + structured receipt."""
+    """Q2R3-B1 fail-closed lane: an attached instrument whose symbol has no selection
+    rule receipts with unsupported_instrument_type -- even now that tap ports exist."""
 
     plan = _planner(_Recorder()).plan(
         "添加一个缓冲罐 V-101，给 V-101 添加一台液位计 LIT-101、一台压力表 PIT-101 和一台温度变送器 TT-101",
         typesafe_config=_config(),
     )
-    assert plan.completeness == "partial"
-    records = list(plan.attachment_gaps)
-    assert {record["instrument_tag"] for record in records} == {"LIT-101", "PIT-101", "TT-101"}
-    for record in records:
+    records = {record["instrument_tag"]: record for record in plan.attachment_gaps}
+    # The recorder's default judgment lands LIT/PIT on symbols outside the selection
+    # table, so they stay receipted; TT resolves through the exact phrase + tap_pt and
+    # leaves no receipt.
+    assert "TT-101" not in records
+    assert {record["reason"] for record in records.values()} == {"unsupported_instrument_type"}
+    for record in records.values():
         assert record["code"] == "instrument_attachment_ambiguity"
-        assert record["reason"] == "no_governed_tap_port"
         assert record["host_tag"] == "V-101"
-    # instruments are still delivered; nothing crashed into the layout stage
     assert {entity.tag for entity in plan.spec.entities} >= {"V-101", "LIT-101", "PIT-101", "TT-101"}
+
+
+def test_dev4_shape_with_pinned_symbols_materializes_tt_and_pit() -> None:
+    """Q2R3-B2 hard lock: TT/PIT resolve and leave no receipt; LIT lands on the
+    level-gauge pair-port semantics which are a separate design, so it receipts with
+    no_instrument_land_port -- never a hidden first-bidirectional default."""
+
+    answers = {
+        "el_LIT_101": {"choice": "level_gauge", "confidence": 0.9},
+        "el_PIT_101": {"choice": "pressure_indicator", "confidence": 0.9},
+    }
+    plan = _planner(_Recorder(answers)).plan(
+        "添加一个缓冲罐 V-101，给 V-101 添加一台液位计 LIT-101、一台压力表 PIT-101 和一台温度变送器 TT-101",
+        typesafe_config=_config(),
+    )
+    records = {record["instrument_tag"]: record for record in plan.attachment_gaps}
+    assert "TT-101" not in records
+    assert "PIT-101" not in records
+    assert records["LIT-101"]["reason"] == "no_instrument_land_port"
+    assert plan.completeness == "partial"

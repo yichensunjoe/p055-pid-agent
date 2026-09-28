@@ -942,7 +942,7 @@ TEXT_METRICS_IS_NOT_A_SEPARATE_DIGEST_INPUT = True   （不新增顶层 text_met
 
 ```
 m7-diagram-spec/2
-m7-adapter-topology-digest/2
+m7-adapter-topology-digest/3
 m7-semantic-layout-plan-digest/4
 m7-symbol-geometry-catalog-digest/1
 m7-layout-digest/2
@@ -1780,7 +1780,7 @@ MATERIALIZATION_PROVENANCE_VERSION_FIELDS = <上面所有 version 的去重并�
 
 ```
 diagram_spec_schema_version              = m7-diagram-spec/2
-adapter_topology_digest_version          = m7-adapter-topology-digest/2
+adapter_topology_digest_version          = m7-adapter-topology-digest/3
 symbol_geometry_catalog_digest_version   = m7-symbol-geometry-catalog-digest/1
 ```
 

@@ -68,6 +68,10 @@ class TopologyNode:
     #: digest: re-binding a device to an equivalent graphic changes the drawing, not the plant.
     symbol_key: str = ""
     ports: tuple[tuple[str, str], ...] = ()
+    #: Q2R3-B2 carrier: an instrument's attachment host, carried verbatim from the
+    #: spec through every layout stage to the materializer -- never re-inferred from
+    #: tags or geometry downstream.
+    host_engineering_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -162,6 +166,7 @@ def adapt(spec: DiagramSpec | Any) -> SemanticTopology:
             measurement=entity.measurement,
             symbol_key=entity.symbol_key,
             ports=tuple(sorted(set(ports_by_entity.get(entity.engineering_id, [])))),
+            host_engineering_id=entity.host_engineering_id,
         )
         for entity in spec.entities
     )
@@ -359,6 +364,7 @@ def spec_semantic_digest(spec: DiagramSpec) -> str:
                     "equipment_class": entity.equipment_class,
                     "instrument_type": entity.instrument_type,
                     "measurement": entity.measurement,
+                    "host_engineering_id": entity.host_engineering_id,
                 }
                 for entity in spec.entities
             ],
@@ -422,6 +428,7 @@ def topology_engineering_rows(topology: SemanticTopology) -> dict[str, Any]:
                 "equipment_class": node.equipment_class,
                 "instrument_type": node.instrument_type,
                 "measurement": node.measurement,
+                "host_engineering_id": node.host_engineering_id,
             }
             for node in topology.nodes
         ],

@@ -358,7 +358,14 @@ def resolve_with_selector(
     the caller reports zero and many -- never a default.
     """
 
-    compatible = tuple(port for port in ports if port.direction in allowed_directions)
+    # Q2R3-B2 medium boundary: selector matching shares the process-endpoint
+    # eligibility -- instrument tap ports never enter the candidate set, however the
+    # selector phrases itself. Vocabulary and token rules are untouched.
+    compatible = tuple(
+        port
+        for port in ports
+        if port.direction in allowed_directions and port.medium != "instrument"
+    )
     surviving = tuple(
         port
         for port in compatible

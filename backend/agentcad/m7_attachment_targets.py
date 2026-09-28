@@ -29,6 +29,10 @@ REASON_NO_GOVERNED_TAP_PORT = "no_governed_tap_port"
 REASON_UNSUPPORTED_INSTRUMENT_TYPE = "unsupported_instrument_type"
 REASON_NO_MATCHING_GOVERNED_TAP_PORT = "no_matching_governed_tap_port"
 REASON_MULTIPLE_GOVERNED_TAP_PORTS = "multiple_governed_tap_ports"
+#: The tap resolved, but the instrument symbol offers no ``process`` port to land the
+#: connector on -- e.g. level gauges expose upper/lower pair ports whose dual-tap
+#: semantics are a separate design. Never "first bidirectional": that would be a guess.
+REASON_NO_INSTRUMENT_LAND_PORT = "no_instrument_land_port"
 
 #: The governed attachment-port class: a port id in this namespace is an
 #: instrumentation tap nozzle, never a process endpoint. Kept as code (like the
@@ -90,6 +94,7 @@ def resolve_attachment_target(
     host_tag: str,
     host_symbol_key: str,
     host_port_ids: tuple[str, ...],
+    instrument_port_ids: tuple[str, ...] = (),
 ) -> AttachmentResolution:
     """Resolve the governed tap port for an attached instrument.
 
@@ -119,6 +124,14 @@ def resolve_attachment_target(
             resolved_port_id=None,
             ambiguity_code=AMBIGUITY_CODE,
             reason=REASON_UNSUPPORTED_INSTRUMENT_TYPE,
+            candidates=governed,
+        )
+    if instrument_port_ids and "process" not in instrument_port_ids:
+        return AttachmentResolution(
+            **base,
+            resolved_port_id=None,
+            ambiguity_code=AMBIGUITY_CODE,
+            reason=REASON_NO_INSTRUMENT_LAND_PORT,
             candidates=governed,
         )
     matching = tuple(p for p in governed if p == wanted)

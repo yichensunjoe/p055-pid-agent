@@ -7,6 +7,7 @@ never enter the candidate set, and no rule ever guesses from geometry.
 
 from agentcad.m7_attachment_targets import (
     REASON_NO_GOVERNED_TAP_PORT,
+    REASON_NO_INSTRUMENT_LAND_PORT,
     REASON_NO_MATCHING_GOVERNED_TAP_PORT,
     REASON_UNSUPPORTED_INSTRUMENT_TYPE,
     resolve_attachment_target,
@@ -91,3 +92,20 @@ def test_known_type_without_its_tap_is_no_matching_not_multiple() -> None:
     assert not result.resolved
     assert result.reason == REASON_NO_MATCHING_GOVERNED_TAP_PORT
     assert result.candidates == ("tap_level",)
+
+
+def test_level_gauge_resolves_no_land_port_without_a_hidden_default() -> None:
+    """Q2R3-B2 round fix: level gauges expose an upper/lower pair, not a process port.
+    The tap may resolve on the host side, but landing must fail closed -- never the
+    first bidirectional port."""
+
+    result = resolve_attachment_target(
+        instrument_tag="LIT-101",
+        instrument_symbol_key="level_gauge",
+        host_tag="V-101",
+        host_symbol_key="buffer_tank",
+        host_port_ids=("in", "out", "tap_level"),
+        instrument_port_ids=("upper", "lower"),
+    )
+    assert not result.resolved
+    assert result.reason == REASON_NO_INSTRUMENT_LAND_PORT

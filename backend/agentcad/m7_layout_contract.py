@@ -665,7 +665,7 @@ ADAPTER_TOPOLOGY_DIGEST_IS_NOT_THE_LAYOUT_DIGEST = True
 #: v2: the specification gained an explicit `symbol_key`, so the topology carries which
 #: catalogue symbol expresses each device. That is layout input, not engineering semantics --
 #: which is why the engineering digest is unchanged while this one moves.
-ADAPTER_TOPOLOGY_DIGEST_VERSION = "m7-adapter-topology-digest/2"
+ADAPTER_TOPOLOGY_DIGEST_VERSION = "m7-adapter-topology-digest/3"
 ADAPTER_TOPOLOGY_DIGEST_INPUTS: tuple[str, ...] = (
     "adapter_topology_digest_version",
     "adapter_topology_projection",
@@ -1321,6 +1321,7 @@ PORT_BINDING_RESOLUTIONS: tuple[str, ...] = ("explicit", "inferred_unique", "sel
 PORT_BINDING_CODES: tuple[str, ...] = (
     "port_not_found",
     "port_direction_mismatch",
+    "port_medium_mismatch",
     "no_compatible_port",
     "ambiguous_port_binding",
     "port_ambiguity",

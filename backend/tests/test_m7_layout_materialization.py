@@ -1170,3 +1170,129 @@ def test_a_layout_that_changed_the_plant_never_reaches_the_writer() -> None:
     )
     with pytest.raises(EngineeringSemanticPreservationError):
         finalize_semantic_layout(retagged, topology)
+
+
+def _tap_probe_spec(hosted: bool = True):
+    from agentcad.m7_diagram_spec import (
+        DiagramConnection,
+        DiagramEntity,
+        DiagramSpec,
+        DiagramSystem,
+    )
+
+    entities = [
+        DiagramEntity(
+            engineering_id="el_V_101",
+            kind="equipment",
+            system_id="S_main",
+            tag="V-101",
+            name="缓冲罐",
+            equipment_class="tank",
+            symbol_key="buffer_tank",
+        ),
+        DiagramEntity(
+            engineering_id="el_P_101",
+            kind="equipment",
+            system_id="S_main",
+            tag="P-101",
+            name="离心泵",
+            equipment_class="pump",
+            symbol_key="centrifugal_pump",
+        ),
+    ]
+    if hosted:
+        entities.append(
+            DiagramEntity(
+                engineering_id="el_TT_101",
+                kind="instrument",
+                system_id="S_main",
+                tag="TT-101",
+                name="温度变送器",
+                equipment_class="instrument",
+                instrument_type="transmitter",
+                symbol_key="temperature_transmitter",
+                host_engineering_id="el_V_101",
+            )
+        )
+    return DiagramSpec(
+        label="tap probe",
+        systems=[DiagramSystem(system_id="S_main", name="主工艺系统", order=0)],
+        entities=entities,
+        connections=[
+            DiagramConnection(
+                engineering_id="cn_1",
+                source_engineering_id="el_V_101",
+                source_port_id="out",
+                target_engineering_id="el_P_101",
+                target_port_id="suction",
+            )
+        ],
+    )
+
+
+def test_attachment_tap_materializes_commits_and_reconciles(tmp_path: Path) -> None:
+    """Q2R3-B2 durable regression: the governed tap connector lands in the document,
+    reconciles against the layout row, and the instrument's signal port stays
+    unconnected (a legal terminal state)."""
+
+    from agentcad.api_semantic_agent import _finalize_spec_layout
+    from agentcad.m7_diagram_spec import DiagramSpec
+
+    assert isinstance(_tap_probe_spec(), DiagramSpec)
+    finalized = _finalize_spec_layout(_tap_probe_spec())
+    layout = materialize_canonical_layout(finalized, document_id="doc_tap")
+    tap_rows = [row for row in layout.rows if str(row["engineering_id"]).startswith("tap_")]
+    assert [row["engineering_id"] for row in tap_rows] == ["tap_el_TT_101"]
+    (tap_row,) = tap_rows
+    assert tap_row["source"]["port_id"] == "tap_pt"
+    assert tap_row["target"]["port_id"] == "process"
+
+    service = make_service(tmp_path)
+    document_id = seed_document(service, layout)
+    request = materialized_transaction(
+        replace(layout, document_id=document_id), expected_revision=0
+    )
+    result = service.apply_transaction(document_id, request, source="system")
+    assert materialization_matches_document(layout, result.document) == []
+
+    tap_element = next(
+        element
+        for element in result.document.elements
+        if element.id == "el_connector_tap_el_TT_101"
+    )
+    assert len(tap_element.points) == 3  # start, elbow, end -- endpoints reconciled
+    signal = next(
+        element for element in result.document.elements if "el_TT_101" in element.id
+    )
+    assert signal.type == "symbol"
+
+
+def test_attachment_materialization_is_deterministic() -> None:
+    """Q2R3-B2 hard lock: the same spec materializes twice to identical connector
+    ids, endpoints and counts."""
+
+    from agentcad.api_semantic_agent import _finalize_spec_layout
+
+    spec = _tap_probe_spec()
+    first = materialize_canonical_layout(_finalize_spec_layout(spec), document_id="doc_a")
+    second = materialize_canonical_layout(_finalize_spec_layout(spec), document_id="doc_b")
+    tap_first = [row for row in first.rows if str(row["engineering_id"]).startswith("tap_")]
+    tap_second = [row for row in second.rows if str(row["engineering_id"]).startswith("tap_")]
+    assert tap_first == tap_second
+    assert tap_first, "the tap row must exist in both runs"
+
+
+def test_attachment_without_a_land_port_refuses_instead_of_dropping() -> None:
+    """Q2R3-B2 hard lock: an attachment relation that cannot materialize must fail
+    loud -- no silent tap-row drop, and never a "first bidirectional" default."""
+
+    import pytest
+
+    from agentcad.api_semantic_agent import _finalize_spec_layout
+    from agentcad.m7_layout_materialization import MaterializationError
+
+    spec = _tap_probe_spec()
+    spec.entities[2] = spec.entities[2].model_copy(update={"symbol_key": "level_gauge"})
+    finalized = _finalize_spec_layout(spec)
+    with pytest.raises(MaterializationError, match="no_instrument_land_port"):
+        materialize_canonical_layout(finalized, document_id="doc_loud")

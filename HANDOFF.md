@@ -2,7 +2,7 @@
 
 > 交接文档：每次开新会话先读本文件。更新规则见 `AGENTS.md`「HANDOFF 交接规则」。
 
-## 当前状态（2026-09-29 R46 —— **main=7f39d92（#56-#65 十个 squash 全合）。M8-Q2 全部获批项 CLOSED：Q1R integrity / Q2(a) condenser / Q2-1R2 TT / Q2R2 内嵌添加 / Q2R2.1 label pool / Q2R3-A 语义挂接 / Q2R3-B1 resolver / B2 catalogue+carrier+物化+介质边界 / B3 零连接窄批**。Q2 收口状态已报 Gate 等总体裁定。DEV-4 诚实终态=partial+唯一 receipt（LIT 双口语义留独立设计）；DEV-6 全三句 complete；HOLDOUT-2 双 complete。未来项（未授权）：LIT 双 tap 设计、「换成」语法、G4 router、真实 system declaration 支持。Q2 完整设计与全过程证据在 reports/m8-q2-design.md + 各 PR (#56-#65)。环境干净，worktree=P055-PID-Agent-q1r（可复用为下一个实现基座））
+## 当前状态（2026-09-29 R47 · 终态 —— **M8-Q2 项目层面正式完全封账：main=`fbcadae`（#56–#66 十一个 squash 全合）。M8-Q2 OVERALL GATE = PASS/CLOSED，closeout artifact = main 线上 reports/m8-q2-closeout.md**（十子阶段 CLOSED 表、九条冻结 fail-closed 契约、DEV-4 honest terminal state、三项 deferred future scope）。后续工程项（LIT 双 tap / HOLDOUT-1「换成」/ G4 router）均 NOT AUTHORIZED，须各走独立 Design Gate——无事不自动开工。任务链至此到达 Gate 明示的自然终点。）
 
 - **M8-Q1 冻结 run 结果**（详见 reports/m8-q1-results.md，commit `25219f8`）：步级 committed 3/16、场景 complete 1/8；gap 排名 G1 selector 失配 / G2 仪表并列子句合并 / G3 feed selector / G4 泄放支路不可走线 / G5 DXF 不支持 A 弧 / G6 shell_in selectors 混入塔词汇；HOLDOUT 只记录。PDF 8/8 200；实体 DXF 0/3。
 - **重大教训（Gate 核出）**：本次 server 是从 `m7-semantic-first-synthesis` worktree 起的（切分支后才启动 8002），runner sys.path 绝对路径 import 到平行分支旧代码——G1（main 已有 SEMANTIC_SURFACE_TOKENS 管程映射）与 G5（main 已有 A 弧 tessellation，`symbol_paths` 共享 grammar）**很可能在 main 上已修**，Q1 的相应失败证据作废待 exact-main 复验。报告写"基线 1afeccab"但 runtime 不是，P0-RUNTIME-PROVENANCE 即为此设。

@@ -1,7 +1,0 @@
-{
- "git_rev_parse_HEAD": "4c9091a202f0877819890bff4e897e96e4d26b9a",
- "git_status_porcelain": "?? reports/m8-q1r-rerun-provenance.json",
- "server_cwd": "/Users/joe/ai/reasonix/projects/active/P055-PID-Agent-q1r",
- "agentcad___file__": "/Users/joe/ai/reasonix/projects/active/P055-PID-Agent-q1r/backend/agentcad/__init__.py",
- "python_executable": "/Users/joe/ai/reasonix/projects/active/P055-PID-Agent/.venv/bin/python"
-}

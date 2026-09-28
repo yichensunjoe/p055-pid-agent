@@ -1,6 +1,6 @@
 # M8-Q1 冻结 corpus 重跑结果（Q1R + Q1R2 修复后，m8-q1r）
 
-> 环境：worktree `P055-PID-Agent-q1r`。本文件对应最终证据提交 `4c85b5119`（HEAD 已核）；runner 在证据写入前捕获的 `git status --porcelain` = **空**（干净树），`agentcad.__file__` 指向 worktree，corpus lock：source commit `25219f8e`、blob `c4442482…`、expected 17 = actual 17 步。scratch DB 跑完已删；corpus 全程未改；HOLDOUT 只验收未反改。
+> 环境：worktree `P055-PID-Agent-q1r`。frozen run 记录的 runtime HEAD = `4c85b5119…`（临时证据提交，已被 amend、远端不可寻）；最终证据 tip = `b17ab08…`，运行与最终纯证据 amend 之间无产品代码变更。runner 在证据写入前捕获的 `git status --porcelain` = **空**（干净树），`agentcad.__file__` 指向 worktree，corpus lock：source commit `25219f8e`、blob `c4442482…`、expected 17 = actual 17 步。scratch DB 跑完已删；corpus 全程未改；HOLDOUT 只验收未反改。
 
 ## 逐场景（8 场景 17 步）
 
@@ -21,14 +21,14 @@
 2. **DEV-5 绝无 phantom E-01，系统声明得到诚实 receipt** ✓（fail-closed receipt 在 raw 的 skipped 字段可见；单测断言 spec 无 E-01、completeness=partial）。
 3. **所有 4xx 保存完整错误原因** ✓（DEV-3 布局拒绝全文、参数校验明细、结构化 receipt 均留存）。
 4. **clean provenance** ✓（status 于证据写入前捕获，为空）。
-5. 此前四项（DEV-2=1/1、DEV-4 独立层、实体 DXF readback、拒绝零副作用）保持 ✓。
+5. 此前四项（DEV-2=1/1、DEV-4 独立层、实体 DXF readback、拒绝零副作用）保持 ✓。实体 DXF readback 为 **6 份**非空（DEV-4、DEV-5 因句一 receipt 为空文档，各导出 991B 空壳）。
 
 ## 修复清单（m8-q1r，基于 origin/main @ 1afeccab）
 
 - `e1a7c20` P1 B' 预提交对账（service.py 新增 keyword-only precommit_validator）+ G7 route parity（_plan_rows 端点经唯一端口映射规范到精确锚点）。
 - `068ebc2` G2 设备添加枚举分解（一台X、一台Y 和一台Z → 独立 clause）。
 - `399ff78`（amend 后 tip 代码同）Q1R2：系统声明 fail-closed receipt（m7_text_planner，read() 经 `last_system_declarations` 属性传出，plan() 入 skipped 账本，设备路径永不接触）；runner 恢复 DEV-5 句二 + 17 步 corpus lock + 4xx 全因留存 + 证据前干净 provenance。
-- 证据：`4c85b5119`（raw + provenance + 本文件）；旧 16 步证据已被替换。
+- 证据：`b17ab08`（raw 内嵌 provenance + 本文件；独立 provenance 旧文件已删除，避免双份冲突）；旧 16 步证据已被替换。
 
 ## 遗留真实 gap（归类不变，Q2 输入）
 

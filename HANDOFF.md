@@ -2,7 +2,7 @@
 
 > 交接文档：每次开新会话先读本文件。更新规则见 `AGENTS.md`「HANDOFF 交接规则」。
 
-## 当前状态（2026-09-29 R45 —— **main=76459c1（#56-#64 九个 squash 全合）。Q2R3-B2 PASS/CLOSED：受治理 tap 口 + carrier 全链 + 物化 tap 行 + 介质边界 + LIT/物化双 fail-closed 全部上线**。当前活跃 = **Q2R3-B3（GO）：attachment-only / 零 process 连接窄批**——从 main 新切 m8-q2r3b3；仅允许"无 semantic process connections 但存在已验证 attachment relations"的图放行 routing（现守卫 if not plan.endpoint_bindings 无条件 raise 在 auto_layout_geometry，B3 需其白名单）；普通无连接无挂接图继续拒绝；不得回填 #64。DEV-4 原句（V-101+三仪表零连接）是 B3 的验收目标：complete + 3 tap connector（TT/PIT 物化、LIT receipt）。注意 LIT 双口语义（upper/lower 双 tap）仍是未来独立设计。工作分支 m8-q2r3b3（worktree）。环境干净）
+## 当前状态（2026-09-29 R46 —— **main=7f39d92（#56-#65 十个 squash 全合）。M8-Q2 全部获批项 CLOSED：Q1R integrity / Q2(a) condenser / Q2-1R2 TT / Q2R2 内嵌添加 / Q2R2.1 label pool / Q2R3-A 语义挂接 / Q2R3-B1 resolver / B2 catalogue+carrier+物化+介质边界 / B3 零连接窄批**。Q2 收口状态已报 Gate 等总体裁定。DEV-4 诚实终态=partial+唯一 receipt（LIT 双口语义留独立设计）；DEV-6 全三句 complete；HOLDOUT-2 双 complete。未来项（未授权）：LIT 双 tap 设计、「换成」语法、G4 router、真实 system declaration 支持。Q2 完整设计与全过程证据在 reports/m8-q2-design.md + 各 PR (#56-#65)。环境干净，worktree=P055-PID-Agent-q1r（可复用为下一个实现基座））
 
 - **M8-Q1 冻结 run 结果**（详见 reports/m8-q1-results.md，commit `25219f8`）：步级 committed 3/16、场景 complete 1/8；gap 排名 G1 selector 失配 / G2 仪表并列子句合并 / G3 feed selector / G4 泄放支路不可走线 / G5 DXF 不支持 A 弧 / G6 shell_in selectors 混入塔词汇；HOLDOUT 只记录。PDF 8/8 200；实体 DXF 0/3。
 - **重大教训（Gate 核出）**：本次 server 是从 `m7-semantic-first-synthesis` worktree 起的（切分支后才启动 8002），runner sys.path 绝对路径 import 到平行分支旧代码——G1（main 已有 SEMANTIC_SURFACE_TOKENS 管程映射）与 G5（main 已有 A 弧 tessellation，`symbol_paths` 共享 grammar）**很可能在 main 上已修**，Q1 的相应失败证据作废待 exact-main 复验。报告写"基线 1afeccab"但 runtime 不是，P0-RUNTIME-PROVENANCE 即为此设。

@@ -33,7 +33,10 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 
 from .device_phrases import (
+    ADD_VERBS,
+    CONNECT_VERBS,
     MAX_CONNECTION_CANDIDATES,
+    REMOVE_VERBS,
     Clause,
     SymbolCandidate,
     available_alternatives,
@@ -263,6 +266,60 @@ def attach_port_selectors(
     return attached
 
 
+#: The measure words a device-add enumeration counts devices with. Anything the sentence does not
+#: phrase as one of these is not part of the enumeration grammar and must not be split.
+_ENUM_MEASURE_WORDS = ("一台", "一个", "一只", "一款", "一台套")
+
+
+def _expand_device_add_enumeration(clause: Clause) -> list[tuple[Clause, str | None]]:
+    """Split one add clause's device enumeration into ordered per-device clauses (G2).
+
+    Only the device-add enumeration syntax is split:
+    「给 HOST 添加一台 X T1、一台 Y T2 和一台 Z T3」 becomes one add clause per item, each
+    carrying its own tag, in written order, sharing the same host prefix -- so every device
+    enters the clause ledger on its own instead of one merged phrase failing lookup for all
+    of them. The returned tag override is the item's own tag: the host prefix may name the
+    attach target (e.g. V-101), which must not win tag extraction over the device the item
+    declares. Guards keep the split narrow: every item must open with a measure word and
+    name exactly one tag, and no item may contain a connect/remove verb. Anything else
+    returns the clause untouched -- no generic comma splitting, and connection clauses
+    never enter here.
+    """
+
+    if clause.kind != "add" or "、" not in clause.text:
+        return [(clause, None)]
+    verb_end = next(
+        (clause.text.find(verb) + len(verb) for verb in ADD_VERBS if verb in clause.text),
+        None,
+    )
+    if verb_end is None:
+        return [(clause, None)]
+    host = clause.text[:verb_end]
+    rest = clause.text[verb_end:]
+    # 、 separates items; 和 separates the last item only when it opens with a measure word,
+    # so a device phrase that happens to contain 和 is not torn apart.
+    pieces = [
+        piece
+        for chunk in rest.split("、")
+        for piece in re.split(r"和(?=一(?:台|个|只|款))", chunk)
+    ]
+    items: list[tuple[str, str]] = []
+    for piece in pieces:
+        item = piece.strip().lstrip("和").strip()
+        if not item.startswith(_ENUM_MEASURE_WORDS):
+            return [(clause, None)]
+        lowered = normalise(item)
+        if any(verb in lowered for verb in (*CONNECT_VERBS, *REMOVE_VERBS)):
+            return [(clause, None)]
+        item_tags = extract_tags(item)
+        if len(item_tags) != 1:
+            return [(clause, None)]
+        items.append((item, item_tags[0]))
+    if len(items) < 2:
+        return [(clause, None)]
+    return [(Clause(text=f"{host}{item}", kind="add"), tag) for item, tag in items]
+
+
 class TypesafeDiagramSpecPlanner:
     """Turns one sentence into a specification, using judgments only where a lookup cannot decide."""
 
@@ -293,14 +350,25 @@ class TypesafeDiagramSpecPlanner:
         vanishes between reading and planning.
         """
 
-        add_clauses = [clause for clause in split_clauses(prompt) if clause.kind == "add"]
+        expanded_adds = [
+            expanded
+            for clause in split_clauses(prompt)
+            if clause.kind == "add"
+            for expanded in _expand_device_add_enumeration(clause)
+        ]
+        add_clauses = [clause for clause, _tag_override in expanded_adds]
+        tag_overrides = {
+            id(clause): tag_override
+            for clause, tag_override in expanded_adds
+            if tag_override is not None
+        }
         connect_clauses = [clause for clause in split_clauses(prompt) if clause.kind == "connect"]
         unknown_clauses = [clause for clause in split_clauses(prompt) if clause.kind == "unknown"]
         entities: list[PlannedEntity] = []
         known_tags: list[str] = []
         for index, clause in enumerate(add_clauses, start=1):
             tags = extract_tags(clause.text)
-            tag = tags[0] if tags else UNTAGGED_TAG_TEMPLATE.format(index=index)
+            tag = tag_overrides.get(id(clause)) or (tags[0] if tags else UNTAGGED_TAG_TEMPLATE.format(index=index))
             phrase = _device_phrase(clause.text) or clause.text
             candidates = tuple(candidate_symbols(self.symbols, clause.text))
             catalog_gap = bool(matched_hints(clause.text)) and not candidates

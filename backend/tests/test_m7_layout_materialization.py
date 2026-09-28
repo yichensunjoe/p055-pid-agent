@@ -1172,7 +1172,7 @@ def test_a_layout_that_changed_the_plant_never_reaches_the_writer() -> None:
         finalize_semantic_layout(retagged, topology)
 
 
-def _tap_probe_spec(hosted: bool = True) -> "DiagramSpec":
+def _tap_probe_spec(hosted: bool = True):
     from agentcad.m7_diagram_spec import (
         DiagramConnection,
         DiagramEntity,

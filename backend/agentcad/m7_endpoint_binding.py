@@ -179,6 +179,20 @@ def bind_endpoint(
                 connection_id=connection_id,
                 role=role,
             )
+        # Q2R3-B2 medium boundary: a process connection endpoint may use any
+        # non-instrument port (the catalogue's medium vocabulary also carries gas,
+        # utility, drain, vent, relief and the like). Declaring an instrument tap port
+        # by id does not bypass the boundary -- eligibility is direction compatible
+        # AND not instrument-medium.
+        if port.medium == "instrument":
+            raise PortBindingError(
+                "port_medium_mismatch",
+                f"connection {connection_id!r} {role} names port {declared!r} on symbol "
+                f"{fact.symbol_key!r}, whose medium is {port.medium!r}; a process connection "
+                "endpoint may not use instrument-medium tap ports",
+                connection_id=connection_id,
+                role=role,
+            )
         return ResolvedEndpointBinding(
             connection_id=connection_id,
             role=role,
@@ -192,7 +206,9 @@ def bind_endpoint(
         )
 
     candidates = tuple(
-        port.port_id for port in fact.ports if port.direction in allowed
+        port.port_id
+        for port in fact.ports
+        if port.direction in allowed and port.medium != "instrument"
     )
     if not candidates:
         raise PortBindingError(
@@ -234,7 +250,9 @@ def bind_endpoint(
                     selector=None,
                     candidates=candidate_hints(
                         ports=tuple(
-                            port for port in fact.ports if port.direction in allowed
+                            port
+                            for port in fact.ports
+                            if port.direction in allowed and port.medium != "instrument"
                         ),
                         width=fact.intrinsic_width,
                         height=fact.intrinsic_height,

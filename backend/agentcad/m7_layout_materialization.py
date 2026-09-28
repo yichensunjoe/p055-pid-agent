@@ -764,6 +764,7 @@ def _attachment_tap_rows(
     from .m7_attachment_targets import resolve_attachment_target
 
     facts = {fact.engineering_id: fact for fact in plan.engineering_entities}
+    node_symbols = dict(plan.node_symbols)
     tap_rows: list[dict[str, Any]] = []
     for fact in plan.engineering_entities:
         host_id = fact.host_engineering_id
@@ -772,22 +773,30 @@ def _attachment_tap_rows(
         host_fact = facts.get(host_id)
         host_row = symbol_rows.get(host_id)
         instrument_row = symbol_rows.get(fact.engineering_id)
-        if host_fact is None or host_row is None or instrument_row is None:
+        host_symbol = str(node_symbols.get(host_id, ""))
+        instrument_symbol = str(node_symbols.get(fact.engineering_id, ""))
+        if (
+            host_fact is None
+            or host_row is None
+            or instrument_row is None
+            or not host_symbol
+            or not instrument_symbol
+        ):
             continue
         try:
-            host_ports = tuple(port.id for port in registry.get(host_fact.symbol_key).ports)
+            host_ports = tuple(port.id for port in registry.get(host_symbol).ports)
         except KeyError:
             continue
         resolution = resolve_attachment_target(
             instrument_tag=fact.tag,
-            instrument_symbol_key=fact.symbol_key,
+            instrument_symbol_key=instrument_symbol,
             host_tag=host_fact.tag,
-            host_symbol_key=host_fact.symbol_key,
+            host_symbol_key=host_symbol,
             host_port_ids=host_ports,
         )
         if not resolution.resolved:
             continue
-        land_port = _instrument_land_port(registry, fact.symbol_key)
+        land_port = _instrument_land_port(registry, instrument_symbol)
         if not land_port:
             continue
         start = _port_exact_anchor(symbol_rows, host_id, resolution.resolved_port_id, registry)
@@ -797,6 +806,22 @@ def _attachment_tap_rows(
         waypoints: list[list[float]] = []
         if start.x != end.x and start.y != end.y:
             waypoints = [[_quantize(end.x), _quantize(start.y)]]
+        # Canonicalize through the writer's own binding rule (G7 lesson): the staged
+        # document recomputes both anchors from the placed symbols and re-binds the
+        # route, so the record must already be port-exact or reconciliation sees two
+        # different routes for one connector.
+        bound = DocumentService._bind_manual_endpoints(
+            [
+                Point(x=_quantize(start.x), y=_quantize(start.y)),
+                *[
+                    Point(x=_quantize(point[0]), y=_quantize(point[1]))
+                    for point in waypoints
+                ],
+                Point(x=_quantize(end.x), y=_quantize(end.y)),
+            ],
+            Point(x=_quantize(start.x), y=_quantize(start.y)),
+            Point(x=_quantize(end.x), y=_quantize(end.y)),
+        )
         tap_rows.append(
             {
                 "kind": "connector",
@@ -810,11 +835,13 @@ def _attachment_tap_rows(
                 "source": {"node_id": host_id, "port_id": resolution.resolved_port_id},
                 "target": {"node_id": fact.engineering_id, "port_id": land_port},
                 "flow_direction": "none",
-                "x": _quantize(start.x),
-                "y": _quantize(start.y),
+                "x": _quantize(bound[0].x),
+                "y": _quantize(bound[0].y),
                 "width": 0.0,
                 "height": 0.0,
-                "waypoints": waypoints,
+                "waypoints": [
+                    [_quantize(point.x), _quantize(point.y)] for point in bound[1:-1]
+                ],
             }
         )
     return tap_rows

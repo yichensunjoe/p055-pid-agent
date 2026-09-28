@@ -355,15 +355,21 @@ def test_semantic_selectors_actually_match_the_real_ports() -> None:
 
 
 def test_the_catalog_identity_is_byte_identical_across_the_q2_boundary() -> None:
-    """The Q2 gate froze this: adding selector evidence must not move geometry identity.
-    The digest below was captured on origin/main @ 18ec8c6 for this exact symbol set."""
+    """B2 intentional catalogue bump: the governed tap ports (buffer_tank tap_pt/tap_level,
+    medium=instrument) move this geometry identity, and that is the approved change --
+    the digest below was re-captured after the B2 catalogue edit, replacing the Q2 golden.
+    Flipping the tap ports back to medium=process to go green is prohibited."""
 
     snapshot = freeze_symbol_geometry(
         ["buffer_tank", "cylinder_vessel", "fractionation_column", "positive_displacement_pump"]
     )
     assert snapshot.digest == (
-        "6a3a05b1bb44594d6697c0c36b59f59c7be623bfd0ff8a3dbf0552e7f909a263"
+        "197987a42783c030cb900c4d2e69730a30d1814a8980066a8047ed28a1c496be"
     )
+    tank = freeze_symbol_geometry(["buffer_tank"]).facts[0]
+    taps = {port.port_id: port for port in tank.ports if port.port_id.startswith("tap_")}
+    assert set(taps) == {"tap_pt", "tap_level"}
+    assert all(port.medium == "instrument" for port in taps.values())
     # the runtime fact still carries the frozen name for the selector and the receipt
     vessel = freeze_symbol_geometry(["cylinder_vessel"]).facts[0]
     assert {port.port_id: port.name for port in vessel.ports}["top"] == "顶部管口"
@@ -420,3 +426,68 @@ def test_resolve_is_pure_predicate_conjunction_without_a_default() -> None:
     assert {REASON_MISSING_SELECTOR, REASON_NO_MATCH, REASON_STILL_AMBIGUOUS} == {
         "missing_selector", "selector_no_match", "selector_still_ambiguous"
     }
+
+
+def test_process_binding_candidates_never_include_instrument_tap_ports() -> None:
+    """Q2R3-B2 hard lock: an unspecified-endpoint process connection on buffer_tank sees
+    only the original process ports -- the governed taps stay out of the candidate set."""
+
+    from agentcad.m7_endpoint_binding import bind_endpoint
+
+    snapshot = freeze_symbol_geometry(["buffer_tank"])
+    fact = snapshot.facts[0]
+    # Each side still binds uniquely to the original process port: the tap ports do
+    # not create ambiguity, and no receipt is needed.
+    source = bind_endpoint(
+        connection_id="cn_1",
+        role="source",
+        node_id="el_V_101",
+        fact=fact,
+        declared_port_id="",
+    )
+    target = bind_endpoint(
+        connection_id="cn_1",
+        role="target",
+        node_id="el_V_101",
+        fact=fact,
+        declared_port_id="",
+    )
+    assert source.port_id == "out"
+    assert target.port_id == "in"
+
+
+def test_declaring_a_tap_port_for_a_process_connection_is_refused() -> None:
+    """Q2R3-B2 hard lock: the exact port id does not bypass the medium boundary -- a
+    process connection naming tap_pt / tap_level by id is refused, not bound."""
+
+    from agentcad.m7_endpoint_binding import PortBindingError, bind_endpoint
+
+    snapshot = freeze_symbol_geometry(["buffer_tank"])
+    fact = snapshot.facts[0]
+    for tap_port in ("tap_pt", "tap_level"):
+        with pytest.raises(PortBindingError) as raised:
+            bind_endpoint(
+                connection_id="cn_1",
+                role="target",
+                node_id="el_V_101",
+                fact=fact,
+                declared_port_id=tap_port,
+            )
+        assert raised.value.code == "port_medium_mismatch", tap_port
+
+
+def test_selector_matching_never_sees_instrument_tap_ports() -> None:
+    """Q2R3-B2 hard lock: even a selector phrase aimed at a tap port matches nothing --
+    the selector layer shares the process-medium eligibility."""
+
+    snapshot = freeze_symbol_geometry(["buffer_tank"])
+    fact = snapshot.facts[0]
+    parsed = parse_selector("tap_pt")
+    surviving, _ = resolve_with_selector(
+        ports=fact.ports,
+        allowed_directions=("in", "bidirectional"),
+        selector=parsed,
+        width=fact.intrinsic_width,
+        height=fact.intrinsic_height,
+    )
+    assert surviving == ()

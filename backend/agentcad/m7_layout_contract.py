@@ -1321,6 +1321,7 @@ PORT_BINDING_RESOLUTIONS: tuple[str, ...] = ("explicit", "inferred_unique", "sel
 PORT_BINDING_CODES: tuple[str, ...] = (
     "port_not_found",
     "port_direction_mismatch",
+    "port_medium_mismatch",
     "no_compatible_port",
     "ambiguous_port_binding",
     "port_ambiguity",

@@ -13,6 +13,9 @@
 - **实现白名单**：`m7_layout_materialization.py` / `service.py` / `m7_text_planner.py` / `backend/tests/` / `reports/m8_q1_runner.py`（仅绝对路径改仓库相对）。**禁改**：`store.py` / `m7_port_selectors.py` / `dxf_render.py` / `symbol_paths.py` / catalogue。G3/G4/G6 继续 deferred。
 - **Gate 通道**：会话「方案落地顺序裁决」conv `6ab36b5a-ece4-83ea-ac36-fd841290a8a9`（注意：侧边栏点入会落到 yu-yu GPT 的同名 URL，conv id 一致即对；该线程混有大量禹豫/dttn 流量，标题不可信）。发送手法：`document.execCommand('insertText')` 注入 + evaluate 派完整鼠标事件点 form 内 aria-label=发送 的按钮，**必须截图确认**；bsk 会话会超时，重开即用。
 
+
+- **R41 补充（同日）**：Q2-1R 设计修订已提交（ccfd678）：TT 解禁有 8d82f75 单行先例、FT/LT 不动（FT=审计范例）、TT 解禁后现有英文 hint 已精确隔离候选（无需中文词表）。DEV-6 句三 s3 根因=「接到一个缓冲罐 V-102」整条被分类为 connect 子句、句内嵌的添加语义未分解成实体（V-102 未声明→连接 undelivered，无 port receipt）——G2 同类 planner grammar 项，已报 Gate 路由。PR #58 CI 四绿（36379051307），等 Gate 裁定期间 ChatGPT 侧基础设施多次抖动（账户加载失败/Cloudflare），消息已全部送达线程。
+
 ## 近期轮次（2026-09-28 R38 —— M8-Q1 run + Q1R 设计两轮 Gate 往返）
 
 - **做了什么**：① 修 runner 两处 `api_key:"x"` 后重跑 8 场景（scratch 8002 + 一次性库），16 步 3 committed，逐场景失败根因全部定位（selector 失配 / 仪表子句合并 / 泄放支路不可走线 / 布局对账 409）；② 探针发现 P1（409 先写库后报错，代码定位到 m7_layout_materialization ~1040–1072）并误报 P2（后撤回）；③ 写 results + Q1R 修复设计，两批均发 Gate 并读回裁定。

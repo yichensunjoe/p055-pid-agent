@@ -565,7 +565,7 @@ def test_attached_instruments_without_governed_tap_get_machine_readable_gaps() -
     # leaves no receipt.
     assert "TT-101" not in records
     assert {record["reason"] for record in records.values()} == {"unsupported_instrument_type"}
-    for tag, record in records.items():
+    for record in records.values():
         assert record["code"] == "instrument_attachment_ambiguity"
         assert record["host_tag"] == "V-101"
     assert {entity.tag for entity in plan.spec.entities} >= {"V-101", "LIT-101", "PIT-101", "TT-101"}

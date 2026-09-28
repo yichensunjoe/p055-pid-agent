@@ -32,6 +32,10 @@ SYMBOL_HINTS: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
     (("阀", "valve", "fcv", "pcv"), ("valve",)),
     (("罐", "tank", "vessel", "容器", "槽"), ("tank", "vessel", "drum")),
     (("塔", "column", "tower"), ("column", "tower")),
+    # 冷凝器 names its own symbol: a precise hint, not a member of the broad exchanger
+    # pool -- without it the phrase opens the whole catalogue and a judgment can land on
+    # an unrelated symbol whose ports (in/top) can never serve 工艺入口/工艺出口.
+    (("冷凝", "冷凝器", "condenser"), ("condenser",)),
     (("换热", "冷却", "加热", "exchanger", "cooler", "heater"), ("exchanger", "cooler", "heater")),
     (("流量", "flow"), ("flow",)),
     (("仪表", "变送", "transmitter", "instrument"), ("instrument", "transmitter", "sensor")),

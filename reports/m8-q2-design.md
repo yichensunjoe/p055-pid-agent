@@ -52,3 +52,21 @@
 - **风险与验证项**：TT 的 process(in)/signal(out) 端口模型与「给 V-101 添加」宿主挂接语义的端到端配合（DEV-4 重跑验证：TT-101 挂到 V-101、LIT/PIT 行为不变）；若宿主挂接受阻，回报 Gate 再定（可能涉及 instrument attachment 语义，不属于本 correction）。
 - 测试矩阵：①DEV-4 句一重跑三仪表全 resolved 且 TT-101→temperature_transmitter（断言精确 key，非 indicator/element）；②HIDDEN_BUILTIN_KEYS 期望集更新；③FT/LT 仍 hidden（负守卫）；④既有 symbol_library/audit 测试全绿。
 - 改动面：`backend/agentcad/symbols.py`（一行）+ `backend/tests/test_symbol_library.py`（期望集）。digest 无 bump。
+
+## M8-Q2R2 设计：connect 子句内嵌目标设备声明（DESIGN GO 已批；实现待签）
+
+**Exact evidence**（17 步后测 + 定向复现，m8-q2a 代码）：「把 T-101 的侧线采出口接到一个缓冲罐 V-102」→ skipped「没有得到判断，已跳过」+「V-102 没有任何设备声明」+ undelivered；无 port receipt。机制：`split_clauses()` 遇 connect 动词把整句判为 connect；editor/planner 的新设备只来自 add 子句 → 内嵌的「一个缓冲罐 V-102」从未进入 delta entity 路径。
+
+**冻结规则（按 Gate 边界锁窄）**：
+1. 仅当 connect 子句的某一端明确为「量词 + 设备短语 + 唯一新 tag」时，把该内嵌设备登记为 delta entity（phrase=设备短语、tag=新 tag、source_clause=**原始整句原文**——不得伪造成用户说过「添加一个缓冲罐 V-102」），并保留原 connection requirement。
+2. 原 connection 的该端点绑定到新实体；semantic ledger 产出「新实体 V-102/缓冲罐 + 原连接 T-101→V-102」两条账。
+3. 反自动创建设备：「接到 V-102」式（无设备短语）不自动创建；无明确 tag 不创建；已存在 tag 不重复添加。
+4. 不做通用逗号/「一个」字符串拆分；多设备内嵌（ enumeration 形态）不处理（超出本批）。
+5. HOLDOUT 不用于驱动规则扩张（本设计只用 DEV 证据）。
+6. 解析放在**共享 planner read 层**（`split_clauses` 之后、分类结果之上的一层窄展开），editor 经 `self.read()` 自动继承——不给 DEV-6 在 m7_text_edit.py 写特判。
+
+**形状判定（与 G2 同风格的保守守卫）**：端片段匹配 `^(一(台|个|只|款))?<设备短语> <TAG>$`（TAG_PATTERN 唯一且不在已知 tag 集）；含第二量词或第二个 tag 则不展开；含 remove/connect 动词片段不展开（防误拆）。设备短语须命中 SYMBOL_HINTS（含 exact 表）——无 hint 的片段不展开（走原有 undelivered 路径，防 phantom）。
+
+**测试矩阵**：①DEV-6 句三全链：s3 complete、V-102 实体落 buffer_tank、连接 cn_4 T-101(side_draw)→V-102、source_clause 保留原句；②负守卫：「接到 V-102」无短语不创建；无 tag 不创建；已存在 tag 不重复；含两个 tag 不展开；③G2 枚举回归 + Q2R1 remap 回归不破坏；④端到端画布验收（编辑后重画对账通过）。
+
+**改动面（实现获批后）**：`backend/agentcad/device_phrases.py`（共享展开层，read() 调用点传参）或 `m7_text_planner.read()` + `m7_text_edit` 继承点；**白名单外不动** m7_port_selectors.py / catalogue / corpus。

@@ -41,6 +41,7 @@ from .device_phrases import (
     SymbolCandidate,
     available_alternatives,
     candidate_symbols,
+    embedded_device_declaration,
     extract_tags,
     matched_hints,
     normalise,
@@ -370,7 +371,7 @@ class TypesafeDiagramSpecPlanner:
     # -- the code half: read the sentence, build the candidates -------------------------------- #
 
     def read(
-        self, prompt: str
+        self, prompt: str, *, existing_tags: tuple[str, ...] = ()
     ) -> tuple[list[PlannedEntity], list[Clause], tuple[str, ...], list[Clause]]:
         """Every device the sentence declares, the connection clauses, and what code could not read.
 
@@ -379,7 +380,9 @@ class TypesafeDiagramSpecPlanner:
         vanishes between reading and planning. System declarations (add clauses that declare
         a system rather than a device) are recognized here, kept out of the device path so
         they can never become phantom equipment, and exposed through
-        :attr:`last_system_declarations` for :meth:`plan` to receipt.
+        :attr:`last_system_declarations` for :meth:`plan` to receipt. ``existing_tags``
+        carries tags the caller already knows (an edit's base spec): an inline device
+        declaration colliding with one is refused a second entity.
         """
 
         expanded_adds = [
@@ -433,6 +436,40 @@ class TypesafeDiagramSpecPlanner:
                     catalog_gap=catalog_gap,
                 )
             )
+            known_tags.append(tag)
+        # Q2R2: a connect clause may declare its target device inline (「接到一个缓冲罐
+        # V-102」). The declaration joins the device path with the connect clause's own text
+        # as its source requirement -- the ledger records what the user actually wrote, not
+        # a synthetic add sentence. Refusals (no measure word, no/colliding tag, no hint)
+        # leave the clause on the ordinary undelivered path.
+        known = set(existing_tags) | set(known_tags)
+        for clause in connect_clauses:
+            declared_inline = embedded_device_declaration(
+                clause, existing_tags=frozenset(known)
+            )
+            if declared_inline is None:
+                continue
+            tag, phrase = declared_inline
+            candidates = tuple(candidate_symbols(self.symbols, phrase))
+            catalog_gap = bool(matched_hints(phrase)) and not candidates
+            symbol_key = ""
+            decided_by = "judgment"
+            if _is_bare_kind(phrase) and len(candidates) == 1:
+                symbol_key = candidates[0].key
+                decided_by = "lookup"
+            entities.append(
+                PlannedEntity(
+                    engineering_id=_entity_id(len(entities) + 1, tag, candidates[0].key if candidates else ""),
+                    tag=tag,
+                    phrase=phrase,
+                    candidates=candidates,
+                    chosen_symbol_key=symbol_key,
+                    decided_by=decided_by,
+                    source_clause=clause.text,
+                    catalog_gap=catalog_gap,
+                )
+            )
+            known.add(tag)
             known_tags.append(tag)
         # A tag named by a connection clause that no device carries is a reference to nothing. It is
         # reported rather than turned into a device: creating the missing device would be inventing
@@ -734,6 +771,8 @@ class TypesafeDiagramSpecPlanner:
             chosen_symbol_key=key,
             confidence=confidence,
             decided_by="judgment",
+            source_clause=entity.source_clause,
+            catalog_gap=entity.catalog_gap,
         )
 
     def _resolve_connection(

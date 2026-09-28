@@ -47,7 +47,10 @@ class TypesafeSpecEditor(TypesafeDiagramSpecPlanner):
 
         # Read only the *delta* devices the edit sentence declares; the base spec's
         # entities join the candidate pool as already-resolved facts.
-        delta_entities, _base_connects, _sentence_unknown, _unknown = self.read(prompt)
+        delta_entities, _base_connects, _sentence_unknown, _unknown = self.read(
+            prompt,
+            existing_tags=tuple(entity.tag for entity in base_spec.entities),
+        )
         base_entities = [
             PlannedEntity(
                 engineering_id=entity.engineering_id,

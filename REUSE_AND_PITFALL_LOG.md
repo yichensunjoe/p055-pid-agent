@@ -1,3 +1,18 @@
+## 2026-09-28 · 测量基线自证：报告写的基线≠进程 import 的代码；「默认系统名」别误读成跨文档泄漏（P055-PID-Agent）
+
+- 场景：M8-Q1 只读运行回报写「基线 origin/main @ 1afeccab」，但 scratch 后端是在切到平行分支 `m7-semantic-first-synthesis`
+  **之后**才启动的，runner 的 `sys.path.insert(0, "/Users/joe/.../backend")` 绝对路径让进程 import 了旧代码——DXF 不支持 A 弧、
+  selector 无中文 surface mapping 这两个「gap」其实是平行分支的旧行为，main 上早已修掉。Gate 核 blob SHA 戳穿，
+  新设 P0-RUNTIME-PROVENANCE 门禁。
+- 结论做法：① 任何「以某 commit 为基线」的运行，证据文件顶部必须记录 `git rev-parse HEAD` + `git status --porcelain`
+  + server cwd + `agentcad.__file__` + Python 可执行文件路径，dirty/不一致即作废；② 起服务用的 worktree 必须先 `git checkout`
+  到目标 SHA 再启动，启动后切分支=污染环境（Python 惰性 import 会按请求时磁盘状态读模块）；③ runner 一律 repo-relative 路径。
+- 踩坑点：① 「主工艺系统出现在所有成功文档」不是跨文档泄漏——`DEFAULT_SYSTEM_NAME` 是句子未命名系统时的设计默认
+  （m7_text_planner.py 常量），先查常量再报泄漏；误报 P0 会冻结一批不需要的修复范围。② 提交/对账顺序要读源码验证：
+  `apply_transaction()` 先写库后 `materialization_matches_document()` 抛 409 无回滚，docstring 说 "refused before the write"
+  与实现矛盾——docstring 也会撒谎。③ 失败响应也可能已落库，探针断言「GET 前后一致」才能下「零副作用」结论。
+- 适用场景：任何多分支并行 + scratch 环境 + 远端裁决的测量型任务；以及诊断「状态泄漏」类 bug 时先排除默认值/单例的误导。
+
 ## 2026-09-24 · 新写一个「会落图」的 HTTP 表面要同时动五处，漏一处都有测试等着（P055-PID-Agent）
 
 - 场景：NL 纵切第二块要把 M7 链接到第一个生产路由。只写端点会被三道闸拦下：`test_every_mutating_route_is_declared`

@@ -2,7 +2,25 @@
 
 > 交接文档：每次开新会话先读本文件。更新规则见 `AGENTS.md`「HANDOFF 交接规则」。
 
-## 当前状态（2026-09-27 R37 —— **M7-Q2 Governed Port Ambiguity Recovery 签 CLOSED @ `1afeccab35dce72c7e213cf46b421956d7dba81a`，已推 main（18ec8c6 → 1afecca），main CI run `36333697135` 四绿**。三轮 Gate 修复全过：①identity 恢复（digest /1→/2 撤销，port name=runtime-only selector evidence 不进 geometry identity projection，同 catalogue digest 与 18ec8c6 逐字节一致 golden 钉死）；②semantic selector 真匹配（声明 surface-token 反查：回流→回流入口、塔顶气相→塔顶气相出口）；③selected-only 持久化（inferred_unique 不升级为用户语义，混合回归锁死）。Q2 纪律全链闭合：多端口歧义→不猜→机器可读 receipt→完整重述→确定性 selector→concrete port_id→仅 selected 进存储语义→governed write。工作分支无 Q2 代码（在 review 线），docs 需同步处见下。**下一站在 Gate 路线：M8 Engineering Coverage & Qualification 设计（先做设计不扩 catalogue）**）
+## 当前状态（2026-09-28 R38 —— **M8-Q1 只读运行已回报，Gate 裁 CHANGES REQUIRED；M8-Q1R Design Gate = APPROVED WITH CHANGES（实现范围已缩定）；新增 P0-RUNTIME-PROVENANCE 基线自证门禁**。证据与文档在 `m7-semantic-first-synthesis` @ `3f9f901`（已推，**该分支与 main 平行历史，Gate 禁直合 main**；Q1R 必须从 fresh origin/main @ `1afeccab` 新切分支/worktree）。 scratch 环境已清（8002 已杀、scratch 库已删，用户 8000/5173 未动）。**下一步 = Q1R 实现前必做的三件事：fresh-main worktree 起 scratch server → 三个 targeted baseline 测试（DEV-2 selector / DEV-1 DXF / HOLDOUT-2 409 原子性）+ provenance 记录（HEAD/status/cwd/agentcad.__file__/python）→ 回报 Gate 再动代码**）
+
+- **M8-Q1 冻结 run 结果**（详见 reports/m8-q1-results.md，commit `25219f8`）：步级 committed 3/16、场景 complete 1/8；gap 排名 G1 selector 失配 / G2 仪表并列子句合并 / G3 feed selector / G4 泄放支路不可走线 / G5 DXF 不支持 A 弧 / G6 shell_in selectors 混入塔词汇；HOLDOUT 只记录。PDF 8/8 200；实体 DXF 0/3。
+- **重大教训（Gate 核出）**：本次 server 是从 `m7-semantic-first-synthesis` worktree 起的（切分支后才启动 8002），runner sys.path 绝对路径 import 到平行分支旧代码——G1（main 已有 SEMANTIC_SURFACE_TOKENS 管程映射）与 G5（main 已有 A 弧 tessellation，`symbol_paths` 共享 grammar）**很可能在 main 上已修**，Q1 的相应失败证据作废待 exact-main 复验。报告写"基线 1afeccab"但 runtime 不是，P0-RUNTIME-PROVENANCE 即为此设。
+- **P1 原子性 = CONFIRMED P0**（与分支无关，两分支同源码）：`m7_layout_materialization.py` ~1040–1072 `apply_transaction()` 先写库后 `materialization_matches_document()` 对账、失败无回滚（fresh DB 实证 409 后 rev=1 落 15 图元；且与文件 docstring "Refused before the write" 矛盾）。**修法冻结 = B' pre-commit exact-staged validation**：给 `service.apply_transaction()` 加 keyword-only precommit_validator，`_stage_mutation()` 后立即对同一个 working document 对账、失败抛 409、**不得进 store.save()**；可改 `service.py` + `m7_layout_materialization.py`，**禁改 store.py**，禁止 ops 模拟器/写后补偿。T1 收紧：history / semantic source / undo-redo 无成功 revision 痕迹（治理性失败 audit event 允许）。
+- **P2 跨文档泄漏 = 误报已撤回**（Gate APPROVED）：「主工艺系统」是 `m7_text_planner.py:56-59 DEFAULT_SYSTEM_NAME` 设计默认；fresh DB 五文档隔离复验零污染。P2 repair 移除，仅留 isolation 守卫测试（T5 改为与 fresh-process 单独执行 B 的控制结果语义等价，不断言系统名）。
+- **G2 并列子句分解 = GO**（两分支 planner blob 同 SHA `e7669dbd`，问题在 main 真实存在）：只拆「一台 X、一台 Y 和一台 Z」设备添加枚举 → N 个 ordered requested-device clauses 共享 host、各自 tag/type/ordering、分别进 clause ledger；禁通用逗号 split、禁动 connection clause、DEV-4 原句与 catalogue 不改。
+- **G1 = contract tests GO + matcher 修改 BLOCKED**（待 exact-main repro）；T6 契约改为：selector 唯一命中→resolve、多命中→selector_still_ambiguous、绝不 no_match、port_id 唯一 resolve self。**G5 = BLOCKED 改实现**（main 已有 16 步确定性 tessellation），只做 exact-main repro：DEV-1 → export-v2.dxf → read_dxf。
+- **实现白名单**：`m7_layout_materialization.py` / `service.py` / `m7_text_planner.py` / `backend/tests/` / `reports/m8_q1_runner.py`（仅绝对路径改仓库相对）。**禁改**：`store.py` / `m7_port_selectors.py` / `dxf_render.py` / `symbol_paths.py` / catalogue。G3/G4/G6 继续 deferred。
+- **Gate 通道**：会话「方案落地顺序裁决」conv `6ab36b5a-ece4-83ea-ac36-fd841290a8a9`（注意：侧边栏点入会落到 yu-yu GPT 的同名 URL，conv id 一致即对；该线程混有大量禹豫/dttn 流量，标题不可信）。发送手法：`document.execCommand('insertText')` 注入 + evaluate 派完整鼠标事件点 form 内 aria-label=发送 的按钮，**必须截图确认**；bsk 会话会超时，重开即用。
+
+## 近期轮次（2026-09-28 R38 —— M8-Q1 run + Q1R 设计两轮 Gate 往返）
+
+- **做了什么**：① 修 runner 两处 `api_key:"x"` 后重跑 8 场景（scratch 8002 + 一次性库），16 步 3 committed，逐场景失败根因全部定位（selector 失配 / 仪表子句合并 / 泄放支路不可走线 / 布局对账 409）；② 探针发现 P1（409 先写库后报错，代码定位到 m7_layout_materialization ~1040–1072）并误报 P2（后撤回）；③ 写 results + Q1R 修复设计，两批均发 Gate 并读回裁定。
+- **关键结论**：Q1 = CHANGES REQUIRED；evidence ACCEPTED；Q1R = APPROVED WITH CHANGES（范围缩为 P1-B' + G2 + provenance + G1/G5 仅 exact-main 复验）；M8-Q2 BLOCKED；新增 P0-RUNTIME-PROVENANCE（runner 绝对路径 import 到平行分支旧代码，G1/G5 在 main 可能已修）。
+- **下一步**：fresh main worktree 起 server → 三个 targeted baseline 测试 + provenance 块 → 回报 Gate → 按白名单实现 P1(B')+G2。
+- **交付**：`25219f8`（corpus 修正+runner+raw+results）、`3f9f901`（Q1R 设计+P2 撤回）均在 `m7-semantic-first-synthesis`（已推 origin，禁合 main）。
+
+## 上一状态（2026-09-27 R37 —— **M7-Q2 Governed Port Ambiguity Recovery 签 CLOSED @ `1afeccab35dce72c7e213cf46b421956d7dba81a`，已推 main（18ec8c6 → 1afecca），main CI run `36333697135` 四绿**。三轮 Gate 修复全过：①identity 恢复（digest /1→/2 撤销，port name=runtime-only selector evidence 不进 geometry identity projection，同 catalogue digest 与 18ec8c6 逐字节一致 golden 钉死）；②semantic selector 真匹配（声明 surface-token 反查：回流→回流入口、塔顶气相→塔顶气相出口）；③selected-only 持久化（inferred_unique 不升级为用户语义，混合回归锁死）。Q2 纪律全链闭合：多端口歧义→不猜→机器可读 receipt→完整重述→确定性 selector→concrete port_id→仅 selected 进存储语义→governed write。工作分支无 Q2 代码（在 review 线），docs 需同步处见下。**下一站在 Gate 路线：M8 Engineering Coverage & Qualification 设计（先做设计不扩 catalogue）**）
 
 - **Gate 裁定要点（2026-09-25 读回）**：主体全 PASS（writer 复用 / dry-run / 目标安全 / 审计 / 前端 / CI / 两个引擎边界维持原判）；
   P0-1 = partial 可提交（coherent ≠ complete）→ 已修：planner 出 **clause 级 completeness 账本**

@@ -70,3 +70,22 @@
 **测试矩阵**：①DEV-6 句三全链：s3 complete、V-102 实体落 buffer_tank、连接 cn_4 T-101(side_draw)→V-102、source_clause 保留原句；②负守卫：「接到 V-102」无短语不创建；无 tag 不创建；已存在 tag 不重复；含两个 tag 不展开；③G2 枚举回归 + Q2R1 remap 回归不破坏；④端到端画布验收（编辑后重画对账通过）。
 
 **改动面（实现获批后）**：`backend/agentcad/device_phrases.py`（共享展开层，read() 调用点传参）或 `m7_text_planner.read()` + `m7_text_edit` 继承点；**白名单外不动** m7_port_selectors.py / catalogue / corpus。
+
+## M8-Q2R3 设计：instrument attachment 语义（DESIGN GO；实现 BLOCKED pending design）
+
+**问题陈述**（exact evidence）：DEV-4 句一在 TT 解禁后，三仪表全部在 planner 层精确解析，但 layout 第一步拒入：`routing needs resolved endpoint bindings: without them it would have to guess ports`。机制：M7 `DiagramSpec` 的 instrument 实体只有 kind/phrase/symbol，**没有任何"挂接到谁"的关系**；`PlannedEntity` 同样没有 host 字段；`read()` 把「给 V-101 添加」的宿主部分当成普通修饰丢弃。endpoint binder 的契约是 routing 前必须解析到唯一真实 port——所以不能靠"找最近端口/接罐顶"糊。
+
+**调研结论：不复用 instrument_tap 操作本体，复用其物化词汇。** `InstrumentTapOperation`（agent_semantic_models.py:129）是**起草层操作**：要求已存在的 `main_connector_id + junction_point`（几何量），在 spec 无坐标阶段不可用。但它的下游物化词汇（junction / root valve / instrument 三件套）是成熟语义，Q2R3 在 layout 物化时复用这些概念，不重造。
+
+**设计答案（对应您的七个问题）**：
+1. **DiagramSpec 增加正式 attachment 关系**：`DiagramEntity` 新增 `host_engineering_id: str = ""`（instrument 专用；equipment 恒空，validator 断言）。semantic-first：关系活在语义 spec 里，不在几何里。
+2. **host identity 保存**：`host_engineering_id` 存工程 id（el_V_101），不存 tag（tag 可改，id 稳定）；`spec.problems()` 增加"instrument 的 host 必须已声明"一致性；planner 在 read() 解析「给 <TAG> 添加<仪表>」时填该字段（枚举分解后的子句已带宿主前缀，G2 产物直接可用）。
+3. **process / signal 接口语义**：process 口 = 物理取压/测量点（接到宿主）；signal 口 = 信号去向——**单句植物料图不连接 signal**（不接 DCS/不猜），该口保持未用是合法终态，不是 gap。TT/LIT/PIT/FT 的 process 绑定语义由仪表符号自己的 port 模型承载（TT 现有 process(in)/signal(out) 即此）。
+4. **宿主无可确定性挂接点时 → structured receipt**，不推导：receipt 命名 host tag + instrument tag + 原因（如「V-101 没有可挂接的仪表口」）。**严禁**把宿主的 process inlet/outlet 静默当 instrumentation tap——作为显式 invariant 进 validator + 负测试（挂接关系只能由 attachment 字段建立，不能由端口方向巧合建立）。
+5. 挂接点（tap 落在宿主哪个几何位置）由 layout 引擎**确定性推导**（规则进 m7 契约，如"罐类液位计→顶侧法兰位；压力/温度→顶部管口"），推导规则本身是数据/契约，不猜——但规则表的制定属实现批次内容，设计阶段只锁定"确定性规则 + 规则外 receipt"。
+6. **redraw / digest / stored semantic source**：attachment 字段是语义 spec 的一部分 → 进 spec_digest（自然变化，无手工 bump）；identity projection 新增 host_engineering_id（对 instrument 行）；stored semantic source 随 revision 保存；redraw 走既有 governed 链路（edit → 新 spec → 重画），关系不丢。
+7. **targeted cases**：TT-101→V-101（温度变送器挂罐）、LIT-101→V-101（液位计挂罐）、PIT-101→V-101（压力表挂罐）各一，端到端 commit + export readback PASS。
+
+**测试矩阵**：①三 targeted case 端到端 complete；②attachment 一致性（host 未声明 → 422 receipt）；③负守卫：process 口不得被当 tap（构造无 attachment 字段的 instrument spec 断言 validator 拒）；④signal 口未连接不产生 gap/undelivered；⑤edit 第二句再加仪表 → 关系进 revision 2，redraw 对账 PASS；⑥frozen corpus DEV-4 重跑三仪表 complete。
+
+**改动面（实现获批后申报）**：m7_diagram_spec.py（字段+validator+problems）、m7_text_planner（read 解析宿主填字段）、m7 绑定/物化层（tap 规则 + 三件套物化）、digest projection、对应测试。**禁改**：m7_port_selectors.py 词表、catalogue、frozen corpus。

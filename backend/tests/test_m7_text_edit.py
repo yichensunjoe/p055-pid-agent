@@ -319,3 +319,119 @@ def test_dev6_edit_binds_condenser_process_ports_through_selectors() -> None:
     assert planned_by_endpoints[("el_T_101", "el_E_101")].target_port_selector == "工艺入口"
     assert planned_by_endpoints[("el_E_101", "el_T_101")].source_port_selector == "工艺出口"
     assert {c.engineering_id for c in planned_by_endpoints.values()} == {"cn_2", "cn_3"}
+
+
+def _dev6_base() -> DiagramSpec:
+    return DiagramSpec(
+        label="base",
+        systems=[DiagramSystem(system_id="S_main", name="主工艺系统", order=0)],
+        entities=[
+            DiagramEntity(
+                engineering_id="el_P_101",
+                kind="equipment",
+                system_id="S_main",
+                tag="P-101",
+                name="进料泵",
+                equipment_class="pump",
+                symbol_key="centrifugal_pump",
+            ),
+            DiagramEntity(
+                engineering_id="el_T_101",
+                kind="equipment",
+                system_id="S_main",
+                tag="T-101",
+                name="精馏塔",
+                equipment_class="column",
+                symbol_key="fractionation_column",
+            ),
+            DiagramEntity(
+                engineering_id="el_E_101",
+                kind="equipment",
+                system_id="S_main",
+                tag="E-101",
+                name="冷凝器",
+                equipment_class="heat_exchanger",
+                symbol_key="condenser",
+            ),
+        ],
+        connections=[
+            DiagramConnection(
+                engineering_id="cn_1",
+                source_engineering_id="el_P_101",
+                target_engineering_id="el_T_101",
+                medium="",
+                tag="",
+            ),
+            DiagramConnection(
+                engineering_id="cn_2",
+                source_engineering_id="el_T_101",
+                target_engineering_id="el_E_101",
+                medium="",
+                tag="",
+            ),
+            DiagramConnection(
+                engineering_id="cn_3",
+                source_engineering_id="el_E_101",
+                target_engineering_id="el_T_101",
+                medium="",
+                tag="",
+            ),
+        ],
+    )
+
+
+def test_embedded_target_device_declaration_is_registered_with_verbatim_source() -> None:
+    """Q2R2 acceptance (DEV-6 s3): 「接到一个缓冲罐 V-102」 declares V-102 inline.
+
+    The ledger gains the entity AND keeps the connection; the entity's source_clause is
+    the user's full original sentence, never a synthetic add sentence.
+    """
+
+    answers = {"el_V_102": {"choice": "buffer_tank", "confidence": 0.9}}
+    plan = _editor(_Recorder(answers)).plan_edit(
+        "把 T-101 的侧线采出口接到一个缓冲罐 V-102",
+        base_spec=_dev6_base(),
+        typesafe_config=_config(),
+    )
+
+    assert plan.completeness == "complete"
+    v102 = next(entity for entity in plan.spec.entities if entity.tag == "V-102")
+    assert v102.symbol_key == "buffer_tank"
+    planned = next(entity for entity in plan.entities if entity.tag == "V-102")
+    assert planned.source_clause == "把 T-101 的侧线采出口接到一个缓冲罐 V-102"
+    pairs = {(c.source_engineering_id, c.target_engineering_id) for c in plan.spec.connections}
+    assert ("el_T_101", "el_V_102") in pairs
+    connection = next(
+        c for c in plan.connections if c.chosen == ("el_T_101", "el_V_102")
+    )
+    assert "侧线" in connection.source_port_selector
+
+
+def test_embedded_declaration_refusals_are_shape_tested() -> None:
+    """The narrow grammar refuses at the shape gate, before any planner work: no measure
+    word, no tag, a colliding tag, a second measure word, or no catalogue hint -- none of
+    these mints an entity."""
+
+    from agentcad.device_phrases import Clause, embedded_device_declaration
+
+    def refuse(text, existing=("V-101",)):
+        assert (
+            embedded_device_declaration(
+                Clause(text=text, kind="connect"), existing_tags=frozenset(existing)
+            )
+            is None
+        )
+
+    refuse("把 T-101 的侧线采出口接到 V-102")                    # no measure word + unknown tag
+    refuse("把 T-101 的侧线采出口接到一个缓冲罐")                # measure word, no tag
+    refuse("把 T-101 的侧线采出口接到一个塔 T-101", existing=("T-101",))  # tag already declared
+    refuse("把 T-101 的侧线采出口接到一个缓冲罐 V-102 V-103")    # two tags in the segment
+    refuse("把 T-101 的侧线采出口接到一个缓冲罐 V-102", existing=("V-102",))
+    # no catalogue hint: the phrase names no kind, so nothing may be minted
+    refuse("把 T-101 的侧线采出口接到一个软水器 V-102")
+
+    hit = embedded_device_declaration(
+        Clause(text="把 T-101 的侧线采出口接到一个缓冲罐 V-102", kind="connect"),
+        existing_tags=frozenset(),
+    )
+    assert hit == ("V-102", "缓冲罐")

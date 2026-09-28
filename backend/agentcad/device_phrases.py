@@ -192,6 +192,73 @@ def candidate_symbols(
     return rows[:limit]
 
 
+#: The measure words an embedded device declaration must open with -- mandatory. A segment
+#: without a measure word is not the declaration grammar and stays plain connection text.
+_EMBED_MEASURE_WORDS = ("一台", "一个", "一只", "一款")
+
+
+def _segment_embedded_declaration(
+    segment: str, *, existing_tags: frozenset[str]
+) -> tuple[str, str] | None:
+    """(tag, device_phrase) when one connect-clause end is 量词+设备短语+唯一新 tag."""
+
+    text = segment.strip().strip("，,。").strip()
+    measure = next((word for word in _EMBED_MEASURE_WORDS if text.startswith(word)), None)
+    if measure is None:
+        return None
+    rest = text[len(measure):].strip()
+    tags = extract_tags(rest)
+    if len(tags) != 1:
+        return None
+    tag = tags[0]
+    if tag in existing_tags:
+        return None
+    if any(other in rest for other in _EMBED_MEASURE_WORDS):
+        return None  # a second measure word: not the narrow grammar
+    lowered = normalise(rest)
+    if any(verb in lowered for verb in (*CONNECT_VERBS, *REMOVE_VERBS, *ADD_VERBS)):
+        return None
+    if not matched_hints(text):
+        return None  # no catalogue hint: never mint a device the words do not name
+    phrase = re.sub(re.escape(tag), " ", rest, flags=re.IGNORECASE)
+    phrase = re.sub(r"\s+", " ", phrase).strip(" 　，,、。")
+    if not phrase:
+        return None
+    return tag, phrase
+
+
+def embedded_device_declaration(
+    clause: Clause, *, existing_tags: frozenset[str]
+) -> tuple[str, str] | None:
+    """The new device a connect clause declares inline, or None.
+
+    Only the narrow grammar qualifies: one end of the clause is 「量词 + 设备短语 +
+    唯一新 tag」. Both ends declaring, no measure word, no tag, a tag that already exists,
+    or a phrase without a catalogue hint all refuse -- the clause then flows through the
+    ordinary undelivered path. The clause text is never rewritten: the connection's
+    source requirement stays the user's verbatim sentence.
+    """
+
+    if clause.kind != "connect":
+        return None
+    text = clause.text
+    verb_end = max(
+        (text.find(verb) + len(verb) for verb in (*CONNECT_VERBS,) if verb in text),
+        default=None,
+    )
+    if verb_end is None:
+        return None
+    target = _segment_embedded_declaration(text[verb_end:], existing_tags=existing_tags)
+    source_text = text[: text.find(next(v for v in (*CONNECT_VERBS,) if v in text))]
+    source = _segment_embedded_declaration(
+        source_text.split("把", 1)[-1], existing_tags=existing_tags
+    )
+    found = [item for item in (source, target) if item is not None]
+    if len(found) != 1:
+        return None
+    return found[0]
+
+
 def available_alternatives(
     registry: SymbolRegistry, *, limit: int = MAX_CANDIDATES
 ) -> list[SymbolCandidate]:

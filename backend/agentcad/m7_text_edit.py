@@ -86,7 +86,7 @@ class TypesafeSpecEditor(TypesafeDiagramSpecPlanner):
 
         notes: list[str] = []
         skipped: list[str] = []
-        state, questions = self.questions(delta_entities, connections)
+        state, questions = self.questions(delta_entities, connections, label_entities=pool)
         if questions:
             result = self.client_factory(typesafe_config).judge(state, questions)
             answers = result["answers"]

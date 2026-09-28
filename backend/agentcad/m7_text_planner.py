@@ -520,11 +520,18 @@ class TypesafeDiagramSpecPlanner:
     # -- the questions: one per undecided choice, all asked together --------------------------- #
 
     def questions(
-        self, entities: Sequence[PlannedEntity], connections: Sequence[PlannedConnection]
+        self,
+        entities: Sequence[PlannedEntity],
+        connections: Sequence[PlannedConnection],
+        *,
+        label_entities: Sequence[PlannedEntity] | None = None,
     ) -> tuple[dict, dict]:
         #: The state the judgments read, as named fields: the phrase, the tags the sentence already
         #: declared, and the candidates, with the criterion text carrying the catalogue identity so
         #: the answer is a choice among spelled-out options rather than a free string.
+        #: ``label_entities`` resolves connection-option labels without widening the judgment
+        #: surface: an edit's connections may join base-spec devices that are not part of this
+        #: sentence's judgments, and those still need a tag for the criterion text.
         state: dict = {
             "request": {"tags": [entity.tag for entity in entities]},
         }
@@ -556,7 +563,10 @@ class TypesafeDiagramSpecPlanner:
                     for candidate in entity.candidates
                 },
             }
-        label_of = {entity.engineering_id: entity.tag for entity in entities}
+        label_of = {
+            entity.engineering_id: entity.tag
+            for entity in (label_entities if label_entities is not None else entities)
+        }
         for connection in connections:
             if len(connection.candidates) <= 1:
                 continue

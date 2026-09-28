@@ -435,3 +435,29 @@ def test_embedded_declaration_refusals_are_shape_tested() -> None:
         existing_tags=frozenset(),
     )
     assert hit == ("V-102", "缓冲罐")
+
+
+def test_edit_connection_judgment_labels_resolve_across_base_entities() -> None:
+    """Q2R2.1: an ambiguous edit connection joining a base device must not KeyError.
+
+    The judgment still targets only the sentence's delta entities; base entities are
+    label-only for the connection criteria.
+    """
+
+    base = _dev6_base()  # carries el_T_101 among its base entities
+    recorder = _Recorder()
+    plan = _editor(recorder).plan_edit(
+        "添加一个缓冲罐",  # no tag: the connection below becomes a wildcard judgment
+        base_spec=base,
+        typesafe_config=_config(),
+    )
+    # The no-tag sentence above exercises the entity path only; the wildcard connection
+    # case is what used to crash, so drive it directly:
+    plan = _editor(recorder).plan_edit(
+        "把 T-101 的侧线采出口接到塔",  # one known end (base T-101) + untagged new device
+        base_spec=base,
+        typesafe_config=_config(),
+    )
+    assert plan.completeness in {"partial", "complete"}
+    questioned = [key for payload in recorder.payloads for key in payload["questions"]]
+    assert not any(key == "el_T_101" for key in questioned)  # no question for a base entity

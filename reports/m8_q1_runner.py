@@ -8,8 +8,12 @@ r1 -- declared, not hidden.
 import json
 import sys
 import urllib.request
+from pathlib import Path
 
-sys.path.insert(0, "/Users/joe/ai/reasonix/projects/active/P055-PID-Agent/backend")
+# Repo-relative import (P0-RUNTIME-PROVENANCE): resolve the backend from this file's
+# location, never from an absolute path that can silently bind to a parallel worktree.
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT / "backend"))
 from agentcad.cad_dxf import read_dxf
 
 BASE = "http://127.0.0.1:8002/api/v2"
@@ -123,6 +127,6 @@ for scenario_id, steps in SCENARIOS:
     results[scenario_id] = entry
     print(f"== {scenario_id}: " + json.dumps([s["outcome"] for s in entry["steps"]], ensure_ascii=False))
 
-out = "/Users/joe/ai/reasonix/projects/active/P055-PID-Agent/reports/m8-q1-raw.json"
+out = str(REPO_ROOT / "reports" / "m8-q1-raw.json")
 json.dump(results, open(out, "w"), ensure_ascii=False, indent=1)
 print("saved", out)

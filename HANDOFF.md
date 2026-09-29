@@ -20,7 +20,8 @@
 
 - **做了什么**：① 拟 WS3A 试点候选提案（主候选 HOLDOUT-1 小流程 5 设备 4 连接 / 备选 DEV-1，reports/m9-ws3a-pilot-candidate.md @ a78e125）；② 旧 Gate 会话达硬上限且回复串题，按同一 GPT 开新会话送上下文简报续裁。
 - **Gate 裁定**：候选 A 范围 APPROVED（受控 shadow rehearsal READY）；**REAL PILOT 仍 BLOCKED，仅差 Owner 四字段**：①真实项目锚点（可为受控 shadow 副本，不得再跑 HOLDOUT benchmark）②专业审核人姓名/角色/资格（operator token ≠ 审核资格）③至少一项真实项目 reference（既有 P&ID/制图约定/deliverable 标准）④数据授权登记（真实项目来源+Owner 授权；纯 synthetic 只能算 rehearsal）。补齐后**自动转 EXECUTION GO**（免再审方案），执行前 preflight：exact SHA / 无未 Review 功能变化（docs-only 可续）/ 环境+schema+pilot 文档 ID 固定记录 / 不扩「换成」G4 LIT。执行纪律：干净 pilot project 从正常产品入口操作、禁测试 fixture/直写 DB、审查意见须真实（脚本第 3 步改「所有真实审查意见全部闭环」）。
-- **下一步**：Owner 补四字段 → 我执行 preflight + 七步验收脚本 → 回填 closeout §5/§6 → 签 M9 Closeout Gate。
+- **下一步**：Owner 补四字段 → 收紧流程（preflight→exact SHA→delta 核对→环境固定）→ Gate 签 EXECUTION GO → 七步验收 → 回填 closeout §5/§6 → M9 Closeout Gate。
+- **WS3B shadow 预演已完成**（R51++）：main@7d5cfa3 专用 worktree + 8002 disposable，七步脚本 11 项全 PASS（doc_4ddaf820f7a1 / ap_cd6ad5fff256 / rel_e4471572a037 / 包 33056B sha256 回核一致）；报告 reports/m9-ws3b-rehearsal.md（ecd0857，已按 Gate 收紧修正 auto-GO 表述 → 57648ed）。Gate 已纠正错仓库（tennis-club-ops）后裁 **REHEARSAL = PASS / VERIFIED AGAINST REPOSITORY REPORT；REAL PILOT = BLOCKED — WAITING OWNER FOUR FIELDS**。Gate 新会话无上下文会错认仓库，报文必须自带仓库全名 yichensunjoe/p055-pid-agent。
 
 ## 近期轮次（2026-09-29 R51 —— WS2 合并封账）
 

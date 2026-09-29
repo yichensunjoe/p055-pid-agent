@@ -30,8 +30,12 @@ if TYPE_CHECKING:  # static only — never imported at runtime (isolation lock)
 
 AuditSurface = Literal["rest", "mcp", "cli", "internal"]
 AuditStatus = Literal["applied", "rejected", "failed"]
+# R69-1: the runtime's neutral ToolRisk keeps the EXACT existing governance
+# value set — the P&ID tool registry and ToolCallRecord already use these five
+# strings, and P2 writes definition.risk into existing governance rows. Any
+# remapping here would distort the frozen contract.
+ToolRisk = Literal["read", "draft_edit", "engineering_change", "critical_change", "release"]
 ToolPermission = Literal["allow", "ask", "deny"]
-ToolRisk = Literal["read", "write", "destructive"]
 
 
 @dataclass(frozen=True)

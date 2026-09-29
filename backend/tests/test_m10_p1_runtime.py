@@ -46,8 +46,15 @@ class _ImportCollector(ast.NodeVisitor):
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
         if node.level > 0:
-            base = "agentcad.runtime"
-            module = base + ("." + node.module if node.module else "")
+            # R69-2: resolve relative imports against the containing package
+            # (agentcad.runtime). level=1 -> agentcad.runtime, level=2 ->
+            # agentcad, level=3 -> the parent of agentcad — a ``from ..models``
+            # here is agentcad.models and must be flagged, not laundered into
+            # an agentcad.runtime.* name.
+            anchor = "agentcad.runtime"
+            for _ in range(node.level - 1):
+                anchor = anchor.rsplit(".", 1)[0]
+            module = anchor + ("." + node.module if node.module else "")
         else:
             module = node.module or ""
         if module and module != "__future__":
@@ -109,6 +116,28 @@ def test_runtime_sources_import_lock() -> None:
                 f"{source_path.name}: runtime import of {module!r} must be "
                 "TYPE_CHECKING-only (no P&ID module may load at runtime)"
             )
+
+
+def test_import_collector_relative_import_resolution() -> None:
+    """R69-2 escape case: ``from ..models import X`` is agentcad.models and must
+    be flagged by the lock; ``from .primitives import X`` stays in-runtime."""
+    collector = _ImportCollector()
+    collector.visit(
+        ast.parse("from ..models import Point\nfrom .primitives import StrictModel\n")
+    )
+    resolved = {module: tc for module, tc in collector.imports}
+    assert resolved["agentcad.models"] is False
+    assert resolved["agentcad.runtime.primitives"] is False
+    # The lock predicate must now catch agentcad.models — before R69-2 it was
+    # laundered into "agentcad.runtime.models" and escaped.
+    flagged = [
+        module
+        for module, tc in resolved.items()
+        if module.startswith("agentcad.")
+        and not module.startswith("agentcad.runtime")
+        and not tc
+    ]
+    assert flagged == ["agentcad.models"]
 
 
 def test_runtime_isolation_subprocess_lock() -> None:

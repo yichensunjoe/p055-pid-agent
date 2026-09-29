@@ -2,7 +2,7 @@
 
 > 交接文档：每次开新会话先读本文件。更新规则见 `AGENTS.md`「HANDOFF 交接规则」。
 
-## 当前状态（2026-09-29 R48 · M8 里程碑终态 —— **Owner 已申请、Gate 已签署：M8 MILESTONE FINAL GATE = PASS / CLOSED（main=`fbcadae`，#56–#66 十一 squash 全合）**。LIT 双 tap / HOLDOUT-1「换成」/ G4 router 三项正式移出 M8、登记 future milestone candidate（各须独立 Design Gate，不得以"M8 补尾"开工）；system declaration 按现状计入 M8 已知能力边界（诚实 receipt + partial，非未完成项）。M8 不再因 DEV-4 partial / HOLDOUT-1 / G4 被 reopen。封账 artifact：main 线上 reports/m8-q2-closeout.md；批间设计全记录：文档分支 m8-q2-design.md。任务链终了。）
+## 当前状态（2026-09-29 R48+ —— **M9 推进中：WS1 review workflow 全包完成（分支 m9-ws1@b191005，PR #67，CI 四绿，等 Merge Gate 裁定）；WS3A 试点候选模板已交付（reports/m9-ws3a-pilot-template.md，等 Owner 填表）**。WS1 实现含 Gate 八项修正全落实（digest 不含 approvals/无歧义 approval 状态机/两段 readiness/stale 可闭环 anchor 不漂移/治理 CAS/GET 纯读/local-operator actor trust/schema v12/audit 扩展）；两处白名单外扩在报文披露请求追认（surface_contract.py 的 governance_write 类别、playwright.config.ts 的 e2e operator identity）。WS1 合并后下一 = WS2 设计（release state 机 + evidence package，WS1 的 approval/review facts 消费方）。M8 已封账（main=fbcadae）不动。worktree=P055-PID-Agent-q1r 在 m9-ws1）
 
 - **M8-Q1 冻结 run 结果**（详见 reports/m8-q1-results.md，commit `25219f8`）：步级 committed 3/16、场景 complete 1/8；gap 排名 G1 selector 失配 / G2 仪表并列子句合并 / G3 feed selector / G4 泄放支路不可走线 / G5 DXF 不支持 A 弧 / G6 shell_in selectors 混入塔词汇；HOLDOUT 只记录。PDF 8/8 200；实体 DXF 0/3。
 - **重大教训（Gate 核出）**：本次 server 是从 `m7-semantic-first-synthesis` worktree 起的（切分支后才启动 8002），runner sys.path 绝对路径 import 到平行分支旧代码——G1（main 已有 SEMANTIC_SURFACE_TOKENS 管程映射）与 G5（main 已有 A 弧 tessellation，`symbol_paths` 共享 grammar）**很可能在 main 上已修**，Q1 的相应失败证据作废待 exact-main 复验。报告写"基线 1afeccab"但 runtime 不是，P0-RUNTIME-PROVENANCE 即为此设。

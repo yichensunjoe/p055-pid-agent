@@ -1,27 +1,22 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 from math import isfinite
 from typing import Annotated, Any, Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 
-
-def utc_now() -> datetime:
-    return datetime.now(UTC)
+# M10-P1: StrictModel / utc_now are defined in the domain-neutral runtime
+# primitives module and re-exported here, so every historical
+# ``from agentcad.models import StrictModel, utc_now`` call site keeps working
+# with class identity preserved. Validation / JSON-schema / serialization
+# behaviour is unchanged (same class object).
+from .runtime.primitives import StrictModel, utc_now
 
 
 def new_id(prefix: str) -> str:
     return f"{prefix}_{uuid4().hex[:12]}"
-
-
-class StrictModel(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid",
-        validate_assignment=True,
-        allow_inf_nan=False,
-    )
 
 
 class Point(StrictModel):

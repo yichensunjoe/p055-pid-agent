@@ -1,0 +1,117 @@
+{
+  "steps": [
+    {
+      "step": "1.建图（人工 transactions 通道）",
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "body": "{\"document\":{\"id\":\"doc_4ddaf820f7a1\",\"name\":\"WS3B 预演 · HOLDOUT-1 小流程\",\"revision\":1,\"canvas\":{\"width\":1600.0,\"height\":900.0,\"grid_size\":20.0,\"background\":\"#ffffff\"},\"layers\":[{\"id\":\"layer_default\",\"name\":\"Default\",\"visible\":true,\"locked\":false}],\"systems\":[{\"id\":\"system_default\",\"name\":\"Default\",\"visible\":true}],\"elements\":[{\"id\":\"V-101\",\"layer_id\":\"layer_default\",\"system_id\":\"system_default\",\"styl"
+      }
+    },
+    {
+      "step": "1b.图纸状态",
+      "ok": true,
+      "detail": {
+        "revision": 1,
+        "elements": 9
+      }
+    },
+    {
+      "step": "2.release-readiness 可读",
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "body": "{\"schema\":\"pid-agent.release-readiness\",\"version\":1,\"document_id\":\"doc_4ddaf820f7a1\",\"document_name\":\"WS3B 预演 · HOLDOUT-1 小流程\",\"revision\":1,\"content_hash\":\"c4f6b55435939881c1efa6b964909f35cf416e5403112d0cb42d819127c9a00b\",\"profile_id\":\"built-in\",\"profile_version\":\"1\",\"rule_bundle_fingerprint\":\"18a2d"
+      }
+    },
+    {
+      "step": "3.审查线程（模拟）",
+      "ok": true,
+      "detail": {
+        "status": 200
+      }
+    },
+    {
+      "step": "3b.审查闭环（模拟）",
+      "ok": true,
+      "detail": {
+        "status": 200
+      }
+    },
+    {
+      "step": "4.申请工程批准",
+      "ok": true,
+      "detail": {
+        "status": 200
+      }
+    },
+    {
+      "step": "4b.批准决策",
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "body": "{\"document_id\":\"doc_4ddaf820f7a1\",\"governance_seq\":4,\"review_snapshot_digest\":\"c4a7257f0de20d51b81cc840142afd67b49ce1a0ffa246ddb20d23e9bd8731ba\",\"operator_enabled\":true,\"threads\":[{\"thread_id\":\"rt_fd53bd187810\",\"document_id\":\"doc_4ddaf820f7a1\",\"anchor_revision\":1,\"element_id\":null,\"subject_text\":\"\","
+      }
+    },
+    {
+      "step": "5.正式发布",
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "body": "{\"document_id\":\"doc_4ddaf820f7a1\",\"governance_seq\":5,\"review_snapshot_digest\":\"c4a7257f0de20d51b81cc840142afd67b49ce1a0ffa246ddb20d23e9bd8731ba\",\"operator_enabled\":true,\"threads\":[{\"thread_id\":\"rt_fd53bd187810\",\"document_id\":\"doc_4ddaf820f7a1\",\"anchor_revision\":1,\"element_id\":null,\"subject_text\":\"\",\"status\":\"resolved\",\"created_by\":\"预演操作者\",\"created_by_kind\":\"operator\",\"created_at\":\"2026-09-29T10:22"
+      }
+    },
+    {
+      "step": "5b.证据包下载",
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "bytes": 33056
+      }
+    },
+    {
+      "step": "5c.包哈希回核",
+      "ok": true,
+      "detail": {
+        "sha256": "0cfef364bfa7b0e1c2183635d52979b257500214fbc899297e74ce29f738bae5",
+        "record": "0cfef364bfa7b0e1c2183635d52979b257500214fbc899297e74ce29f738bae5"
+      }
+    },
+    {
+      "step": "5d.MANIFEST 成员",
+      "ok": true,
+      "detail": {
+        "members": [
+          "MANIFEST.sha256",
+          "approval.json",
+          "audit-chain.json",
+          "drawing.dxf",
+          "drawing.pdf",
+          "release-readiness.json",
+          "release.json",
+          "validation-report.json"
+        ]
+      }
+    }
+  ],
+  "document_id": "doc_4ddaf820f7a1",
+  "release": {
+    "release_id": "rel_e4471572a037",
+    "document_id": "doc_4ddaf820f7a1",
+    "state": "released",
+    "approval_id": "ap_cd6ad5fff256",
+    "engineering_revision": 1,
+    "review_snapshot_digest": "c4a7257f0de20d51b81cc840142afd67b49ce1a0ffa246ddb20d23e9bd8731ba",
+    "readiness_hash": "3274fbb0ec81c234477010a28f36aa4e57969bb6b0794e0fb694a90f0857b37d",
+    "evidence_manifest_hash": "09801ba771cb532126d1c9b6521a6635a5d24973430834e1e77aef96c047e7a9",
+    "package_sha256": "0cfef364bfa7b0e1c2183635d52979b257500214fbc899297e74ce29f738bae5",
+    "released_by": "预演操作者",
+    "released_by_kind": "operator",
+    "released_at": "2026-09-29T10:22:33.525473Z",
+    "superseded_reason": null,
+    "seq": 5,
+    "derived_superseded": false
+  },
+  "package_sha256": "0cfef364bfa7b0e1c2183635d52979b257500214fbc899297e74ce29f738bae5",
+  "verdict": "REHEARSAL ONLY — synthetic HOLDOUT-1, simulated review comments, no Owner input; NOT M9-WS3B real-pilot evidence."
+}

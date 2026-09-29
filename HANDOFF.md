@@ -16,6 +16,12 @@
 
 - **R41 补充（同日）**：Q2-1R 设计修订已提交（ccfd678）：TT 解禁有 8d82f75 单行先例、FT/LT 不动（FT=审计范例）、TT 解禁后现有英文 hint 已精确隔离候选（无需中文词表）。DEV-6 句三 s3 根因=「接到一个缓冲罐 V-102」整条被分类为 connect 子句、句内嵌的添加语义未分解成实体（V-102 未声明→连接 undelivered，无 port receipt）——G2 同类 planner grammar 项，已报 Gate 路由。PR #58 CI 四绿（36379051307），等 Gate 裁定期间 ChatGPT 侧基础设施多次抖动（账户加载失败/Cloudflare），消息已全部送达线程。
 
+## 近期轮次（2026-09-30 R53 —— M10-P1 合并封账）
+
+- **做了什么**：① M10 Design v2 获 R10-1~5 CLOSED + R10-6/7/8 amendment + **M10-P1 CODE GO**；② 实施 P1（runtime 三件套 + shim + 7 硬锁），首报被裁 R69-1（ToolRisk 必须原样五值 read/draft_edit/engineering_change/critical_change/release）+ R69-2（AST 锁相对导入解析漏洞）；③ 小 delta 修复（aec4fca）获 **MERGE GO**，fail-closed 合并，main→5150758，main CI 36646208607 四绿。
+- **关键结论**：M10-P1 = neutral primitives + ports + shim 落地（runtime 包零 P&ID import，子进程隔离锁）；成熟度门甲已冻结；**m10-p2 已从新 main@5150758 fresh cut，等 Gate 签 P2 CODE GO**（P2 = harness 切 DomainAdapter 七端口 + PidDomainAdapter + R10-4 五闭包/mid-commit 硬测，行为零变化）。
+- **下一步**：Gate 签 P2 CODE GO → 实施 P2 → PR → Merge Gate → P3（隔离锁）→ P4（内存 cable proof）→ M10 技术完成 → 等 WS3B/M9 Closeout 签 FINAL ACCEPTANCE。
+
 ## 近期轮次（2026-09-29/30 R52 —— Owner 重排：先 M10 后 M9 收口；M10 DESIGN PREP GO 已批，草案 v1 已交）
 
 - **Owner 决定**（2026-09-29 23:35）：暂不收口 M9（WS3B 真实试点 Owner 主动推迟、四字段暂不补），先做 M10，直至 M10 干完。已发 Gate 并获 **M10 DESIGN PREP GO = APPROVED**（仅设计/文档，禁代码；fresh cut from main@7d5cfa3；M9 状态口径冻结不变）。

@@ -2,11 +2,13 @@
 
 Actor trust (Gate-frozen v1 local-operator mode): the server mints one operator
 token per process. A loopback-only bootstrap endpoint hands it to the local UI;
-every human decision carries it in ``X-Operator-Token`` and is compared in constant
-time. The token never enters audit, logs or diagnostics. Requests without a valid
-token act as ``agent`` — able to request approvals and comment, never to resolve,
-reopen or decide. Shared deployments (or a local deployment without an explicitly
-configured operator identity) fail closed: no bootstrap, no human decisions.
+every human decision carries it in ``X-Operator-Token``, is compared in constant
+time, and only counts from a loopback peer — the token is human authority solely
+on the local machine. The token never enters audit, logs or diagnostics. Requests
+without a valid token act as ``agent`` — able to request approvals and comment,
+never to resolve, reopen or decide. Shared deployments (or a local deployment
+without an explicitly configured operator identity) fail closed: no bootstrap,
+no human decisions.
 """
 
 from __future__ import annotations
@@ -19,6 +21,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict
 
 from .config import Settings
+from .review_models import review_snapshot_digest
 from .review_service import (
     Actor,
     ActorNotTrustedError,
@@ -91,8 +94,14 @@ def create_review_router(
 
     def _actor(request: Request) -> Actor:
         presented = request.headers.get(_OPERATOR_TOKEN_HEADER, "")
+        # Round-2 Gate freeze: the token is human authority only on a loopback
+        # peer. A valid token presented from any other peer degrades to agent —
+        # it can comment and request, but resolve/reopen/decide still fail closed
+        # with 403 actor_not_trusted.
+        peer = request.client.host if request.client else None
         if (
             _operator_enabled()
+            and _loopback(peer)
             and presented
             and hmac.compare_digest(presented.encode(), operator_token.encode())
         ):
@@ -126,12 +135,20 @@ def create_review_router(
             for thread in state.threads
         ]
         approvals = []
+        current_digest = review_snapshot_digest(state)
         for approval in state.approvals:
             liveness = "historical"
             if approval.status in {"requested", "approved"}:
-                liveness = (
-                    "live" if approval.engineering_revision == document.revision else "stale"
-                )
+                # Round-2 Gate freeze: derived liveness compares BOTH bindings —
+                # the engineering revision and the review snapshot digest the
+                # approval was requested against. Either one moving marks the
+                # approval stale at read time even before a mutation persists it.
+                if approval.engineering_revision != document.revision:
+                    liveness = "stale"
+                elif approval.review_snapshot_digest != current_digest:
+                    liveness = "stale"
+                else:
+                    liveness = "live"
             approvals.append(
                 {**approval.model_dump(mode="json"), "derived_liveness": liveness}
             )

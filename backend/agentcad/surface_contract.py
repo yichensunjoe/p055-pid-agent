@@ -53,6 +53,13 @@ AUDITED_CATEGORIES: frozenset[str] = frozenset(
         "legacy_write",
         "project_metadata",
         "harness_lifecycle",
+        # M9-WS1 Round-2 Gate freeze: governance writes (review threads, comments,
+        # resolve/reopen, approval request/decide) always carry an audit fact —
+        # and, since the unified reconcile, so does every approval.invalidated
+        # they trigger. The bootstrap endpoint is deliberately NOT here: it is
+        # runtime (hands out a token, writes no governance state, audits nothing;
+        # the token never enters the audit chain).
+        "governance_write",
     }
 )
 
@@ -142,11 +149,14 @@ HTTP_SURFACE_BINDINGS: tuple[SurfaceBinding, ...] = (
     _http(
         "POST",
         "/api/v2/review/operator-session",
-        "governance_write",
+        "runtime",
         tool="bootstrap_operator_session",
-        audited=True,
         notes="Loopback-only; local deployments with an operator identity only. "
-        "Verified by test_review_operator_session_refuses_non_loopback.",
+        "Hands out the per-process operator token and writes no governance state, "
+        "so it is runtime, not governance_write, and audits nothing — the token "
+        "never enters the audit chain. Verified by "
+        "test_review_operator_session_refuses_non_loopback and "
+        "test_valid_operator_token_from_non_loopback_peer_is_refused.",
     ),
     _http(
         "POST",
@@ -155,7 +165,9 @@ HTTP_SURFACE_BINDINGS: tuple[SurfaceBinding, ...] = (
         tool="create_review_thread",
         audited=True,
         notes="Governance CAS on expected_governance_seq; never moves the engineering "
-        "revision. Verified by test_review_governance_never_moves_engineering_revision.",
+        "revision. A new open thread invalidates every live approval "
+        "(review_digest_changed) with an approval.invalidated audit in the same "
+        "transaction. Verified by test_review_governance_never_moves_engineering_revision.",
     ),
     _http(
         "POST",
@@ -163,6 +175,8 @@ HTTP_SURFACE_BINDINGS: tuple[SurfaceBinding, ...] = (
         "governance_write",
         tool="add_review_comment",
         audited=True,
+        notes="Any comment after an approval invalidates it (review_digest_changed) "
+        "via the unified reconcile, atomically with this mutation's audit.",
     ),
     _http(
         "POST",

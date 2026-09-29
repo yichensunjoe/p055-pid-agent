@@ -598,13 +598,17 @@ class SQLiteDocumentStore:
         *,
         expected_governance_seq: int,
         audit: AuditRecordDraft | None = None,
+        extra_audits: tuple[AuditRecordDraft, ...] = (),
     ) -> None:
-        """CAS write of the whole governance surface, atomic with its audit record.
+        """CAS write of the whole governance surface, atomic with its audit records.
 
         The optimistic sequence is the concurrency contract of the governance plane:
         two mutations carrying the same ``expected_governance_seq`` race on one
         UPDATE rowcount, exactly one wins, the other gets a conflict — the review
-        plane can never lose a comment to a last-write-wins race.
+        plane can never lose a comment to a last-write-wins race. ``extra_audits``
+        (e.g. one ``approval.invalidated`` per invalidated approval) commit in the
+        same transaction as the state write: the invalidation fact and the mutation
+        that caused it are inseparable.
         """
 
         with self._lock, self._connect() as connection:
@@ -631,6 +635,8 @@ class SQLiteDocumentStore:
                     )
                 if audit is not None:
                     self._append_audit_record(connection, audit)
+                for extra in extra_audits:
+                    self._append_audit_record(connection, extra)
                 connection.commit()
             except Exception:
                 connection.rollback()
@@ -641,6 +647,7 @@ class SQLiteDocumentStore:
         state: ReviewState,
         *,
         audit: AuditRecordDraft | None = None,
+        extra_audits: tuple[AuditRecordDraft, ...] = (),
     ) -> None:
         """First write for a document's governance surface (seq 0 -> 1)."""
 
@@ -663,6 +670,8 @@ class SQLiteDocumentStore:
                 )
                 if audit is not None:
                     self._append_audit_record(connection, audit)
+                for extra in extra_audits:
+                    self._append_audit_record(connection, extra)
                 connection.commit()
             except sqlite3.IntegrityError as exc:
                 connection.rollback()

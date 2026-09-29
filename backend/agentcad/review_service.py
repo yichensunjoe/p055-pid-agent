@@ -11,6 +11,10 @@ Responsibilities frozen by the WS1 gate:
 * readiness binding is decision-time fresh: requesting records the request-time
   readiness hash as evidence, approving re-runs readiness and requires an eligible
   state, and stores the decision-time hash. The two are never required to match.
+* approval liveness is reconciled uniformly: every governance mutation re-checks
+  every live approval binding (revision drift first, then the mutation's own
+  Gate-frozen invalidation reason) and persists the stale mark together with one
+  ``approval.invalidated`` audit per invalidated approval, in the same transaction.
 """
 
 from __future__ import annotations
@@ -142,8 +146,15 @@ class ReviewService:
         actor: Actor,
         event_type: str,
         metadata: dict[str, Any],
+        invalidate_reason: str | None = None,
     ) -> ReviewState:
         next_state = state.model_copy(update={"governance_seq": state.governance_seq + 1})
+        # Round-2 Gate freeze: the unified approval reconcile runs inside EVERY
+        # governance mutation (not just reopen), so a live approval can never
+        # survive a review-surface move it did not vet. The reconciled state and
+        # one approval.invalidated audit per invalidated approval commit in the
+        # same SQLite transaction as the mutation that triggered them.
+        next_state, invalidated = self._reconcile(next_state, reason=invalidate_reason)
         draft = AuditRecordDraft(
             event_type=event_type,
             actor=actor.identity,
@@ -158,11 +169,30 @@ class ReviewService:
                 **metadata,
             },
         )
+        invalidation_drafts = tuple(
+            AuditRecordDraft(
+                event_type="approval.invalidated",
+                actor=actor.identity,
+                surface="rest",
+                tool_name="review_workflow",
+                status="applied",
+                document_id=state.document_id,
+                label=f"Approval {approval_id} invalidated",
+                evidence={
+                    "actor_kind": actor.kind,
+                    "governance_seq": next_state.governance_seq,
+                    "approval_id": approval_id,
+                    "reason": reason,
+                    "trigger_event": event_type,
+                },
+            )
+            for approval_id, reason in invalidated
+        )
         try:
             if expected_seq == 0 and self.store.get_review_state(state.document_id) is None:
-                self.store.create_review_state(next_state, audit=draft)
+                self.store.create_review_state(next_state, audit=draft, extra_audits=invalidation_drafts)
             else:
-                self.store.save_review_state(next_state, expected_governance_seq=expected_seq, audit=draft)
+                self.store.save_review_state(next_state, expected_governance_seq=expected_seq, audit=draft, extra_audits=invalidation_drafts)
         except ReviewStateConflictError as exc:
             raise ReviewStateConflict(str(exc)) from exc
         return next_state
@@ -220,6 +250,7 @@ class ReviewService:
             actor=actor,
             event_type="review.thread.created",
             metadata={"thread_id": thread.thread_id, "element_id": element_id},
+            invalidate_reason="review_digest_changed",
         )
 
     def add_comment(
@@ -252,6 +283,7 @@ class ReviewService:
             actor=actor,
             event_type="review.comment.posted",
             metadata={"thread_id": thread_id, "comment_id": comment.comment_id},
+            invalidate_reason="review_digest_changed",
         )
 
     def resolve_thread(
@@ -272,6 +304,11 @@ class ReviewService:
         state = self._raw_state(document_id)
         self._require_seq(state, expected_governance_seq)
         thread = self._thread(state, thread_id)
+        if thread.status not in {"open", "reopened"}:
+            raise ReviewWorkflowError(
+                f"thread {thread_id} is {thread.status}; only open or reopened threads resolve",
+                details={"code": "review_thread_not_open"},
+            )
         current_revision = self.service.get_document(document_id).revision
         # Stale / orphaned threads may be closed by a trusted operator — the anchor
         # never moves; the closure records where the drawing actually stands.
@@ -316,10 +353,9 @@ class ReviewService:
             update={"status": "reopened", "reopened_by": actor.identity, "reopened_at": utcnow()}
         )
         next_state = self._replace_thread(state, updated)
-        # A reopened (or newly created) unresolved thread invalidates any live
-        # approval: the review surface moved after the decision, so the decision's
-        # closed-loop claim no longer stands.
-        next_state = self._invalidate_approvals(next_state, reason="review_reopened")
+        # Reopening an unresolved thread invalidates any live approval: the review
+        # surface moved after the decision, so the decision's closed-loop claim no
+        # longer stands. Handled by the unified reconcile inside _persist.
         return self._persist(
             next_state,
             expected_seq=expected_governance_seq,
@@ -327,6 +363,7 @@ class ReviewService:
             actor=actor,
             event_type="review.thread.reopened",
             metadata={"thread_id": thread_id},
+            invalidate_reason="review_reopened",
         )
 
     # --------------------------------------------------------------- approvals
@@ -475,16 +512,48 @@ class ReviewService:
                 return approval
         return None
 
-    def _invalidate_approvals(self, state: ReviewState, *, reason: str) -> ReviewState:
-        invalidated = tuple(
-            approval.model_copy(
-                update={"status": "stale", "invalidation_reason": reason}
-            )
-            if approval.status in {"requested", "approved"}
-            else approval
-            for approval in state.approvals
-        )
-        return state.model_copy(update={"approvals": invalidated})
+    def _reconcile(
+        self, state: ReviewState, *, reason: str | None
+    ) -> tuple[ReviewState, tuple[tuple[str, str], ...]]:
+        """The single approval-liveness reconcile (Round-2 Gate freeze).
+
+        Runs inside every governance mutation, before persistence, so the stored
+        status and its ``approval.invalidated`` audit facts commit atomically with
+        the mutation that triggered them:
+
+        * engineering revision drift always wins — an approval bound to an old
+          revision is stale (``revision_changed``) no matter what else happened,
+          and this is also how a drifted approval gets persisted stale on the
+          next governance mutation after an external engineering edit;
+        * otherwise, when the mutation moved the review surface (new open thread,
+          comment, reopen — the caller passes its Gate-frozen reason, or None for
+          mutations that never invalidate: resolve, request, decide), every live
+          (``requested``/``approved``) approval goes ``stale`` with that reason.
+        """
+        current_revision = self.service.get_document(state.document_id).revision
+        approvals: list[EngineeringApproval] = []
+        invalidated: list[tuple[str, str]] = []
+        for approval in state.approvals:
+            if approval.status not in {"requested", "approved"}:
+                approvals.append(approval)
+                continue
+            if approval.engineering_revision != current_revision:
+                approvals.append(
+                    approval.model_copy(
+                        update={"status": "stale", "invalidation_reason": "revision_changed"}
+                    )
+                )
+                invalidated.append((approval.approval_id, "revision_changed"))
+            elif reason is not None:
+                approvals.append(
+                    approval.model_copy(update={"status": "stale", "invalidation_reason": reason})
+                )
+                invalidated.append((approval.approval_id, reason))
+            else:
+                approvals.append(approval)
+        if not invalidated:
+            return state, ()
+        return state.model_copy(update={"approvals": tuple(approvals)}), tuple(invalidated)
 
     def _replace_thread(self, state: ReviewState, thread: ReviewThread) -> ReviewState:
         return state.model_copy(

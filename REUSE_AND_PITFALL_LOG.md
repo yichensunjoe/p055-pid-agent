@@ -1,3 +1,10 @@
+## 2026-09-29 · Gate 会话硬长度上限与浏览器标签被并行项目劫持；「验证-重读」窗口是 audit cutoff 的经典漏洞（P055-PID-Agent）
+
+- 场景：① Gate（ChatGPT 工程方向裁定）线程到达对话硬上限：消息照发、裁定照出，但旧消息不再渲染——`document.body.innerText` 里翻不到上一轮的 R68 原文，只能信页面尾部新回复；期间 bsk 会话多次超时重开（`bsk session start` 即换新 id），agent 窗口标签还被并行的 dttn 项目导航切走过一次（注入前必须核对 `location.href` 是 Gate conv `6ab36b5a…`）。② WS2 evidence 包的 audit cutoff 第一版先 `verify_chain()` 再 `all_audit_records()` 两次读库——Gate 核出 TOCTOU：声称的 verified tip 可能包含没参加验证的新记录。
+- 结论做法：① 发 Gate 报文前 `location.href` 断言 conv id；裁定读回只取 `slice(-N)` 尾部；bsk 会话死了重开再导航，不用旧 session id。② 任何「验证某前缀/快照」的语义必须**一次读快照 → 对同一对象验证 → 从同一对象取锚点**；抽纯函数（`verify_audit_records(records, database_instance_id)`）让 verify 与 read 物理上共享入参。③ 导出类校验器要锁「实际行序」而非「排序后集合相等」——逆序重排 + 重算 expected hash 的突变测试才能证明拒绝来自 canonical order。④ 跨表完整性要双向绑定：BLOB 行自洽不够，必须与治理面 Record 双 hash 交叉验证（防"整包移植"篡改）。
+- 踩坑点：`dict(sorted(entries))` 这类"集合对但顺序没验"的写法在 review 里很容易被放过，自己先写突变测试再报 Gate。
+- 适用场景：一切「取证包/快照/cutoff」语义设计；跨平面（JSON 行 vs BLOB 表）一致性校验；长会话 Gate 自动化运维。
+
 ## 2026-09-28 · 边界外调用方会打断签名变更；「假 complete」比诚实 422 更危险（P055-PID-Agent）
 
 - 场景：Q1R2 给 planner.read() 加返回值（系统声明通道），全量测试全绿——但只跑了后端单测；m7_text_edit.py（白名单外）也解包 read() 的 4 元组，跑到它时才炸。另一个坑：Gate 拒收 DEV-5 的「phantom E-01 假 complete」——未支持的能力被静默吞成杂牌设备还宣称 complete，比诚实 receipt 危害大得多。

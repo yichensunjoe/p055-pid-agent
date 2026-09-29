@@ -781,3 +781,26 @@ def test_verify_maps_encoding_and_json_failures_to_corrupt(tmp_path: Path) -> No
     expect_corrupt(tampered({"MANIFEST.sha256": b"\xff\xff not utf-8"}), "manifest encoding")
     expect_corrupt(tampered({"release.json": b"{not json"}), "release.json json")
     expect_corrupt(tampered({"MANIFEST.sha256": b"short\n"}), "manifest line format")
+
+    # Final order lock (Gate R68-3): the same seven valid lines in a WRONG order,
+    # with the tampered manifest/package hashes passed as the expected values, must
+    # still be refused — the rejection comes from the canonical order, not the hash.
+    with zf.ZipFile(BytesIO(row.package_blob)) as archive:
+        members = {name: archive.read(name) for name in archive.namelist()}
+    reversed_lines = list(reversed(members["MANIFEST.sha256"].decode("utf-8").splitlines()))
+    members["MANIFEST.sha256"] = ("\n".join(reversed_lines) + "\n").encode("utf-8")
+    buffer = BytesIO()
+    with zf.ZipFile(buffer, "w", zf.ZIP_DEFLATED) as archive:
+        for name in sorted(members):
+            archive.writestr(name, members[name])
+    reordered_blob = buffer.getvalue()
+    reordered_manifest = members["MANIFEST.sha256"]
+    reordered = ReleaseEvidencePackage(
+        release_id=row.release_id,
+        document_id=row.document_id,
+        manifest_sha256=hashlib.sha256(reordered_manifest).hexdigest(),
+        package_sha256=hashlib.sha256(reordered_blob).hexdigest(),
+        package_blob=reordered_blob,
+        created_at=row.created_at,
+    )
+    expect_corrupt(reordered, "manifest line order")

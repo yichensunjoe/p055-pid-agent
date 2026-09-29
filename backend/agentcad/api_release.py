@@ -277,6 +277,7 @@ def verify_evidence_package(
                     "MANIFEST must be exactly seven LF-terminated lines"
                 )
             entries: dict[str, str] = {}
+            manifest_names: list[str] = []
             for line in lines[:-1]:
                 match = re.match(_MANIFEST_LINE, line)
                 if match is None:
@@ -287,8 +288,11 @@ def verify_evidence_package(
                 if name in entries:
                     raise ReleaseEvidenceCorruptError(f"duplicate MANIFEST entry: {name}")
                 entries[name] = digest
-            if tuple(sorted(entries)) != PACKAGE_MEMBERS:
-                raise ReleaseEvidenceCorruptError("MANIFEST member set drifted")
+                manifest_names.append(name)
+            if tuple(manifest_names) != PACKAGE_MEMBERS:
+                raise ReleaseEvidenceCorruptError(
+                    "MANIFEST entries must be in the frozen ASCII filename order"
+                )
             for name in PACKAGE_MEMBERS:
                 if _sha256(archive.read(name)) != entries[name]:
                     raise ReleaseEvidenceCorruptError(f"member hash mismatch: {name}")

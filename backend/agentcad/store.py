@@ -55,6 +55,18 @@ class ReviewStateConflictError(RuntimeError):
     """The governance sequence moved underneath a review mutation (HTTP 409)."""
 
 
+@dataclass(frozen=True)
+class ReleaseEvidencePackage:
+    """One immutable evidence package row (M9-WS2 release_evidence_packages)."""
+
+    release_id: str
+    document_id: str
+    manifest_sha256: str
+    package_sha256: str
+    package_blob: bytes
+    created_at: str
+
+
 class SQLiteDocumentStore:
     def __init__(self, database_path: str | Path):
         self.database_path = Path(database_path)
@@ -681,6 +693,112 @@ class SQLiteDocumentStore:
             except Exception:
                 connection.rollback()
                 raise
+
+    # ------------------------------------------------------ release evidence
+
+    def commit_release(
+        self,
+        state: ReviewState,
+        *,
+        expected_governance_seq: int,
+        expected_engineering_revision: int,
+        release_id: str,
+        manifest_sha256: str,
+        package_sha256: str,
+        package_blob: bytes,
+        audit: AuditRecordDraft,
+        extra_audits: tuple[AuditRecordDraft, ...] = (),
+    ) -> None:
+        """The single atomic primitive that lands one release (M9-WS2, Gate-frozen).
+
+        One short ``BEGIN IMMEDIATE`` transaction performs, in order: the
+        engineering-revision recheck (a drawing edit that raced Phase A fails the
+        whole release here), the governance CAS, the ReviewState write, the
+        immutable evidence-package row, and the ``release.released`` audit. Any
+        failure rolls back everything — a released-never-happened is the only
+        acceptable partial outcome. Package bytes are generated in Phase A (in
+        memory, no DB write lock held) and passed in ready to persist.
+        """
+
+        with self._lock, self._connect() as connection:
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                row = connection.execute(
+                    "SELECT revision FROM documents WHERE id = ?",
+                    (state.document_id,),
+                ).fetchone()
+                current_revision = row["revision"] if row is not None else None
+                if current_revision != expected_engineering_revision:
+                    raise ReviewStateConflictError(
+                        f"engineering revision of {state.document_id!r} moved from "
+                        f"{expected_engineering_revision} to {current_revision} "
+                        "while the evidence package was being built; retry the release"
+                    )
+                cursor = connection.execute(
+                    """
+                    UPDATE engineering_review_state
+                    SET governance_seq = ?, data_json = ?, updated_at = ?
+                    WHERE document_id = ? AND governance_seq = ?
+                    """,
+                    (
+                        state.governance_seq,
+                        self._encode(state.model_dump(mode="json")),
+                        datetime.now(UTC).isoformat(),
+                        state.document_id,
+                        expected_governance_seq,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise ReviewStateConflictError(
+                        f"review state of {state.document_id!r} moved past governance "
+                        f"seq {expected_governance_seq}; retry against the fresh state"
+                    )
+                connection.execute(
+                    """
+                    INSERT INTO release_evidence_packages
+                        (release_id, document_id, manifest_sha256, package_sha256,
+                         package_blob, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        release_id,
+                        state.document_id,
+                        manifest_sha256,
+                        package_sha256,
+                        sqlite3.Binary(package_blob),
+                        datetime.now(UTC).isoformat(),
+                    ),
+                )
+                self._append_audit_record(connection, audit)
+                for extra in extra_audits:
+                    self._append_audit_record(connection, extra)
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+
+    def get_release_package(self, release_id: str) -> ReleaseEvidencePackage | None:
+        """The immutable evidence package of one release, or None."""
+
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT release_id, document_id, manifest_sha256, package_sha256,
+                       package_blob, created_at
+                FROM release_evidence_packages WHERE release_id = ?
+                """,
+                (release_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return ReleaseEvidencePackage(
+            release_id=row["release_id"],
+            document_id=row["document_id"],
+            manifest_sha256=row["manifest_sha256"],
+            package_sha256=row["package_sha256"],
+            package_blob=bytes(row["package_blob"]),
+            created_at=row["created_at"],
+        )
 
     def delete(
         self,

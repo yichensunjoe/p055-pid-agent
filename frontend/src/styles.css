@@ -1116,3 +1116,10 @@ html[data-e2e="true"] textarea {
 .review-new { display: flex; gap: 6px; margin-top: 8px; }
 .review-approval { border: 1px solid #e5e7eb; border-radius: 6px; padding: 8px 10px; margin-bottom: 8px; }
 .review-approval header { display: flex; gap: 6px; align-items: center; }
+.review-release { border: 1px solid #e5e7eb; border-radius: 6px; padding: 8px 10px; margin-bottom: 8px; }
+.review-release header { display: flex; gap: 6px; align-items: center; }
+.review-release--superseded { opacity: 0.75; }
+.review-badge--released { background: #ecfdf5; color: #047857; }
+.review-badge--superseded { background: #f3f4f6; color: #6b7280; }
+.review-download { font-size: 12px; color: #2563eb; text-decoration: none; }
+.review-download:hover { text-decoration: underline; }

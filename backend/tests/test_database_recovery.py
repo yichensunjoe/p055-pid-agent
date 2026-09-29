@@ -51,6 +51,36 @@ def _prepare_for_restore(path: Path) -> None:
         sidecar.unlink(missing_ok=True)
 
 
+def test_v13_release_evidence_table_is_additive_and_required(tmp_path: Path) -> None:
+    """M9-WS2: v13 adds only the release_evidence_packages table. A v12 database
+    migrates to v13 with zero evidence packages; the table is part of the
+    required schema so recovery refuses to run against a database that lacks it."""
+
+    service = _service(tmp_path / "v13.db")
+    document = service.create_document(CreateDocumentRequest(name="d", width=100, height=100))
+    assert document.id
+
+    database = tmp_path / "v13.db"
+    connection = sqlite3.connect(database)
+    connection.execute("DROP TABLE release_evidence_packages")
+    connection.execute("PRAGMA user_version=12")
+    connection.commit()
+    connection.close()
+
+    store = SQLiteDocumentStore(database)
+    with store._connect() as check:  # noqa: SLF001 - schema assertion
+        version = check.execute("PRAGMA user_version").fetchone()[0]
+        assert version == CURRENT_SCHEMA_VERSION == 13
+        tables = {
+            row["name"]
+            for row in check.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+        assert "release_evidence_packages" in tables
+        count = check.execute("SELECT COUNT(*) AS n FROM release_evidence_packages").fetchone()
+        assert count["n"] == 0
+    assert store.get_release_package("rel_missing") is None
+
+
 def test_new_database_has_version_and_persistent_instance_identity(tmp_path: Path):
     source = tmp_path / "source.db"
     store = SQLiteDocumentStore(source)

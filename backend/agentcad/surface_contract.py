@@ -210,6 +210,22 @@ HTTP_SURFACE_BINDINGS: tuple[SurfaceBinding, ...] = (
         notes="Operator token required; decision-time fresh readiness gate. "
         "Verified by test_review_approval_roundtrip_blocks_open_threads.",
     ),
+    # --- M9-WS2 release + evidence package (consumes WS1 approval facts) ---
+    _http(
+        "POST",
+        "/api/v2/documents/{document_id}/releases",
+        "governance_write",
+        tool="release_document",
+        audited=True,
+        notes="M9-WS2 one-shot formal release. Frozen guard order: actor trust → "
+        "open threads → approval live → one-live-release-per-binding → fresh "
+        "readiness → package build; Phase B is the single atomic commit_release "
+        "primitive (revision recheck + governance CAS + state + BLOB row + "
+        "release.released audit in one transaction). F1/F2/F3 record exactly one "
+        "audit-only release.denied; F4 untrusted and F6/F7 conflicts record none. "
+        "Verified by test_m9_release_workflow.",
+    ),
+    _read("/api/v2/documents/{document_id}/releases/{release_id}/evidence.zip"),
     # --- v2 document lifecycle -------------------------------------------------
     _http(
         "POST",

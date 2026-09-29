@@ -45,6 +45,15 @@ def _live_mutating_routes(app) -> set[tuple[str, str]]:
     return found
 
 
+def _live_routes(app) -> set[tuple[str, str]]:
+    """Every live route, any method — M9-WS2 added the first declared GET
+    (the evidence download), so declared-route existence must not be limited
+    to mutating methods."""
+
+    paths = app.openapi()["paths"]
+    return {(method.upper(), path) for path, operations in paths.items() for method in operations}
+
+
 def _declared_http_routes() -> set[tuple[str, str]]:
     declared: set[tuple[str, str]] = set()
     for binding in HTTP_SURFACE_BINDINGS:
@@ -69,7 +78,7 @@ def test_every_mutating_route_is_declared(app) -> None:
 
 
 def test_declared_routes_all_exist(app) -> None:
-    live = _live_mutating_routes(app)
+    live = _live_routes(app)
     declared = _declared_http_routes()
     stale = sorted(declared - live)
     assert not stale, f"surface_contract declares routes that no longer exist: {stale}"
@@ -136,6 +145,30 @@ def test_governance_write_audit_contract_round2() -> None:
     )
     assert bootstrap.category == "runtime"
     assert not bootstrap.audited
+
+
+def test_release_surfaces_frozen_categories() -> None:
+    """M9-WS2 Gate freeze, machine-locked: the release endpoint is an audited
+    governance write; the evidence download is a pure read (no side effect, no
+    audit) — frozen as read because governance_write ∈ AUDITED_CATEGORIES makes
+    an unaudited governance binding a contract violation."""
+
+    release = next(
+        binding
+        for binding in HTTP_SURFACE_BINDINGS
+        if binding.name == "/api/v2/documents/{document_id}/releases"
+    )
+    assert release.category == "governance_write"
+    assert release.audited and release.has_side_effect
+
+    evidence = next(
+        binding
+        for binding in HTTP_SURFACE_BINDINGS
+        if binding.name == "/api/v2/documents/{document_id}/releases/{release_id}/evidence.zip"
+    )
+    assert evidence.category == "read"
+    assert not evidence.has_side_effect
+    assert not evidence.audited
 
 
 def test_every_side_effecting_tool_is_reachable_from_a_surface() -> None:

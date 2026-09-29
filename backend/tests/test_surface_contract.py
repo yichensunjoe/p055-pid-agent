@@ -83,7 +83,17 @@ def test_mutating_surfaces_name_a_registered_tool_or_justify_themselves() -> Non
     known = {definition.name for definition in registry.list()}
     # Harness lifecycle routes are session/approval bookkeeping, not engineering
     # capabilities; they are covered by the audit-required assertion below.
-    exempt = {"runtime", "agent_runtime", "model_acceptance", "read", "harness_lifecycle"}
+    exempt = {
+        "runtime",
+        "agent_runtime",
+        "model_acceptance",
+        "read",
+        "harness_lifecycle",
+        # M9-WS1: governance writes are deliberately non-engineering — they carry
+        # their own CAS + audit plane and never touch the engineering write path,
+        # so the engineering tool registry does not govern them.
+        "governance_write",
+    }
     ungoverned: list[str] = []
     for binding in HTTP_SURFACE_BINDINGS:
         if not binding.has_side_effect:
@@ -102,6 +112,30 @@ def test_audited_categories_are_marked_audited() -> None:
         if binding.category in AUDITED_CATEGORIES and binding.has_side_effect and not binding.audited
     ]
     assert not offenders, f"these surfaces must record an audit fact but are not marked: {offenders}"
+
+
+def test_governance_write_audit_contract_round2() -> None:
+    """M9-WS1 Round-2 Gate freeze, machine-locked: governance_write is an audited
+    category and every governance_write surface declares audited=True; the
+    operator-session bootstrap is runtime (hands out a token, writes no
+    governance state) and therefore audits nothing."""
+
+    assert "governance_write" in AUDITED_CATEGORIES
+    governance = [
+        binding for binding in HTTP_SURFACE_BINDINGS if binding.category == "governance_write"
+    ]
+    assert governance, "governance_write category has no HTTP surfaces"
+    assert all(
+        binding.audited and binding.has_side_effect for binding in governance
+    ), f"governance_write surfaces must be audited: {governance}"
+
+    bootstrap = next(
+        binding
+        for binding in HTTP_SURFACE_BINDINGS
+        if binding.name == "/api/v2/review/operator-session"
+    )
+    assert bootstrap.category == "runtime"
+    assert not bootstrap.audited
 
 
 def test_every_side_effecting_tool_is_reachable_from_a_surface() -> None:

@@ -40,6 +40,10 @@ SurfaceCategory = Literal[
     "runtime",
     "model_acceptance",
     "project_metadata",
+    # M9-WS1: review/approval governance writes. Like engineering_write these are
+    # audited and CAS-guarded, but they deliberately never move an engineering
+    # revision or any engineering digest.
+    "governance_write",
 ]
 
 #: Categories that must produce an audit record.
@@ -49,6 +53,13 @@ AUDITED_CATEGORIES: frozenset[str] = frozenset(
         "legacy_write",
         "project_metadata",
         "harness_lifecycle",
+        # M9-WS1 Round-2 Gate freeze: governance writes (review threads, comments,
+        # resolve/reopen, approval request/decide) always carry an audit fact —
+        # and, since the unified reconcile, so does every approval.invalidated
+        # they trigger. The bootstrap endpoint is deliberately NOT here: it is
+        # runtime (hands out a token, writes no governance state, audits nothing;
+        # the token never enters the audit chain).
+        "governance_write",
     }
 )
 
@@ -134,6 +145,71 @@ LEGACY_V1_TOOL = "apply_compiled_agent_transaction"
 
 #: Every mutating HTTP route in the live application.
 HTTP_SURFACE_BINDINGS: tuple[SurfaceBinding, ...] = (
+    # --- M9-WS1 review workflow (governance plane: never an engineering write) ---
+    _http(
+        "POST",
+        "/api/v2/review/operator-session",
+        "runtime",
+        tool="bootstrap_operator_session",
+        notes="Loopback-only; local deployments with an operator identity only. "
+        "Hands out the per-process operator token and writes no governance state, "
+        "so it is runtime, not governance_write, and audits nothing — the token "
+        "never enters the audit chain. Verified by "
+        "test_review_operator_session_refuses_non_loopback and "
+        "test_valid_operator_token_from_non_loopback_peer_is_refused.",
+    ),
+    _http(
+        "POST",
+        "/api/v2/documents/{document_id}/review/threads",
+        "governance_write",
+        tool="create_review_thread",
+        audited=True,
+        notes="Governance CAS on expected_governance_seq; never moves the engineering "
+        "revision. A new open thread invalidates every live approval "
+        "(review_digest_changed) with an approval.invalidated audit in the same "
+        "transaction. Verified by test_review_governance_never_moves_engineering_revision.",
+    ),
+    _http(
+        "POST",
+        "/api/v2/documents/{document_id}/review/threads/{thread_id}/comments",
+        "governance_write",
+        tool="add_review_comment",
+        audited=True,
+        notes="Any comment after an approval invalidates it (review_digest_changed) "
+        "via the unified reconcile, atomically with this mutation's audit.",
+    ),
+    _http(
+        "POST",
+        "/api/v2/documents/{document_id}/review/threads/{thread_id}/resolve",
+        "governance_write",
+        tool="resolve_review_thread",
+        audited=True,
+        notes="Operator token required. Verified by test_review_agent_cannot_resolve.",
+    ),
+    _http(
+        "POST",
+        "/api/v2/documents/{document_id}/review/threads/{thread_id}/reopen",
+        "governance_write",
+        tool="reopen_review_thread",
+        audited=True,
+        notes="Operator token required; invalidates live approvals.",
+    ),
+    _http(
+        "POST",
+        "/api/v2/documents/{document_id}/approval/request",
+        "governance_write",
+        tool="request_engineering_approval",
+        audited=True,
+    ),
+    _http(
+        "POST",
+        "/api/v2/documents/{document_id}/approval/{approval_id}/decide",
+        "governance_write",
+        tool="decide_engineering_approval",
+        audited=True,
+        notes="Operator token required; decision-time fresh readiness gate. "
+        "Verified by test_review_approval_roundtrip_blocks_open_threads.",
+    ),
     # --- v2 document lifecycle -------------------------------------------------
     _http(
         "POST",

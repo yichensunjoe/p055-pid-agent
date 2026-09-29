@@ -25,6 +25,7 @@ from .api_harness import create_harness_router
 from .api_layout import create_layout_router
 from .api_repair import create_repair_router
 from .api_reports import create_reports_router
+from .api_review import create_review_router
 from .api_semantic_agent import create_semantic_agent_router
 from .api_validation import create_validation_router
 from .config import Settings
@@ -248,7 +249,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_origins=settings.cors_origins,
         allow_credentials=False,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        allow_headers=["Authorization", "Content-Type", "If-Match"],
+        allow_headers=["Authorization", "Content-Type", "If-Match", "X-Operator-Token"],
         expose_headers=[
             "X-PID-Agent-Request-ID",
             "Content-Disposition",
@@ -293,6 +294,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(create_audit_router(service))
     app.include_router(create_engineering_router(service, project_index))
     app.include_router(create_export_router(service, diagnostics))
+    app.include_router(create_review_router(service, store, settings))
     app.include_router(create_dxf_router(service, diagnostics))
     app.include_router(create_layout_router(service, diagnostics))
     app.include_router(create_drafting_router(service, diagnostics))

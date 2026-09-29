@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, BinaryIO
 from urllib.parse import quote
 
-CURRENT_SCHEMA_VERSION = 11
+CURRENT_SCHEMA_VERSION = 12
 BACKUP_FORMAT = "pid-agent.sqlite-backup"
 BACKUP_VERSION = 1
 BACKUP_DATABASE_MEMBER = "database.sqlite3"
@@ -1028,6 +1028,27 @@ def _migration_11(connection: sqlite3.Connection) -> None:
     )
 
 
+def _migration_12(connection: sqlite3.Connection) -> None:
+    """M9-WS1: the engineering review governance surface.
+
+    Deliberately free-standing: no foreign key to documents, so deleting a drawing
+    can never cascade away review evidence. Pre-v12 databases read as zero review
+    records for every document — old drawing identity is untouched.
+    """
+
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS engineering_review_state (
+            document_id TEXT PRIMARY KEY,
+            governance_seq INTEGER NOT NULL,
+            data_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+
+
 _MIGRATIONS = {
     1: _migration_1,
     2: _migration_2,
@@ -1040,6 +1061,7 @@ _MIGRATIONS = {
     9: _migration_9,
     10: _migration_10,
     11: _migration_11,
+    12: _migration_12,
 }
 
 
@@ -1070,6 +1092,7 @@ def _validate_required_schema(connection: sqlite3.Connection) -> None:
         "project_index",
         "semantic_candidates",
         "review_decisions",
+        "engineering_review_state",
         "confirmed_semantic_findings",
         "synthesis_proposal_evidence",
         _METADATA_TABLE,

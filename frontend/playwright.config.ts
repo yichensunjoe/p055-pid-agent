@@ -68,6 +68,10 @@ export default defineConfig({
         PID_AGENT_FRONTEND_DIST: path.resolve("dist"),
         PID_AGENT_CORS_ORIGINS: previewOrigin,
         PID_AGENT_AGENT_TIMEOUT_SECONDS: "180",
+        // M9-WS1: the disposable E2E backend runs a local deployment; give it a
+        // fixed operator identity so the review-workflow e2e can exercise human
+        // decisions. Overridable from the environment for local runs.
+        PID_AGENT_OPERATOR_IDENTITY: process.env.PID_AGENT_OPERATOR_IDENTITY ?? "E2E 操作者",
       },
       url: `${apiOrigin}/health`,
       timeout: 30_000,

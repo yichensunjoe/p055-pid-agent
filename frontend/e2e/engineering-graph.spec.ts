@@ -69,9 +69,10 @@ test("the right dock keeps every panel tab on one row", async ({ page, request }
   const dock = page.getByRole("tablist", { name: "右侧面板" });
   await expect(dock).toBeVisible();
   const tabs = dock.getByRole("tab");
-  await expect(tabs).toHaveCount(7);
+  await expect(tabs).toHaveCount(8); // M9-WS1 added the 审查 tab
   await expect(page.getByRole("tab", { name: "工程图谱" })).toBeVisible();
   await expect(page.getByRole("tab", { name: "整理" })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "审查" })).toBeVisible();
 
   const boxes = await tabs.evaluateAll((nodes) =>
     nodes.map((node) => {

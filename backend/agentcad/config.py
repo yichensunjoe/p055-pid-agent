@@ -52,6 +52,9 @@ class Settings:
     diagnostics_path: Path | None = None
     deployment_mode: DeploymentMode = "local"
     api_token: str | None = None
+    #: M9-WS1: the trusted local operator identity. Human review decisions exist
+    #: only when this is set on a local deployment; shared deployments fail closed.
+    operator_identity: str | None = None
     provider_allow_hosts: tuple[str, ...] = field(default_factory=tuple)
     provider_allow_cidrs: tuple[str, ...] = field(default_factory=tuple)
     max_json_body_bytes: int = 2 * 1024 * 1024
@@ -95,6 +98,7 @@ class Settings:
         if mode not in {"local", "shared"}:
             raise ValueError("PID_AGENT_DEPLOYMENT_MODE must be local or shared")
         token = _env("PID_AGENT_API_TOKEN", "AGENTCAD_API_TOKEN", "").strip() or None
+        operator = _env("PID_AGENT_OPERATOR_IDENTITY", "AGENTCAD_OPERATOR_IDENTITY", "").strip() or None
         settings = cls(
             database_path=database_path,
             cors_origins=_csv(origins),
@@ -102,6 +106,7 @@ class Settings:
             diagnostics_path=diagnostics_path,
             deployment_mode=mode,  # type: ignore[arg-type]
             api_token=token,
+            operator_identity=operator,
             provider_allow_hosts=tuple(
                 item.lower().rstrip(".")
                 for item in _csv(

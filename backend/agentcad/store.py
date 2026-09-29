@@ -27,6 +27,7 @@ from .m7_semantic_specs import SemanticSpecRecord, record_from_row, spec_payload
 from .m7_synthesis_models import PROPOSAL_EVIDENCE_TABLE, SynthesisProposalEvidence
 from .models import Document, DocumentSummary, HistoryEntry
 from .project_io import ProjectSettings
+from .review_models import ReviewState
 
 
 def _new_audit_record_id() -> str:
@@ -48,6 +49,10 @@ class StoredDocument:
     document: Document
     undo_stack: list[dict[str, Any]]
     redo_stack: list[dict[str, Any]]
+
+
+class ReviewStateConflictError(RuntimeError):
+    """The governance sequence moved underneath a review mutation (HTTP 409)."""
 
 
 class SQLiteDocumentStore:
@@ -571,6 +576,111 @@ class SQLiteDocumentStore:
             undo_stack=json.loads(row["undo_json"]),
             redo_stack=json.loads(row["redo_json"]),
         )
+
+    # ------------------------------------------------------- review governance
+
+    def get_review_state(self, document_id: str) -> ReviewState | None:
+        """The governance surface of one document, or None for a document with no
+        review records yet (every pre-v12 drawing reads as zero review records)."""
+
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT data_json FROM engineering_review_state WHERE document_id = ?",
+                (document_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return ReviewState.model_validate_json(row["data_json"])
+
+    def save_review_state(
+        self,
+        state: ReviewState,
+        *,
+        expected_governance_seq: int,
+        audit: AuditRecordDraft | None = None,
+        extra_audits: tuple[AuditRecordDraft, ...] = (),
+    ) -> None:
+        """CAS write of the whole governance surface, atomic with its audit records.
+
+        The optimistic sequence is the concurrency contract of the governance plane:
+        two mutations carrying the same ``expected_governance_seq`` race on one
+        UPDATE rowcount, exactly one wins, the other gets a conflict — the review
+        plane can never lose a comment to a last-write-wins race. ``extra_audits``
+        (e.g. one ``approval.invalidated`` per invalidated approval) commit in the
+        same transaction as the state write: the invalidation fact and the mutation
+        that caused it are inseparable.
+        """
+
+        with self._lock, self._connect() as connection:
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                cursor = connection.execute(
+                    """
+                    UPDATE engineering_review_state
+                    SET governance_seq = ?, data_json = ?, updated_at = ?
+                    WHERE document_id = ? AND governance_seq = ?
+                    """,
+                    (
+                        state.governance_seq,
+                        self._encode(state.model_dump(mode="json")),
+                        datetime.now(UTC).isoformat(),
+                        state.document_id,
+                        expected_governance_seq,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise ReviewStateConflictError(
+                        f"review state of {state.document_id!r} moved past governance "
+                        f"seq {expected_governance_seq}; retry against the fresh state"
+                    )
+                if audit is not None:
+                    self._append_audit_record(connection, audit)
+                for extra in extra_audits:
+                    self._append_audit_record(connection, extra)
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+
+    def create_review_state(
+        self,
+        state: ReviewState,
+        *,
+        audit: AuditRecordDraft | None = None,
+        extra_audits: tuple[AuditRecordDraft, ...] = (),
+    ) -> None:
+        """First write for a document's governance surface (seq 0 -> 1)."""
+
+        with self._lock, self._connect() as connection:
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                connection.execute(
+                    """
+                    INSERT INTO engineering_review_state
+                        (document_id, governance_seq, data_json, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        state.document_id,
+                        state.governance_seq,
+                        self._encode(state.model_dump(mode="json")),
+                        datetime.now(UTC).isoformat(),
+                        datetime.now(UTC).isoformat(),
+                    ),
+                )
+                if audit is not None:
+                    self._append_audit_record(connection, audit)
+                for extra in extra_audits:
+                    self._append_audit_record(connection, extra)
+                connection.commit()
+            except sqlite3.IntegrityError as exc:
+                connection.rollback()
+                raise ReviewStateConflictError(
+                    f"review state of {state.document_id!r} already exists"
+                ) from exc
+            except Exception:
+                connection.rollback()
+                raise
 
     def delete(
         self,

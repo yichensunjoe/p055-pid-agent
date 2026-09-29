@@ -17,6 +17,7 @@ import { DraftingPanel } from "./editor/DraftingPanel";
 import { EngineeringGraphPanel } from "./editor/EngineeringGraphPanel";
 import { EngineeringReportPanel } from "./editor/EngineeringReportPanel";
 import { ValidationPanel } from "./editor/ValidationPanel";
+import { ReviewPanel } from "./editor/ReviewPanel";
 import { ViewNavigator } from "./editor/ViewNavigator";
 import { elementPaletteCommands, type PaletteCommand } from "./editor/paletteCommands";
 import { currentNavigationZone, deriveNavigationZones, loadNamedViews, persistNamedViews, sanitizeNamedViews, type CanvasView, type NamedCanvasView, type NavigationZone } from "./editor/navigationViews";
@@ -133,7 +134,7 @@ function ShapeToolButton({ tool, label, shortcut, active }: { tool: "line" | "re
   );
 }
 
-type RightPanel = "properties" | "groups" | "history" | "reports" | "graph" | "drafting" | "agent";
+type RightPanel = "properties" | "groups" | "history" | "reports" | "graph" | "drafting" | "agent" | "review";
 
 function operationDescription(operation: SemanticOperation): string {
   switch (operation.op) {
@@ -820,6 +821,7 @@ export default function App() {
     { id: "graph", label: "工程图谱" },
     { id: "drafting", label: "整理" },
     { id: "agent", label: "Agent" },
+    { id: "review", label: "审查" },
   ];
   const busyAgent = planningAgent || repairingAgent || applyingAgent || automaticAgentRunning;
   const agentImages = useMemo(() => toAgentImagePayload(referenceImages), [referenceImages]);
@@ -1250,6 +1252,7 @@ export default function App() {
           {rightPanel === "properties" ? <section className="inspector-panel" role="tabpanel"><h2>元素属性</h2><PropertyInspector /></section> : null}
           {rightPanel === "groups" ? <section className="inspector-panel" role="tabpanel"><h2>图层与工艺系统</h2><LayerSystemPanel /></section> : null}
           {rightPanel === "history" ? <section className="inspector-panel" role="tabpanel"><h2>Revision 历史</h2><HistoryPanel /></section> : null}
+          {rightPanel === "review" ? <section className="inspector-panel" role="tabpanel"><h2>工程审查</h2><ReviewPanel /></section> : null}
           {rightPanel === "reports" ? (
             <section className="inspector-panel" role="tabpanel">
               <h2>工程报表与规则检查</h2>

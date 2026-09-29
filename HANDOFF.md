@@ -16,11 +16,11 @@
 
 - **R41 补充（同日）**：Q2-1R 设计修订已提交（ccfd678）：TT 解禁有 8d82f75 单行先例、FT/LT 不动（FT=审计范例）、TT 解禁后现有英文 hint 已精确隔离候选（无需中文词表）。DEV-6 句三 s3 根因=「接到一个缓冲罐 V-102」整条被分类为 connect 子句、句内嵌的添加语义未分解成实体（V-102 未声明→连接 undelivered，无 port receipt）——G2 同类 planner grammar 项，已报 Gate 路由。PR #58 CI 四绿（36379051307），等 Gate 裁定期间 ChatGPT 侧基础设施多次抖动（账户加载失败/Cloudflare），消息已全部送达线程。
 
-## 近期轮次（2026-09-29 R49 —— WS1 合并封账 + WS2 设计报送）
+## 近期轮次（2026-09-29 R49 —— WS1 合并封账 + WS2 设计两轮 Gate 往返）
 
-- **做了什么**：① 按 Gate Round-2 CHANGES REQUIRED 修 4 项（统一 reconcile 进 _persist、_actor 加 loopback、resolve 状态机前置、governance_write 入 AUDITED + operator-session 改 runtime），新增 7 条全命名硬测（test_m9_review_workflow 6 + surface contract 1）；② 全量回归 1675 过 + ruff 净 + e2e（8002/4174）4 过，推 acb888b，CI 36534988814 四绿；③ 报 Gate Round 2 → **SQUASH MERGE GO = APPROVED**（四项全 CLOSED），fail-closed 核对 base/head/17-file/CI 四项绑定后 squash 合并，main→153c28c，main CI 36536255690 四绿，PR body 已更新；④ WS2 设计草案扩为完整详细设计（含 F1–F10 failure modes、13 条测试矩阵、exact 白名单、3 个待裁决策点），随本轮提交报送 Gate 签 DETAILED DESIGN GO。
-- **关键结论**：M9-WS1 = PASS/CLOSED；WS2 CODE = BLOCKED pending design GO；releases 内嵌 ReviewState（不升 schema 不加表）替代草案预告的 release_records 表。
-- **下一步**：等 WS2 DESIGN GO → 白名单内实现（release 状态机 + evidence 包 + fresh readiness + 事务内 revision 复核）→ PR → Gate。
+- **做了什么**：① 按 Gate Round-2 CHANGES REQUIRED 修 4 项（统一 reconcile 进 _persist、_actor 加 loopback、resolve 状态机前置、governance_write 入 AUDITED + operator-session 改 runtime），新增 7 条全命名硬测（test_m9_review_workflow 6 + surface contract 1）；② 全量回归 1675 过 + ruff 净 + e2e（8002/4174）4 过，推 acb888b，CI 36534988814 四绿；③ 报 Gate Round 2 → **SQUASH MERGE GO = APPROVED**（四项全 CLOSED），fail-closed 核对 base/head/17-file/CI 四项绑定后 squash 合并，main→153c28c，main CI 36536255690 四绿，PR body 已更新；④ WS2 设计 v1 报送 → **DIRECTION ACCEPTED + CHANGES REQUIRED（R49-1~R49-6）**；v2 逐项闭合（hash 消环顺序/audit-chain document-subset+global verify+cutoff/REST 复数带 release_id/F1-F4 写入面精确化（F4 不可信零 audit、F6/F7 竞争零 denied）/F2 测试 seam 构造/两阶段 Phase A 不占写锁）+ 三决策点已获冻结（两态机 OK；v13 release_evidence_packages 附加表替代 blob-in-JSON；evidence.zip=read）；v2=e757b9d 已推 docs 分支。
+- **关键结论**：M9-WS1 = PASS/CLOSED；WS2 详细设计 = CHANGES REQUIRED → v2 复送等 DESIGN GO；**执行红线：WS2 实现分支必须 fresh cut from main@153c28c，4ee286f 系 diverged worktree 禁作代码基线**；Gate 会话已达长度上限，下轮可能需新聊天续裁。
+- **下一步**：等 WS2 DESIGN GO → fresh 分支（from main）按 v2 白名单实现（release 状态机 + evidence 包 + fresh readiness + 两阶段落库）→ PR → Gate。
 
 ## 近期轮次（2026-09-28 R38 —— M8-Q1 run + Q1R 设计两轮 Gate 往返）
 

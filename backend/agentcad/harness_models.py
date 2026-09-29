@@ -6,7 +6,9 @@ from uuid import uuid4
 
 from pydantic import Field
 
-from .models import StrictModel, utc_now
+# M10-P1: harness models build on the domain-neutral runtime primitives
+# (same re-exported class objects as agentcad.models — identity preserved).
+from .runtime.primitives import StrictModel, utc_now
 
 AgentSessionStatus = Literal["active", "completed", "failed", "cancelled"]
 ApprovalStatus = Literal["pending", "approved", "rejected", "consumed"]

@@ -83,7 +83,17 @@ def test_mutating_surfaces_name_a_registered_tool_or_justify_themselves() -> Non
     known = {definition.name for definition in registry.list()}
     # Harness lifecycle routes are session/approval bookkeeping, not engineering
     # capabilities; they are covered by the audit-required assertion below.
-    exempt = {"runtime", "agent_runtime", "model_acceptance", "read", "harness_lifecycle"}
+    exempt = {
+        "runtime",
+        "agent_runtime",
+        "model_acceptance",
+        "read",
+        "harness_lifecycle",
+        # M9-WS1: governance writes are deliberately non-engineering — they carry
+        # their own CAS + audit plane and never touch the engineering write path,
+        # so the engineering tool registry does not govern them.
+        "governance_write",
+    }
     ungoverned: list[str] = []
     for binding in HTTP_SURFACE_BINDINGS:
         if not binding.has_side_effect:

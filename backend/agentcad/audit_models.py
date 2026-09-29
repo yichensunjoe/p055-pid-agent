@@ -48,6 +48,15 @@ AuditEventType = Literal[
     "repair.refused",
     "permission.rejected",
     "provider.egress.blocked",
+    # M9-WS1: engineering review workflow. Governance events only -- they never
+    # appear as revision events and never move an engineering digest.
+    "review.thread.created",
+    "review.comment.posted",
+    "review.thread.resolved",
+    "review.thread.reopened",
+    "approval.requested",
+    "approval.decided",
+    "approval.invalidated",
 ]
 
 AuditStatus = Literal["applied", "rejected", "failed"]

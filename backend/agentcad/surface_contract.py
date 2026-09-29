@@ -40,6 +40,10 @@ SurfaceCategory = Literal[
     "runtime",
     "model_acceptance",
     "project_metadata",
+    # M9-WS1: review/approval governance writes. Like engineering_write these are
+    # audited and CAS-guarded, but they deliberately never move an engineering
+    # revision or any engineering digest.
+    "governance_write",
 ]
 
 #: Categories that must produce an audit record.
@@ -134,6 +138,64 @@ LEGACY_V1_TOOL = "apply_compiled_agent_transaction"
 
 #: Every mutating HTTP route in the live application.
 HTTP_SURFACE_BINDINGS: tuple[SurfaceBinding, ...] = (
+    # --- M9-WS1 review workflow (governance plane: never an engineering write) ---
+    _http(
+        "POST",
+        "/api/v2/review/operator-session",
+        "governance_write",
+        tool="bootstrap_operator_session",
+        audited=True,
+        notes="Loopback-only; local deployments with an operator identity only. "
+        "Verified by test_review_operator_session_refuses_non_loopback.",
+    ),
+    _http(
+        "POST",
+        "/api/v2/documents/{document_id}/review/threads",
+        "governance_write",
+        tool="create_review_thread",
+        audited=True,
+        notes="Governance CAS on expected_governance_seq; never moves the engineering "
+        "revision. Verified by test_review_governance_never_moves_engineering_revision.",
+    ),
+    _http(
+        "POST",
+        "/api/v2/documents/{document_id}/review/threads/{thread_id}/comments",
+        "governance_write",
+        tool="add_review_comment",
+        audited=True,
+    ),
+    _http(
+        "POST",
+        "/api/v2/documents/{document_id}/review/threads/{thread_id}/resolve",
+        "governance_write",
+        tool="resolve_review_thread",
+        audited=True,
+        notes="Operator token required. Verified by test_review_agent_cannot_resolve.",
+    ),
+    _http(
+        "POST",
+        "/api/v2/documents/{document_id}/review/threads/{thread_id}/reopen",
+        "governance_write",
+        tool="reopen_review_thread",
+        audited=True,
+        notes="Operator token required; invalidates live approvals.",
+    ),
+    _http(
+        "POST",
+        "/api/v2/documents/{document_id}/approval/request",
+        "governance_write",
+        tool="request_engineering_approval",
+        audited=True,
+    ),
+    _http(
+        "POST",
+        "/api/v2/documents/{document_id}/approval/{approval_id}/decide",
+        "governance_write",
+        tool="decide_engineering_approval",
+        audited=True,
+        notes="Operator token required; decision-time fresh readiness gate. "
+        "Verified by test_review_approval_roundtrip_blocks_open_threads.",
+    ),
     # --- v2 document lifecycle -------------------------------------------------
     _http(
         "POST",

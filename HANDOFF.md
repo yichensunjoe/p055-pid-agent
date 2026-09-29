@@ -2,7 +2,7 @@
 
 > 交接文档：每次开新会话先读本文件。更新规则见 `AGENTS.md`「HANDOFF 交接规则」。
 
-## 当前状态（2026-09-29 R49 —— **M9 推进中：WS1 已合并封账（PR #67 squash → main@153c28c，main CI 36536255690 四绿，Gate 裁 M9-WS1 = PASS/CLOSED）；WS2 DETAILED DESIGN GO 已报送等裁（reports/m9-ws2-release-evidence-design.md 完整版，含 release 状态机/approval 消费/fresh readiness/evidence 包契约/failure modes F1–F10/矩阵/exact 白名单/3 个待裁决策点）；WS3A 试点候选模板仍等 Owner 填表**。WS1 Round-2 修复四项：统一 approval reconcile（revision drift 优先，thread/comment→review_digest_changed、reopen→review_reopened，失效与 approval.invalidated audit 经 extra_audits 同事务）、operator token 仅 loopback 为 human authority、resolve 状态机冻结（重复 resolve 422）、governance_write 入 AUDITED + operator-session 改 runtime。M8 已封账不动。worktree=P055-PID-Agent-q1r 临时分支 ws2-design-go（基 origin/m7-semantic-first-synthesis））
+## 当前状态（2026-09-29 R50 —— **M9 推进中：WS1 已封账（main@153c28c）；WS2 DESIGN GO 已批（PASS/FROZEN WITH GATE AMENDMENTS）+ CODE IMPLEMENTATION GO ACTIVE——11 条实施 amendment 冻结（双绑定 supersede/guard 顺序 actor→threads→approval→readiness→build/同 revision+snapshot 唯一 live release 409 release_already_exists/Phase A 单 pinned snapshot 用 assess_release_readiness(document) 直调/Phase B dedicated 原子 commit_release primitive/F1-F3 denied audit 不增 governance_seq 用 record_rejection/audit cutoff 历史锚点+database_instance_id/review digest 不含 releases 硬测/seq=governance_seq/evidence GET 五重完整性校验 500 release_evidence_corrupt）；实现分支必须 fresh cut from main@153c28c，docs 线（e43a503）只作设计文本来源。WS3A 试点模板仍等 Owner 填表**。worktree=P055-PID-Agent-q1r）
 
 - **M8-Q1 冻结 run 结果**（详见 reports/m8-q1-results.md，commit `25219f8`）：步级 committed 3/16、场景 complete 1/8；gap 排名 G1 selector 失配 / G2 仪表并列子句合并 / G3 feed selector / G4 泄放支路不可走线 / G5 DXF 不支持 A 弧 / G6 shell_in selectors 混入塔词汇；HOLDOUT 只记录。PDF 8/8 200；实体 DXF 0/3。
 - **重大教训（Gate 核出）**：本次 server 是从 `m7-semantic-first-synthesis` worktree 起的（切分支后才启动 8002），runner sys.path 绝对路径 import 到平行分支旧代码——G1（main 已有 SEMANTIC_SURFACE_TOKENS 管程映射）与 G5（main 已有 A 弧 tessellation，`symbol_paths` 共享 grammar）**很可能在 main 上已修**，Q1 的相应失败证据作废待 exact-main 复验。报告写"基线 1afeccab"但 runtime 不是，P0-RUNTIME-PROVENANCE 即为此设。
@@ -15,6 +15,12 @@
 
 
 - **R41 补充（同日）**：Q2-1R 设计修订已提交（ccfd678）：TT 解禁有 8d82f75 单行先例、FT/LT 不动（FT=审计范例）、TT 解禁后现有英文 hint 已精确隔离候选（无需中文词表）。DEV-6 句三 s3 根因=「接到一个缓冲罐 V-102」整条被分类为 connect 子句、句内嵌的添加语义未分解成实体（V-102 未声明→连接 undelivered，无 port receipt）——G2 同类 planner grammar 项，已报 Gate 路由。PR #58 CI 四绿（36379051307），等 Gate 裁定期间 ChatGPT 侧基础设施多次抖动（账户加载失败/Cloudflare），消息已全部送达线程。
+
+## 近期轮次（2026-09-29 R50 —— WS2 DESIGN GO 获批，开工实现）
+
+- **做了什么**：① WS2 设计 v1 报送 → DIRECTION ACCEPTED + CHANGES REQUIRED（R49-1~R49-6：hash 自引用环/audit-chain subset 冒充全链/历史包缺 release_id/F1-F4 零写入与 denied 互斥/F2 测试构造穿帮/长事务打包）；② v2 逐项闭合推 e757b9d 复送 → **DETAILED DESIGN = PASS/FROZEN WITH GATE AMENDMENTS + CODE IMPLEMENTATION GO = APPROVED**（11 条 amendment 见当前状态行）；③ 期间发现 agent 窗口标签被并行项目切走，已导航回 Gate conv 核实 v2 送达与裁定。
+- **关键结论**：WS2 不再需要 v3；实施红线 fresh cut from main@153c28c；release_validator.py 生产冻结（只能改其测试）；PDF/DXF 内核禁改（现有接口已接受 pinned Document）。
+- **下一步**：m9-ws2 分支实现（两阶段 release + commit_release 原子原语 + v13 表 + 前端 Release UI）→ 全量回归 → PR → 送 exact-head Merge Gate。
 
 ## 近期轮次（2026-09-29 R49 —— WS1 合并封账 + WS2 设计两轮 Gate 往返）
 

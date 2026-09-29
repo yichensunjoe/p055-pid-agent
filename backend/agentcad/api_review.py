@@ -315,7 +315,11 @@ def create_review_router(
 
         service.get_document(document_id)
         state = reviews.get_state(document_id)
-        if all(release.release_id != release_id for release in state.releases):
+        record = next(
+            (release for release in state.releases if release.release_id == release_id),
+            None,
+        )
+        if record is None:
             raise HTTPException(
                 status_code=404,
                 detail={"code": "release_not_found", "message": f"release {release_id!r} not found"},
@@ -327,7 +331,11 @@ def create_review_router(
                 detail={"code": "release_not_found", "message": f"release {release_id!r} has no package"},
             )
         try:
-            verify_evidence_package(package)
+            verify_evidence_package(
+                package,
+                expected_manifest_sha256=record.evidence_manifest_hash,
+                expected_package_sha256=record.package_sha256,
+            )
         except ReleaseEvidenceCorruptError as exc:
             raise HTTPException(
                 status_code=500,

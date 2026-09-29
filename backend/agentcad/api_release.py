@@ -23,12 +23,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import zipfile
 from dataclasses import dataclass
 from io import BytesIO
 from typing import Any
 
-from .audit import AuditRecorder
+from .audit import verify_audit_records
 from .audit_hash import GENESIS_HASH
 from .dxf_export import DxfExportOptions, render_dxf
 from .exporting import resolve_export_bounds
@@ -90,19 +91,23 @@ def _build_audit_chain_member(
     """The frozen audit-chain.json (Gate R49-2): a *document subset* that was
     verified against the complete global hash chain, never a stand-alone chain.
 
-    The cutoff is the current chain tip at Phase A time — a historical anchor.
-    The ``release.released`` audit of this very release is written in Phase B
-    and therefore can never appear inside the package (that would re-introduce
-    the hash cycle the gate forbids).
+    Gate R68-1: the records are read exactly ONCE and the verification, the
+    reported ordinal, the reported tip and the document subset all come from
+    that same immutable snapshot — the claimed cutoff is provably the verified
+    cutoff. The cutoff is the chain tip at Phase A time, a historical anchor;
+    the ``release.released`` audit of this very release is written in Phase B
+    and therefore can never appear inside the package.
     """
 
-    verification = AuditRecorder(store).verify_chain()
+    records = store.all_audit_records()
+    verification = verify_audit_records(
+        records, database_instance_id=store.database_instance_id
+    )
     if not verification.ok:
         raise EvidenceBuildError(
             f"global audit chain diverged: {verification.first_divergence.reason} "
             f"at ordinal {verification.first_divergence.ordinal}"
         )
-    records = store.all_audit_records()
     verified_through_ordinal = len(records)
     verified_global_tip_hash = records[-1].record_hash if records else GENESIS_HASH
     member = {
@@ -218,16 +223,36 @@ class ReleaseEvidenceCorruptError(RuntimeError):
     code = "release_evidence_corrupt"
 
 
+#: Frozen MANIFEST line: 64 lowercase hex, two spaces, ASCII filename.
+_MANIFEST_LINE = re.compile(r"^([0-9a-f]{64})  ([A-Za-z0-9._-]+)$")
+
+
 def verify_evidence_package(
     package: ReleaseEvidencePackage,
+    *,
+    expected_manifest_sha256: str,
+    expected_package_sha256: str,
 ) -> None:
-    """Re-verify a stored package before serving it (Gate amendment, frozen set).
+    """Re-verify a stored package before serving it (Gate amendments, frozen).
 
-    In-memory only — the ZIP is never extracted to the file system. Every
-    violation raises :class:`ReleaseEvidenceCorruptError`; the caller maps it
-    to 500 ``release_evidence_corrupt``.
+    Gate R68-2 (cross-plane binding): the BLOB row must agree with the
+    governance-plane ReleaseRecord on BOTH hashes before anything else — a row
+    made internally self-consistent by tampering must still fail against the
+    record. Gate R68-3: every structural/encoding/JSON failure maps to
+    :class:`ReleaseEvidenceCorruptError` (HTTP 500 ``release_evidence_corrupt``);
+    the MANIFEST format itself is strictly locked (exactly seven lines, one per
+    frozen member, ASCII-sorted, LF-terminated). In-memory only — the ZIP is
+    never extracted to the file system.
     """
 
+    if package.manifest_sha256 != expected_manifest_sha256:
+        raise ReleaseEvidenceCorruptError(
+            "package row manifest hash disagrees with the release record"
+        )
+    if package.package_sha256 != expected_package_sha256:
+        raise ReleaseEvidenceCorruptError(
+            "package row package hash disagrees with the release record"
+        )
     if _sha256(package.package_blob) != package.package_sha256:
         raise ReleaseEvidenceCorruptError("package blob does not match package_sha256")
     try:
@@ -245,9 +270,22 @@ def verify_evidence_package(
             manifest_bytes = archive.read("MANIFEST.sha256")
             if _sha256(manifest_bytes) != package.manifest_sha256:
                 raise ReleaseEvidenceCorruptError("MANIFEST does not match manifest_sha256")
+            manifest_text = manifest_bytes.decode("utf-8")
+            lines = manifest_text.split("\n")
+            if lines[-1] != "" or len(lines) - 1 != len(PACKAGE_MEMBERS):
+                raise ReleaseEvidenceCorruptError(
+                    "MANIFEST must be exactly seven LF-terminated lines"
+                )
             entries: dict[str, str] = {}
-            for line in manifest_bytes.decode("utf-8").splitlines():
-                digest, _, name = line.partition("  ")
+            for line in lines[:-1]:
+                match = re.match(_MANIFEST_LINE, line)
+                if match is None:
+                    raise ReleaseEvidenceCorruptError(
+                        "MANIFEST line must be 64hex + two spaces + ASCII filename"
+                    )
+                digest, name = match.group(1), match.group(2)
+                if name in entries:
+                    raise ReleaseEvidenceCorruptError(f"duplicate MANIFEST entry: {name}")
                 entries[name] = digest
             if tuple(sorted(entries)) != PACKAGE_MEMBERS:
                 raise ReleaseEvidenceCorruptError("MANIFEST member set drifted")
@@ -260,5 +298,9 @@ def verify_evidence_package(
                     raise ReleaseEvidenceCorruptError(
                         f"release.json must not contain {forbidden}"
                     )
+    except UnicodeDecodeError as exc:
+        raise ReleaseEvidenceCorruptError("package text member is not valid UTF-8") from exc
+    except json.JSONDecodeError as exc:
+        raise ReleaseEvidenceCorruptError(f"release.json is not valid JSON: {exc}") from exc
     except zipfile.BadZipFile as exc:
         raise ReleaseEvidenceCorruptError("package is not a valid ZIP") from exc

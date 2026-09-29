@@ -179,6 +179,74 @@ def request_audit_context(
     )
 
 
+def verify_audit_records(
+    records: Sequence[AuditRecord],
+    *,
+    database_instance_id: str,
+) -> AuditVerification:
+    """Pure chain verification over one immutable snapshot of records.
+
+    M9-WS2 (Gate R68-1): an evidence package must bind a cutoff that was
+    ACTUALLY verified. The caller reads ``all_audit_records()`` once and passes
+    that same list here, so the verified set, the reported ordinal and the
+    reported tip hash are provably the same objects — no verify-then-re-read
+    window where a concurrently appended record could be claimed as verified
+    without having been. Global chain growth after the snapshot is legitimate
+    and never invalidates this verification.
+    """
+
+    prev_hash = GENESIS_HASH
+    expected_ordinal = 1
+    for record in records:
+        if record.ordinal != expected_ordinal:
+            return AuditVerification(
+                ok=False,
+                record_count=len(records),
+                database_instance_id=database_instance_id,
+                first_divergence=AuditDivergence(
+                    ordinal=record.ordinal,
+                    record_id=record.record_id,
+                    reason="ordinal_gap",
+                    expected_hash=prev_hash,
+                    actual_hash=record.prev_hash,
+                ),
+            )
+        if record.prev_hash != prev_hash:
+            return AuditVerification(
+                ok=False,
+                record_count=len(records),
+                database_instance_id=database_instance_id,
+                first_divergence=AuditDivergence(
+                    ordinal=record.ordinal,
+                    record_id=record.record_id,
+                    reason="broken_link",
+                    expected_hash=prev_hash,
+                    actual_hash=record.prev_hash,
+                ),
+            )
+        recomputed = compute_record_hash(record, prev_hash)
+        if recomputed != record.record_hash:
+            return AuditVerification(
+                ok=False,
+                record_count=len(records),
+                database_instance_id=database_instance_id,
+                first_divergence=AuditDivergence(
+                    ordinal=record.ordinal,
+                    record_id=record.record_id,
+                    reason="hash_mismatch",
+                    expected_hash=recomputed,
+                    actual_hash=record.record_hash,
+                ),
+            )
+        prev_hash = record.record_hash
+        expected_ordinal += 1
+    return AuditVerification(
+        ok=True,
+        record_count=len(records),
+        database_instance_id=database_instance_id,
+    )
+
+
 class AuditRecorder:
     """Single entry point for building and persisting provenance."""
 
@@ -484,56 +552,7 @@ class AuditRecorder:
         records = self.store.all_audit_records()
         if limit is not None:
             records = records[: max(1, limit)]
-        prev_hash = GENESIS_HASH
-        expected_ordinal = 1
-        for record in records:
-            if record.ordinal != expected_ordinal:
-                return AuditVerification(
-                    ok=False,
-                    record_count=len(records),
-                    database_instance_id=self._instance_id(),
-                    first_divergence=AuditDivergence(
-                        ordinal=record.ordinal,
-                        record_id=record.record_id,
-                        reason="ordinal_gap",
-                        expected_hash=prev_hash,
-                        actual_hash=record.prev_hash,
-                    ),
-                )
-            if record.prev_hash != prev_hash:
-                return AuditVerification(
-                    ok=False,
-                    record_count=len(records),
-                    database_instance_id=self._instance_id(),
-                    first_divergence=AuditDivergence(
-                        ordinal=record.ordinal,
-                        record_id=record.record_id,
-                        reason="broken_link",
-                        expected_hash=prev_hash,
-                        actual_hash=record.prev_hash,
-                    ),
-                )
-            recomputed = compute_record_hash(record, prev_hash)
-            if recomputed != record.record_hash:
-                return AuditVerification(
-                    ok=False,
-                    record_count=len(records),
-                    database_instance_id=self._instance_id(),
-                    first_divergence=AuditDivergence(
-                        ordinal=record.ordinal,
-                        record_id=record.record_id,
-                        reason="hash_mismatch",
-                        expected_hash=recomputed,
-                        actual_hash=record.record_hash,
-                    ),
-                )
-            prev_hash = record.record_hash
-            expected_ordinal += 1
-        return AuditVerification(
-            ok=True,
-            record_count=len(records),
-            database_instance_id=self._instance_id(),
-        )
+        return verify_audit_records(records, database_instance_id=self._instance_id())
 
     def revision_evidence(self, document_id: str, revision: int) -> RevisionEvidence:
         """Rebuild the review bundle for one revision and re-check its hashes."""
@@ -694,4 +713,5 @@ __all__ = [
     "request_audit_context",
     "semantic_diff_hash",
     "validation_evidence_hash",
+    "verify_audit_records",
 ]

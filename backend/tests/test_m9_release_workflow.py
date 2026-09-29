@@ -211,6 +211,8 @@ def test_agent_release_attempt_gets_403_and_no_audit(tmp_path: Path) -> None:
         "/api/v2/documents",
         json={"name": "pilot", "width": 1600, "height": 900},
     ).json()["id"]
+    before_records = SQLiteDocumentStore(settings.database_path).all_audit_records()
+    before_tip = before_records[-1].record_hash if before_records else ""
 
     response = client.post(
         f"/api/v2/documents/{document_id}/releases",
@@ -218,9 +220,12 @@ def test_agent_release_attempt_gets_403_and_no_audit(tmp_path: Path) -> None:
     )
     assert response.status_code == 403
     assert response.json()["detail"]["code"] == "actor_not_trusted"
-    # No denial audit may exist: untrusted callers never touch the chain.
-    records = SQLiteDocumentStore(settings.database_path).all_audit_records()
-    assert [r for r in records if r.event_type == "release.denied"] == []
+    # R68-4, machine-locked: the attempt must not grow the global audit chain
+    # at all — not just "no release.denied", zero new records and same tip.
+    records_after = SQLiteDocumentStore(settings.database_path).all_audit_records()
+    assert [r for r in records_after if r.event_type == "release.denied"] == []
+    assert len(records_after) == len(before_records)
+    assert (records_after[-1].record_hash if records_after else "") == before_tip
 
 
 # ⑤ F5: a package-build failure never reaches Phase B — zero everything.
@@ -586,3 +591,193 @@ def test_package_hash_formation_order_and_member_contract(tmp_path: Path) -> Non
         readiness_member = json.loads(archive.read("release-readiness.json").decode("utf-8"))
         validation_member = json.loads(archive.read("validation-report.json").decode("utf-8"))
         assert readiness_member["validation_hash"] == validation_member["result_hash"]
+
+
+# R68-5, machine-locked: two releases racing from the SAME initial governance
+# seq cross Phase A together (barrier seam) — exactly one lands.
+def test_concurrent_double_release_one_wins_one_conflicts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import threading
+
+    service = make_service(tmp_path)
+    document_id = seed_document(service)
+    reviews = make_reviews(service)
+    state = _approved(reviews, document_id)
+
+    barrier = threading.Barrier(2)
+    real_build = review_service_module.build_release_evidence_package
+
+    def synchronised_build(**kwargs):
+        barrier.wait(timeout=15)
+        return real_build(**kwargs)
+
+    monkeypatch.setattr(review_service_module, "build_release_evidence_package", synchronised_build)
+
+    results: list = []
+    errors: list = []
+
+    def attempt():
+        try:
+            results.append(
+                reviews.release_document(
+                    document_id=document_id,
+                    actor=OPERATOR,
+                    expected_governance_seq=state.governance_seq,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 - recorded and asserted below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=attempt) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+
+    assert len(results) == 1, "exactly one concurrent release may land"
+    assert len(errors) == 1
+    assert isinstance(errors[0], ReleaseConflictError)
+    assert errors[0].code == "release_conflict"
+
+    final = reviews.get_state(document_id)
+    assert len(final.releases) == 1
+    assert len(_released_audits(service)) == 1
+    assert _denied_audits(service) == []
+    package = service.store.get_release_package(final.releases[0].release_id)
+    assert package is not None
+
+
+# R68-2, machine-locked: a BLOB row made internally self-consistent with
+# ANOTHER release's package still fails against this release's record.
+def test_cross_plane_binding_rejects_foreign_but_valid_package(tmp_path: Path) -> None:
+    settings = Settings(
+        database_path=tmp_path / "xplane.db",
+        cors_origins=["http://localhost:5173"],
+        frontend_dist=tmp_path / "dist",
+        deployment_mode="local",  # type: ignore[arg-type]
+        operator_identity="李工",
+    )
+    app = create_app(settings)
+    client = TestClient(app)
+    token = client.post("/api/v2/review/operator-session").json()["operator_token"]
+    headers = {"X-Operator-Token": token}
+
+    release_ids: list[str] = []
+    for name in ("doc-a", "doc-b"):
+        created = client.post(
+            "/api/v2/documents", json={"name": name, "width": 1600, "height": 900}
+        ).json()
+        document_id = created["id"]
+        view = client.post(
+            f"/api/v2/documents/{document_id}/review/threads",
+            json={"body": "复核", "expected_governance_seq": 0},
+            headers=headers,
+        ).json()
+        thread_id = view["threads"][0]["thread_id"]
+        seq = view["governance_seq"]
+        view = client.post(
+            f"/api/v2/documents/{document_id}/review/threads/{thread_id}/resolve",
+            json={"resolution_note": "已补", "expected_governance_seq": seq},
+            headers=headers,
+        ).json()
+        seq = view["governance_seq"]
+        view = client.post(
+            f"/api/v2/documents/{document_id}/approval/request",
+            json={"expected_governance_seq": seq},
+        ).json()
+        seq = view["governance_seq"]
+        approval_id = view["approvals"][-1]["approval_id"]
+        view = client.post(
+            f"/api/v2/documents/{document_id}/approval/{approval_id}/decide",
+            json={"decision": "approved", "expected_governance_seq": seq},
+            headers=headers,
+        ).json()
+        seq = view["governance_seq"]
+        view = client.post(
+            f"/api/v2/documents/{document_id}/releases",
+            json={"expected_governance_seq": seq},
+            headers=headers,
+        ).json()
+        release_ids.append(view["releases"][-1]["release_id"])
+
+    store = SQLiteDocumentStore(settings.database_path)
+    row_a = store.get_release_package(release_ids[0])
+    row_b = store.get_release_package(release_ids[1])
+    assert row_a is not None and row_b is not None
+    # Rewrite A's row with B's fully self-consistent package bytes + hashes.
+    connection = sqlite3.connect(settings.database_path)
+    connection.execute(
+        "UPDATE release_evidence_packages SET package_blob = ?, manifest_sha256 = ?, "
+        "package_sha256 = ? WHERE release_id = ?",
+        (sqlite3.Binary(row_b.package_blob), row_b.manifest_sha256, row_b.package_sha256, row_a.release_id),
+    )
+    connection.commit()
+    connection.close()
+
+    # A's document id comes straight from the (tampered) row.
+    connection = sqlite3.connect(settings.database_path)
+    row = connection.execute(
+        "SELECT document_id FROM release_evidence_packages WHERE release_id = ?",
+        (release_ids[0],),
+    ).fetchone()
+    connection.close()
+    document_id_a = row[0]
+    response = client.get(
+        f"/api/v2/documents/{document_id_a}/releases/{release_ids[0]}/evidence.zip"
+    )
+    assert response.status_code == 500
+    assert response.json()["detail"]["code"] == "release_evidence_corrupt"
+
+
+# R68-3, unit-locked: every structural/encoding/JSON failure maps to
+# release_evidence_corrupt — never an unhandled exception.
+def test_verify_maps_encoding_and_json_failures_to_corrupt(tmp_path: Path) -> None:
+    import zipfile as zf
+
+    from agentcad.api_release import (
+        ReleaseEvidenceCorruptError,
+        verify_evidence_package,
+    )
+    from agentcad.store import ReleaseEvidencePackage
+
+    service = make_service(tmp_path)
+    document_id = seed_document(service)
+    reviews = make_reviews(service)
+    state = _approved(reviews, document_id)
+    released = _release(reviews, document_id, state)
+    release = released.releases[-1]
+    row = service.store.get_release_package(release.release_id)
+    assert row is not None
+
+    def tampered(replace: dict[str, bytes]) -> ReleaseEvidencePackage:
+        with zf.ZipFile(BytesIO(row.package_blob)) as archive:
+            members = {name: archive.read(name) for name in archive.namelist()}
+        members.update(replace)
+        buffer = BytesIO()
+        with zf.ZipFile(buffer, "w", zf.ZIP_DEFLATED) as archive:
+            for name in sorted(members):
+                archive.writestr(name, members[name])
+        blob = buffer.getvalue()
+        manifest = members["MANIFEST.sha256"]
+        return ReleaseEvidencePackage(
+            release_id=row.release_id,
+            document_id=row.document_id,
+            manifest_sha256=hashlib.sha256(manifest).hexdigest(),
+            package_sha256=hashlib.sha256(blob).hexdigest(),
+            package_blob=blob,
+            created_at=row.created_at,
+        )
+
+    def expect_corrupt(package: ReleaseEvidencePackage, label: str) -> None:
+        with pytest.raises(ReleaseEvidenceCorruptError) as excinfo:
+            verify_evidence_package(
+                package,
+                expected_manifest_sha256=package.manifest_sha256,
+                expected_package_sha256=package.package_sha256,
+            )
+        assert excinfo.value.code == "release_evidence_corrupt", label
+
+    expect_corrupt(tampered({"MANIFEST.sha256": b"\xff\xff not utf-8"}), "manifest encoding")
+    expect_corrupt(tampered({"release.json": b"{not json"}), "release.json json")
+    expect_corrupt(tampered({"MANIFEST.sha256": b"short\n"}), "manifest line format")

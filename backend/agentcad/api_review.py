@@ -17,15 +17,17 @@ import hmac
 import secrets
 from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict
 
+from .api_release import ReleaseEvidenceCorruptError, verify_evidence_package
 from .config import Settings
 from .review_models import review_snapshot_digest
 from .review_service import (
     Actor,
     ActorNotTrustedError,
     ApprovalNotFoundError,
+    ReleaseAlreadyExistsError,
     ReviewService,
     ReviewStateConflict,
     ReviewThreadNotFoundError,
@@ -110,7 +112,9 @@ def create_review_router(
 
     def _reject(exc: ReviewWorkflowError) -> HTTPException:
         status = 422
-        if isinstance(exc, ReviewStateConflict):
+        if isinstance(exc, (ReviewStateConflict, ReleaseAlreadyExistsError)):
+            # ReviewStateConflict covers the Phase B recheck failure, surfaced
+            # as ReleaseConflictError with code release_conflict (409).
             status = 409
         elif isinstance(exc, ActorNotTrustedError):
             status = 403
@@ -152,6 +156,21 @@ def create_review_router(
             approvals.append(
                 {**approval.model_dump(mode="json"), "derived_liveness": liveness}
             )
+        releases = []
+        for release in state.releases:
+            # Double-binding derivation (Gate amendment): a release is superseded
+            # when EITHER the engineering revision or the review snapshot digest
+            # it was released against stops matching the current state. The stored
+            # mark is persisted by the next governance mutation; this read-time
+            # derivation keeps the UI honest in between.
+            derived_superseded = (
+                release.state == "superseded"
+                or release.engineering_revision != document.revision
+                or release.review_snapshot_digest != current_digest
+            )
+            releases.append(
+                {**release.model_dump(mode="json"), "derived_superseded": derived_superseded}
+            )
         return {
             "document_id": document_id,
             "governance_seq": state.governance_seq,
@@ -160,6 +179,7 @@ def create_review_router(
             "threads": threads,
             "comments": [comment.model_dump(mode="json") for comment in state.comments],
             "approvals": approvals,
+            "releases": releases,
         }
 
     @router.post("/review/operator-session")
@@ -267,5 +287,66 @@ def create_review_router(
         except ReviewWorkflowError as exc:
             raise _reject(exc) from exc
         return _view(document_id)
+
+    @router.post("/documents/{document_id}/releases")
+    def create_release(document_id: str, payload: _GovernanceSeq, request: Request) -> dict[str, Any]:
+        """M9-WS2: the one-shot formal release (operator only, frozen guards)."""
+
+        service.get_document(document_id)
+        try:
+            reviews.release_document(
+                document_id=document_id,
+                actor=_actor(request),
+                expected_governance_seq=payload.expected_governance_seq,
+            )
+        except ReviewWorkflowError as exc:
+            raise _reject(exc) from exc
+        return _view(document_id)
+
+    @router.get("/documents/{document_id}/releases/{release_id}/evidence.zip")
+    def release_evidence(document_id: str, release_id: str) -> Response:
+        """M9-WS2: pure read of one immutable evidence package.
+
+        Frozen as ``read`` in the surface contract: any actor with document
+        access may download; superseded releases keep serving their historical
+        package. The stored bytes are re-verified in memory before every
+        response — any inconsistency is ``release_evidence_corrupt`` (500).
+        """
+
+        service.get_document(document_id)
+        state = reviews.get_state(document_id)
+        record = next(
+            (release for release in state.releases if release.release_id == release_id),
+            None,
+        )
+        if record is None:
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "release_not_found", "message": f"release {release_id!r} not found"},
+            )
+        package = store.get_release_package(release_id)
+        if package is None or package.document_id != document_id:
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "release_not_found", "message": f"release {release_id!r} has no package"},
+            )
+        try:
+            verify_evidence_package(
+                package,
+                expected_manifest_sha256=record.evidence_manifest_hash,
+                expected_package_sha256=record.package_sha256,
+            )
+        except ReleaseEvidenceCorruptError as exc:
+            raise HTTPException(
+                status_code=500,
+                detail={"code": "release_evidence_corrupt", "message": str(exc)},
+            ) from exc
+        return Response(
+            package.package_blob,
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": f'attachment; filename="{release_id}-evidence.zip"'
+            },
+        )
 
     return router

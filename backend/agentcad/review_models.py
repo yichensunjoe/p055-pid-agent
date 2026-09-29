@@ -24,6 +24,7 @@ ThreadStatus = Literal["open", "resolved", "reopened"]
 ApprovalStatus = Literal["requested", "approved", "rejected", "stale", "superseded"]
 ApprovalDecision = Literal["approved", "rejected"]
 ActorKind = Literal["operator", "agent"]
+ReleaseState = Literal["released", "superseded"]
 
 
 def _now() -> datetime:
@@ -104,6 +105,46 @@ class EngineeringApproval(StrictModel):
     seq: int
 
 
+class ReleaseRecord(StrictModel):
+    """One formal release of a drawing revision (M9-WS2, Gate-frozen).
+
+    Frozen semantics:
+    * the state machine has exactly two states — ``released`` and ``superseded``;
+      release is a one-shot judgment, there is no draft release;
+    * a release binds BOTH the engineering revision and the review snapshot digest;
+      either one moving (read-time derived, persisted by the next governance
+      mutation with exactly one ``release.superseded`` audit) supersedes it;
+    * releases NEVER enter :func:`review_snapshot_digest` — publishing must not
+      invalidate the approval it consumed;
+    * ``seq`` is the governance sequence of the mutation that created the record
+      (expected_governance_seq + 1), exactly like threads and approvals;
+    * ``evidence_manifest_hash`` / ``package_sha256`` are hashes OF the evidence
+      package, therefore they never appear inside the package's ``release.json``.
+    """
+
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
+    release_id: str
+    document_id: str
+    state: ReleaseState = "released"
+    approval_id: str
+    engineering_revision: int
+    review_snapshot_digest: str
+    readiness_hash: str
+    evidence_manifest_hash: str
+    package_sha256: str
+    released_by: str
+    released_by_kind: ActorKind
+    released_at: datetime
+    superseded_reason: str | None = None  # revision_changed | review_snapshot_changed
+    seq: int
+
+    def evidence_projection(self) -> dict[str, Any]:
+        """The ``release.json`` member: every field except the package hashes."""
+
+        return self.model_dump(mode="json", exclude={"evidence_manifest_hash", "package_sha256"})
+
+
 class ReviewState(StrictModel):
     """The whole governance surface of one document."""
 
@@ -114,6 +155,7 @@ class ReviewState(StrictModel):
     threads: tuple[ReviewThread, ...] = ()
     comments: tuple[ReviewComment, ...] = ()
     approvals: tuple[EngineeringApproval, ...] = ()
+    releases: tuple[ReleaseRecord, ...] = ()
 
 
 def _canonical(value: Any) -> str:
@@ -129,9 +171,9 @@ def review_snapshot_digest(state: ReviewState) -> str:
 
     Covers review facts only: threads (with lifecycle facts and the trusted actor
     identities — who resolved an issue is a governance fact), and comments.
-    Excludes approvals entirely (an approval binds this digest; including approvals
-    would be circular), the governance sequence, timestamps, and read-time derived
-    stale/orphaned states.
+    Excludes approvals and releases entirely (an approval binds this digest and a
+    release binds it too; including either would be circular), the governance
+    sequence, timestamps, and read-time derived stale/orphaned/superseded states.
     """
 
     projection = {
@@ -180,6 +222,10 @@ def new_comment_id(thread_id: str, entry_seq: int, body: str, author: str) -> st
 
 def new_approval_id(document_id: str, revision: int, seq: int) -> str:
     return "ap_" + _hash(f"{document_id}|{revision}|{seq}")[:12]
+
+
+def new_release_id(document_id: str, revision: int, seq: int) -> str:
+    return "rel_" + _hash(f"{document_id}|{revision}|{seq}")[:12]
 
 
 def utcnow() -> datetime:

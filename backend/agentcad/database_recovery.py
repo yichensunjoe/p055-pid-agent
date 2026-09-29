@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, BinaryIO
 from urllib.parse import quote
 
-CURRENT_SCHEMA_VERSION = 12
+CURRENT_SCHEMA_VERSION = 13
 BACKUP_FORMAT = "pid-agent.sqlite-backup"
 BACKUP_VERSION = 1
 BACKUP_DATABASE_MEMBER = "database.sqlite3"
@@ -1049,6 +1049,31 @@ def _migration_12(connection: sqlite3.Connection) -> None:
     )
 
 
+def _migration_13(connection: sqlite3.Connection) -> None:
+    """M9-WS2: immutable evidence-package bytes, one row per release.
+
+    Release *metadata* lives inside the governance JSON (ReviewState.releases, one
+    CAS plane with threads/approvals); this table only holds the immutable package
+    blob plus the two hashes the export endpoint re-verifies before serving.
+    Deliberately free-standing like the review state table: no foreign key, so no
+    cascade can ever destroy released evidence. Additive — pre-v13 databases have
+    zero evidence packages, exactly like pre-v12 had zero review records.
+    """
+
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS release_evidence_packages (
+            release_id TEXT PRIMARY KEY,
+            document_id TEXT NOT NULL,
+            manifest_sha256 TEXT NOT NULL,
+            package_sha256 TEXT NOT NULL,
+            package_blob BLOB NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+
+
 _MIGRATIONS = {
     1: _migration_1,
     2: _migration_2,
@@ -1062,6 +1087,7 @@ _MIGRATIONS = {
     10: _migration_10,
     11: _migration_11,
     12: _migration_12,
+    13: _migration_13,
 }
 
 
@@ -1093,6 +1119,7 @@ def _validate_required_schema(connection: sqlite3.Connection) -> None:
         "semantic_candidates",
         "review_decisions",
         "engineering_review_state",
+        "release_evidence_packages",
         "confirmed_semantic_findings",
         "synthesis_proposal_evidence",
         _METADATA_TABLE,

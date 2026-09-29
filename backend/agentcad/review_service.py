@@ -22,22 +22,30 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from .api_release import EvidenceBuildError, build_release_evidence_package
 from .audit_models import AuditRecordDraft
-from .release_validator import ReleaseReadiness, assess_document_release_readiness
+from .release_validator import (
+    ReleaseReadiness,
+    assess_document_release_readiness,
+    assess_release_readiness,
+)
 from .review_models import (
     ActorKind,
     EngineeringApproval,
+    ReleaseRecord,
     ReviewComment,
     ReviewState,
     ReviewThread,
     new_approval_id,
     new_comment_id,
+    new_release_id,
     new_thread_id,
     review_snapshot_digest,
     utcnow,
 )
 from .service import DocumentService
 from .store import ReviewStateConflictError, SQLiteDocumentStore
+from .validation_engine import run_validation
 
 
 class ReviewWorkflowError(RuntimeError):
@@ -80,6 +88,26 @@ class ReviewStateConflict(ReviewWorkflowError):
 
 class ApprovalNotFoundError(ReviewWorkflowError):
     code = "approval_not_found"
+
+
+class ReleaseOpenThreadsError(ReviewWorkflowError):
+    code = "release_open_threads"
+
+
+class ReleaseApprovalNotLiveError(ReviewWorkflowError):
+    code = "release_approval_not_live"
+
+
+class ReleaseReadinessNotEligibleError(ReviewWorkflowError):
+    code = "release_readiness_not_eligible"
+
+
+class ReleaseAlreadyExistsError(ReviewWorkflowError):
+    code = "release_already_exists"
+
+
+class ReleaseConflictError(ReviewStateConflict):
+    code = "release_conflict"
 
 
 @dataclass(frozen=True)
@@ -154,7 +182,7 @@ class ReviewService:
         # survive a review-surface move it did not vet. The reconciled state and
         # one approval.invalidated audit per invalidated approval commit in the
         # same SQLite transaction as the mutation that triggered them.
-        next_state, invalidated = self._reconcile(next_state, reason=invalidate_reason)
+        next_state, invalidated, superseded = self._reconcile(next_state, reason=invalidate_reason)
         draft = AuditRecordDraft(
             event_type=event_type,
             actor=actor.identity,
@@ -187,6 +215,24 @@ class ReviewService:
                 },
             )
             for approval_id, reason in invalidated
+        ) + tuple(
+            AuditRecordDraft(
+                event_type="release.superseded",
+                actor=actor.identity,
+                surface="rest",
+                tool_name="review_workflow",
+                status="applied",
+                document_id=state.document_id,
+                label=f"Release {release_id} superseded",
+                evidence={
+                    "actor_kind": actor.kind,
+                    "governance_seq": next_state.governance_seq,
+                    "release_id": release_id,
+                    "reason": reason,
+                    "trigger_event": event_type,
+                },
+            )
+            for release_id, reason in superseded
         )
         try:
             if expected_seq == 0 and self.store.get_review_state(state.document_id) is None:
@@ -493,6 +539,273 @@ class ReviewService:
             },
         )
 
+    # ------------------------------------------------------------------ release
+
+    def release_document(
+        self,
+        *,
+        document_id: str,
+        actor: Actor,
+        expected_governance_seq: int,
+        now: Any = None,
+    ) -> ReviewState:
+        """The one-shot formal release (M9-WS2, Gate-frozen two phases).
+
+        Guard order is frozen: actor trust → open threads → approval live →
+        one-live-release-per-binding → fresh readiness → package build. A guard
+        refusal writes no state; F1/F2/F3 additionally record exactly one
+        audit-only ``release.denied`` fact (no governance_seq movement), while an
+        untrusted actor (F4) never reaches this layer and injects no audit.
+
+        Phase A pins ONE in-memory Document snapshot — the only drawing read —
+        and stages the whole evidence package in memory without touching the
+        database write path. Phase B is the store's single atomic
+        ``commit_release`` primitive: revision recheck, governance CAS, state
+        write, immutable package row and ``release.released`` audit in one short
+        transaction; any failure rolls back everything.
+        """
+
+        self._require_operator(actor, "release a drawing")
+        state = self._raw_state(document_id)
+        try:
+            self._require_seq(state, expected_governance_seq)
+        except ReviewStateConflict as exc:
+            raise ReleaseConflictError(str(exc)) from exc
+        open_threads = [
+            thread.thread_id for thread in state.threads if thread.status in {"open", "reopened"}
+        ]
+        if open_threads:
+            self._deny_release(
+                state,
+                actor=actor,
+                error_code="release_open_threads",
+                evidence={"open_threads": open_threads},
+            )
+        document = self.service.get_document(document_id)  # the one pinned read
+        current_digest = review_snapshot_digest(state)
+        approval = next(
+            (
+                item
+                for item in reversed(state.approvals)
+                if item.status == "approved"
+                and item.engineering_revision == document.revision
+                and item.review_snapshot_digest == current_digest
+            ),
+            None,
+        )
+        if approval is None:
+            self._deny_release(
+                state,
+                actor=actor,
+                error_code="release_approval_not_live",
+                evidence={"engineering_revision": document.revision},
+            )
+        existing = next(
+            (
+                item
+                for item in reversed(state.releases)
+                if item.state == "released"
+                and item.engineering_revision == document.revision
+                and item.review_snapshot_digest == current_digest
+            ),
+            None,
+        )
+        if existing is not None:
+            raise ReleaseAlreadyExistsError(
+                f"release {existing.release_id} already binds revision "
+                f"{document.revision} and the current review snapshot; it must "
+                "supersede before a new release is possible"
+            )
+        if self._readiness_profile is None:
+            raise ReviewWorkflowError(
+                "review service has no readiness profile configured",
+                details={"code": "readiness_profile_missing"},
+            )
+
+        # ---------------------------------------------------------- Phase A
+        moment = now if now is not None else utcnow()
+        profile = self._readiness_profile
+        validation_result = run_validation(
+            document,
+            self.service.symbols,
+            profile,
+            service=self.service,
+            now=moment,
+        )
+        readiness = assess_release_readiness(
+            document,
+            self.service.symbols,
+            profile,
+            service=self.service,
+            now=moment,
+            document_name=document.name,
+        )
+        if readiness.validation_hash != validation_result.result_hash:
+            raise ReviewWorkflowError(
+                "release readiness and validation evidence diverged on the same "
+                "pinned snapshot — refusing to release",
+                details={"code": "release_evidence_divergence"},
+            )
+        if readiness.state != "eligible":
+            self._deny_release(
+                state,
+                actor=actor,
+                error_code="release_readiness_not_eligible",
+                evidence={
+                    "readiness_state": readiness.state,
+                    "reasons": readiness.reasons,
+                    "readiness_hash": readiness.readiness_hash,
+                },
+            )
+        release = ReleaseRecord(
+            release_id=new_release_id(document_id, document.revision, state.governance_seq + 1),
+            document_id=document_id,
+            state="released",
+            approval_id=approval.approval_id,
+            engineering_revision=document.revision,
+            review_snapshot_digest=current_digest,
+            readiness_hash=readiness.readiness_hash,
+            evidence_manifest_hash="",
+            package_sha256="",
+            released_by=actor.identity,
+            released_by_kind=actor.kind,
+            released_at=moment,
+            seq=state.governance_seq + 1,
+        )
+        try:
+            package = build_release_evidence_package(
+                document=document,
+                state_release=release,
+                approval_json=approval.model_dump(mode="json"),
+                readiness=readiness,
+                validation_result=validation_result,
+                service=self.service,
+                store=self.store,
+            )
+        except EvidenceBuildError as exc:
+            raise ReviewWorkflowError(
+                str(exc), details={"code": "release_evidence_build_failed"}
+            ) from exc
+        release = release.model_copy(
+            update={
+                "evidence_manifest_hash": package.manifest_sha256,
+                "package_sha256": package.package_sha256,
+            }
+        )
+
+        # ---------------------------------------------------------- Phase B
+        next_state = state.model_copy(
+            update={
+                "governance_seq": state.governance_seq + 1,
+                "releases": (*state.releases, release),
+            }
+        )
+        # Release creation never moves the review digest or the revision, so the
+        # reconcile persists any not-yet-persisted supersede of older releases in
+        # the same transaction — it can never touch the approval being consumed.
+        next_state, _invalidated, superseded = self._reconcile(next_state, reason=None)
+        draft = AuditRecordDraft(
+            event_type="release.released",
+            actor=actor.identity,
+            surface="rest",
+            tool_name="review_workflow",
+            status="applied",
+            document_id=document_id,
+            label=f"Released revision {document.revision}",
+            evidence={
+                "actor_kind": actor.kind,
+                "governance_seq": next_state.governance_seq,
+                "release_id": release.release_id,
+                "approval_id": approval.approval_id,
+                "engineering_revision": document.revision,
+                "evidence_manifest_hash": package.manifest_sha256,
+                "package_sha256": package.package_sha256,
+                "verified_through_ordinal": package.verified_through_ordinal,
+                "verified_global_tip_hash": package.verified_global_tip_hash,
+            },
+        )
+        supersede_drafts = tuple(
+            AuditRecordDraft(
+                event_type="release.superseded",
+                actor=actor.identity,
+                surface="rest",
+                tool_name="review_workflow",
+                status="applied",
+                document_id=document_id,
+                label=f"Release {release_id} superseded",
+                evidence={
+                    "actor_kind": actor.kind,
+                    "governance_seq": next_state.governance_seq,
+                    "release_id": release_id,
+                    "reason": reason,
+                    "trigger_event": "release.released",
+                },
+            )
+            for release_id, reason in superseded
+        )
+        try:
+            self.store.commit_release(
+                next_state,
+                expected_governance_seq=expected_governance_seq,
+                expected_engineering_revision=document.revision,
+                release_id=release.release_id,
+                manifest_sha256=package.manifest_sha256,
+                package_sha256=package.package_sha256,
+                package_blob=package.zip_bytes,
+                audit=draft,
+                extra_audits=supersede_drafts,
+            )
+        except ReviewStateConflictError as exc:
+            raise ReleaseConflictError(str(exc)) from exc
+        return next_state
+
+    def _deny_release(
+        self,
+        state: ReviewState,
+        *,
+        actor: Actor,
+        error_code: str,
+        evidence: dict[str, Any],
+    ) -> None:
+        """Record the one audit-only denial fact, then refuse (no state writes).
+
+        Gate-frozen: F1/F2/F3 write exactly one ``release.denied`` audit with
+        status ``rejected`` and move no governance sequence — a denial is a
+        governance fact, not a mutation. F4 never reaches here (the actor check
+        precedes), so an untrusted caller can never inject into the chain.
+        """
+
+        self.store.record_audit_event(
+            AuditRecordDraft(
+                event_type="release.denied",
+                actor=actor.identity,
+                surface="rest",
+                tool_name="review_workflow",
+                status="rejected",
+                document_id=state.document_id,
+                label=f"Release denied: {error_code}",
+                evidence={
+                    "actor_kind": actor.kind,
+                    "error_code": error_code,
+                    **evidence,
+                },
+            )
+        )
+        if error_code == "release_open_threads":
+            raise ReleaseOpenThreadsError(
+                f"unresolved review threads block release: {evidence['open_threads']}"
+            )
+        if error_code == "release_approval_not_live":
+            raise ReleaseApprovalNotLiveError(
+                "release requires an approved engineering approval whose revision "
+                f"and review snapshot bindings still hold; none is live for revision "
+                f"{evidence['engineering_revision']}"
+            )
+        raise ReleaseReadinessNotEligibleError(
+            f"fresh release readiness is {evidence['readiness_state']!r}; release "
+            f"requires 'eligible' (fresh hash {evidence['readiness_hash']})"
+        )
+
     # ----------------------------------------------------------------- helpers
 
     def _readiness(self, document_id: str) -> ReleaseReadiness:
@@ -514,23 +827,29 @@ class ReviewService:
 
     def _reconcile(
         self, state: ReviewState, *, reason: str | None
-    ) -> tuple[ReviewState, tuple[tuple[str, str], ...]]:
-        """The single approval-liveness reconcile (Round-2 Gate freeze).
+    ) -> tuple[ReviewState, tuple[tuple[str, str], ...], tuple[tuple[str, str], ...]]:
+        """The single governance liveness reconcile (Round-2 + WS2 Gate freeze).
 
         Runs inside every governance mutation, before persistence, so the stored
-        status and its ``approval.invalidated`` audit facts commit atomically with
-        the mutation that triggered them:
+        marks and their audit facts commit atomically with the mutation that
+        triggered them:
 
-        * engineering revision drift always wins — an approval bound to an old
-          revision is stale (``revision_changed``) no matter what else happened,
-          and this is also how a drifted approval gets persisted stale on the
-          next governance mutation after an external engineering edit;
-        * otherwise, when the mutation moved the review surface (new open thread,
-          comment, reopen — the caller passes its Gate-frozen reason, or None for
-          mutations that never invalidate: resolve, request, decide), every live
-          (``requested``/``approved``) approval goes ``stale`` with that reason.
+        * approvals: engineering revision drift always wins — an approval bound
+          to an old revision is stale (``revision_changed``) no matter what else
+          happened; otherwise, when the mutation moved the review surface (new
+          open thread, comment, reopen — the caller passes its Gate-frozen
+          reason, or None for mutations that never invalidate: resolve, request,
+          decide, release), every live approval goes ``stale`` with that reason;
+        * releases: a released record is superseded when EITHER binding moves —
+          the engineering revision (``revision_changed``) or the review snapshot
+          digest (``review_snapshot_changed``). Releases never enter the review
+          digest, so persisting a supersede can never cascade into another
+          supersede; already-superseded records are never re-touched, so each
+          transition produces exactly one ``release.superseded`` audit.
         """
+
         current_revision = self.service.get_document(state.document_id).revision
+        current_digest = review_snapshot_digest(state)
         approvals: list[EngineeringApproval] = []
         invalidated: list[tuple[str, str]] = []
         for approval in state.approvals:
@@ -551,9 +870,42 @@ class ReviewService:
                 invalidated.append((approval.approval_id, reason))
             else:
                 approvals.append(approval)
-        if not invalidated:
-            return state, ()
-        return state.model_copy(update={"approvals": tuple(approvals)}), tuple(invalidated)
+
+        releases: list[ReleaseRecord] = []
+        superseded: list[tuple[str, str]] = []
+        for release in state.releases:
+            if release.state != "released":
+                releases.append(release)
+                continue
+            if release.engineering_revision != current_revision:
+                releases.append(
+                    release.model_copy(
+                        update={"state": "superseded", "superseded_reason": "revision_changed"}
+                    )
+                )
+                superseded.append((release.release_id, "revision_changed"))
+            elif release.review_snapshot_digest != current_digest:
+                releases.append(
+                    release.model_copy(
+                        update={
+                            "state": "superseded",
+                            "superseded_reason": "review_snapshot_changed",
+                        }
+                    )
+                )
+                superseded.append((release.release_id, "review_snapshot_changed"))
+            else:
+                releases.append(release)
+
+        if not invalidated and not superseded:
+            return state, (), ()
+        return (
+            state.model_copy(
+                update={"approvals": tuple(approvals), "releases": tuple(releases)}
+            ),
+            tuple(invalidated),
+            tuple(superseded),
+        )
 
     def _replace_thread(self, state: ReviewState, thread: ReviewThread) -> ReviewState:
         return state.model_copy(

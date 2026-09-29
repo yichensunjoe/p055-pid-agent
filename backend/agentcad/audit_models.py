@@ -57,6 +57,10 @@ AuditEventType = Literal[
     "approval.requested",
     "approval.decided",
     "approval.invalidated",
+    # M9-WS2: formal release + evidence package. Same governance plane, same rule.
+    "release.released",
+    "release.superseded",
+    "release.denied",
 ]
 
 AuditStatus = Literal["applied", "rejected", "failed"]

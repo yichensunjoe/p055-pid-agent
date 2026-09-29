@@ -37,6 +37,20 @@ type ApprovalView = {
   derived_liveness: string;
 };
 
+type ReleaseView = {
+  release_id: string;
+  state: "released" | "superseded";
+  approval_id: string;
+  engineering_revision: number;
+  readiness_hash: string;
+  evidence_manifest_hash: string;
+  package_sha256: string;
+  released_by: string;
+  released_at: string;
+  superseded_reason: string | null;
+  derived_superseded: boolean;
+};
+
 type ReviewView = {
   document_id: string;
   governance_seq: number;
@@ -45,6 +59,7 @@ type ReviewView = {
   threads: ReviewThreadView[];
   comments: ReviewCommentView[];
   approvals: ApprovalView[];
+  releases: ReleaseView[];
 };
 
 async function reviewFetch<T>(path: string, init: RequestInit = {}, token = ""): Promise<T> {
@@ -75,6 +90,7 @@ export function ReviewPanel() {
   const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
   const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
+  const [confirmingRelease, setConfirmingRelease] = useState(false);
 
   const documentId = document?.id ?? "";
 
@@ -364,6 +380,81 @@ export function ReviewPanel() {
         >
           申请工程批准
         </button>
+      </section>
+
+      <section className="review-releases">
+        <h3>正式发布</h3>
+        {view.releases.length === 0 ? <p className="review-empty">尚无发布记录。</p> : null}
+        {view.releases.map((release) => (
+          <article
+            key={release.release_id}
+            className={`review-release review-release--${
+              release.derived_superseded ? "superseded" : "released"
+            }`}
+          >
+            <header>
+              <strong>{release.release_id}</strong>
+              <span
+                className={`review-badge review-badge--${
+                  release.derived_superseded ? "superseded" : "released"
+                }`}
+              >
+                {release.derived_superseded
+                  ? `superseded${release.superseded_reason ? `（${release.superseded_reason}）` : ""}`
+                  : "released"}
+              </span>
+            </header>
+            <p className="review-meta">
+              绑定 revision {release.engineering_revision}；由 {release.released_by} 发布于{" "}
+              {release.released_at}
+            </p>
+            <p className="review-meta">
+              包哈希 <code>{release.package_sha256.slice(0, 12)}</code>（manifest{" "}
+              <code>{release.evidence_manifest_hash.slice(0, 12)}</code>）
+            </p>
+            <div className="review-actions">
+              <a
+                className="review-download"
+                href={`/api/v2/documents/${documentId}/releases/${release.release_id}/evidence.zip`}
+                download
+              >
+                下载证据包
+              </a>
+            </div>
+          </article>
+        ))}
+        {identity ? (
+          <div className="review-actions">
+            {confirmingRelease ? (
+              <>
+                <span>确认发布当前 revision？该判定一次性生效并生成证据包。</span>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() =>
+                    run(async () => {
+                      await reviewFetch(
+                        `/api/v2/documents/${documentId}/releases`,
+                        { method: "POST", body: JSON.stringify({ expected_governance_seq: seq }) },
+                        token,
+                      );
+                      setConfirmingRelease(false);
+                    })
+                  }
+                >
+                  确认发布
+                </button>
+                <button type="button" disabled={busy} onClick={() => setConfirmingRelease(false)}>
+                  取消
+                </button>
+              </>
+            ) : (
+              <button type="button" disabled={busy} onClick={() => setConfirmingRelease(true)}>
+                发布 Release
+              </button>
+            )}
+          </div>
+        ) : null}
       </section>
     </div>
   );

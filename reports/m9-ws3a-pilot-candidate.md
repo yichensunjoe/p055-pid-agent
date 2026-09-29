@@ -22,7 +22,7 @@
 
 1. 用本系统完成试点图纸新建（NL surface 或人工编辑，agent 辅助在现有允许范围内）。
 2. 跑全量 validators → release-readiness fresh 全绿。
-3. Owner 以 operator 身份通过 Review 面板提出 ≥1 条审查意见 → 全部线程闭环（resolved + resolution_note）。
+3. Owner 以 operator 身份通过 Review 面板提出审查意见 → **所有真实审查意见全部闭环**（resolved + resolution_note）；不人为制造 defect，无意见则如实记录「零意见」。
 4. 申请工程批准 → Owner 决策 approve（决策时 readiness eligible 绑定入 approval）。
 5. 执行 release 导出 evidence package；人工校验包成员与 MANIFEST。
 6. 对照基准 reference 出具差异说明；批准记录存档。
@@ -38,5 +38,5 @@
 
 - WS1（review workflow）：**CLOSED**（PR #67 → main@153c28c）。
 - WS2（release gate + evidence package）：**CLOSED**（PR #68 → main@7d5cfa3，main CI 36548626197 四绿）。
-- WS3B（真实试点）：BLOCKED——待 Owner 确认本表 + Gate 单独放行；放行时重新确认 main exact SHA 与运行环境。
+- WS3B（真实试点）：**候选 A 范围已获 Gate APPROVED（shadow rehearsal READY）；REAL PILOT 差 Owner 四字段**（新会话裁定）：①真实项目锚点（受控 shadow 副本即可）②专业审核人姓名/角色/资格 ③≥1 项真实项目 reference ④数据授权登记。**Owner 补齐后自动转 EXECUTION GO**（免再审），执行前 preflight：exact SHA、无未 Review 功能变化（docs-only 可续）、环境/schema/pilot 文档 ID 固定、不扩「换成」/G4/LIT。执行纪律：干净 pilot project 从正常产品入口操作，禁 fixture/直写 DB，审查意见须真实。
 - M9 Closeout 草案骨架：reports/m9-closeout-draft.md（已推 docs 分支）。

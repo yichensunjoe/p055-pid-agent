@@ -16,6 +16,12 @@
 
 - **R41 补充（同日）**：Q2-1R 设计修订已提交（ccfd678）：TT 解禁有 8d82f75 单行先例、FT/LT 不动（FT=审计范例）、TT 解禁后现有英文 hint 已精确隔离候选（无需中文词表）。DEV-6 句三 s3 根因=「接到一个缓冲罐 V-102」整条被分类为 connect 子句、句内嵌的添加语义未分解成实体（V-102 未声明→连接 undelivered，无 port receipt）——G2 同类 planner grammar 项，已报 Gate 路由。PR #58 CI 四绿（36379051307），等 Gate 裁定期间 ChatGPT 侧基础设施多次抖动（账户加载失败/Cloudflare），消息已全部送达线程。
 
+## 近期轮次（2026-09-29 R51+ —— WS3B 裁定：候选范围批，真实试点差 Owner 四字段）
+
+- **做了什么**：① 拟 WS3A 试点候选提案（主候选 HOLDOUT-1 小流程 5 设备 4 连接 / 备选 DEV-1，reports/m9-ws3a-pilot-candidate.md @ a78e125）；② 旧 Gate 会话达硬上限且回复串题，按同一 GPT 开新会话送上下文简报续裁。
+- **Gate 裁定**：候选 A 范围 APPROVED（受控 shadow rehearsal READY）；**REAL PILOT 仍 BLOCKED，仅差 Owner 四字段**：①真实项目锚点（可为受控 shadow 副本，不得再跑 HOLDOUT benchmark）②专业审核人姓名/角色/资格（operator token ≠ 审核资格）③至少一项真实项目 reference（既有 P&ID/制图约定/deliverable 标准）④数据授权登记（真实项目来源+Owner 授权；纯 synthetic 只能算 rehearsal）。补齐后**自动转 EXECUTION GO**（免再审方案），执行前 preflight：exact SHA / 无未 Review 功能变化（docs-only 可续）/ 环境+schema+pilot 文档 ID 固定记录 / 不扩「换成」G4 LIT。执行纪律：干净 pilot project 从正常产品入口操作、禁测试 fixture/直写 DB、审查意见须真实（脚本第 3 步改「所有真实审查意见全部闭环」）。
+- **下一步**：Owner 补四字段 → 我执行 preflight + 七步验收脚本 → 回填 closeout §5/§6 → 签 M9 Closeout Gate。
+
 ## 近期轮次（2026-09-29 R51 —— WS2 合并封账）
 
 - **做了什么**：① WS2 首报 → CHANGES REQUIRED×5（R68-1 audit TOCTOU / R68-2 跨面绑定 / R68-3 corrupt 映射 / R68-4 F4 硬锁 / R68-5 真并发），21eb13f 全闭合（audit.py 纯函数 verify_audit_records 入白名单）；② 复送 → R68-3 剩 MANIFEST 行序一个缺口，a091728 锁死（行序 tuple 比对 + 逆序突变硬测）；③ 终获 **MERGE GATE = APPROVED（M9-WS2 = PASS）**，fail-closed 核对 base/head/CI/15-files 后 squash 合并，main→7d5cfa3，main CI 36548626197 四绿。

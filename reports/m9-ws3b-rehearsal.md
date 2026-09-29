@@ -29,4 +29,6 @@
 
 ## 升级到 REAL PILOT 仍差的（Gate 冻结，Owner 动作）
 
-①真实项目锚点 ②专业审核人姓名/角色/资格 ③≥1 项真实项目 reference ④数据授权登记。补齐自动转 EXECUTION GO。
+①真实项目锚点 ②专业审核人姓名/角色/资格 ③≥1 项真实项目 reference ④数据授权登记。
+
+**升级流程（2026-09-29 Gate 收紧后冻结，取代此前「补齐自动转 EXECUTION GO」表述）**：四字段补齐 → fresh preflight → 锁定当时 GitHub 可解析的 exact execution SHA → 核对 rehearsal→execution delta 无影响 WS3B 的未 Review 功能变化 → 固定环境/reference/授权/operator 身份 → 全部 PASS 后才签发 EXECUTION GO。

@@ -1,112 +1,165 @@
-# M9-WS2 Release Gate + Evidence Package · 详细设计（送 Gate 签 DETAILED DESIGN GO）
+# M9-WS2 Release Gate + Evidence Package · 详细设计 v2（R49-1~R49-6 全闭合，送 Gate 签 DETAILED DESIGN GO）
 
-> 前置：WS1 已合并（main@153c28c，PR #67 squash，M9-WS1 = PASS/CLOSED）。本设计按 Gate 上轮冻结的下一步清单逐项给出：release 状态机 / approval 消费规则 / fresh readiness gate / evidence package manifest+hash+export 契约 / failure modes / migration+API+UI+test 矩阵 / exact 白名单。
+> 前置：WS1 已合并（main@153c28c，PR #67 squash，M9-WS1 = PASS/CLOSED）。v1 设计获 DIRECTION ACCEPTED + CHANGES REQUIRED（R49-1~R49-6），本版逐项闭合；三个待裁决策点已由 Gate 冻结（① 两态状态机认可；② **否** blob-in-JSON，改 v13 附加表 release_evidence_packages；③ evidence.zip 类别冻结为 read）。
+> 执行红线：WS2 实现分支必须从 main@153c28c（或届时 exact main）fresh cut；本文档所在 docs 分支（4ee286f 后继）与 main diverged，只作设计文本来源。
 
 ## 1. Release 状态机
 
-治理实体 `ReleaseRecord`（与 EngineeringApproval 同面、同存储——作为 `ReviewState.releases` 元组内嵌，见 §6；不进任何工程 digest）：
+治理实体 `ReleaseRecord`（ReviewState.releases 元组内嵌，随 governance JSON 一体 CAS；不进任何工程 digest）：
 
 ```
 release_id, document_id, state ∈ {released, superseded},
 approval_id(绑 WS1 approval), engineering_revision,
 review_snapshot_digest, readiness_hash(fresh, release 时重算),
-evidence_package_hash, released_by(operator), released_at, seq
+evidence_manifest_hash, package_sha256,
+released_by(operator), released_at, seq
 ```
 
-转移（全部 fail-closed，守卫不过即整体拒绝、零写入）：
+转移（守卫不过即拒绝，语义按 §5 F1–F7 精确区分写入面）：
 
 ```
 （无记录） --release[守卫全过]--> released
 released   --工程 revision 漂移--> superseded（读取期派生 + 下一治理写持久化，语义同 WS1 stale）
 ```
 
-- 状态机刻意不设 draft：release 是一次性判定，不存在"半成品 release"。
-- superseded 不冻结、不阻止工程写；release 不是锁定（M9 验证的是"经审核后可进入正式交付流程的能力"）。
-- v1 单态 released，不引入 AFC/IFC 细分（Gate 已留 WS2 之外）。
-- 并发：release 走 governance_seq CAS 同一平面（ReviewState 扩展），两个并发 release 只有一个落地，另一个 `release_conflict`（409）。
+- 两态无 draft（Gate 已裁认可）：release 是一次性判定，不存在半成品 release。
+- superseded 不冻结、不阻止工程写；release 不是锁定。
+- v1 单态 released，不引入 AFC/IFC 细分。
+- 并发：release 走 governance_seq CAS 同一平面；并发双 release 一胜一 409 `release_conflict`。
 
 ## 2. Approval 消费规则
 
-- 每个 ReleaseRecord 精确绑定一个 `approval_id`；该 approval 在 release 时刻必须 `status=approved` 且 derived_liveness=live（revision 未漂 + review digest 未动 + 未被 invalidate）。
-- release **不消费、不修改** approval：approval 保持 approved 原状（同 WS1 resolve 不失效语义）。release 与 approval 是"引用"不是"转移"。
-- superseded 后重发 release 必须走**新 approval**：revision 漂移已杀死旧 approval 的 liveness，新 revision 上的 release 天然要求新决策——闭环不靠特判，靠 WS1 已冻结的 liveness 语义自动成立。
-- release 拒绝（守卫不过）不使 approval 失效——拒绝不动 review surface。
+- 每个 ReleaseRecord 精确绑定一个 approval_id；release 时刻必须 `status=approved` 且 derived_liveness=live。
+- release **不消费、不修改** approval（同 WS1 resolve 不失效语义）。
+- superseded 后重发 release 必须走新 approval：revision 漂移已杀死旧 approval liveness，闭环靠 WS1 已冻结语义自动成立，无特判。
+- release 拒绝（F1/F2/F3）不使 approval 失效——拒绝不动 review surface。
 
 ## 3. Fresh readiness gate
 
-- release 时**重跑** `assess_document_release_readiness`，要求 `state=eligible`；WS1 决策时 hash 只是证据，不作数（WS1 冻结原文"WS2 真正进入 release state 时还要再做一次 fresh readiness gate"）。
-- fresh `readiness_hash` 写入 ReleaseRecord；与 decision-time hash 不要求相等。
-- 跨平面竞态收尾：工程 revision 可能在 readiness 重跑与落库之间前进。release 持久化在**同一 SQLite 事务**内复核 `documents.revision`（store 层 `expected_engineering_revision` 校验，不过即 ReviewStateConflict→409 release_conflict）——守卫、状态、证据包、audit 一条事务，无窗口。
+- release 时**重跑** `assess_document_release_readiness`，要求 `state=eligible`；decision-time hash 仅作证据。
+- fresh readiness_hash 写入 ReleaseRecord。
+- 测试必须真正证明 fresh rerun（R49-5）：用测试 seam 使 release-time readiness 返回 not_eligible，同时保持 engineering revision 与 review digest 不变（revision 一变会先在 F1 拦下，根本到不了 F2——v1 测试构造有此缺陷，已废），断言 readiness 被重新调用、未复用 decision_readiness_hash。生产语义不变。
 
-## 4. Evidence package（manifest / hash / export 契约）
+## 4. Evidence package（manifest / hash / export 契约，R49-1/R49-2 闭合）
 
-**生成时机**：release 事务内一次性生成并**整包存储**（zip 字节存 ReleaseRecord.package_blob）；导出是纯读已存字节——取证冻结在判定时刻，不接受事后重算，也不接受调用方传入 hash。
+**生成时机与两阶段纪律（R49-6）**：
 
-**包内容**（文件名固定、确定性排序）：
+- **Phase A — 内存 staging（不占 SQLite 写锁）**：钉住 exact revision + exact governance_seq → fresh readiness → 生成 PDF/DXF/validation/audit projection → 构造包字节。此间 revision/governance 前进无妨——产物作废重来即可。
+- **Phase B — 短事务落库**：BEGIN IMMEDIATE → 复核 documents.revision == expected_engineering_revision、复核 governance_seq == expected、复核 release 不变量 → 写 ReviewState metadata（ReleaseRecord）→ 写 release_evidence_packages 行（manifest/blob）→ 写 release.released audit → COMMIT。任一复核不过即整体回滚，内存 ZIP 丢弃。绝不落半截 release，也不为 PDF/DXF 生成持有数据库写锁。
+
+**包成员**（文件名固定）：
 
 | 文件 | 来源 |
 |---|---|
-| `drawing.pdf` | 既有 PDF 导出面复用（release 事务内 fresh 调用） |
-| `drawing.dxf` | 既有 DXF 导出面复用 |
-| `validation-report.json` | fresh 全量 validation run 结果 |
+| `drawing.pdf` / `drawing.dxf` | 既有导出面（Phase A fresh 调用） |
+| `validation-report.json` | fresh 全量 validation run |
 | `release-readiness.json` | fresh readiness 全量结果（含 hash） |
-| `audit-chain.json` | 该 document 全量 audit 记录 + chain verify 结果 |
-| `approval.json` | WS1 approval 全字段（决策四元组+hash） |
-| `release.json` | ReleaseRecord 全字段（不含 blob） |
-| `MANIFEST.sha256` | 见下 |
+| `audit-chain.json` | **R49-2 冻结格式**，见下 |
+| `approval.json` | WS1 approval 全字段 |
+| `release.json` | ReleaseRecord 的 **evidence projection**（R49-1：不含 evidence_manifest_hash / package_sha256 / package_blob） |
+| `MANIFEST.sha256` | `<sha256hex><两个空格><filename>`，文件名 ASCII 升序，LF，末行换行 |
 
-**MANIFEST 契约**：每行 `<sha256hex><两个空格><filename>`，文件名按 ASCII 升序，LF 行尾，末行有换行。`evidence_package_hash = sha256(MANIFEST.sha256 的内容)`（hash-of-hashes），在 release 事务内写回 ReleaseRecord。
+**hash 形成顺序（R49-1 消环，顺序固定）**：
+1. 生成普通成员字节（含 release.json projection——此时 manifest/package hash 尚不存在，物理上不可能自引用）
+2. 对每个普通成员算 SHA256
+3. 生成 MANIFEST.sha256
+4. `evidence_manifest_hash = sha256(MANIFEST bytes)`
+5. 生成 ZIP（成员 + MANIFEST）
+6. `package_sha256 = sha256(final ZIP bytes)`
+7. Phase B 事务内持久化：ReleaseRecord metadata（含 evidence_manifest_hash、package_sha256）+ ZIP blob + release.released audit
 
-**导出端点**：`GET /api/v2/documents/{id}/release/evidence.zip` 纯读（任何有文档读权限的 actor，含 agent——证据是给人看的，不是治理写）；superseded 的 release 照常导出历史包（audit 语义）。重复 GET 字节级一致（读同一份存留字节，硬测锁定）。
+字段名冻结为 `evidence_manifest_hash` 与 `package_sha256` 两个，不再用 evidence_package_hash。
 
-**导出失败/包损坏语义**：export 端点打开前先校验 blob 内 MANIFEST 与成员 hash 自洽，不一致 500 `release_evidence_corrupt`（落库时不可能发生，迁移/手工篡改 DB 时才可能出现）。
+**audit-chain.json 冻结格式（R49-2）**：
+```json
+{
+  "scope": "document-subset",
+  "verified_through_ordinal": 0,
+  "verified_global_tip_hash": "...",
+  "global_chain_verification": "...",
+  "document_records": []
+}
+```
+先对**完整 global chain** 验证到 ordinal N，包内只携带该 document 的 subset，明确标注这是经 global-chain verification 的 document projection——不假装 subset 可独立 chain verify（audit 是全库一条全局 hash chain）。
+**cutoff 纪律**：包内 audit cutoff = release audit 之前——release.released 自身不进本包 audit-chain.json（它要绑定最终 package hash，放进包内又成环）。正确闭环：cutoff → 算 manifest/zip hash → 事务写 Record+blob → **同事务**写 release.released audit（evidence 含 release_id / evidence_manifest_hash / package_sha256 / verified_through_ordinal / verified_global_tip_hash）。
 
-## 5. Failure modes（逐项闭合）
+**导出端点（R49-3 冻结，REST 复数）**：
+- `POST /api/v2/documents/{document_id}/releases`（operator；执行守卫+两阶段落库）
+- `GET /api/v2/documents/{document_id}/releases/{release_id}/evidence.zip`（纯读；superseded 历史包一一对应可导出）
+- review 视图 `_view` 增 `releases` 投影（含 derived_superseded）。
 
-| # | 场景 | 行为 |
-|---|---|---|
-| F1 | approval 非 approved / liveness 非 live | 422 `release_approval_not_live`，零写入，approval 原状 |
-| F2 | fresh readiness 非 eligible | 422 `release_readiness_not_eligible`，零写入 |
-| F3 | 存在 open/reopened 线程 | 422 `release_open_threads`，零写入 |
-| F4 | 非 operator（无 token/非 loopback/shared 部署） | 403 `actor_not_trusted`，零写入 |
-| F5 | 守卫全过但包生成中途失败（PDF/DXF/validation 抛错） | 整事务回滚：无 ReleaseRecord、无 audit、无半截状态 |
-| F6 | 并发双 release（同 governance_seq 竞争） | CAS 失败者 409 `release_conflict` |
-| F7 | readiness 重跑后 revision 前进（跨平面竞态） | 事务内 revision 复核失败 → 409 `release_conflict`（同 F6 码） |
-| F8 | 守卫拒绝 | 记一条 `release.denied` audit（status=denied，evidence 含失败守卫码）——拒绝也是治理事实；approval 不失效 |
-| F9 | superseded 后请求 release | 允许（新 revision + 新 approval 走完整守卫），旧包仍可导出 |
-| F10 | v12 旧库（WS1 记录存在/不存在） | 零迁移直接可读；release 前需先有 approval，守卫自然保证顺序 |
+**导出语义**：读已存字节，不重算；重复 GET 字节级一致（硬测）；打开前校验 blob 内 MANIFEST 与成员 hash 自洽，不一致 500 `release_evidence_corrupt`（仅迁移/手工篡改 DB 时可能）。
 
-## 6. 数据面 / 迁移
+## 5. Failure modes（R49-4 精确化写入面）
 
-- **不加表、不升 schema 版本**：releases 内嵌 `ReviewState.releases: tuple[ReleaseRecord, ...]`，随 governance JSON 一体存储与 CAS。旧 v12 文档的 data_json 无 releases 字段 → pydantic 默认空元组，天然零记录零迁移。比草案预告的 release_records 表更简：单一 CAS 平面、无新并发语义、无迁移风险。
-- 已知取舍：blob 使 governance 行变大，每次治理写重写整行（含 blob）。图纸规模下可接受；若未来成为瓶颈，拆表是向后兼容的纯存储优化（JSON 字段保留，blob 外置）。
-- audit Literal 扩 3 事件：`release.released` / `release.superseded` / `release.denied`（只加不改 WS1 已有 7+2 类型）。
-- surface_contract：`governance_write` 类别（WS1 已追认）下增 2 条绑定——POST release（audited）、GET evidence.zip（read 类别？不——纯读但声明 governance_write 更准确：它读治理产物；类别 `read`+notes，或 governance_write audited=False。裁决点：建议 governance_write / audited=False / has_side_effect=False，与 WS1 GET review 视图同处理）。
+| # | 场景 | HTTP | ReleaseRecord | blob | governance mutation | audit |
+|---|---|---|---|---|---|---|
+| F1 | approval 非 approved / liveness 非 live | 422 `release_approval_not_live` | 0 | 0 | 0 | **1 条 release.denied** |
+| F2 | fresh readiness 非 eligible | 422 `release_readiness_not_eligible` | 0 | 0 | 0 | **1 条 release.denied** |
+| F3 | 存在 open/reopened 线程 | 422 `release_open_threads` | 0 | 0 | 0 | **1 条 release.denied** |
+| F4 | 非 operator / 非 loopback / shared 部署 | 403 `actor_not_trusted` | 0 | 0 | 0 | **0——不可信调用者不得向治理 audit chain 注入记录** |
+| F5 | Phase A 包生成中途失败 | —（不进入 Phase B） | 0 | 0 | 0 | 0（整体未发生） |
+| F6 | 并发双 release CAS 竞争 | 409 `release_conflict` | 0 | 0 | 0 | 0——竞争失败非治理拒绝决定 |
+| F7 | Phase B revision/governance 复核不过 | 409 `release_conflict` | 0 | 0 | 0 | 0（同 F6） |
+| F8 | （合并入 F1–F3 行）拒绝即治理事实，落 denied audit；status 用既有 AuditStatus rejected/failed 承载 | | | | | |
+| F9 | superseded 后请求 release | 允许（新 revision+新 approval 走完整守卫），旧包按 release_id 导出 | | | | |
+| F10 | v12 旧库 | 零 release 记录直读；release 前须先有 approval，守卫保证顺序 | | | | |
+
+## 6. 数据面 / 迁移（R49 决策②冻结：v13 附加表，blob 不进 JSON）
+
+- `ReleaseRecord` 仍在 `ReviewState.releases`（governance CAS 语义不变）。
+- **store v13 附加表**（additive，无 FK 级联，同 review 面纪律）：
+```sql
+release_evidence_packages(
+  release_id PK, document_id,
+  manifest_sha256, package_sha256,
+  package_blob BLOB, created_at)
+```
+  只存不可变证据字节；metadata 在 governance JSON。
+- metadata + BLOB + release.released audit **同一 SQLite transaction** 写入。
+- 迁移：v12→v13 additive；旧库 release 包数为零；database_recovery required_tables 增表。
+- audit Literal 扩 3 事件：`release.released` / `release.superseded` / `release.denied`（只加不改）。
+- surface_contract（R49 决策③冻结）：POST /releases = `governance_write` / audited=True；GET evidence.zip = `read` / has_side_effect=False / audited=False（governance_write ∈ AUDITED_CATEGORIES 的机器锁已禁止 audited=False 的 governance_write 绑定，read 是唯一自洽类别）。
 
 ## 7. API / UI / 测试矩阵
 
-**API**（prefix /api/v2，operator token 同 WS1）：
-- `POST /documents/{id}/release`（body: expected_governance_seq）→ 守卫+落 released+生成包，返回 review 视图（含 releases）。
-- `GET /documents/{id}/release/evidence.zip` → 纯读流式下载。
-- review 视图 `_view` 增 `releases` 投影（含 derived_superseded 派生标记）。
+**API**：POST /documents/{id}/releases（operator token）；GET /documents/{id}/releases/{release_id}/evidence.zip（纯读）；review 视图增 releases 投影。
 
-**UI**（ReviewPanel 增量，不新开 tab）：
-- 操作员可见「发布 Release」按钮（approval live 且 fresh eligible 时可用），点击弹应用内确认对话框（不用 window.prompt）；
-- release 状态横幅（released 绿 / superseded 灰 + 触发 revision）、evidence 下载链接、历史 release 列表。
+**UI**（ReviewPanel 增量）：操作员「发布 Release」按钮（approval live 且 fresh eligible 可用）+ 应用内确认对话框；release 状态横幅（released 绿 / superseded 灰 + 触发 revision）；按 release_id 的 evidence 下载链接与历史列表。
 
-**测试矩阵（硬锁）**：
-① 无 approval / approval stale / approval superseded → release 拒（F1）；② approval 后新增 blocker 元素使 fresh readiness 变 not_eligible → release 拒（F2，证明决策时 eligible 不算数）；③ open thread → 拒（F3）；④ agent 无 token → 403（F4）；⑤ 包生成失败注入 → 全回滚无 audit（F5）；⑥ 双 release 并发 CAS 一胜一 409（F6）；⑦ revision 竞态复核 → 409（F7）；⑧ 每次拒绝落 release.denied audit 且 approval 不失效（F8）；⑨ superseded 后重 release 需新 approval（F9 语义）；⑩ v12 旧库直读（F10）；⑪ 双 GET 字节一致 + MANIFEST 自洽校验；⑫ evidence_package_hash 写回一致；⑬ e2e：approve → release → 下载 zip → 脚本校验 MANIFEST 与成员 hash。
+**测试矩阵（13 条硬锁，F2 按 R49-5 重修）**：
+① F1：无 approval / stale / superseded approval → 422 + release.denied 恰好一条 + approval 原状；
+② F2（R49-5 seam 构造，revision/digest 不变，fresh readiness 返回 not_eligible）→ 422 + 断言 readiness 被重新调用且未复用 decision hash + release.denied；
+③ F3 open thread → 422 + release.denied；
+④ F4 agent 无 token → 403 + **audit 零增长**（不可信不注入）；
+⑤ F5 包生成失败注入 → Phase B 未发生、零 Record 零 blob 零 audit；
+⑥ F6 双 release 并发 → 一胜一 409 + 败方无 denied audit；
+⑦ F7 Phase B revision 竞态复核 → 409；
+⑧ release.released audit evidence 五元组（release_id/evidence_manifest_hash/package_sha256/verified_through_ordinal/verified_global_tip_hash）齐全；
+⑨ superseded 后重 release 需新 approval（F9 语义）；
+⑩ v12→v13 迁移：旧库零包可读、升级幂等；
+⑪ 双 GET 字节一致 + MANIFEST 自洽校验 + corrupt 路径 500；
+⑫ evidence_manifest_hash / package_sha256 写回一致 + R49-1 顺序钉死（release.json 内无 hash 字段，突变测试：往 release.json 塞 hash → 拒）；
+⑬ e2e：approve → release → 按 release_id 下载 zip → 脚本校验 MANIFEST 与成员 hash。
 
-## 8. Exact 白名单
+## 8. Exact 白名单（R49 修订版）
 
-**改**：review_models.py（+ReleaseRecord、ReviewState.releases）、review_service.py（+release_document 与守卫，_persist 复用）、store.py（save_review_state 增 expected_engineering_revision 可选复核；零迁移）、audit_models.py（+3 Literal）、surface_contract.py（+2 绑定）、api_review.py（+2 端点与 _view releases 投影）、api_release.py（新，包生成/MANIFEST/校验）、main.py（注册）、frontend ReviewPanel.tsx/styles.css/api 封装、frontend/e2e review.spec.ts（扩 release 链）。
+**改**：
+- `backend/agentcad/review_models.py`（+ReleaseRecord、ReviewState.releases）
+- `backend/agentcad/review_service.py`（+release_document 两阶段与守卫；_persist 复用）
+- `backend/agentcad/store.py`（save_review_state 增 expected_engineering_revision 复核；release_evidence_packages 读写）
+- `backend/agentcad/database_recovery.py`（**v13 additive BLOB 表**）
+- `backend/agentcad/audit_models.py`（+3 Literal）
+- `backend/agentcad/surface_contract.py`（+2 绑定：POST=governance_write/audited、GET=read）
+- `backend/agentcad/api_review.py`（+2 端点与 _view releases 投影）或独立 `api_release.py`（新，包生成/MANIFEST/audit projection/校验）
+- `backend/agentcad/main.py`（注册）
+- `frontend/ReviewPanel.tsx` / `styles.css` / api 封装；`frontend/e2e/review.spec.ts`（扩 release 链）
 
-**新增**：backend/tests/test_m9_release_workflow.py。
+**新增**：`backend/tests/test_m9_release_workflow.py`；改 `backend/tests/test_database_recovery.py`（v12→v13、旧库零包）；改 `backend/tests/test_surface_contract.py`（POST=governance_write/audited、GET=read/no-side-effect 机器锁）。
 
-**不动**：WS1 已冻结语义（reconcile/失效/token/状态机一字不改）、工程写通道、PDF/DXF 导出内核、store schema 版本（维持 12）、frontend tab 结构。
+**不动**：WS1 已冻结语义、工程写通道、PDF/DXF 导出内核、store v12 已有结构（v13 纯 additive）、frontend tab 结构。
 
-## 9. 待 Gate 裁的 3 个设计决策点
+## 9. 实现纪律（执行红线复述）
 
-1. §1 状态机两态（released/superseded，无 draft）——是否认可；
-2. §6 releases 内嵌 ReviewState（不升 schema、不加表）vs 草案预告的 release_records 表——取更简方案是否认可；
-3. §6 evidence.zip 的 surface 类别（governance_write/audited=False vs read）——请冻结。
+- 实现分支 **fresh cut from main@153c28c**（或届时 exact main）；4ee286f 及其后继 diverged worktree **禁作代码基线**，设计文本以 cherry-pick/复制方式带入。
+- 未获 DESIGN GO 不动代码；本版闭合 R49-1~R49-6 后申请 M9-WS2 DETAILED DESIGN GO → GO 后 CODE IMPLEMENTATION GO。

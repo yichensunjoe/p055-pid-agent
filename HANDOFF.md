@@ -16,6 +16,13 @@
 
 - **R41 补充（同日）**：Q2-1R 设计修订已提交（ccfd678）：TT 解禁有 8d82f75 单行先例、FT/LT 不动（FT=审计范例）、TT 解禁后现有英文 hint 已精确隔离候选（无需中文词表）。DEV-6 句三 s3 根因=「接到一个缓冲罐 V-102」整条被分类为 connect 子句、句内嵌的添加语义未分解成实体（V-102 未声明→连接 undelivered，无 port receipt）——G2 同类 planner grammar 项，已报 Gate 路由。PR #58 CI 四绿（36379051307），等 Gate 裁定期间 ChatGPT 侧基础设施多次抖动（账户加载失败/Cloudflare），消息已全部送达线程。
 
+## 近期轮次（2026-09-29/30 R52 —— Owner 重排：先 M10 后 M9 收口；M10 DESIGN PREP GO 已批，草案 v1 已交）
+
+- **Owner 决定**（2026-09-29 23:35）：暂不收口 M9（WS3B 真实试点 Owner 主动推迟、四字段暂不补），先做 M10，直至 M10 干完。已发 Gate 并获 **M10 DESIGN PREP GO = APPROVED**（仅设计/文档，禁代码；fresh cut from main@7d5cfa3；M9 状态口径冻结不变）。
+- **M10 Design Draft v1**：reports/m10-design-draft-v1.md（docs 11d593f）——耦合盘点（harness 核心已领域无关，P&ID 硬耦合在 5 个请求模型 + service.apply_transaction 焊死执行语义）/ ToolExecutor 协议边界 / test-only 线缆 domain 证明切片 / P1–P4 PR 切片（逐片可回退）/ 非回归门 / 零 schema 变更 / 成熟度门二选一（推荐甲：WS3B 保持 M10 签收前置、代码切片不等它）。
+- **M10 CODE IMPLEMENTATION 未授权**：草案回 Gate 等裁定 + 逐片 CODE GO。Gate 会话 = 新 chat conv 6abbdafb（标题「M10路由确认」，报文必须自带仓库全名）。
+- **下一步**：读回 Gate 对草案的裁定；按批开工 P1（纯搬运零行为）。
+
 ## 近期轮次（2026-09-29 R51+ —— WS3B 裁定：候选范围批，真实试点差 Owner 四字段）
 
 - **做了什么**：① 拟 WS3A 试点候选提案（主候选 HOLDOUT-1 小流程 5 设备 4 连接 / 备选 DEV-1，reports/m9-ws3a-pilot-candidate.md @ a78e125）；② 旧 Gate 会话达硬上限且回复串题，按同一 GPT 开新会话送上下文简报续裁。

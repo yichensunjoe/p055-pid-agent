@@ -288,3 +288,23 @@ def test_registry_catalog_is_stable_and_machine_readable() -> None:
                 "depends_on_revision",
                 "non_idempotent",
             }
+
+
+def test_cable_read_only_surface_frozen() -> None:
+    """M11-D4 machine lock: the Cable surface is exactly three GET bindings,
+    all read / no side effect / no audit — no write path exists."""
+    cable = [
+        binding
+        for binding in HTTP_SURFACE_BINDINGS
+        if binding.name.startswith("/api/v2/cable/")
+    ]
+    assert {binding.name for binding in cable} == {
+        "/api/v2/cable/documents",
+        "/api/v2/cable/documents/{document_id}",
+        "/api/v2/cable/documents/{document_id}/export.zip",
+    }
+    assert all(binding.methods == ["GET"] for binding in cable)
+    assert all(
+        binding.category == "read" and not binding.has_side_effect and not binding.audited
+        for binding in cable
+    )

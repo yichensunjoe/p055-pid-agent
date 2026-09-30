@@ -778,6 +778,23 @@ class SQLiteDocumentStore:
                 connection.rollback()
                 raise
 
+    def list_cable_documents(self) -> list[tuple[str, int, str]]:
+        """Read-only enumeration for the Cable UI: (document_id, revision, name)."""
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                "SELECT document_id, revision, data_json FROM cable_documents ORDER BY document_id"
+            ).fetchall()
+        import json as _json
+
+        result = []
+        for row in rows:
+            try:
+                name = str(_json.loads(row[2]).get("name", ""))
+            except Exception:
+                name = ""
+            result.append((str(row[0]), int(row[1]), name))
+        return result
+
     def get_cable_envelope(self, document_id: str) -> tuple[int, str] | None:
         """(revision, data_json) of one cable document, or None. Pure read of
         the cable plane — P&ID ids never resolve here (fail-closed isolation)."""

@@ -226,6 +226,10 @@ HTTP_SURFACE_BINDINGS: tuple[SurfaceBinding, ...] = (
         "Verified by test_m9_release_workflow.",
     ),
     _read("/api/v2/documents/{document_id}/releases/{release_id}/evidence.zip"),
+    # --- M11-D4: minimal read-only Cable surface (Gate-frozen, 3 GETs) ---
+    _read("/api/v2/cable/documents"),
+    _read("/api/v2/cable/documents/{document_id}"),
+    _read("/api/v2/cable/documents/{document_id}/export.zip"),
     # --- v2 document lifecycle -------------------------------------------------
     _http(
         "POST",

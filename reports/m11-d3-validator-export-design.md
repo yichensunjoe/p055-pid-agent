@@ -27,9 +27,9 @@
 ### 2.2 gauge 语法+语义（R11-D3-2 精确冻结，fullmatch）
 
 - 语法（二选一，不存在 `2.5AWG12` 这类拼接）：
-  `^(?:\d+(?:\.\d+)?mm2|AWG\d{1,2})$`（fullmatch，大小写敏感）。
+  `^(?:\d+(?:\.\d{1,2})?mm2|AWG\d{1,2})$`（fullmatch，大小写敏感；小数 ≤2 位由语法保证，如 2.123456mm2 拒绝）。
 - 语义（正则之外显式校验，「能匹配」≠「合法」）：
-  mm2 分支数值必须 **> 0**（`0mm2`、`00mm2` 拒绝；小数位 ≤2 由语法保证）；
+  mm2 分支数值必须 **> 0**（`0mm2`、`00mm2` 拒绝）；
   AWG 分支数值必须在 **0–40**  inclusive（`AWG99` 拒绝）。
 - 违反任一为 `cable.gauge_grammar` blocker finding。
 
@@ -40,7 +40,7 @@
 - `CableValidationResult`：document_id、revision（envelope 权威值）、content_hash、profile_id/version/fingerprint、rule_results 每条 {rule_id, severity, passed, detail}、counts、**result_hash**。
 - result_hash 输入 = {profile fingerprint, document_id, revision, content_hash, sorted rule_results}；**排除** timestamps/运行序号——同一 revision 结果 hash 必须可复现。
 - content_hash = sha256(canonical JSON of CableDocument payload 不含 revision) + revision 绑定：`sha256(revision || ":" || payload_hash)`。
-- readiness = unwaived blocker 存在 → not_eligible；仅 warning → eligible。waiver 机制 v1 不提供（有 waiver 语义前先 fail-closed）。
+- readiness 冻结：无未豁免 blocker 为必要非充分——命中 also_fail_on_warning 指定 warning（v1 = document_non_empty）同样 not_eligible；其余普通 warning 不阻断。即「空文档 → warning + not_eligible」。waiver 机制 v1 不提供（有 waiver 语义前先 fail-closed）。
 - validator **只读**：读 cable envelope，不改 Cable/P&ID 任何状态、不写 audit。
 
 ## 3. deterministic export artifact（两成员 ZIP，冻结）
@@ -56,7 +56,7 @@
 
 ### 3.2 确定性纪律
 
-- canonical JSON：ensure_ascii=False、sort_keys、紧凑分隔符、LF、末行换行；**全部 hash 服务端重算**，调用方提交的任何 hash 一律拒绝作为事实源（参数中出现即 422）。
+- canonical JSON：ensure_ascii=False、sort_keys、紧凑分隔符、LF、末行换行；**全部 hash 服务端重算**——export API 不接受 caller-provided hash（无此参数入口）；内部若防御性检测到此类输入，抛 typed error `caller_hash_not_allowed`。
 - **ZIP 元数据全冻结（R11-D3-4）**：ZIP_STORED 不压缩；成员恰两枚、插入序 cable-document.json → MANIFEST.sha256、无目录项；ZipInfo date_time=(1980,1,1,0,0,0)、create_system=0、external_attr=0、permissions 不外泄、extra=b""；archive comment 空、member comment 空；ASCII 文件名。
 - **byte-for-byte 复现（R11-D3-4 加强）**：同 document_id + expected_revision 在**两个独立 fresh Python 进程**中导出，完整 ZIP bytes 与 SHA-256 相同（同进程双跑只是必要条件，跨进程才是证据）。
 - **敏感受输入影响**：payload 或 revision 任一变化 → artifact 内容与 bundle hash 必变（硬测：改一字符后 hash 不同）。
@@ -71,7 +71,7 @@
 
 ## 4. 测试矩阵（冻结 ≥10 条）
 
-① 五规则全过 → eligible；② gauge 违例 → not_eligible 且 reason 点名规则；③ 空文档 → eligible-with-warning（document_non_empty 仅 warning）；④ unknown rule id / profile_version → fail-closed not_eligible；⑤ result_hash 同 revision 可复现、跨 revision 必变；⑥ 双导出 byte-for-byte 一致；⑦ payload 改一字符 artifact hash 变；⑧ manifest/payload 篡改校验例程报警；⑨ expected_revision stale → 409；⑩ validator+export 全程 P&ID 文档/revision/digest/audit 零变化 + 跨 domain id 互送 fail-closed。
+① 两条 readiness rules 全过 → eligible（结构不变量由 parse fail-closed 另测）；② gauge 违例 → not_eligible 且 reason 点名规则；③ 空文档 → document_non_empty warning 且 readiness=not_eligible（also_fail_on_warning）；④ unknown rule id / profile_version → fail-closed not_eligible；⑤ result_hash 同 revision 可复现、跨 revision 必变；⑥ 双导出 byte-for-byte 一致；⑦ payload 改一字符 artifact hash 变；⑧ manifest/payload 篡改校验例程报警；⑨ expected_revision stale → typed error `stale_revision`（未来 REST 层是否映射 409 不属 D3）；⑩ validator+export 全程 P&ID 文档/revision/digest/audit 零变化 + 跨 domain id 互送 fail-closed。
 
 ## 5. 待裁决策点
 

@@ -483,14 +483,20 @@ def _migrate(connection: sqlite3.Connection) -> None:
             version = next_version
         _validate_required_schema(connection)
         connection.commit()
-    except DatabaseRecoveryError:
-        connection.rollback()
-        raise
     except sqlite3.DatabaseError as exc:
         connection.rollback()
         raise DatabaseMigrationError(f"database migration failed: {exc}") from exc
+    except BaseException:
+        # R73-3: ANY non-SQLite failure (DatabaseMigrationError, injected errors)
+        # must roll the transaction back explicitly — never rely on connection
+        # close to undo a half-applied migration.
+        if connection.in_transaction:
+            connection.rollback()
+        raise
     finally:
         if crosses_v14:
+            # Runs only after the transaction above has ended (commit/rollback):
+            # SQLite ignores FK pragma changes inside a transaction.
             connection.execute("PRAGMA foreign_keys=ON")
 
 
@@ -1168,7 +1174,7 @@ def _migration_14(connection: sqlite3.Connection) -> None:
         connection.execute(f"DROP TABLE {table}")
         connection.execute(f"ALTER TABLE {table}_v14 RENAME TO {table}")
         for index in indexes:
-            connection.execute(index["sql"])
+            connection.execute(index[1])
     # Reconciliation: registry covers every document; governance rows reference
     # only registered identities.
     registry_count = connection.execute("SELECT COUNT(*) FROM documents_registry").fetchone()[0]
@@ -1243,9 +1249,10 @@ def _validate_required_schema(connection: sqlite3.Connection) -> None:
         "synthesis_proposal_evidence",
         _METADATA_TABLE,
     }
-    if CURRENT_SCHEMA_VERSION >= 14:
-        # M11-D1: identity tables are only required from v14 onward, so a
-        # pinned-v13 database (test fixtures) still validates as v13.
+    if _schema_version(connection) >= 14:
+        # M11-D1: identity tables are required only of databases actually at
+        # v14+ — a v13 database inspected by a v14 binary (migrate=False or a
+        # pre-v14 backup) must still validate as v13.
         required_tables = required_tables | {"documents_registry", "cable_documents"}
     missing = required_tables - _table_names(connection)
     if missing:

@@ -368,6 +368,9 @@ class SQLiteDocumentStore:
                             document.updated_at.isoformat(),
                         ),
                     )
+                    _ensure_pid_registry_row(
+                        connection, document.id, document.created_at.isoformat()
+                    )
                     connection.execute(
                         """
                         INSERT INTO document_history (

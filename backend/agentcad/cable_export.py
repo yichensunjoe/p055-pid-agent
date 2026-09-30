@@ -177,5 +177,7 @@ def verify_cable_artifact(zip_bytes: bytes) -> None:
                 raise CableExportError("artifact_corrupt", "manifest entry malformed")
             if match.group(1) != _sha256(document):
                 raise CableExportError("artifact_corrupt", "document hash mismatch")
+    except CableExportError:
+        raise  # our own findings keep their precise code/message
     except (zipfile.BadZipFile, ValueError, OSError) as exc:
         raise CableExportError("artifact_corrupt", "not a valid ZIP") from exc

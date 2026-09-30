@@ -1,3 +1,10 @@
+## 2026-10-01 · node_modules 符号链接入库；Playwright 子进程不继承 webServer env；visual 基线再生正路（P055-PID-Agent）
+
+- 场景：M11-D4 修复提交后 Gate 裁出三个 blocker：①误把 `frontend/node_modules` 符号链接（指向本机绝对路径）提交进 Git——`.gitignore` 的 `node_modules/`（带尾斜杠=只匹配目录）在 git 眼里 symlink 是文件，永远匹配不到；②e2e 里 subprocess 调项目 python 报 ModuleNotFoundError——playwright.config.ts webServer 的 env（PYTHONPATH）只给后端子进程，测试进程拿不到；③改完全局壳布局后 linux visual 基线全红，本机无 docker。
+- 结论做法：① `.gitignore` 改 `node_modules`（去尾斜杠）+ `git rm --cached`；提交前 `git status --short` 留意符号链接类 `??`。② e2e 内嵌 python 子进程时在 helper 里显式 `env: { ...process.env, PYTHONPATH: path.resolve("..", "backend") }`，python 解释器与 webServer 同解析（同 PATH）。③ linux 基线**不要**在 mac 上糊弄：仓库自带 `.github/workflows/visual-baselines.yml`（workflow_dispatch，pinned ubuntu-24.04，sentinel 证明 + re-assert 自清），dispatch 后 `gh run download` 取 `*-linux.png` 提交；darwin 集本机 `--update-snapshots`。
+- 踩坑点：① `npm run preview`（vite preview）**不重新构建**——e2e/基线再生前必须确认 dist 新于源码（`stat` 对比 mtime，必要时 `npm run build:e2e`），否则你验证的是旧代码。② bsk 会话频繁死掉：`bsk session start` 换新 id → `bsk navigate` 回 conv URL 即可，注入手法 execCommand insertText + 原生 Enter 可靠。③ Gate 会逐字节核对 exact head——报 CI run 前先 `gh run view --json headSha` 与本地 HEAD 对齐再报。
+- 适用场景：任何把 node_modules/构建产物纳入版本管理的仓库；Playwright webServer 模式 + 需要旁路调后端 Python 的 e2e；跨平台像素基线维护；bsk 驱动的长程远端 Gate 会话。
+
 ## 2026-09-29 · Gate 会话硬长度上限与浏览器标签被并行项目劫持；「验证-重读」窗口是 audit cutoff 的经典漏洞（P055-PID-Agent）
 
 - 场景：① Gate（ChatGPT 工程方向裁定）线程到达对话硬上限：消息照发、裁定照出，但旧消息不再渲染——`document.body.innerText` 里翻不到上一轮的 R68 原文，只能信页面尾部新回复；期间 bsk 会话多次超时重开（`bsk session start` 即换新 id），agent 窗口标签还被并行的 dttn 项目导航切走过一次（注入前必须核对 `location.href` 是 Gate conv `6ab36b5a…`）。② WS2 evidence 包的 audit cutoff 第一版先 `verify_chain()` 再 `all_audit_records()` 两次读库——Gate 核出 TOCTOU：声称的 verified tip 可能包含没参加验证的新记录。

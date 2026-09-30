@@ -1,4 +1,4 @@
-# M11-D2 详细设计：Cable Runtime Production Wiring & Atomic Governed Write（送 Gate 审，docs-only）
+# M11-D2 详细设计 v2：Cable Runtime Production Wiring & Atomic Governed Write（送 Gate 审，docs-only）
 
 > 前置：M11-D1 CLOSED（main@5ea00b3，identity-only registry + v14 frozen envelope）；D2 DESIGN PREP GO 已签（A1~A3 修正已并入）。基线 main@5ea00b3ae5b2729c8b99a21c41e2b9b424f8ce82。核心问题：在 schema v14 不变、registry identity-only、Cable revision 单真相条件下，Cable 经七端口 DomainAdapter 进入 M10 runtime，使 **Cable payload mutation + cable_documents.revision + 三项治理闭包 + 全局 audit append 成为一个 SQLite 原子提交**。
 
@@ -24,12 +24,22 @@
 - 增删 segment = 文档级 mutation，产生 revision 前进（与 P&ID 事务同级语义）。
 - **不创建 cable_segments 表、不升 v15**（A3）：若实现中证明 normalized 表是生产必需 → STOP / RETURN TO GATE。
 
+## 2A. AddCableSegmentIntent（R11-D2-1 冻结——expected_revision 进入审批绑定）
+
+```
+AddCableSegmentIntent
+  expected_revision: int >= 0        # 审批绑定的一部分，canonical intent 包含它
+  segment: {id, from_node, to_node, gauge}
+```
+
+冻结链：canonical intent 含 expected_revision → approval evidence 明示它 → preview_diff_hash 基于该 revision → composition 调 `authorize(..., base_revision=intent.expected_revision)` → execute() 硬断言 `authorized.record.base_revision == intent.expected_revision` → store CAS 用同一值。五处同值，堵住「审批看旧状态、执行换 base」的绑定缺口（对齐 P&ID TransactionRequest.expected_revision 先例）。
+
 ## 3. CableDomainAdapter 七端口（生产实现，不经 PidDomainAdapter）
 
 | 端口 | 生产语义 |
 |---|---|
 | document_context | 读 cable_documents envelope → DocumentContext(document_id, revision=envelope.revision)；行不存在 → DocumentNotFound 语义 |
-| canonicalize_intent | 校验 `add_cable_segment` intent 为 CableSegmentRequest 并填默认值后 model_dump；from==to 即拒（invariant 前置） |
+| canonicalize_intent | 校验 AddCableSegmentIntent（含 expected_revision）并填默认值后 model_dump；from==to 即拒（invariant 前置） |
 | preview_diff_hash | CableDocument 差异确定性 hash（canonical JSON sha256；best-effort 不抛） |
 | approval_evidence | {tool, cable_document_id, cable_segment_id(s), diff_preview_hash} |
 | rejection_evidence | {tool_permission, cable_document_id, authorized: false} |
@@ -49,15 +59,21 @@
 6. COMMIT；任一步失败整体 ROLLBACK
 ```
 
-## 5. 失败矩阵（每类：不变量 / tool-call 终态 / session / approval / 恰一条失败证据）
+## 5. 失败语义（R11-D2-3 重写：success-tx 回滚 → failure-closeout tx，两级 audit 失败如实）
 
-| 失败类 | 必须不变 | tool-call | session | approval | 失败证据 |
-|---|---|---|---|---|---|
-| storage failure（2/3 步：CAS 不过、invariant 违例） | envelope revision 与 data_json 原样；无 audit 变化 | failed（error_code 精确） | failed | 仍 approved 不 consumed | 恰一条 revision.created status=rejected，绑三关联（R72-3A 语义对齐） |
-| closure write failure（4 步） | 同 storage | failed | failed | 仍 approved | 恰一条 rejected（同事务回滚后由 record_failure 路径重放——record_failure 自带单事务留证） |
-| audit append failure（5 步） | 载荷与闭包随事务回滚（不留半截） | failed | failed | 仍 approved | 恰一条 rejected（失败路径的 audit 写入若本身再失败 → 上抛且全回滚，不留任何痕迹，重试安全） |
+**结构**：success primitive（§4 六步）任一失败 → 该事务完整回滚（Cable 载荷/envelope revision 绝不变）→ 进入 **failure-closeout 事务**（独立于 success tx）：tool-call → failed（error_code 精确）、session → failed、approval 保持 approved 不 consumed、恰一条 revision.created status=rejected 且绑 tool_call/session/approval 三关联（R72-3A 语义）。「恰一条 rejected evidence」是 **failure-closeout 事务成功**的 postcondition。
 
-禁止「先提交 Cable 再补 audit」——所有路径同事务。
+**一级**：success 失败但 failure-closeout 可持久化 → 上述 postcondition 全成立，异常上抛原错误。
+
+**二级**：failure-closeout 自身也无法持久化 → 两事务全部回滚，原始/二级 persistence error 显式上抛，**不得伪报 evidence 已记录**；此时允许 tool-call 仍 running、session 仍 active、approval 仍 approved、Cable 载荷/revision 零变化。
+
+**硬测两条**：① success audit append 一次性失败、failure-closeout audit 正常 → 恰一条 rejected；② success audit 与 failure audit 持续失败 → Cable 零变化、无半闭包、异常显式上抛。
+
+禁止「先提交 Cable 再补 audit」——success 路径永远单事务。
+
+## 5A. Cable 文档 bootstrap 创建（R11-D2-4 冻结）
+
+`CableService.create_document()` = **provisioning/bootstrap 生命周期操作，不是 engineering mutation**——空文档须先于任何 session 存在（runtime create_session 先调 document_context），故它天然不进 runtime 审批流。但它必须可审计，冻结为单事务：INSERT documents_registry(domain='cable') + INSERT cable_documents(revision=0, data_json=空文档) + audit append（event_type="document.created"，status="applied"，evidence 含 cable_document_id）→ COMMIT；任一失败整体回滚。**此后任何 segment engineering mutation 一律经 M10 runtime**（session→approval→execute）。与 P&ID create-document 的可审计习惯一致，不伪装 bootstrap 能过 runtime。
 
 ## 6. Global audit chain（硬锁）
 
@@ -66,6 +82,10 @@
 ## 7. ToolRegistry production boundary
 
 Cable 用 **cable-specific 独立 registry 实现 ToolRegistryPort**（不复用 P&ID catalogue、不扩它）：`CableToolRegistry` 冻结一个工具 `add_cable_segment`（permission="ask"，risk="engineering_change"，audit_event="tool.cable.add_segment"，description 冻结）。禁止把 P&ID catalogue 变成隐式跨域 catalogue；runtime 只见中性 ToolDefinitionView。
+
+## 7A. CableAuditAdapter : AuditPort（R11-D2-2 冻结）
+
+runtime 在 execute 之前的拒绝路径（approval 缺失/已拒/四元组不匹配/permission deny）由 runtime 自建 rejected ToolCall 并直调 `audit_port.record(AuditEvent(permission.rejected))`——这些事件**不进** §4 原子写。故 D2 提供 `CableAuditAdapter`（置于 cable_domain_adapter.py）：与 PidAuditAdapter 同构——中性 AuditEvent 逐字段转 `request_audit_context` + `AuditRecorder.record_rejection`，hash 形成/链语义全在 audit 实现内。composition 必须注入它；测试覆盖 Cable 拒绝路径留证（含 approval mismatch）。
 
 ## 8. Composition scope
 

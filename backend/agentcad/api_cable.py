@@ -46,7 +46,7 @@ def create_cable_router(store: SQLiteDocumentStore) -> APIRouter:
         """Frozen shape: [{document_id, name, revision, readiness_state}].
         A corrupt stored payload fails closed as 500 data-integrity."""
         entries = []
-        for document_id, _revision, data_json in store.list_cable_documents():
+        for document_id, _revision, _data_json in store.list_cable_documents():
             try:
                 view = _load(document_id)
                 readiness = assess_cable_document(service, document_id)

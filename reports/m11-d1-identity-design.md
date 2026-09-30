@@ -1,99 +1,125 @@
-# M11-D1 详细设计：domain-neutral document identity boundary（送 Gate 审，docs-only）
+# M11-D1 详细设计 v2：domain-neutral document identity boundary（送 Gate 审，docs-only）
 
-> 前置：M11 Definition APPROVED/FROZEN @255f53d；M11-D1 DESIGN PREP GO 已签。本文档零产品代码。基线 main@3379477（schema v13）。
+> 前置：M11 Definition FROZEN @255f53d；D1 v1 被裁 CHANGES REQUIRED（R11-D1-1~5），本版逐项闭合。基线 main@3379477（schema v13）。已实测核验：`_connect()` 与 `initialize_database()` 均 `PRAGMA foreign_keys=ON`（R11-D1-1 的「FK 不开」前提作废，本版按 FK 开启重写）。
 
-## 1. 文档身份模型：六类表的关系（目标态 v14）
+## 1. 身份模型（目标态 v14，按 R11-D1-2 最小化）
 
 ```
-documents_registry                # 新增：全局文档身份注册表（domain-neutral identity）
-  document_id TEXT PK             # 全局唯一，ID 生成器带 domain 前缀（doc_*/cab_*）
-  domain TEXT NOT NULL            # 'pid' | 'cable'（domain discriminator）
-  payload_table TEXT NOT NULL     # 'documents' | 'cable_documents'（路由，应用层只读）
-  revision INTEGER NOT NULL
-  created_at/updated_at TEXT
+documents_registry                      -- 唯一职责：identity，不是第二份 revision truth
+  document_id TEXT PRIMARY KEY
+  domain TEXT NOT NULL CHECK(domain IN ('pid','cable'))   -- 创建后不可改写
+  created_at TEXT NOT NULL
 
-documents                         # P&ID 载荷表（现有结构一行不动；由 registry 行指向）
-cable_documents                   # 新增：Cable 载荷表（document_id PK 且 FK→registry，同库独立表）
-cable_segments                    # 新增：Cable 段表（FK→cable_documents；D1 只建空表，D2 才用）
+documents                     -- P&ID 载荷（一行不动；revision 真相仍在载荷表 + DomainAdapter.document_context）
+cable_documents               -- D1 建空壳（无 segment 数据模型；cable_segments 延后 D2）
 
 agent_sessions / agent_approvals / agent_tool_calls
-  document_id TEXT NOT NULL FK → documents_registry(document_id)   # 由 FK→documents 改挂 registry
+  document_id ... FOREIGN KEY(document_id) REFERENCES documents_registry(document_id) ON DELETE CASCADE
+  -- 表内层级 FK（approvals.session_id→sessions CASCADE、tool_calls.session_id→sessions CASCADE、
+     tool_calls.approval_id→approvals SET NULL）原样保留
 
-audit_records                     # 一行不动：无 FK、全局 ordinal hash chain，domain 无关
+audit_records                 -- 完全不动：无 FK、全局 ordinal hash chain
 ```
 
-治理面（session/approval/tool-call）与审计面（audit_records）从此只认 registry 身份，不理解 domain 载荷；domain 语义只存在于各自载荷表与 adapter。
+**R11-D1-2 冻结**：registry 只存 identity（document_id/domain/created_at）；**删除 revision 列与 payload_table 列**——runtime 的 revision 正式接口是 `DomainAdapter.document_context()`（M10 已冻结），载荷表是唯一 revision 真相；domain 到载荷表的路由由代码静态完成，不用库内字符串表名做动态路由；domain 一经创建不得改写。
 
-## 2. domain-neutral identity 方案比选（冻结候选 A）
+## 2. v14 DDL（冻结，R11-D1-4 要求逐字给出）
 
-| 方案 | 说明 | 判定 |
-|---|---|---|
-| **A. 全局注册表（generic document registry）** | 新增 registry 作唯一身份与 FK 目标；载荷表按 domain 分表，registry 行路由 | **选定** |
-| B. 治理表去 FK + domain 判别列 | 去掉治理表 FK，加 domain 列 | 否决：SQLite 侧失去声明式引用完整性，且审计/治理 join 路径分叉 |
-| C. 每 domain 复制一套治理表 | cable 自建 sessions/approvals 表 | 否决：治理面碎片化，runtime 单平面语义破裂，跨 domain 审计序无从谈起 |
+三表仅 `document_id` 的 FK 目标从 `documents(id)` 改为 `documents_registry(document_id)`，`ON DELETE CASCADE` 逐字保留；其余列、默认值、层级 FK 全部不变。以 agent_tool_calls 为例（v14）：
 
-A 方案的四个冻结点：
-- **ID 全局唯一**：registry PK 是唯一权威；ID 生成器按 domain 前缀分配（现有 `doc_*` 不变，Cable 用 `cab_*`），但前缀只是可读性，真正的防碰撞是 PK 冲突即 IntegrityError → **fail-closed**。
-- **domain discriminator**：registry.domain 列，写入时由对应 domain 的 store 路径设置，应用层不可跨 domain 改写。
-- **现有 P&ID 行映射**：v14 迁移为每个 documents 行插入 registry 行（domain='pid', payload_table='documents', revision=现有 revision），一行不漏。
-- **ID collision fail-closed**：任何 domain 的插入先撞 PK 即拒；跨 domain 复用同一 document_id 物理不可能。
+```sql
+CREATE TABLE agent_tool_calls_v14 (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    tool_name TEXT NOT NULL,
+    document_id TEXT NOT NULL,
+    permission TEXT NOT NULL,
+    risk TEXT NOT NULL,
+    approval_id TEXT,
+    intent_hash TEXT NOT NULL,
+    base_revision INTEGER,
+    result_revision INTEGER,
+    status TEXT NOT NULL,
+    error_code TEXT NOT NULL DEFAULT '',
+    started_at TEXT NOT NULL,
+    completed_at TEXT,
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    FOREIGN KEY(session_id) REFERENCES agent_sessions(id) ON DELETE CASCADE,
+    FOREIGN KEY(document_id) REFERENCES documents_registry(document_id) ON DELETE CASCADE,
+    FOREIGN KEY(approval_id) REFERENCES agent_approvals(id) ON DELETE SET NULL
+);
+```
 
-## 3. 治理表迁移方案
+（agent_sessions_v14 / agent_approvals_v14 同法：仅 document_id FK 目标改 registry；sessions 表层级不变，approvals 保留 session_id FK CASCADE。实现时以 `sqlite_master` 现读现迁：迁移第一步把三表与索引的当前 DDL 读入，**以现读 DDL 为唯一真源**生成 v14 建表语句，防手工抄错。）
 
-三张治理表的 `document_id` 外键从 `documents(id)` 改挂 `documents_registry(document_id)`：
-- SQLite 不能 ALTER FK → 采用标准 12 步表重建（create new → copy → drop → rename），外键引用对象改为 registry。
-- **禁止 dummy P&ID document 占位**：Cable 文档从 registry 行直接成立，不借 P&ID 载荷。
-- 迁移后治理表内既有的 P&ID document_id 全部在 registry 有对应行（迁移保证），引用完整性在迁移事务内逐表校验（COUNT 对账）。
+**索引契约**（重建后逐条重建，名称与定义逐字保留）：
+```sql
+CREATE INDEX idx_agent_sessions_document_created ON agent_sessions(document_id, created_at DESC);
+CREATE INDEX idx_agent_approvals_session_created ON agent_approvals(session_id, created_at ASC);
+CREATE INDEX idx_agent_tool_calls_session_started ON agent_tool_calls(session_id, started_at ASC);
+```
 
-## 4. M10 runtime contract 兼容性（冻结）
+## 3. 迁移算法（冻结，R11-D1-1 真实可执行版）
 
-- HarnessStorePort / AgentSession / ToolApproval / ToolCallRecord 的外部语义**全部不变**；M10 已合并的行为锁（golden parity、五闭包、隔离锁）继续有效。
-- store.py 的治理面方法实现改挂 registry join（读载荷 revision 时经 registry 路由），但方法签名与返回模型不变。
-- 若 D1 实施中发现必须修改 runtime port 或 model contract → **显式新 Gate 项，不顺手改**（本设计未发现需要）。
+选 **migration 专用 FK-OFF 路径**（三张治理表互相 FK 引用，FK-ON 下 12 步 rename  dance 不可能安全；`foreign_key_check` 在提交前兜底完整性）：
 
-## 5. 原子事务边界（冻结）
+```
+0. 校验 user_version==13；PRAGMA foreign_keys=OFF（须在 BEGIN 外设置，SQLite 限制）
+1. BEGIN IMMEDIATE
+2. 读入三表+索引当前 DDL（sqlite_master）作为生成真源
+3. CREATE documents_registry（§1 最小 schema）
+4. backfill registry：INSERT INTO documents_registry SELECT id,'pid',created_at FROM documents
+5. CREATE cable_documents（空壳，D1 无写入路径）
+6. 逐表 12 步重建（agent_sessions → agent_approvals → agent_tool_calls）：
+   CREATE <t>_v14（§2 生成）→ INSERT SELECT * 全列拷贝 → COUNT 对账（旧表==新表）
+   → DROP <t> → ALTER <t>_v14 RENAME TO <t> → 重建该表索引（§2 契约）
+   （建表按父→子顺序，DROP/RENAME 按子→父顺序回退执行）
+7. 全局对账：registry 行数==documents 行数；三表行数迁移前后一致；
+   三表 distinct document_id ⊆ registry
+8. PRAGMA foreign_key_check —— 必须为空，非空即 ROLLBACK
+9. PRAGMA user_version=14
+10. COMMIT
+11. PRAGMA foreign_keys=ON（finally 保证；任何异常 → ROLLBACK + FK ON，库保持 v13 可读可写）
+```
 
-Cable governed write（D2 落地，D1 只定义边界）必须是 store 层单一 primitive（模式同 M9 的 commit_release）：**BEGIN IMMEDIATE → cable 载荷写 + registry revision 更新 + tool-call/approval/session 闭包 + audit append → COMMIT**，任一失败全回滚。同库同连接单事务，无跨库问题（独立库方案已被 DEF-3 排除）。
+幂等：user_version==14 即整体跳过。失败注入测试点位：4 / 6 / 8 各注一次异常，断言回滚后 v13 全功能 + 重跑成功。
 
-## 6. Audit hard lock（冻结）
+## 4. P&ID 生命周期不变量（R11-D1-3 冻结）
 
-audit_records 表结构、global ordinal 连续性、prev_hash/record_hash 形成算法、chain schema/version、genesis verification 验证逻辑——**全部不变**。D1 迁移只改治理表 FK 与新增表，不触碰 audit_records。若实施中发现任一项必须改 → **STOP / RETURN TO GATE**。
+| 操作 | 事务边界 |
+|---|---|
+| 新建 P&ID 文档 | documents 行 + registry(domain='pid') 行同一事务 |
+| project import | 全部导入 documents + 对应 registry 行同一事务 |
+| 普通 revision update | 只写载荷表，**registry 不动**（无 revision 列） |
+| 删除 P&ID 文档 | documents 删除 + registry identity 删除同一事务；治理表经 v14 FK `ON DELETE CASCADE` 行为与 v13 逐字一致；audit 行无 FK、保留（删除证据可审计，原语义不变） |
+| 跨 domain ID 注册 | registry PK 冲突 → IntegrityError，原子 fail-closed |
 
-## 7. migration algorithm（v13 fixture → v14）
+store.py 的文档 create/import/delete 路径增加 registry 同事务写入；治理面方法读 revision 仍走 DomainAdapter/载荷表，registry 不参与读路径。
 
-1. PRAGMA user_version 校验 =13；BEGIN IMMEDIATE。
-2. CREATE documents_registry（空）。
-3. CREATE cable_documents / cable_segments（空表，D1 不写入任何 Cable 数据）。
-4. 12 步重建 agent_sessions → 新 schema（document_id FK→registry）；COPY 全量；DROP 旧表；RENAME。approvals、tool_calls 同法依次做。
-5. INSERT registry 行：SELECT 自 documents（domain='pid'）。
-6. 对账校验：治理表 distinct document_id ⊆ registry；三表行数迁移前后一致；registry 行数 == documents 行数。
-7. PRAGMA user_version=14；COMMIT。任一步失败 → ROLLBACK，库保持 v13 可读可写。
-- FK 策略：应用连接历史不开 foreign_keys pragma（以代码核验为准，设计稿记录实测结果）；重建后声明式 FK 指向 registry，开启 pragma 的客户端同样得到一致约束。
-- 失败注入测试：在第 4–6 步各注入一次异常，断言 ROLLBACK 后 v13 全功能（读写/迁移重跑幂等）。
-- 迁移重复执行：user_version=14 即跳过（幂等）。
+## 5. runtime contract / audit 硬锁（不变）
 
-## 8. compatibility evidence（D1 必须交付的测试）
+HarnessStorePort/AgentSession/approval/tool-call 语义不变；必须改 port/model → 显式新 Gate 项。audit_records 结构、global ordinal、hash 形成、chain schema、genesis 验证全部不动；必须改 → STOP RETURN TO GATE。原子闭包边界（D2 落地）同 §5 v1：单一 store primitive 同事务。
 
-- v13 P&ID 数据/文档历史/session/approval/tool-call/audit chain 迁移前后语义与引用关系不变（逐表 COUNT + 抽样字段 + audit verify_chain ok）。
-- 全量 1706 baseline 测试在 v14 库上全绿（测试库自动迁移路径同生产）。
-- Cable 数据不进 P&ID digest/projection（D1 阶段 Cable 表为空，测试以 registry discriminator 断言 P&ID 查询路径不触碰 cable_* 表）。
-- registry 路由负测：用 cable document_id 走 P&ID 读路径 → 404/not_found（fail-closed）。
+## 6. compatibility evidence（按 R11-D1-4 升级）
 
-## 9. backup / rollback runbook
+1. 三张重建表**全行全持久字段** pre/post 等价（非抽样：逐行 dict 比对）。
+2. 索引契约存在（§2 三条 + sqlite_autoindex）。
+3. 迁移后 `PRAGMA foreign_key_check` 为空。
+4. 删除一个 P&ID document 后：治理表 cascade 行为与 v13 一致（同 fixture 双版本对比）、audit 行保留。
+5. fresh P&ID create / import 后 registry 完整（每 documents 行恰一 registry 行）。
+6. cross-domain ID collision：以 cable domain 注册已存在的 pid id → IntegrityError，且两表均无变化。
+7. 1706 baseline 在 v14 库全绿（含 M5/quality）；隔离锁不回归。
+8. 迁移前后 audit `verify_chain()` ok 且 ordinal 连续。
 
-- 迁移前：create_backup（现有 database_recovery 备份格式）+ inspect_backup 验证；restore 演练用一次性 v13 库实测（备份→restore→verify_chain ok）。
-- v14→v13 不是普通 git revert：代码回退后 v14 库不能被 v13 binary 打开（DatabaseVersionError 如实记录）；真正的降级 = 恢复迁移前 backup。是否提供专门 downgrade procedure：D1 **不提供**（数据面为空，无 downgrade 价值；若 D2 后需要，另开 Gate）。
+## 7. backup / rollback runbook（R11-D1-5 修正口径）
 
-## 10. D1 CODE PR 的 whitelist / 测试矩阵 / rollback boundary
+- **代码普通 revert 仅在迁移未执行时成立**。DB 已 v14 时回 v13：停服务 → 恢复 pre-v14 verified backup（create_backup/inspect_backup 格式）→ 用 v13 binary 验证 instance_id 与 audit chain（verify_chain ok）→ 启动。v14 库不能被 v13 binary 打开（DatabaseVersionError）如实记录。
+- **不提供通用 v14→v13 downgrade migration**（已获批准）；backup→restore 演练是 D1 硬交付。
 
-**Whitelist**：database_recovery.py（v14 迁移 + registry/cable 建表 + required_tables）、store.py（治理面方法改挂 registry 路由 + registry 读写 + v14 对账校验）、tests（新增 test_m11_d1_identity.py、扩展 test_database_recovery.py）、docs。Cable validator/export/UI/runtime wiring/D2 内容**一律不在 D1**（D1 的 cable 表为空壳，证明身份边界与迁移，不证明 domain 功能——这正是 D1/D2 的证据分层）。
+## 8. D1 CODE whitelist / 分层 / 决策点复核
 
-**测试矩阵**：① v13→v14 迁移 happy path（fixture 库）；② 三步失败注入回滚（§7）；③ 幂等重跑；④ 对账校验（治理表/registry/documents 行数与引用）；⑤ audit chain 迁移前后 verify_chain ok 且 ordinal 连续；⑥ registry 路由负测（fail-closed）；⑦ v14 上 1706 baseline 全绿；⑧ 隔离锁不回归（runtime 包仍零 P&ID 新增依赖——registry 属 store 层，不在 runtime 包）。
+Whitelist：database_recovery.py（v14 迁移 §3 + registry/cable 建表 + required_tables）、store.py（文档 create/import/delete 加 registry 同事务 + registry 读写）、tests（test_m11_d1_identity.py 新 + test_database_recovery.py 扩展）、docs。cable 空壳进 D1、cable_segments 延后 D2（按你建议采纳）；**禁**：runtime ports/models、audit hash、main composition、validator/export/UI/API、CABLE 数据写入路径。
 
-**Rollback boundary**：D1 纯代码 revert 可回（v14 空 Cable 数据，生产可留 v14）；已迁移的生产库回退代码 = 恢复迁移前 backup（runbook §9）。
+§11 v1 四决策点现状：方案 A 收敛为 identity-only registry（R11-D1-2 已落）；cable 空壳=部分批准（segments 延后）；whitelist 按上；downgrade 不提供（backup/restore 演练硬要求）。
 
-**D1 不提前实现 D2 adapter 的理由**：身份边界未过 Gate 前，adapter 的持久化假设不可靠；且 D1 的 evidence（迁移+对账+负测）与 D2 的 evidence（governed write 全链）分层后，若 D2 暴露问题可归因于 wiring 而非身份边界设计。
-
-## 11. 待 Gate 裁的决策点
-
-1. 注册表方案 A 选定与否；2. cable 表空壳进 D1 是否认可（vs 连表也不建）；3. whitelist 是否需增删；4. downgrade「D1 不提供」是否认可。
+请裁 M11-D1 Design v2；PASS 后请签 M11-D1 CODE GO。

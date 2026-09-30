@@ -13,7 +13,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from .cable_models import CableDocument
 from .cable_service import CableDocumentView
@@ -89,7 +89,7 @@ class CableReadiness:
     profile_version: int
     profile_fingerprint: str
     rule_results: tuple[CableRuleResult, ...]
-    state: str  # Literal["eligible", "not_eligible"] — the canonical contract
+    state: Literal["eligible", "not_eligible"]  # the canonical contract
     counts: dict[str, int]
     eligible: bool  # convenience mirror of state; never the sole truth
     reasons: tuple[str, ...] = ()
@@ -228,5 +228,13 @@ def assess_cable_document(service, document_id: str) -> CableReadiness:
 
         if isinstance(exc, CableDocumentNotFoundError):
             raise
-        raise CableValidationError("invalid_cable_payload", str(exc)) from exc
+        import sqlite3
+
+        import pydantic
+
+        if isinstance(exc, (ValueError, pydantic.ValidationError)):
+            raise CableValidationError("invalid_cable_payload", str(exc)) from exc
+        if isinstance(exc, sqlite3.Error):
+            raise  # storage failures keep their truth — never relabelled
+        raise
     return assess(view)

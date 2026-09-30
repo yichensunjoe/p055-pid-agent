@@ -70,7 +70,12 @@ def export_cable_document(
             "cable_document_not_found", f"cable document {document_id!r} not found"
         ) from None
     except Exception as exc:
-        raise CableExportError("invalid_cable_payload", str(exc)) from exc
+
+        import pydantic
+
+        if isinstance(exc, (ValueError, pydantic.ValidationError)):
+            raise CableExportError("invalid_cable_payload", str(exc)) from exc
+        raise
     if view.document.revision != expected_revision:
         raise CableExportError(
             "stale_revision",

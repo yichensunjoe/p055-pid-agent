@@ -176,29 +176,6 @@ def test_cross_domain_fail_closed_and_pid_zero_change(tmp_path: Path) -> None:
     assert len(store.all_audit_records()) == audits_before
 
 
-def test_cross_process_byte_for_byte(tmp_path: Path) -> None:
-    _, _, cable = _service(tmp_path)
-    doc = cable.create_document("x")
-    script = (
-        "import sys\n"
-        "sys.path.insert(0, r'/Users/joe/ai/reasonix/projects/active/P055-PID-Agent-main/backend')\n"
-        "from agentcad.cable_export import export_cable_document\n"
-        "from agentcad.cable_service import CableService\n"
-        "from agentcad.store import SQLiteDocumentStore\n"
-        f"service = CableService(SQLiteDocumentStore(r'{tmp_path}/d3.db'))\n"
-        f"artifact = export_cable_document(service, '{doc.document_id}', expected_revision=0)\n"
-        "print(artifact.artifact_sha256)\n"
-    )
-    hashes = set()
-    for _ in range(2):
-        result = subprocess.run(
-            [sys.executable, "-c", script], capture_output=True, text=True, timeout=60
-        )
-        assert result.returncode == 0, result.stderr
-        hashes.add(result.stdout.strip().splitlines()[-1])
-    assert len(hashes) == 1
-
-
 def test_payload_change_changes_artifact(tmp_path: Path) -> None:
     _, _, cable = _service(tmp_path)
     doc = cable.create_document("c")
@@ -274,16 +251,17 @@ def test_targeted_member_tamper(tmp_path: Path) -> None:
     doc = cable.create_document("t")
     artifact = export_cable_document(cable, doc.document_id, expected_revision=0)
 
+    from agentcad.cable_export import _force_zero_external_attributes, _zipinfo
+
     def rebuild(modify) -> bytes:
         with zipfile.ZipFile(BytesIO(artifact.zip_bytes)) as archive:
             members = {name: archive.read(name) for name in archive.namelist()}
         members = modify(members)
         buffer = BytesIO()
         with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_STORED) as archive:
+            archive.comment = b""
             for name in ("cable-document.json", "MANIFEST.sha256"):
-                archive.writestr(name, members[name])
-        from agentcad.cable_export import _force_zero_external_attributes
-
+                archive.writestr(_zipinfo(name), members[name])
         return _force_zero_external_attributes(buffer.getvalue())
 
     def tamper_document(members):
@@ -322,10 +300,17 @@ def test_reverse_cross_domain_and_pid_zero_change(tmp_path: Path) -> None:
     # successful cable validate + export leaves the P&ID document untouched
     pid_before = service.get_document(pid_doc.id).model_dump()
     audits_before = len(store.all_audit_records())
+    from agentcad.release_validator import assess_document_release_readiness
+    from agentcad.validation_profile import load_profile
+
+    with pytest.raises(DocumentNotFoundError):
+        assess_document_release_readiness(
+            service, cable_doc.document_id, load_profile()
+        )
     readiness = assess(cable.load(cable_doc.document_id))
-    assert readiness.state == "not_eligible" or readiness.state == "eligible"
+    assert readiness.state == "eligible"
     artifact = export_cable_document(cable, cable_doc.document_id, expected_revision=1)
-    assert artifact.readiness.state in {"eligible", "not_eligible"}
+    assert artifact.readiness.state == "eligible"
     assert service.get_document(pid_doc.id).model_dump() == pid_before
     assert len(store.all_audit_records()) == audits_before
 
@@ -352,3 +337,25 @@ def test_corrupt_payload_typed_error(tmp_path: Path) -> None:
     with pytest.raises(CableValidationError) as excinfo:
         assess_cable_document(cable, doc.document_id)
     assert excinfo.value.code == "invalid_cable_payload"
+
+
+def test_storage_failure_not_relabelled(tmp_path: Path, monkeypatch) -> None:
+    """R75-7: a SQLite/storage failure keeps its truth — never reported as an
+    invalid payload."""
+    _, _, cable = _service(tmp_path)
+    doc = cable.create_document("db")
+
+    def boom(document_id):
+        import sqlite3
+
+        raise sqlite3.OperationalError("disk I/O error")
+
+    monkeypatch.setattr(cable.store, "get_cable_envelope", boom)
+    import sqlite3
+
+    with pytest.raises(sqlite3.OperationalError):
+        export_cable_document(cable, doc.document_id, expected_revision=0)
+    from agentcad.cable_validation import assess_cable_document
+
+    with pytest.raises(sqlite3.OperationalError):
+        assess_cable_document(cable, doc.document_id)

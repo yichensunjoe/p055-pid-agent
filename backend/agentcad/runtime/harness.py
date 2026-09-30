@@ -660,7 +660,13 @@ class AgentHarnessRuntime:
                 provider=session.provider,
                 model=session.model,
                 intent_hash=intent_hash,
-                metadata={"permission": definition.permission, "risk": definition.risk},
+                # P2-4/R70-1: caller metadata merges with permission+risk, exactly
+                # as the pre-M10 _tool_audit_context built it — nothing dropped.
+                metadata={
+                    **(metadata or {}),
+                    "permission": definition.permission,
+                    "risk": definition.risk,
+                },
                 evidence=self.adapter.rejection_evidence(
                     definition=definition,
                     intent=intent_hash,

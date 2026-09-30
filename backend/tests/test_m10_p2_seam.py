@@ -25,6 +25,7 @@ GOLDEN_HASHES = {
     "apply_compiled_agent_transaction": "f3c982a8e76da87517f248790891abc924c9e4b6128af039cc45574132000a9b",
     "apply_deterministic_drafting": "18cb3f46e00a40d86ea2ebadd1a3c80499272a4bfbef9317f6257b68c063cf55",
     "passthrough_tool": "f849c2a121debb52f5a55b5dd6666c64aa8f9ac52dbee2bc669c8cb2afbc45ec",
+    "apply_agent_transaction": "6a98ad8c16eea6b9dddbc161e4e108a34a99f20d6a8db7b3c2a83c5d3a699519",
 }
 
 GOLDEN_TRANSACTION = {
@@ -64,7 +65,9 @@ GOLDEN_REJECTION_PROJECTION = {
     "has_tool_call_id": True,
     "label": "Apply an already compiled and validated low-level Agent transaction "
     "through the atomic DocumentService write boundary.",
-    "metadata_keys": ["permission", "risk"],
+    "metadata_keys": ["attempt", "permission", "plan_id", "risk"],
+    "metadata_plan_id": "golden-plan",
+    "metadata_attempt": 3,
     "model": "",
     "provider": "",
     "status": "rejected",
@@ -95,6 +98,25 @@ def test_intent_hash_golden_parity_and_default_invariance() -> None:
         "apply_auto_layout": {"options": {}},
         "apply_deterministic_drafting": {"request": {}},
         "passthrough_tool": {"anything": {"b": 1, "a": [True, None, 2]}},
+        "apply_agent_transaction": {
+            "transaction": {
+                "expected_revision": 0,
+                "label": "golden-sem",
+                "operations": [
+                    {
+                        "op": "add_element",
+                        "element": {
+                            "type": "symbol",
+                            "id": "golden_sem",
+                            "symbol_key": "ball_valve",
+                            "position": {"x": 100, "y": 100},
+                            "width": 60,
+                            "height": 40,
+                        },
+                    }
+                ],
+            }
+        },
     }
     for name, intent in cases.items():
         canonical = canonicalize_tool_intent(name, intent)
@@ -130,6 +152,7 @@ def test_rejection_audit_parity(tmp_path: Path) -> None:
             document_id=document_id,
             intent={"transaction": GOLDEN_TRANSACTION},
             base_revision=0,
+            metadata={"plan_id": "golden-plan", "attempt": 3},
         )
     assert getattr(excinfo.value, "code", "") == "tool_approval_required"
 
@@ -153,6 +176,8 @@ def test_rejection_audit_parity(tmp_path: Path) -> None:
         "has_tool_call_id": bool(record.tool_call_id),
         "label": record.label,
         "metadata_keys": sorted(record.evidence.get("metadata", {}).keys()),
+        "metadata_plan_id": (record.evidence.get("metadata") or {}).get("plan_id"),
+        "metadata_attempt": (record.evidence.get("metadata") or {}).get("attempt"),
         "model": record.model,
         "provider": record.provider,
         "status": record.status,
@@ -218,22 +243,36 @@ def test_five_closure_success_postcondition(tmp_path: Path) -> None:
 
 
 def test_mid_commit_failure_locks_existing_states(tmp_path: Path, monkeypatch) -> None:
+    """R70-3: the failure must happen INSIDE the store save transaction, so the
+    staged document/history/audit writes genuinely roll back — not a pre-call
+    raise. We inject into store._write_tool_call, which runs after the document
+    row and audit record have been staged but before COMMIT."""
     from agentcad.harness import AgentHarnessService
     from agentcad.service import RevisionConflictError
+    from agentcad.store import StoreRevisionConflictError
 
     service = _service(tmp_path)
     document_id = _seed(service, tmp_path)
     harness = AgentHarnessService(service, service.store)
     session, approval, authorized = _approved_call(harness, service, document_id)
 
-    def racing_apply(document, transaction, **kwargs):
-        raise RevisionConflictError("revision moved while committing")
+    store = service.store
+    audits_before = len(store.all_audit_records())
+    real_write = store._write_tool_call  # noqa: SLF001 - test-only injection seam
+    writes = {"n": 0}
 
-    monkeypatch.setattr(service, "apply_transaction", racing_apply)
+    def failing_write(connection, tool_call):
+        writes["n"] += 1
+        if writes["n"] == 1:
+            # Fail the success-path close-out inside the save transaction;
+            # the failure-path close-out (record_failure) must still write.
+            raise StoreRevisionConflictError("injected mid-commit tool-call failure")
+        return real_write(connection, tool_call)
+
+    monkeypatch.setattr(store, "_write_tool_call", failing_write)
     with pytest.raises(RevisionConflictError):
         harness.apply_authorized(authorized, document_id, GOLDEN_TRANSACTION)
 
-    store = service.store
     # P2-6: the existing failure states, not redefined ones.
     assert service.get_document(document_id).revision == 0
     call = store.get_tool_call(authorized.record.id)
@@ -252,3 +291,8 @@ def test_mid_commit_failure_locks_existing_states(tmp_path: Path, monkeypatch) -
     # Parity with pre-M10: RevisionConflictError carries no .code, so the
     # recorded error_code is the class name (existing behavior, not redefined).
     assert failures[0].error_code == "RevisionConflictError"
+    # The staged success audit rolled back with the transaction: the only new
+    # audit row anywhere is the single failure record above.
+    assert len(store.all_audit_records()) == audits_before + 1
+    # The injected writer never ran the real one: no stray completed row.
+    assert real_write is not None

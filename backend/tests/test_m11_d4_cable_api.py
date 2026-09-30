@@ -61,8 +61,11 @@ def test_three_gets_read_only_and_projection(tmp_path: Path) -> None:
 
     listing = client.get("/api/v2/cable/documents")
     assert listing.status_code == 200
-    entries = listing.json()["documents"]
-    assert [(e["document_id"], e["revision"]) for e in entries] == [(document_id, 1)]
+    entries = listing.json()
+    assert isinstance(entries, list)  # frozen top-level array shape
+    assert [
+        (e["document_id"], e["revision"], e["readiness_state"]) for e in entries
+    ] == [(document_id, 1, "eligible")]
 
     detail = client.get(f"/api/v2/cable/documents/{document_id}")
     assert detail.status_code == 200

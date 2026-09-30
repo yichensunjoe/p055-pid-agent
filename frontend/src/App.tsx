@@ -135,7 +135,7 @@ function ShapeToolButton({ tool, label, shortcut, active }: { tool: "line" | "re
   );
 }
 
-type RightPanel = "properties" | "groups" | "history" | "reports" | "graph" | "drafting" | "agent" | "review" | "cable";
+type RightPanel = "properties" | "groups" | "history" | "reports" | "graph" | "drafting" | "agent" | "review";
 
 function operationDescription(operation: SemanticOperation): string {
   switch (operation.op) {
@@ -161,6 +161,7 @@ export default function App() {
   const preferences = useEditorPreferences();
   const resolvedAppearance = useResolvedAppearance();
   const shortcutMap = useMemo(() => resolvedShortcutMap(preferences.shortcutOverrides), [preferences.shortcutOverrides]);
+  const [domainMode, setDomainMode] = useState<"pid" | "cable">("pid");
   const [prompt, setPrompt] = useState("");
   const [context, setContext] = useState("");
   const [referenceImages, setReferenceImages] = useState<VisionAttachment[]>([]);
@@ -823,7 +824,6 @@ export default function App() {
     { id: "drafting", label: "整理" },
     { id: "agent", label: "Agent" },
     { id: "review", label: "审查" },
-    { id: "cable", label: "线缆" },
   ];
   const busyAgent = planningAgent || repairingAgent || applyingAgent || automaticAgentRunning;
   const agentImages = useMemo(() => toAgentImagePayload(referenceImages), [referenceImages]);
@@ -1243,7 +1243,11 @@ export default function App() {
               <button type="button" className="document-view-button" onClick={() => setViewNavigatorOpen(true)}>分区 {activeZone?.label ?? "—"} · 命名视图 {namedViews.length}</button>
               <span>框选 · Shift 多选 · 右键快捷操作 · {shortcutMap["palette:open"]} 命令面板</span>
             </div>
-            {rightPanel === "cable" ? (
+            <div className="domain-tabs" role="tablist" aria-label="工程域">
+              <button type="button" role="tab" aria-selected={domainMode === "pid"} className={domainMode === "pid" ? "active" : ""} onClick={() => setDomainMode("pid")}>P&ID</button>
+              <button type="button" role="tab" aria-selected={domainMode === "cable"} className={domainMode === "cable" ? "active" : ""} onClick={() => setDomainMode("cable")}>线缆</button>
+            </div>
+            {domainMode === "cable" ? (
               <div className="cable-workspace" data-testid="cable-workspace">
                 <CablePanel />
               </div>
@@ -1261,7 +1265,7 @@ export default function App() {
           {rightPanel === "groups" ? <section className="inspector-panel" role="tabpanel"><h2>图层与工艺系统</h2><LayerSystemPanel /></section> : null}
           {rightPanel === "history" ? <section className="inspector-panel" role="tabpanel"><h2>Revision 历史</h2><HistoryPanel /></section> : null}
           {rightPanel === "review" ? <section className="inspector-panel" role="tabpanel"><h2>工程审查</h2><ReviewPanel /></section> : null}
-          {rightPanel === "cable" ? <section className="inspector-panel" role="tabpanel"><h2>线缆</h2><p className="review-empty">线缆工作区已在左侧主区打开。</p></section> : null}
+
           {rightPanel === "reports" ? (
             <section className="inspector-panel" role="tabpanel">
               <h2>工程报表与规则检查</h2>

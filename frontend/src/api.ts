@@ -933,3 +933,40 @@ export const api = {
     }),
   }),
 };
+
+export type CableListEntry = { document_id: string; name: string; revision: number; readiness_state: string };
+export type CableDetail = {
+  document_id: string;
+  revision: number;
+  schema: string;
+  name: string;
+  segments: Array<{ id: string; from_node: string; to_node: string; gauge: string }>;
+  readiness: {
+    state: "eligible" | "not_eligible";
+    counts: Record<string, number>;
+    reasons: string[];
+    result_hash: string;
+    profile_id: string;
+    profile_version: number;
+    profile_fingerprint: string;
+  };
+};
+
+export async function fetchCableDocuments(): Promise<CableListEntry[]> {
+  const response = await authorizedFetch("/api/v2/cable/documents");
+  if (!response.ok) throw new Error(`Cable list failed: HTTP ${response.status}`);
+  return (await response.json()) as CableListEntry[];
+}
+
+export async function fetchCableDetail(documentId: string): Promise<CableDetail> {
+  const response = await authorizedFetch(`/api/v2/cable/documents/${documentId}`);
+  if (!response.ok) throw new Error(`Cable detail failed: HTTP ${response.status}`);
+  return (await response.json()) as CableDetail;
+}
+
+export async function downloadCableExport(documentId: string, revision: number): Promise<void> {
+  await downloadApiResource(
+    `/api/v2/cable/documents/${documentId}/export.zip?expected_revision=${revision}`,
+    `${documentId}-r${revision}.zip`,
+  );
+}

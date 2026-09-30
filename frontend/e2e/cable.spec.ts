@@ -32,6 +32,12 @@ function seedCableDocument(): string {
 }
 
 test.describe("M11-D4 dual-domain coexistence", () => {
+  test("cable domain is reachable without any open P&ID document", async ({ page }) => {
+    await page.goto("/");
+    await page.getByRole("tab", { name: "线缆" }).click();
+    await expect(page.getByTestId("cable-panel")).toBeVisible();
+  });
+
   test("the frozen 10-step read-only cable surface coexists with P&ID", async ({
     page,
     request,
@@ -45,27 +51,38 @@ test.describe("M11-D4 dual-domain coexistence", () => {
     const pidBaseline = await (await request.get(`/api/v2/documents/${pidId}`)).json();
     const auditsBefore = (await (await request.get("/api/v2/audit/records")).json()).length;
 
-    // ② seed a Cable document (bootstrap data, D4 has no write surface)
+    // ② switch to the Cable domain (top-level tab; P&ID canvas not rendered)
     const cableId = seedCableDocument();
-
-    // ③ switch to the Cable tab: real DB-driven list, no P&ID documents
     await page.getByRole("tab", { name: "线缆" }).click();
+    await expect(page.getByTestId("cable-workspace")).toBeVisible();
+
+    // ③ real DB-driven list; isolation: no P&ID documents in the cable list
     await expect(page.getByTestId("cable-panel")).toBeVisible();
-    await expect(page.getByText("e2e 线缆（r1）")).toBeVisible();
-    await expect(page.getByTestId("cable-panel").getByText("coexistence-pid")).toHaveCount(0);
+    await expect(page.getByText("e2e 线缆（r1 · eligible）")).toBeVisible();
+    await expect(
+      page.getByTestId("cable-panel").getByText("coexistence-pid"),
+    ).toHaveCount(0);
+    const listEntry = (await (await request.get("/api/v2/cable/documents")).json()).find(
+      (entry: { document_id: string }) => entry.document_id === cableId,
+    );
+    expect(listEntry.readiness_state).toBe("eligible");
 
     // ④ detail: load/identity
-    await page.getByText("e2e 线缆（r1）").click();
+    await page.getByText("e2e 线缆（r1 · eligible）").click();
     await expect(page.getByTestId("cable-detail")).toBeVisible();
 
-    // ⑤ readiness projection matches the D3 contract exactly
+    // ⑤ readiness projection matches the FULL D3 contract
     const detail = await (
       await request.get(`/api/v2/cable/documents/${cableId}`)
     ).json();
     expect(detail.readiness.state).toBe("eligible");
+    expect(detail.readiness.counts).toEqual({ blocker: 1, warning: 1, failed: 0 });
+    expect(detail.readiness.reasons).toEqual([]);
+    expect(detail.readiness.result_hash).toMatch(/^[0-9a-f]{64}$/);
     expect(detail.readiness.profile_id).toBe("cable-built-in");
-    expect(detail.readiness.result_hash).toBeTruthy();
-    await expect(page.getByText("eligible")).toBeVisible();
+    expect(detail.readiness.profile_version).toBe(1);
+    expect(detail.readiness.profile_fingerprint).toMatch(/^[0-9a-f]{64}$/);
+    await expect(page.getByTestId("cable-detail").getByText("eligible")).toBeVisible();
     await expect(page.getByText("CBL-E2E")).toBeVisible();
 
     // ⑥ export byte parity: HTTP body == direct D3 function output
@@ -87,18 +104,22 @@ test.describe("M11-D4 dual-domain coexistence", () => {
     );
     expect(cross.status()).toBe(404);
 
-    // UI export download works and matches the HTTP bytes (no re-pack)
+    // UI export download matches the HTTP bytes (authenticated download flow)
     const [download] = await Promise.all([
       page.waitForEvent("download"),
-      page.getByRole("link", { name: "导出确定性包" }).click(),
+      page.getByRole("button", { name: "导出确定性包" }).click(),
     ]);
     const path = await download.path();
     const { readFileSync } = await import("node:fs");
     expect(readFileSync(path)).toEqual(Buffer.from(httpBytes));
 
+    // additional in-step assertions: no write controls on the cable surface
+    await expect(
+      page.getByTestId("cable-workspace").getByRole("button", { name: /新增|删除|编辑/ }),
+    ).toHaveCount(0);
+
     // ⑨ back to P&ID: intact and still editable; cable unchanged
-    await page.getByRole("tab", { name: "审查" }).click();
-    await page.getByRole("tab", { name: "属性" }).click();
+    await page.getByRole("tab", { name: "P&ID" }).click();
     const pidAfter = await (await request.get(`/api/v2/documents/${pidId}`)).json();
     expect(pidAfter.revision).toBe(pidBaseline.revision);
     expect(pidAfter.elements).toEqual(pidBaseline.elements);
@@ -107,13 +128,15 @@ test.describe("M11-D4 dual-domain coexistence", () => {
     ).json();
     expect(cableAfter.revision).toBe(1);
 
-    // no add/edit/delete controls on the cable surface
-    await page.getByRole("tab", { name: "线缆" }).click();
-    await expect(
-      page.getByTestId("cable-workspace").getByRole("button", { name: /新增|删除|编辑/ }),
-    ).toHaveCount(0);
-
-    // ⑩ reads/downloads did not grow the audit chain
+    // ⑩ shared-mode auth boundary: the Cable surface uses the SAME request
+    // boundary as every other route (never an anonymous bypass) — in the
+    // local e2e deployment both anonymous probes succeed; in shared mode both
+    // are rejected. The dedicated shared-mode 401/403 proof lives in the
+    // backend test (test_shared_mode_auth_boundary).
+    const anonymousCable = await request.get("/api/v2/cable/documents");
+    const anonymousPid = await request.get("/api/v2/documents");
+    expect(anonymousCable.status()).toBe(anonymousPid.status());
+    // local e2e backend: reads/downloads grew no audit facts
     const auditsAfter = (await (await request.get("/api/v2/audit/records")).json())
       .length;
     expect(auditsAfter).toBe(auditsBefore);

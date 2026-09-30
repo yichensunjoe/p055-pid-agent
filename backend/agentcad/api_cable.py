@@ -42,13 +42,25 @@ def create_cable_router(store: SQLiteDocumentStore) -> APIRouter:
             raise  # storage faults keep their truth (real 500 via FastAPI)
 
     @router.get("/documents")
-    def list_documents() -> dict:
-        return {
-            "documents": [
-                {"document_id": document_id, "revision": revision, "name": name}
-                for document_id, revision, name in store.list_cable_documents()
-            ]
-        }
+    def list_documents() -> list[dict]:
+        """Frozen shape: [{document_id, name, revision, readiness_state}].
+        A corrupt stored payload fails closed as 500 data-integrity."""
+        entries = []
+        for document_id, _revision, data_json in store.list_cable_documents():
+            try:
+                view = _load(document_id)
+                readiness = assess_cable_document(service, document_id)
+            except HTTPException:
+                raise
+            entries.append(
+                {
+                    "document_id": document_id,
+                    "name": view.document.name,
+                    "revision": readiness.revision,
+                    "readiness_state": readiness.state,
+                }
+            )
+        return entries
 
     @router.get("/documents/{document_id}")
     def document_detail(document_id: str) -> dict:

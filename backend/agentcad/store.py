@@ -779,21 +779,16 @@ class SQLiteDocumentStore:
                 raise
 
     def list_cable_documents(self) -> list[tuple[str, int, str]]:
-        """Read-only enumeration for the Cable UI: (document_id, revision, name)."""
+        """Read-only enumeration for the Cable UI: (document_id, revision, data_json).
+
+        Payload parsing deliberately happens at the service/API layer so a
+        corrupt stored payload fails closed as data-integrity instead of being
+        silently swallowed here."""
         with self._lock, self._connect() as connection:
             rows = connection.execute(
                 "SELECT document_id, revision, data_json FROM cable_documents ORDER BY document_id"
             ).fetchall()
-        import json as _json
-
-        result = []
-        for row in rows:
-            try:
-                name = str(_json.loads(row[2]).get("name", ""))
-            except Exception:
-                name = ""
-            result.append((str(row[0]), int(row[1]), name))
-        return result
+        return [(str(row[0]), int(row[1]), str(row[2])) for row in rows]
 
     def get_cable_envelope(self, document_id: str) -> tuple[int, str] | None:
         """(revision, data_json) of one cable document, or None. Pure read of

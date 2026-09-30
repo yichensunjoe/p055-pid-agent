@@ -1,48 +1,24 @@
 import { useCallback, useEffect, useState } from "react";
 
-type CableListEntry = { document_id: string; revision: number; name: string };
-type CableReadiness = {
-  state: "eligible" | "not_eligible";
-  counts: Record<string, number>;
-  reasons: string[];
-  result_hash: string;
-  profile_id: string;
-  profile_version: number;
-  profile_fingerprint: string;
-};
-type CableDetail = {
-  document_id: string;
-  revision: number;
-  schema: string;
-  name: string;
-  segments: Array<{ id: string; from_node: string; to_node: string; gauge: string }>;
-  readiness: CableReadiness;
-};
+import {
+  downloadCableExport,
+  fetchCableDetail,
+  fetchCableDocuments,
+  type CableDetail,
+} from "../api";
 
-async function cableFetch<T>(path: string): Promise<T> {
-  const response = await fetch(path);
-  if (!response.ok) {
-    const body = (await response.json().catch(() => ({}))) as {
-      detail?: { code?: string; message?: string } | string;
-    };
-    const detail = body.detail;
-    const message =
-      typeof detail === "string" ? detail : (detail?.message ?? `HTTP ${response.status}`);
-    throw new Error(message);
-  }
-  return (await response.json()) as T;
-}
+import "./CablePanel.css";
 
 export function CablePanel() {
-  const [documents, setDocuments] = useState<CableListEntry[]>([]);
+  const [documents, setDocuments] = useState<
+    Awaited<ReturnType<typeof fetchCableDocuments>>
+  >([]);
   const [detail, setDetail] = useState<CableDetail | null>(null);
   const [error, setError] = useState("");
+  const [downloading, setDownloading] = useState(false);
 
   const refresh = useCallback(async () => {
-    const listing = await cableFetch<{ documents: CableListEntry[] }>(
-      "/api/v2/cable/documents",
-    );
-    setDocuments(listing.documents);
+    setDocuments(await fetchCableDocuments());
   }, []);
 
   useEffect(() => {
@@ -52,9 +28,22 @@ export function CablePanel() {
   const open = async (documentId: string) => {
     setError("");
     try {
-      setDetail(await cableFetch<CableDetail>(`/api/v2/cable/documents/${documentId}`));
+      setDetail(await fetchCableDetail(documentId));
     } catch (exc) {
       setError(String(exc));
+    }
+  };
+
+  const exportDocument = async () => {
+    if (!detail) return;
+    setDownloading(true);
+    setError("");
+    try {
+      await downloadCableExport(detail.document_id, detail.revision);
+    } catch (exc) {
+      setError(String(exc));
+    } finally {
+      setDownloading(false);
     }
   };
 
@@ -75,7 +64,7 @@ export function CablePanel() {
             className="cable-list-item"
             onClick={() => open(entry.document_id)}
           >
-            {entry.name}（r{entry.revision}）
+            {entry.name}（r{entry.revision} · {entry.readiness_state}）
           </button>
         ))}
       </section>
@@ -119,13 +108,9 @@ export function CablePanel() {
             <p className="review-empty">文档暂无线段。</p>
           ) : null}
           <div className="review-actions">
-            <a
-              className="review-download"
-              href={`/api/v2/cable/documents/${detail.document_id}/export.zip?expected_revision=${detail.revision}`}
-              download
-            >
+            <button type="button" disabled={downloading} onClick={() => exportDocument()}>
               导出确定性包
-            </a>
+            </button>
           </div>
         </section>
       ) : null}

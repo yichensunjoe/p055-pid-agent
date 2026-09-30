@@ -418,6 +418,9 @@ def test_success_audit_provenance_parity(tmp_path: Path) -> None:
     assert record.intent_hash == authorized.record.intent_hash
     assert record.diff_preview_hash == approval.diff_preview_hash
     assert record.validation_hash
+    assert record.evidence["validation_evidence"] == {"cable": "fresh"}
+    assert record.evidence["runtime_metadata"]["permission"] == "ask"
+    assert record.evidence["runtime_metadata"]["risk"] == "engineering_change"
 
 
 def test_failure_audit_provenance_parity_mcp_surface(tmp_path: Path) -> None:

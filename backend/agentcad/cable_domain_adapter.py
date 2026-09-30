@@ -205,6 +205,8 @@ class CableDomainAdapter:
                     **closure.metadata,
                     "cable_document_id": document_id,
                     "cable_segment_id": request.segment.id,
+                    "validation_evidence": audit_event.validation_evidence,
+                    "runtime_metadata": audit_event.metadata,
                 },
             )
             self.service.store.commit_cable_write(

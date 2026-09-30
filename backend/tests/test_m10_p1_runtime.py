@@ -147,6 +147,8 @@ def test_runtime_isolation_subprocess_lock() -> None:
         "import agentcad.runtime\n"
         "import agentcad.runtime.primitives\n"
         "import agentcad.runtime.ports\n"
+        "import agentcad.runtime.models\n"
+        "import agentcad.runtime.harness\n"
         "bad = ["
         "m for m in sys.modules"
         " if m.startswith('agentcad.') and not m.startswith('agentcad.runtime')]\n"

@@ -25,6 +25,23 @@ audit_records                 -- 完全不动：无 FK、全局 ordinal hash cha
 
 ## 2. v14 DDL（冻结，R11-D1-4 要求逐字给出）
 
+**cable_documents 精确 DDL（R11-D1-6 冻结，D2 不得改变这些 envelope 字段语义；data_json 是 D2 Cable JSON contract 的 opaque payload carrier——D2 只定义 JSON 内容，不再 ALTER 表，无需 v15）：**
+
+```sql
+CREATE TABLE cable_documents (
+    document_id TEXT PRIMARY KEY,
+    revision INTEGER NOT NULL DEFAULT 0 CHECK(revision >= 0),
+    data_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY(document_id)
+        REFERENCES documents_registry(document_id)
+        ON DELETE CASCADE
+);
+```
+
+（Cable 的 revision 真相存于此 envelope 的 revision 列，与 P&ID documents.revision 同层——registry 不含 revision 的口径一致。）
+
 三表仅 `document_id` 的 FK 目标从 `documents(id)` 改为 `documents_registry(document_id)`，`ON DELETE CASCADE` 逐字保留；其余列、默认值、层级 FK 全部不变。以 agent_tool_calls 为例（v14）：
 
 ```sql
@@ -116,7 +133,13 @@ HarnessStorePort/AgentSession/approval/tool-call 语义不变；必须改 port/m
 - **代码普通 revert 仅在迁移未执行时成立**。DB 已 v14 时回 v13：停服务 → 恢复 pre-v14 verified backup（create_backup/inspect_backup 格式）→ 用 v13 binary 验证 instance_id 与 audit chain（verify_chain ok）→ 启动。v14 库不能被 v13 binary 打开（DatabaseVersionError）如实记录。
 - **不提供通用 v14→v13 downgrade migration**（已获批准）；backup→restore 演练是 D1 硬交付。
 
-## 8. D1 CODE whitelist / 分层 / 决策点复核
+## 8. CODE GO 硬锁（Gate 预冻，实施必须遵守）
+
+1. **FK-OFF 时序**：`PRAGMA foreign_keys=OFF` 必须发生在 `_migrate()` 外层事务开始之前——不能在 `_migration_14()` 内部才执行（SQLite 事务内改 FK pragma 无效）；实现需重构外层 migration orchestration 满足 v2 §3 步骤 0→1，初始化路径预开 FK 的事实保持。
+2. **旧 upgrade path 不破坏**：D1 不得只让「exact v13 fixture」能升到 v14——现有全部 migration 测试语料（v1–v13 各版本 fixture）必须继续通过；v14 事务 COMMIT 前 `PRAGMA foreign_key_check` 必须为空。
+3. **P&ID lifecycle 实现范围**：registry 同事务维护全部落在 store.py 内（create→store.save()、import→import_documents_atomic()、delete→store.delete() 三个挂点），不扩到 API/runtime。
+
+## 9. D1 CODE whitelist / 分层 / 决策点复核
 
 Whitelist：database_recovery.py（v14 迁移 §3 + registry/cable 建表 + required_tables）、store.py（文档 create/import/delete 加 registry 同事务 + registry 读写）、tests（test_m11_d1_identity.py 新 + test_database_recovery.py 扩展）、docs。cable 空壳进 D1、cable_segments 延后 D2（按你建议采纳）；**禁**：runtime ports/models、audit hash、main composition、validator/export/UI/API、CABLE 数据写入路径。
 

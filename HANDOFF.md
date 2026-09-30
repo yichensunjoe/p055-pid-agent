@@ -16,6 +16,12 @@
 
 - **R41 补充（同日）**：Q2-1R 设计修订已提交（ccfd678）：TT 解禁有 8d82f75 单行先例、FT/LT 不动（FT=审计范例）、TT 解禁后现有英文 hint 已精确隔离候选（无需中文词表）。DEV-6 句三 s3 根因=「接到一个缓冲罐 V-102」整条被分类为 connect 子句、句内嵌的添加语义未分解成实体（V-102 未声明→连接 undelivered，无 port receipt）——G2 同类 planner grammar 项，已报 Gate 路由。PR #58 CI 四绿（36379051307），等 Gate 裁定期间 ChatGPT 侧基础设施多次抖动（账户加载失败/Cloudflare），消息已全部送达线程。
 
+## 近期轮次（2026-10-01 R57 —— M11 开战：D1/D2 合并封账）
+
+- **做了什么**：① Owner 再问 M10 是否同 M9 需试点 → Gate 冻结口径：M10 技术完成不挂试点（仅 FINAL ACCEPTANCE 挂 WS3B）；Charter 无 M11 → **M11 DEFINITION PREP GO** 批；② M11 定义两轮（R11-DEF-1~4 + 编辑一致性）FROZEN：M11 = Production-Ready Second Domain Slice（§55A，Cable Schematic v1 冻结）；③ D1（PR #73→5ea00b3）：identity-only documents_registry + v14 FK 重建 + 生命周期同事务 + fail-closed 碰撞（修掉 save ON CONFLICT DO NOTHING 的 fail-open 洞），R73-1~5 收口；④ D2（PR #74→03ec9c9）：Cable 生产写入全链（七端口 + commit_cable_write 原子原语 + 两级失败语义 + bootstrap + 全 provenance parity），R74-1~5 + R74-2 final 三轮收口；⑤ D3 DESIGN PREP GO 申请已发（validator profile + deterministic export）。
+- **关键结论**：main=03ec9c9（D2 后），open PR=0；**m11-d3 已 fresh cut**；D2 教训：Gate 对 provenance/失败注入/evidence 的要求极细（success/failure audit 都必须全字段承 AuditEvent；注入必须打在真实 primitive 内部）。
+- **下一步**：D3 裁定 → validator+export → D4 UI/共存基准 → M11 完成标志逐条 → final Gate。
+
 ## 近期轮次（2026-09-30 R56 —— M10 技术完成获 Gate ACK）
 
 - **做了什么**：① P4 经 R72-1/2/3/3A 四轮小 delta 收口获 MERGE GO，合并 main→3379477，main CI 36655549044 四绿；② 报 M10 技术完成报告，Gate 签 **M10 Technical Completion ACK（P1–P4 technical implementation evidence complete）**——两层状态明确拆分：技术完成已 ACK（不等 WS3B）；FINAL ACCEPTANCE 按成熟度门甲仍需 WS3B REAL PILOT + M9 Closeout。

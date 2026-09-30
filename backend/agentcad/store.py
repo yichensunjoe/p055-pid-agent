@@ -737,6 +737,121 @@ class SQLiteDocumentStore:
                 connection.rollback()
                 raise
 
+    # ---------------------------------------------------------- cable (M11-D2)
+
+    def create_cable_document(
+        self,
+        *,
+        document_id: str,
+        data_json: str,
+        audit: AuditRecordDraft,
+    ) -> None:
+        """Cable bootstrap (M11-D2 R11-D2-4): provisioning, not an engineering
+        mutation. Registry identity + revision-0 envelope + document.created
+        audit commit in one transaction; any failure rolls back everything."""
+
+        now = datetime.now(UTC).isoformat()
+        with self._lock, self._connect() as connection:
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                row = connection.execute(
+                    "SELECT domain FROM documents_registry WHERE document_id = ?",
+                    (document_id,),
+                ).fetchone()
+                if row is not None:
+                    raise StoreDocumentIdentityError(
+                        f"document id {document_id!r} is already registered to domain {row[0]!r}"
+                    )
+                connection.execute(
+                    "INSERT INTO documents_registry (document_id, domain, created_at) "
+                    "VALUES (?, 'cable', ?)",
+                    (document_id, now),
+                )
+                connection.execute(
+                    "INSERT INTO cable_documents (document_id, revision, data_json, created_at, updated_at) "
+                    "VALUES (?, 0, ?, ?, ?)",
+                    (document_id, data_json, now, now),
+                )
+                self._append_audit_record(connection, audit)
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+
+    def get_cable_envelope(self, document_id: str) -> tuple[int, str] | None:
+        """(revision, data_json) of one cable document, or None. Pure read of
+        the cable plane — P&ID ids never resolve here (fail-closed isolation)."""
+
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT revision, data_json FROM cable_documents WHERE document_id = ?",
+                (document_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return int(row[0]), str(row[1])
+
+    def commit_cable_write(
+        self,
+        *,
+        document_id: str,
+        expected_revision: int,
+        data_json: str,
+        new_revision: int,
+        audit: AuditRecordDraft,
+        tool_call: ToolCallRecord,
+        approval: ToolApproval | None,
+        session: AgentSession,
+    ) -> None:
+        """The single atomic Cable governed write (M11-D2): envelope CAS +
+        payload + tool-call closure + approval consumption + session closure +
+        audit append in one BEGIN IMMEDIATE. Any failure rolls back everything."""
+
+        with self._lock, self._connect() as connection:
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                cursor = connection.execute(
+                    "UPDATE cable_documents SET revision = ?, data_json = ?, updated_at = ? "
+                    "WHERE document_id = ? AND revision = ?",
+                    (new_revision, data_json, datetime.now(UTC).isoformat(), document_id, expected_revision),
+                )
+                if cursor.rowcount != 1:
+                    raise StoreRevisionConflictError(
+                        f"cable document {document_id!r} no longer has revision {expected_revision}"
+                    )
+                self._write_tool_call(connection, tool_call)
+                if approval is not None:
+                    self._write_tool_approval(connection, approval)
+                self._write_agent_session(connection, session)
+                self._append_audit_record(connection, audit)
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+
+    def cable_failure_closeout(
+        self,
+        *,
+        tool_call: ToolCallRecord,
+        session: AgentSession,
+        audit: AuditRecordDraft,
+    ) -> None:
+        """Failure-closeout transaction (M11-D2 R11-D2-3): failed tool call +
+        failed session + exactly one rejected audit fact, bound to the call.
+        If this transaction itself cannot persist, it rolls back and raises —
+        the caller must let the original error propagate (level-2 honesty)."""
+
+        with self._lock, self._connect() as connection:
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                self._write_tool_call(connection, tool_call)
+                self._write_agent_session(connection, session)
+                self._append_audit_record(connection, audit)
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+
     # ------------------------------------------------------ release evidence
 
     def commit_release(

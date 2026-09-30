@@ -64,9 +64,45 @@ class ClosureRequest:
 
 @dataclass(frozen=True)
 class ExecutionOutcome:
+    """Neutral execution result. ``payload`` is opaque to the runtime (P2-3):
+    the P&ID facade returns it verbatim as the historical TransactionResult."""
+
     document_id: str
-    base_revision: int
+    base_revision: int | None
     result_revision: int
+    payload: Any = None
+
+
+@dataclass(frozen=True)
+class AuditEvent:
+    """Neutral audit carrier (P2-4): every field the existing AuditContext binds.
+
+    The P&ID audit adapter converts this verbatim into its native audit context
+    (``request_audit_context`` equivalents) — no field may be dropped, and hash
+    formation / chain schema / event semantics stay in the audit implementation.
+    """
+
+    event_type: str
+    actor: str
+    tool_name: str = ""
+    surface: AuditSurface = "internal"
+    status: AuditStatus = "applied"
+    error_code: str = ""
+    label: str = ""
+    session_id: str | None = None
+    approval_id: str | None = None
+    tool_call_id: str | None = None
+    document_id: str | None = None
+    base_revision: int | None = None
+    result_revision: int | None = None
+    provider: str = ""
+    model: str = ""
+    intent_hash: str = ""
+    diff_preview_hash: str = ""
+    validation_status: str = ""
+    validation_evidence: dict[str, Any] = field(default_factory=dict)
+    evidence: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -120,23 +156,15 @@ class HarnessStorePort(Protocol):
 
 
 class AuditPort(Protocol):
-    """Neutral audit event recording; hash-chain specifics stay in the impl."""
+    """Neutral audit event recording (P2-4 refined).
 
-    def record(
-        self,
-        *,
-        event_type: str,
-        actor: str,
-        surface: AuditSurface = "internal",
-        status: AuditStatus = "applied",
-        error_code: str = "",
-        evidence: dict[str, Any] | None = None,
-        session_id: str | None = None,
-        approval_id: str | None = None,
-        tool_call_id: str | None = None,
-        document_id: str | None = None,
-        base_revision: int | None = None,
-    ) -> AuditRecordRef: ...
+    The carrier is the full :class:`AuditEvent`; the implementation converts it
+    into its native context without dropping a field. Hash-chain formation,
+    chain schema and event semantics stay inside the audit implementation —
+    this port never sees them.
+    """
+
+    def record(self, event: AuditEvent) -> AuditRecordRef: ...
 
 
 class DomainAdapter(Protocol):
@@ -144,7 +172,9 @@ class DomainAdapter(Protocol):
 
     The runtime never inspects ``intent``; it canonicalises through the domain,
     binds the hash, and delegates execution. Atomicity of the provenance
-    close-out is the adapter's contractual postcondition (R10-4).
+    close-out is the adapter's contractual postcondition (R10-4): the domain's
+    governed write must land the engineering mutation AND the harness close-out
+    in one storage transaction, on success and on failure alike.
     """
 
     def document_context(self, *, document_id: str) -> DocumentContext: ...
@@ -175,13 +205,14 @@ class DomainAdapter(Protocol):
         self,
         *,
         authorized: Any,
-        audit_context: dict[str, Any],
+        audit_event: AuditEvent,
         closure: ClosureRequest,
         intent: Any,
     ) -> ExecutionOutcome: ...
 
 
 __all__ = [
+    "AuditEvent",
     "AuditPort",
     "AuditRecordRef",
     "ClosureRequest",

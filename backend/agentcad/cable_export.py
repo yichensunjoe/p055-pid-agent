@@ -69,6 +69,8 @@ def export_cable_document(
         raise CableExportError(
             "cable_document_not_found", f"cable document {document_id!r} not found"
         ) from None
+    except Exception as exc:
+        raise CableExportError("invalid_cable_payload", str(exc)) from exc
     if view.document.revision != expected_revision:
         raise CableExportError(
             "stale_revision",
@@ -89,6 +91,8 @@ def export_cable_document(
                 "profile_id": readiness.profile_id,
                 "profile_version": readiness.profile_version,
                 "profile_fingerprint": readiness.profile_fingerprint,
+                "state": readiness.state,
+                "counts": readiness.counts,
                 "eligible": readiness.eligible,
                 "reasons": list(readiness.reasons),
                 "rule_results": [
@@ -111,12 +115,28 @@ def export_cable_document(
         archive.comment = b""
         archive.writestr(_zipinfo(MEMBER_DOCUMENT), member_payload)
         archive.writestr(_zipinfo(MEMBER_MANIFEST), manifest)
-    zip_bytes = buffer.getvalue()
+    zip_bytes = _force_zero_external_attributes(buffer.getvalue())
     return CableExportArtifact(
         zip_bytes=zip_bytes,
         artifact_sha256=_sha256(zip_bytes),
         readiness=readiness,
     )
+
+
+def _force_zero_external_attributes(zip_bytes: bytes) -> bytes:
+    """CPython 3.11's zipfile forces external_attr to 0o600<<16 when it is 0;
+    the frozen contract wants literal 0. The external-attributes field lives
+    at offset 38 in each central-directory header (PK\x01\x02) — zero it
+    in place. Deterministic: the layout is fully determined by our writer."""
+    data = bytearray(zip_bytes)
+    position = 0
+    while True:
+        index = data.find(b"PK\x01\x02", position)
+        if index < 0:
+            break
+        data[index + 38 : index + 42] = b"\x00\x00\x00\x00"
+        position = index + 4
+    return bytes(data)
 
 
 _MANIFEST_LINE = re.compile(r"^([0-9a-f]{64})  ([A-Za-z0-9._-]+)$")
@@ -131,6 +151,17 @@ def verify_cable_artifact(zip_bytes: bytes) -> None:
                 raise CableExportError("artifact_corrupt", "member set drifted")
             if archive.comment not in (b"", None):
                 raise CableExportError("artifact_corrupt", "archive comment not empty")
+            for info in archive.infolist():
+                if info.external_attr != 0:
+                    raise CableExportError("artifact_corrupt", "external_attr is not zero")
+                if info.create_system != 0:
+                    raise CableExportError("artifact_corrupt", "create_system is not zero")
+                if info.extra != b"":
+                    raise CableExportError("artifact_corrupt", "member extra is not empty")
+                if info.comment not in (b"", None):
+                    raise CableExportError("artifact_corrupt", "member comment not empty")
+                if info.compress_type != zipfile.ZIP_STORED:
+                    raise CableExportError("artifact_corrupt", "member is not ZIP_STORED")
             document = archive.read(MEMBER_DOCUMENT)
             manifest_text = archive.read(MEMBER_MANIFEST).decode("utf-8")
             lines = manifest_text.split("\n")

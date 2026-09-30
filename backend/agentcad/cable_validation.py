@@ -89,7 +89,9 @@ class CableReadiness:
     profile_version: int
     profile_fingerprint: str
     rule_results: tuple[CableRuleResult, ...]
-    eligible: bool
+    state: str  # Literal["eligible", "not_eligible"] — the canonical contract
+    counts: dict[str, int]
+    eligible: bool  # convenience mirror of state; never the sole truth
     reasons: tuple[str, ...] = ()
     result_hash: str = ""
 
@@ -116,16 +118,27 @@ def assess(
     view: CableDocumentView,
     *,
     profile_version: int = CABLE_PROFILE_VERSION,
-    rule_ids: tuple[str, ...] | None = None,
 ) -> CableReadiness:
-    """Readiness assessment. Structural integrity was already enforced at load;
-    unknown profile/rule inputs fail closed. Read-only."""
+    """Readiness assessment of the FULL frozen two-rule profile — callers can
+    never downgrade the profile by selecting a rule subset (R75-1). Structural
+    integrity was already enforced at load; unknown profile versions fail
+    closed. Read-only."""
+    return _assess_rules(view, active=(RULE_GAUGE, RULE_NON_EMPTY), profile_version=profile_version)
+
+
+def _assess_rules(
+    view: CableDocumentView,
+    *,
+    active: tuple[str, ...],
+    profile_version: int,
+) -> CableReadiness:
+    """Internal engine. ``active`` is validated against the frozen rule set so
+    an unknown id fails closed instead of silently dropping a rule."""
     if profile_version != CABLE_PROFILE_VERSION:
         raise CableValidationError(
             "unsupported_profile_version",
             f"cable profile version {profile_version} is not supported",
         )
-    active = (RULE_GAUGE, RULE_NON_EMPTY) if rule_ids is None else tuple(rule_ids)
     for rule_id in active:
         if rule_id not in RULE_SEVERITY:
             raise CableValidationError("unknown_rule", f"unknown cable rule: {rule_id}")
@@ -157,6 +170,7 @@ def assess(
                 )
             )
 
+    results = sorted(results, key=lambda r: r.rule_id)
     blockers_failed = [r for r in results if r.severity == "blocker" and not r.passed]
     warnings_failed = [
         r for r in results if r.rule_id in ALSO_FAIL_ON_WARNING and not r.passed
@@ -183,6 +197,11 @@ def assess(
             }
         )
     )
+    counts = {
+        "blocker": sum(1 for r in results if r.severity == "blocker"),
+        "warning": sum(1 for r in results if r.severity == "warning"),
+        "failed": sum(1 for r in results if not r.passed),
+    }
     return CableReadiness(
         document_id=view.document_id,
         revision=revision,
@@ -191,7 +210,23 @@ def assess(
         profile_version=CABLE_PROFILE_VERSION,
         profile_fingerprint=profile_fingerprint(),
         rule_results=tuple(results),
+        state="eligible" if eligible else "not_eligible",
+        counts=counts,
         eligible=eligible,
         reasons=tuple(reasons),
         result_hash=result_hash,
     )
+
+
+def assess_cable_document(service, document_id: str) -> CableReadiness:
+    """Validation entry by id: corrupt payloads map to the typed
+    invalid_cable_payload error instead of leaking parser internals (R75-7)."""
+    try:
+        view = service.load(document_id)
+    except Exception as exc:
+        from .cable_service import CableDocumentNotFoundError
+
+        if isinstance(exc, CableDocumentNotFoundError):
+            raise
+        raise CableValidationError("invalid_cable_payload", str(exc)) from exc
+    return assess(view)

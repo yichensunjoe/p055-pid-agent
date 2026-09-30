@@ -12,6 +12,7 @@ from uuid import uuid4
 
 from .audit_models import AuditRecordDraft
 from .cable_models import (
+    CABLE_DOCUMENT_SCHEMA,
     CableDocument,
     parse_cable_payload,
     serialize_cable_payload,
@@ -41,7 +42,7 @@ class CableService:
     def create_document(self, name: str = "cable schematic") -> CableDocumentView:
         """Bootstrap (R11-D2-4): provisioning, audited, single transaction."""
         document_id = self.new_document_id()
-        document = CableDocument(name=name)
+        document = CableDocument(schema=CABLE_DOCUMENT_SCHEMA, name=name)
         audit = AuditRecordDraft(
             event_type="document.created",
             actor="cable-service",
@@ -54,7 +55,7 @@ class CableService:
         )
         self.store.create_cable_document(
             document_id=document_id,
-            name=name,
+            data_json=serialize_cable_payload(document),
             audit=audit,
         )
         return CableDocumentView(document_id=document_id, document=document)

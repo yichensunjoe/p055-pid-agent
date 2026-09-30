@@ -8,9 +8,10 @@ injected from the envelope at load time and must equal it (fail-closed).
 
 from __future__ import annotations
 
+import json
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from .runtime.primitives import StrictModel
 
@@ -38,10 +39,17 @@ class CableDocument(StrictModel):
     never serialized into data_json as an authoritative fact.
     """
 
-    schema: Literal["pid-agent.cable-document/1"] = CABLE_DOCUMENT_SCHEMA
+    schema: Literal["pid-agent.cable-document/1"]
     name: str = "cable schematic"
     segments: tuple[CableSegment, ...] = ()
     revision: int = Field(default=0, ge=0)
+
+    @model_validator(mode="after")
+    def _segment_ids_unique(self) -> CableDocument:
+        ids = [segment.id for segment in self.segments]
+        if len(ids) != len(set(ids)):
+            raise ValueError("duplicate cable segment id in document payload")
+        return self
 
     def segment_ids(self) -> set[str]:
         return {segment.id for segment in self.segments}
@@ -65,7 +73,15 @@ class AddCableSegmentIntent(StrictModel):
 def parse_cable_payload(data_json: str, envelope_revision: int) -> CableDocument:
     document = CableDocument.model_validate_json(data_json)
     # The payload never carries an authoritative revision (A2): the envelope
-    # is the single revision truth, injected here at the IO boundary.
+    # is the single revision truth, injected at the IO boundary. If a payload
+    # DOES contain a revision field (we strip it on write), it must agree with
+    # the envelope — otherwise the payload was tampered with: fail closed.
+    explicit = json.loads(data_json).get("revision") if data_json.strip().startswith("{") else None
+    if explicit is not None and int(explicit) != envelope_revision:
+        raise ValueError(
+            "cable payload revision cache disagrees with the envelope "
+            f"({explicit} != {envelope_revision})"
+        )
     return document.model_copy(update={"revision": envelope_revision})
 
 

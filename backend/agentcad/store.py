@@ -743,7 +743,7 @@ class SQLiteDocumentStore:
         self,
         *,
         document_id: str,
-        name: str,
+        data_json: str,
         audit: AuditRecordDraft,
     ) -> None:
         """Cable bootstrap (M11-D2 R11-D2-4): provisioning, not an engineering
@@ -770,7 +770,7 @@ class SQLiteDocumentStore:
                 connection.execute(
                     "INSERT INTO cable_documents (document_id, revision, data_json, created_at, updated_at) "
                     "VALUES (?, 0, ?, ?, ?)",
-                    (document_id, "{}", now, now),
+                    (document_id, data_json, now, now),
                 )
                 self._append_audit_record(connection, audit)
                 connection.commit()

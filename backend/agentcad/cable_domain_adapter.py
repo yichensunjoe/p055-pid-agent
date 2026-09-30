@@ -104,9 +104,20 @@ class CableDomainAdapter:
         return AddCableSegmentIntent.model_validate(intent).model_dump(mode="json")
 
     def preview_diff_hash(self, *, document_id: str, intent: Any) -> str:
+        """Deterministic before->after diff hash: bound to the document at the
+        intent's expected_revision (R74-3) — reading the Cable plane, never P&ID."""
         try:
             canonical = self.canonicalize_intent(TOOL_ADD_CABLE_SEGMENT, intent)
-            return hashlib.sha256(_canonical_json(canonical).encode("utf-8")).hexdigest()
+            request = AddCableSegmentIntent.model_validate(canonical)
+            view = self.service.load(document_id)
+            if view.document.revision != request.expected_revision:
+                return ""
+            material = {
+                "before_revision": view.document.revision,
+                "document": json.loads(self.service.persist(view)),
+                "intent": canonical,
+            }
+            return hashlib.sha256(_canonical_json(material).encode("utf-8")).hexdigest()
         except Exception:  # pragma: no cover - preview must never block an approval
             return ""
 
@@ -118,9 +129,11 @@ class CableDomainAdapter:
         diff_preview_hash: str,
     ) -> dict[str, Any]:
         intent = AddCableSegmentIntent.model_validate(canonical_intent)
+        # cable_document_id is NOT embedded here: the binding is authoritative
+        # on ToolApproval.document_id / AuditEvent.document_id (R74-2) — an
+        # evidence-level copy would be a second, diverging truth.
         return {
             "tool": definition.name,
-            "cable_document_id": "",
             "expected_revision": intent.expected_revision,
             "cable_segment_id": intent.segment.id,
             "diff_preview_hash": diff_preview_hash,
@@ -135,7 +148,6 @@ class CableDomainAdapter:
     ) -> dict[str, Any]:
         return {
             "tool_permission": definition.permission,
-            "cable_document_id": "",
             "authorized": False,
         }
 
@@ -170,8 +182,8 @@ class CableDomainAdapter:
             updated = view.document.with_segment(request.segment)
             success_audit = AuditRecordDraft(
                 event_type="revision.created",
-                actor=authorized.session.actor,
-                surface="rest",
+                actor=audit_event.actor,
+                surface=audit_event.surface,
                 tool_name=authorized.definition.name,
                 status="applied",
                 document_id=document_id,
@@ -180,8 +192,14 @@ class CableDomainAdapter:
                 tool_call_id=authorized.record.id,
                 base_revision=request.expected_revision,
                 result_revision=updated.revision,
+                provider=audit_event.provider,
+                model=audit_event.model,
+                intent_hash=audit_event.intent_hash,
+                diff_preview_hash=audit_event.diff_preview_hash,
+                validation_status="valid",
                 label=f"Added cable segment {request.segment.id}",
                 evidence={
+                    **closure.metadata,
                     "cable_document_id": document_id,
                     "cable_segment_id": request.segment.id,
                 },
@@ -206,11 +224,13 @@ class CableDomainAdapter:
                 approval=authorized.approval.model_copy(
                     update={"status": "consumed", "consumed_at": datetime.now(UTC)}
                 )
-                if authorized.approval is not None
+                if authorized.approval is not None and closure.consume_approval
                 else None,
                 session=authorized.session.model_copy(
                     update={"status": "completed", "end_revision": updated.revision}
-                ),
+                )
+                if closure.close_session
+                else authorized.session,
             )
             return ExecutionOutcome(
                 document_id=document_id,
@@ -228,7 +248,7 @@ class CableDomainAdapter:
         audit = AuditRecordDraft(
             event_type="revision.created",
             actor=authorized.session.actor,
-            surface="rest",
+            surface=authorized.record.metadata.get("surface", "rest"),
             tool_name=authorized.definition.name,
             status="rejected",
             error_code=error_code,
@@ -237,6 +257,7 @@ class CableDomainAdapter:
             approval_id=authorized.approval.id if authorized.approval else None,
             tool_call_id=authorized.record.id,
             base_revision=authorized.record.base_revision,
+            intent_hash=authorized.record.intent_hash,
             label=f"Cable write denied: {error_code}",
             evidence={"cable_document_id": authorized.record.document_id},
         )

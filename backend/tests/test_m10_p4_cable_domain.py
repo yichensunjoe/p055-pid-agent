@@ -82,6 +82,7 @@ class CableDomainAdapter:
         self.repository = repository
         self._store = store
         self._audit = audit
+        self.executes = 0
 
     def document_context(self, *, document_id: str) -> DocumentContext:
         return DocumentContext(document_id=document_id, revision=self.repository.revision)
@@ -127,10 +128,38 @@ class CableDomainAdapter:
             metadata={"cable_segment_id": CableSegmentRequest.model_validate(intent).id},
         )
 
+    def _fail_closeout(self, authorized, error_code: str) -> None:
+        """Failure provenance contract (same semantics the P&ID domain freezes):
+        the failed tool call, the untouched approval and the failed session close
+        out together with exactly one rejected audit fact — no half-state."""
+        failed = authorized.record.model_copy(
+            update={"status": "failed", "error_code": error_code}
+        )
+        self._store.update_tool_call(failed)
+        session = self._store.get_agent_session(authorized.session.id)
+        self._store.update_agent_session(
+            session.model_copy(update={"status": "failed"})
+        )
+        self._audit.record(
+            AuditEvent(
+                event_type="revision.created",
+                actor=authorized.session.actor,
+                tool_name=authorized.definition.name,
+                status="rejected",
+                error_code=error_code,
+                document_id=authorized.record.document_id,
+                base_revision=authorized.record.base_revision,
+                evidence={"cable_segment_id": authorized.record.metadata.get("cable_segment_id", "")},
+            )
+        )
+
     def execute(self, *, authorized, audit_event, closure, intent) -> ExecutionOutcome:
+        self.executes += 1
         request = CableSegmentRequest.model_validate(intent)
         # Domain invariant 2: segment id unique within the repository.
         if request.id in self.repository.segments:
+            error_code = "duplicate_cable_segment"
+            self._fail_closeout(authorized, error_code)
             raise ValueError(f"duplicate cable segment id: {request.id}")
         revision = self.repository.revision + 1
         self.repository.revision = revision
@@ -267,6 +296,7 @@ except ToolApprovalRequiredError:
     pass
 assert len([c for c in store.calls.values() if c.status == "rejected"]) == 1
 assert len([e for e in audit.events if e.event_type == "permission.rejected"]) == 1
+assert runtime.adapter.executes == 0
 assert repository.revision == 0 and repository.segments == {}
 
 # ---- success chain: five closures + readable segment + revision 0 -> 1 ----
@@ -291,9 +321,11 @@ authorized = runtime.authorize(
     base_revision=0,
 )
 outcome = runtime.apply_authorized(authorized, "cable_doc", SEGMENT)
+assert runtime.adapter.executes == 1
 assert outcome.result_revision == 1 and outcome.base_revision == 0
 segment = repository.segments.get("CBL-001")
 assert segment is not None and segment.from_node == "MCC-1" and segment.to_node == "PMP-101"
+assert segment.gauge == "4mm2"
 call = store.get_tool_call(authorized.record.id)
 assert call.status == "completed" and call.result_revision == 1
 assert store.get_tool_approval(approval.id).status == "consumed"
@@ -334,6 +366,19 @@ try:
 except ValueError:
     pass
 assert repository.revision == 1 and len(repository.segments) == 1
+# R72-3: the failure closed provenance exactly like the P&ID domain — no
+# running/approved/active half-state, exactly one rejected failure audit.
+fresh_call = store.get_tool_call(fresh_authorized.record.id)
+assert fresh_call.status == "failed" and fresh_call.error_code == "duplicate_cable_segment"
+assert store.get_tool_approval(fresh_approval.id).status == "approved"
+assert store.get_agent_session(fresh_session.id).status == "failed"
+fresh_failures = [
+    e for e in audit.events
+    if e.event_type == "revision.created" and e.status == "rejected"
+    and e.error_code == "duplicate_cable_segment"
+]
+assert len(fresh_failures) == 1
+assert len([e for e in audit.events if e.status == "applied"]) == 1
 
 post = sorted(
     m for m in sys.modules
@@ -361,4 +406,4 @@ def test_cable_domain_probe() -> None:
     assert payload["verdict"] == "cable-domain-ok"
     assert payload["repository_revision"] == 1
     assert payload["segments"] == ["CBL-001"]
-    assert payload["audit_events"] == 2  # one permission.rejected + one applied
+    assert payload["audit_events"] == 3  # permission.rejected + applied + duplicate failure

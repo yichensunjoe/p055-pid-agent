@@ -1233,7 +1233,15 @@ export default function App() {
         </aside>
 
         <section className="canvas-stage" data-testid="canvas-stage" onPointerDownCapture={() => setCanvasPointerActive(true)} onPointerUpCapture={() => setCanvasPointerActive(false)} onPointerCancelCapture={() => setCanvasPointerActive(false)}>
-          {state.document ? <>
+          <div className="domain-tabs" role="tablist" aria-label="工程域">
+            <button type="button" role="tab" aria-selected={domainMode === "pid"} className={domainMode === "pid" ? "active" : ""} onClick={() => setDomainMode("pid")}>P&ID</button>
+            <button type="button" role="tab" aria-selected={domainMode === "cable"} className={domainMode === "cable" ? "active" : ""} onClick={() => setDomainMode("cable")}>线缆</button>
+          </div>
+          {domainMode === "cable" ? (
+            <div className="cable-workspace" data-testid="cable-workspace">
+              <CablePanel />
+            </div>
+          ) : state.document ? <>
             <div className="document-bar">
               <strong>{state.document.name}</strong>
               <span>revision {state.document.revision}</span>
@@ -1243,17 +1251,7 @@ export default function App() {
               <button type="button" className="document-view-button" onClick={() => setViewNavigatorOpen(true)}>分区 {activeZone?.label ?? "—"} · 命名视图 {namedViews.length}</button>
               <span>框选 · Shift 多选 · 右键快捷操作 · {shortcutMap["palette:open"]} 命令面板</span>
             </div>
-            <div className="domain-tabs" role="tablist" aria-label="工程域">
-              <button type="button" role="tab" aria-selected={domainMode === "pid"} className={domainMode === "pid" ? "active" : ""} onClick={() => setDomainMode("pid")}>P&ID</button>
-              <button type="button" role="tab" aria-selected={domainMode === "cable"} className={domainMode === "cable" ? "active" : ""} onClick={() => setDomainMode("cable")}>线缆</button>
-            </div>
-            {domainMode === "cable" ? (
-              <div className="cable-workspace" data-testid="cable-workspace">
-                <CablePanel />
-              </div>
-            ) : (
-              <EditorCanvas agentPreview={agentCanvasPreview} focusRequest={canvasFocusRequest} commandRequest={canvasCommandRequest} viewportRequest={canvasViewportRequest} onViewChange={setCanvasView} />
-            )}
+            <EditorCanvas agentPreview={agentCanvasPreview} focusRequest={canvasFocusRequest} commandRequest={canvasCommandRequest} viewportRequest={canvasViewportRequest} onViewChange={setCanvasView} />
           </> : <div className="empty-canvas">没有打开的文档</div>}
         </section>
 

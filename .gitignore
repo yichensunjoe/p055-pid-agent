@@ -19,7 +19,10 @@ logs/
 *.pidbak
 
 # Node / Frontend
-node_modules/
+# No trailing slash: the pattern must also match a node_modules *symlink*
+# (git sees a symlink as a file, so `node_modules/` never matched one and a
+# local absolute-path symlink was once committed by accident).
+node_modules
 frontend/.vite/
 frontend/*.tsbuildinfo
 frontend/vite.config.js

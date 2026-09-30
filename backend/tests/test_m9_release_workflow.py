@@ -455,8 +455,10 @@ def test_v12_database_migrates_additively_to_v13(tmp_path: Path) -> None:
     assert state_after is not None
     assert [release.release_id for release in state_after.releases] == [release_id]
     connection = reopened_store._connect()  # noqa: SLF001
+    from agentcad.database_recovery import CURRENT_SCHEMA_VERSION
+
     version = connection.execute("PRAGMA user_version").fetchone()[0]
-    assert version == 13
+    assert version == CURRENT_SCHEMA_VERSION
 
 
 # ⑪ export integrity: repeated GETs are byte-identical; a tampered blob is

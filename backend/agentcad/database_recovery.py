@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, BinaryIO
 from urllib.parse import quote
 
-CURRENT_SCHEMA_VERSION = 13
+CURRENT_SCHEMA_VERSION = 14
 BACKUP_FORMAT = "pid-agent.sqlite-backup"
 BACKUP_VERSION = 1
 BACKUP_DATABASE_MEMBER = "database.sqlite3"
@@ -463,6 +463,15 @@ def _migrate(connection: sqlite3.Connection) -> None:
         )
     if version == 0:
         version = _infer_unversioned_schema(connection)
+    # M11-D1: rebuilding the three governance tables to reference
+    # documents_registry is only safe with FK enforcement suspended for the
+    # migration transaction. PRAGMA foreign_keys cannot change inside a
+    # transaction, so the toggle must happen BEFORE BEGIN (Gate-frozen hard
+    # lock). v1->v13 migration behaviour is unaffected: FK-off only relaxes
+    # DML-time enforcement, which these DDL-only migrations never relied on.
+    crosses_v14 = version < 14 <= CURRENT_SCHEMA_VERSION
+    if crosses_v14:
+        connection.execute("PRAGMA foreign_keys=OFF")
     try:
         connection.execute("BEGIN EXCLUSIVE")
         if _schema_version(connection) == 0 and version > 0:
@@ -474,12 +483,21 @@ def _migrate(connection: sqlite3.Connection) -> None:
             version = next_version
         _validate_required_schema(connection)
         connection.commit()
-    except DatabaseRecoveryError:
-        connection.rollback()
-        raise
     except sqlite3.DatabaseError as exc:
         connection.rollback()
         raise DatabaseMigrationError(f"database migration failed: {exc}") from exc
+    except BaseException:
+        # R73-3: ANY non-SQLite failure (DatabaseMigrationError, injected errors)
+        # must roll the transaction back explicitly — never rely on connection
+        # close to undo a half-applied migration.
+        if connection.in_transaction:
+            connection.rollback()
+        raise
+    finally:
+        if crosses_v14:
+            # Runs only after the transaction above has ended (commit/rollback):
+            # SQLite ignores FK pragma changes inside a transaction.
+            connection.execute("PRAGMA foreign_keys=ON")
 
 
 def _infer_unversioned_schema(connection: sqlite3.Connection) -> int:
@@ -1074,6 +1092,112 @@ def _migration_13(connection: sqlite3.Connection) -> None:
     )
 
 
+def _migration_14(connection: sqlite3.Connection) -> None:
+    """M11-D1: domain-neutral document identity (design frozen at docs 52a7709).
+
+    Adds documents_registry (identity-only: no revision truth, no payload
+    routing) and the cable_documents envelope, then rebuilds the three
+    governance tables so document_id references the registry instead of the
+    P&ID documents table. Runs with FK enforcement suspended by the outer
+    orchestration; foreign_key_check below is the integrity gate that must
+    pass before the v14 transaction may commit.
+    """
+
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS documents_registry (
+            document_id TEXT PRIMARY KEY,
+            domain TEXT NOT NULL CHECK(domain IN ('pid', 'cable')),
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    # Backfill first: every existing P&ID document gets exactly one registry row.
+    connection.execute(
+        """
+        INSERT OR IGNORE INTO documents_registry (document_id, domain, created_at)
+        SELECT id, 'pid', created_at FROM documents
+        """
+    )
+    # Frozen cable_documents envelope (R11-D1-6): D2 defines the JSON contract
+    # inside data_json; these envelope fields never change semantics again.
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS cable_documents (
+            document_id TEXT PRIMARY KEY,
+            revision INTEGER NOT NULL DEFAULT 0 CHECK(revision >= 0),
+            data_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(document_id)
+                REFERENCES documents_registry(document_id)
+                ON DELETE CASCADE
+        )
+        """
+    )
+    # Rebuild governance tables: FK target documents(id) -> documents_registry.
+    # The current DDL in sqlite_master is the single source of truth for the
+    # rebuild (column order, defaults, hierarchy FKs, ON DELETE behaviour).
+    for table in ("agent_sessions", "agent_approvals", "agent_tool_calls"):
+        row = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)
+        ).fetchone()
+        if row is None or not row[0]:
+            raise DatabaseMigrationError(f"governance table {table} missing from schema")
+        source_sql = row[0]
+        old_fk = "FOREIGN KEY(document_id) REFERENCES documents(id)"
+        new_fk = "FOREIGN KEY(document_id) REFERENCES documents_registry(document_id)"
+        if new_fk in source_sql:
+            # Idempotent re-run (e.g. a forced version downgrade over an
+            # already-rebuilt schema): the table is already in v14 shape.
+            continue
+        if old_fk not in source_sql:
+            raise DatabaseMigrationError(
+                f"{table}: neither v13 nor v14 FK clause found in current DDL"
+            )
+        rebuilt_sql = source_sql.replace(old_fk, new_fk, 1).replace(
+            f"CREATE TABLE {table}", f"CREATE TABLE {table}_v14", 1
+        )
+        before = connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+        connection.execute(rebuilt_sql)
+        connection.execute(f"INSERT INTO {table}_v14 SELECT * FROM {table}")
+        after = connection.execute(f"SELECT COUNT(*) FROM {table}_v14").fetchone()[0]
+        if before != after:
+            raise DatabaseMigrationError(
+                f"{table}: row count drifted during rebuild ({before} -> {after})"
+            )
+        indexes = connection.execute(
+            "SELECT name, sql FROM sqlite_master WHERE type='index' "
+            "AND tbl_name=? AND sql IS NOT NULL",
+            (table,),
+        ).fetchall()
+        connection.execute(f"DROP TABLE {table}")
+        connection.execute(f"ALTER TABLE {table}_v14 RENAME TO {table}")
+        for index in indexes:
+            connection.execute(index[1])
+    # Reconciliation: registry covers every document; governance rows reference
+    # only registered identities.
+    registry_count = connection.execute("SELECT COUNT(*) FROM documents_registry").fetchone()[0]
+    pid_count = connection.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
+    if registry_count != pid_count:
+        raise DatabaseMigrationError(
+            f"registry backfill mismatch: {registry_count} registry rows for "
+            f"{pid_count} pid documents"
+        )
+    for table in ("agent_sessions", "agent_approvals", "agent_tool_calls"):
+        orphans = connection.execute(
+            f"SELECT COUNT(*) FROM {table} t LEFT JOIN documents_registry r "
+            "ON t.document_id = r.document_id WHERE r.document_id IS NULL"
+        ).fetchone()[0]
+        if orphans:
+            raise DatabaseMigrationError(f"{table}: {orphans} governance rows without registry identity")
+    violations = connection.execute("PRAGMA foreign_key_check").fetchall()
+    if violations:
+        raise DatabaseMigrationError(
+            f"PRAGMA foreign_key_check found {len(violations)} violation(s) after v14 rebuild"
+        )
+
+
 _MIGRATIONS = {
     1: _migration_1,
     2: _migration_2,
@@ -1088,6 +1212,7 @@ _MIGRATIONS = {
     11: _migration_11,
     12: _migration_12,
     13: _migration_13,
+    14: _migration_14,
 }
 
 
@@ -1124,6 +1249,11 @@ def _validate_required_schema(connection: sqlite3.Connection) -> None:
         "synthesis_proposal_evidence",
         _METADATA_TABLE,
     }
+    if _schema_version(connection) >= 14:
+        # M11-D1: identity tables are required only of databases actually at
+        # v14+ — a v13 database inspected by a v14 binary (migrate=False or a
+        # pre-v14 backup) must still validate as v13.
+        required_tables = required_tables | {"documents_registry", "cable_documents"}
     missing = required_tables - _table_names(connection)
     if missing:
         raise DatabaseMigrationError(f"database schema is missing tables: {sorted(missing)}")

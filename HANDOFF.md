@@ -16,6 +16,12 @@
 
 - **R41 补充（同日）**：Q2-1R 设计修订已提交（ccfd678）：TT 解禁有 8d82f75 单行先例、FT/LT 不动（FT=审计范例）、TT 解禁后现有英文 hint 已精确隔离候选（无需中文词表）。DEV-6 句三 s3 根因=「接到一个缓冲罐 V-102」整条被分类为 connect 子句、句内嵌的添加语义未分解成实体（V-102 未声明→连接 undelivered，无 port receipt）——G2 同类 planner grammar 项，已报 Gate 路由。PR #58 CI 四绿（36379051307），等 Gate 裁定期间 ChatGPT 侧基础设施多次抖动（账户加载失败/Cloudflare），消息已全部送达线程。
 
+## 近期轮次（2026-09-30 R54 —— M10-P2 合并封账）
+
+- **做了什么**：① P2 实施（runtime 通用核心 + P&ID facade + 适配器），首报被裁 R70-1（拒绝审计丢 caller metadata，golden 实锤）/R70-2（漏第四个工具 golden）/R70-3（mid-commit 测试未进事务）/R70-4（隔离锁未覆盖 runtime.harness）；② 小 delta（1bbb7fd）全闭合获 **MERGE GO**，fail-closed 合并，main→d7d947f，main CI 36650366921 四绿；③ golden parity 方法固化：双树（旧 main worktree vs 新分支）跑同一采集脚本比对哈希与审计投影（修复中抓到真 parity 破坏：适配器 context 首参误传事件类型）。
+- **关键结论**：M10-P2 = Harness 与 P&ID 解耦的接缝落地（七端口 DomainAdapter + 原子闭包不变 + synthesis 沉 facade + completion guard 注入）；**m10-p3 已 fresh cut，P3 CODE GO 申请已发**（传递边界全量锁 + 纯内存 fake harness 全链烟测，零生产改动）。
+- **下一步**：Gate 签 P3 → 实施 → PR → Merge Gate → P4（内存 cable proof）→ M10 技术完成 → 等 WS3B/M9 Closeout 签 FINAL ACCEPTANCE。
+
 ## 近期轮次（2026-09-30 R53 —— M10-P1 合并封账）
 
 - **做了什么**：① M10 Design v2 获 R10-1~5 CLOSED + R10-6/7/8 amendment + **M10-P1 CODE GO**；② 实施 P1（runtime 三件套 + shim + 7 硬锁），首报被裁 R69-1（ToolRisk 必须原样五值 read/draft_edit/engineering_change/critical_change/release）+ R69-2（AST 锁相对导入解析漏洞）；③ 小 delta 修复（aec4fca）获 **MERGE GO**，fail-closed 合并，main→5150758，main CI 36646208607 四绿。

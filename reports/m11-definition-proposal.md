@@ -19,10 +19,10 @@ M10 的完成标志（Charter §55）被有意切成两层并已 ACK：技术实
 
 ## 4. 完成标志（冻结候选，待 Gate 裁）
 
-1. 选定第二 domain（默认 cable 示意图，Gate 可改选）达到 production slice：持久化（**同一 SQLite 库内 domain 独立表**，R11-DEF-3；跨独立库属未来扩展，不进 M11）、自身 validator profile（release-readiness 可跑）、最小 UI 面（画布/列表面）、**一个 deterministic export artifact（格式在 D3 Design Gate 预先冻结，不事后挑选）**。
+1. **Cable Schematic v1**（domain 已冻结，换 domain 须重走 definition revision）达到 production-ready minimal slice：持久化（**同一 SQLite 库内 domain 独立表**，R11-DEF-3；跨独立库属未来扩展，不进 M11）、自身 validator profile（release-readiness 可跑）、最小 UI 面（画布/列表面）、**一个 deterministic export artifact（格式在 D3 Design Gate 预先冻结，不事后挑选）**。
 2. 该 domain 的 governed write 全程走 M10 runtime（session→authorize→approval→execute→audit），审计链接入**同一条全局 hash chain**（可交叉验证两 domain 的审计完整性）。
 3. P&ID 非回归：1706 测试全绿 + M5 deterministic + e2e + surface contract 机器锁，外加新增的「双 domain 共存」硬测（P&ID 文档操作与第二 domain 操作交错，互不改写对方状态）。
-4. 文档/迁移：v14 additive 迁移旧库零二域记录直读；Charter §55 句注更新为「含生产态第二 domain」。
+4. 文档/迁移：按 D1 Design Gate 冻结的 v14 migration-safe 方案完成 v13→v14 upgrade、backup/restore 演练与 compatibility evidence；Charter 新增 §55A，不修改 §55。
 
 ## 5. 与 M9/M10 的依赖关系
 
@@ -40,7 +40,7 @@ M10 的完成标志（Charter §55）被有意切成两层并已 ACK：技术实
 
 ## 8. Mutable Architecture 范围
 
-- store 层抽出「治理面存储端口」的实现边界（M10 已有 HarnessStorePort；M11 新增文档面按 domain 分表的存储规划，additive v14）。
+- store 层抽出「治理面存储端口」的实现边界（M10 已有 HarnessStorePort；M11 新增文档面按 domain 分表的存储规划，migration-safe v14）。
 - 第二 domain 的 adapter/validator/UI/导出为**新增模块**，不修改 P&ID 现有模块行为。
 - main.py composition root 扩展（双 domain 挂载）。
 
@@ -87,7 +87,7 @@ v13 数据 100% 兼容；audit chain 从 genesis 验证不变；第二 domain �
 
 ## 16. Owner approval point
 
-三处：① 本定义提案（当前，Gate 审）；② D1 合并前的 schema v14 迁移方案（Gate 审）；③ M11 完成标志逐条核对时的 final Gate。**不需要 Owner 输入**（除非 Gate 改选第二 domain 对象，那会回到 Owner 偏好）。
+三处：① 本定义提案（当前，Gate 审）；② D1 合并前的 schema v14 迁移方案（Gate 审）；③ M11 完成标志逐条核对时的 final Gate。M11 不依赖 WS3B 四字段或真实试点输入；Charter revision、schema migration 和 M11 final acceptance 仍按既有 Gate/Owner approval governance 执行。
 
 ---
 

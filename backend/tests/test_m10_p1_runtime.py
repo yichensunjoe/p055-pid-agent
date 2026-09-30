@@ -166,7 +166,7 @@ def test_runtime_isolation_subprocess_lock() -> None:
     assert "isolation-ok" in result.stdout
 
 
-def test_schema_version_still_13() -> None:
+def test_schema_version_still_14() -> None:
     from agentcad.database_recovery import CURRENT_SCHEMA_VERSION
 
-    assert CURRENT_SCHEMA_VERSION == 13
+    assert CURRENT_SCHEMA_VERSION == 14

@@ -55,6 +55,40 @@ class ReviewStateConflictError(RuntimeError):
     """The governance sequence moved underneath a review mutation (HTTP 409)."""
 
 
+class StoreDocumentIdentityError(RuntimeError):
+    """A document id is already registered to a different domain (M11 fail-closed)."""
+
+
+def _registry_available(connection: sqlite3.Connection) -> bool:
+    """Pre-v14 databases (only reachable in pinned-version tests) have no
+    registry table; production databases always migrate to CURRENT on open."""
+    return connection.execute(
+        "SELECT COUNT(*) AS n FROM sqlite_master WHERE type='table' AND name='documents_registry'"
+    ).fetchone()["n"] == 1
+
+
+def _ensure_pid_registry_row(connection: sqlite3.Connection, document_id: str, created_at: str) -> None:
+    """M11-D1: maintain the domain-neutral identity row for a P&ID document.
+
+    Creates it on first sight; refuses (fail-closed) if the id belongs to a
+    different domain — a cable identity can never silently carry P&ID payload.
+    """
+    if not _registry_available(connection):
+        return
+    row = connection.execute(
+        "SELECT domain FROM documents_registry WHERE document_id = ?", (document_id,)
+    ).fetchone()
+    if row is None:
+        connection.execute(
+            "INSERT INTO documents_registry (document_id, domain, created_at) VALUES (?, 'pid', ?)",
+            (document_id, created_at),
+        )
+    elif row["domain"] != "pid":
+        raise StoreDocumentIdentityError(
+            f"document id {document_id!r} is already registered to domain {row['domain']!r}"
+        )
+
+
 @dataclass(frozen=True)
 class ReleaseEvidencePackage:
     """One immutable evidence package row (M9-WS2 release_evidence_packages)."""
@@ -153,6 +187,7 @@ class SQLiteDocumentStore:
                         INSERT INTO documents (
                             id, name, revision, data_json, undo_json, redo_json, created_at, updated_at
                         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        
                         ON CONFLICT(id) DO UPDATE SET
                             name=excluded.name,
                             revision=excluded.revision,
@@ -168,6 +203,11 @@ class SQLiteDocumentStore:
                             values[5],
                         ),
                     )
+                # M11-D1: the domain-neutral identity row is created in the same
+                # transaction as the document itself; updates leave it untouched.
+                _ensure_pid_registry_row(
+                    connection, document.id, document.created_at.isoformat()
+                )
                 if history is not None:
                     connection.execute(
                         """
@@ -815,6 +855,11 @@ class SQLiteDocumentStore:
                     (document_id, expected_revision),
                 )
                 if cursor.rowcount == 1:
+                    if _registry_available(connection):
+                        connection.execute(
+                            "DELETE FROM documents_registry WHERE document_id = ?",
+                            (document_id,),
+                        )
                     # The audit row deliberately has no foreign key to documents: the
                     # evidence for a deletion must outlive the deleted document.
                     if audit is not None:

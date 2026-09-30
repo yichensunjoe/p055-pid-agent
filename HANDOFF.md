@@ -16,6 +16,12 @@
 
 - **R41 补充（同日）**：Q2-1R 设计修订已提交（ccfd678）：TT 解禁有 8d82f75 单行先例、FT/LT 不动（FT=审计范例）、TT 解禁后现有英文 hint 已精确隔离候选（无需中文词表）。DEV-6 句三 s3 根因=「接到一个缓冲罐 V-102」整条被分类为 connect 子句、句内嵌的添加语义未分解成实体（V-102 未声明→连接 undelivered，无 port receipt）——G2 同类 planner grammar 项，已报 Gate 路由。PR #58 CI 四绿（36379051307），等 Gate 裁定期间 ChatGPT 侧基础设施多次抖动（账户加载失败/Cloudflare），消息已全部送达线程。
 
+## 近期轮次（2026-09-30 R55 —— M10-P3 合并，P4 CODE GO 申请中）
+
+- **做了什么**：① P3 实施（fake-domain 子进程探针：递归 import 全包 + pre/post 双隔离断言 + FakeStore 11 方法 + FakeDomain 七端口 + 五闭包/拒绝/mismatch 三链），一轮获 **MERGE GO**，合并 main→98c322e，main CI 四绿；② P4 CODE GO 申请已发（具名 cable domain 内存证明，tests-only）。
+- **关键结论**：M10 四片中 P1/P2/P3 已合并；runtime 复用性已有两层机器证据（纯 fake + 即将的具名 cable）；剩 P4 → M10 技术完成 →（成熟度门甲）等 WS3B/M9 Closeout 签 FINAL ACCEPTANCE。
+- **下一步**：P4 GO → 实施 → PR → Merge Gate → M10 技术完成报告。
+
 ## 近期轮次（2026-09-30 R54 —— M10-P2 合并封账）
 
 - **做了什么**：① P2 实施（runtime 通用核心 + P&ID facade + 适配器），首报被裁 R70-1（拒绝审计丢 caller metadata，golden 实锤）/R70-2（漏第四个工具 golden）/R70-3（mid-commit 测试未进事务）/R70-4（隔离锁未覆盖 runtime.harness）；② 小 delta（1bbb7fd）全闭合获 **MERGE GO**，fail-closed 合并，main→d7d947f，main CI 36650366921 四绿；③ golden parity 方法固化：双树（旧 main worktree vs 新分支）跑同一采集脚本比对哈希与审计投影（修复中抓到真 parity 破坏：适配器 context 首参误传事件类型）。

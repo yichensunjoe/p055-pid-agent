@@ -1,10 +1,10 @@
-# M11 Milestone 定义提案（Charter MINOR revision，送 Gate 审定义）
+# M11 Milestone 定义提案 v2（Charter MINOR revision §55A，送 Gate 审定义）
 
-> Gate：M11 DEFINITION PREP GO = APPROVED（2026-10-01）。本文档纯定义/设计提案，零产品代码；按 Charter §26.3（Owner 主动要求 = replanning trigger）与 §57/§59（新增 milestone = MINOR revision）提交。基线 main@3379477323e512dd29ec3e28b7e6c312761e52b6。
+> Gate：M11 DEFINITION PREP GO = APPROVED（2026-10-01）；v1 被裁 CHANGES REQUIRED（R11-DEF-1~4），本版逐项闭合。本文档纯定义/设计提案，零产品代码；按 Charter §26.3（Owner 主动要求 = replanning trigger）与 §57/§59（新增 milestone = MINOR revision）提交。基线 main@3379477323e512dd29ec3e28b7e6c312761e52b6。
 
 ## 1. 名称与目标
 
-**M11 — Platform Production & Second Domain Live**：把 M10 已 ACK 的平台解耦从「测试证明」推进到「生产可用」——第二个 engineering drawing domain 以持久化、可校验、可导出的产品形态跑在 runtime 上，P&ID 能力全程不退化。
+**M11 — Production-Ready Second Domain Slice（§55A）**：把 M10 已 ACK 的平台解耦从「测试证明」推进到「生产可用切片」——**Cable Schematic v1（冻结，不换 domain，换则重走 definition revision）** 以持久化、可校验、可导出的产品形态跑在 runtime 上，P&ID 能力全程不退化。新增 §55A，不改 §55 原文、不改 M10 Technical Completion ACK（R11-DEF-1）。
 
 ## 2. 为什么需要 M11，而不是 M10 的遗漏工作
 
@@ -15,10 +15,11 @@ M10 的完成标志（Charter §55）被有意切成两层并已 ACK：技术实
 - runtime 核心已领域无关且经隔离锁证明，但 persistence/audit 的实现类（SQLiteDocumentStore/AuditRecorder）仍与 P&ID 文档模型同库同表耦合——第二 domain 生产化需要治理面（session/approval/tool-call/audit）与文档面的存储边界真正分开。
 - Cable 证明切片没有持久化、没有 validator、没有 UI/导出——不足以回答「第二 domain 能复用 runtime」的生产含义。
 - 无跨 domain 的非回归基准：改动 runtime 时如何证明 P&ID 不退化已有机器锁（1706 测试），但**新增 domain 数据面**对 P&ID 的干扰尚无基准。
+- **domain-neutral document identity boundary 缺失（R11-DEF-2）**：现有三张治理表（agent_sessions/agent_approvals/agent_tool_calls）的 document_id 均 FK 指向 P&ID documents 表——非 P&ID 文档无法合法进入 session/approval/tool-call 链。D1 的核心设计问题就是这条边界（generic document registry / 治理 FK 重构等方案开放，不在定义期锁实现）。
 
 ## 4. 完成标志（冻结候选，待 Gate 裁）
 
-1. 选定第二 domain（默认 cable 示意图，Gate 可改选）达到 production slice：持久化（独立表空间或独立库，additive 迁移）、自身 validator profile（release-readiness 可跑）、最小 UI 面（画布/列表面）、最小导出（PDF 或 JSON 包）。
+1. 选定第二 domain（默认 cable 示意图，Gate 可改选）达到 production slice：持久化（**同一 SQLite 库内 domain 独立表**，R11-DEF-3；跨独立库属未来扩展，不进 M11）、自身 validator profile（release-readiness 可跑）、最小 UI 面（画布/列表面）、**一个 deterministic export artifact（格式在 D3 Design Gate 预先冻结，不事后挑选）**。
 2. 该 domain 的 governed write 全程走 M10 runtime（session→authorize→approval→execute→audit），审计链接入**同一条全局 hash chain**（可交叉验证两 domain 的审计完整性）。
 3. P&ID 非回归：1706 测试全绿 + M5 deterministic + e2e + surface contract 机器锁，外加新增的「双 domain 共存」硬测（P&ID 文档操作与第二 domain 操作交错，互不改写对方状态）。
 4. 文档/迁移：v14 additive 迁移旧库零二域记录直读；Charter §55 句注更新为「含生产态第二 domain」。
@@ -45,22 +46,27 @@ M10 的完成标志（Charter §55）被有意切成两层并已 ACK：技术实
 
 ## 9. Benchmark before（已在 M10 收口测得）
 
-main@3379477：backend 1706 passed、ruff 净、e2e 5/5、main CI 36655549044 四绿；全量测试墙钟 ~105s（本地）。
+main@3379477：backend 1706 passed、ruff 净、e2e 5/5、main CI 36655549044 四绿；全量墙钟 ~105s（本地，`pytest backend/tests -q -p no:cacheprovider` + 同一 venv/机器；after 对比必须用相同命令与环境，R11-DEF 收紧项）。
 
 ## 10. Expected benchmark after
 
-- 1706 既有测试全绿不减少；新增 M11 测试 ≥20 条（持久化/迁移/双域共存/导出/validator）。
+- pre-M11 baseline 测试不得删除/xfail/skip；新增 M11 测试 ≥20 条（持久化/迁移/双域共存/导出/validator）。
 - 全量墙钟增量 ≤ +10%（~115s 内）。
 - 双 domain 共存硬测：交错操作 100 轮零交叉污染（属性测试）。
 - CI 仍为四 job 全绿。
 
-## 11. Migration
+## 11. Migration（R11-DEF-2/4 修正后口径）
 
-schema v12→v13 纪律的延续：v14 纯 additive（第二 domain 表），无 FK 级联，旧库零记录直读；迁移锁测试同 v13 模式。
+- v14 必须 data-compatible / migration-safe；**是否 DDL 纯 additive 由 D1 Design Gate 决定，定义期不预设**。
+- D1 必须先设计 domain-neutral document identity boundary，再谈 Cable 表结构。
+- 同一 SQLite 库、domain 独立表（R11-DEF-3）；audit hash formation / chain schema / global ordinal 完全不动。
+- 迁移必须原子、失败自动回滚；v13→v14 需 upgrade fixture + 迁移锁测试；**pre-v14 backup → restore 必须演练**。
 
-## 12. Rollback
+## 12. Rollback（R11-DEF-4 修正后口径）
 
-M11 按 PR 切片（建议：M11-D1 存储边界+v14、M11-D2 第二 domain runtime 接线、M11-D3 validator+导出、M11-D4 UI+共存基准），每片独立 revert；v14 additive 意味着回滚无数据风险（第二 domain 表随 revert 弃用）。
+- D2/D3/D4 为独立 code revert，逐片可回退。
+- **D1 的 schema migration 是 forward migration：不承诺「git revert = DB rollback」**——v14 库不能被 v13 binary 打开（DatabaseVersionError）；若已产生 Cable v14 数据，降回 v13 = **恢复 migration 前 backup / 专门 downgrade 演练过的 procedure**，不是「表弃用即可」。
+- v14 上线前必须有可验证 backup；回滚剧本随 D1 Design 一起交 Gate。
 
 ## 13. Data / schema compatibility
 

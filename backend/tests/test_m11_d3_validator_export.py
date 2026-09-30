@@ -269,13 +269,19 @@ def test_targeted_member_tamper(tmp_path: Path) -> None:
         return members
 
     def tamper_manifest(members):
-        members["MANIFEST.sha256"] = members["MANIFEST.sha256"].replace(b"0", b"1", 1)
+        manifest = members["MANIFEST.sha256"]
+        flip = b"1" if manifest[:1] == b"0" else b"0"
+        members["MANIFEST.sha256"] = flip + manifest[1:]
         return members
 
-    for modify in (tamper_document, tamper_manifest):
-        with pytest.raises(CableExportError) as excinfo:
-            verify_cable_artifact(rebuild(modify))
-        assert excinfo.value.code == "artifact_corrupt"
+    with pytest.raises(CableExportError) as excinfo:
+        verify_cable_artifact(rebuild(tamper_document))
+    assert excinfo.value.code == "artifact_corrupt"
+    assert "document hash mismatch" in str(excinfo.value)
+    with pytest.raises(CableExportError) as excinfo:
+        verify_cable_artifact(rebuild(tamper_manifest))
+    assert excinfo.value.code == "artifact_corrupt"
+    assert "document hash mismatch" in str(excinfo.value)
 
 
 # ---- R75-6: reverse cross-domain + P&ID zero-change during cable validate/export ----

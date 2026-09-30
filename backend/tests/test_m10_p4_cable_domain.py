@@ -128,10 +128,11 @@ class CableDomainAdapter:
             metadata={"cable_segment_id": CableSegmentRequest.model_validate(intent).id},
         )
 
-    def _fail_closeout(self, authorized, error_code: str) -> None:
+    def _fail_closeout(self, authorized, error_code: str, segment_id: str) -> None:
         """Failure provenance contract (same semantics the P&ID domain freezes):
         the failed tool call, the untouched approval and the failed session close
-        out together with exactly one rejected audit fact — no half-state."""
+        out together with exactly one rejected audit fact bound to this call —
+        no half-state, no orphan audit."""
         failed = authorized.record.model_copy(
             update={"status": "failed", "error_code": error_code}
         )
@@ -147,9 +148,12 @@ class CableDomainAdapter:
                 tool_name=authorized.definition.name,
                 status="rejected",
                 error_code=error_code,
+                session_id=authorized.session.id,
+                approval_id=authorized.approval.id if authorized.approval else None,
+                tool_call_id=authorized.record.id,
                 document_id=authorized.record.document_id,
                 base_revision=authorized.record.base_revision,
-                evidence={"cable_segment_id": authorized.record.metadata.get("cable_segment_id", "")},
+                evidence={"cable_segment_id": segment_id},
             )
         )
 
@@ -159,7 +163,7 @@ class CableDomainAdapter:
         # Domain invariant 2: segment id unique within the repository.
         if request.id in self.repository.segments:
             error_code = "duplicate_cable_segment"
-            self._fail_closeout(authorized, error_code)
+            self._fail_closeout(authorized, error_code, request.id)
             raise ValueError(f"duplicate cable segment id: {request.id}")
         revision = self.repository.revision + 1
         self.repository.revision = revision
@@ -378,6 +382,11 @@ fresh_failures = [
     and e.error_code == "duplicate_cable_segment"
 ]
 assert len(fresh_failures) == 1
+failure = fresh_failures[0]
+assert failure.tool_call_id == fresh_authorized.record.id
+assert failure.session_id == fresh_session.id
+assert failure.approval_id == fresh_approval.id
+assert failure.evidence.get("cable_segment_id") == "CBL-001"
 assert len([e for e in audit.events if e.status == "applied"]) == 1
 
 post = sorted(

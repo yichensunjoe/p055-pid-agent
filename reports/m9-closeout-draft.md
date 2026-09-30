@@ -47,5 +47,8 @@
 
 ## 7. 复跑清单（签 Gate 前执行）
 
-- [ ] final main exact SHA 确认 + 全量后端回归 + ruff + 前端构建 + e2e + CI run 编号回填
-- [ ] Gate 会话路由裁定（closeout 预备受认可与否）
+- [x] final main exact SHA 确认：**3379477323e512dd29ec3e28b7e6c312761e52b6**（M10-P4 合并后；含 WS1/WS2 全部语义）
+- [x] 全量后端回归（main@3379477 本地）：**1706 passed**；ruff 净
+- [x] 前端构建 + e2e（8002/4174）：review/engineering-graph **5 passed**（含 WS2 release 全链）
+- [x] CI run 编号回填：main CI **36655549044 四绿**（Browser/Backend/Frontend/M5 deterministic；Backend 含 Ruff/quality/Pytest）
+- [ ] WS3B 真实试点执行 + 结论回填 §5/§6 → 签 M9 Closeout Gate → M10 FINAL ACCEPTANCE Gate（成熟度门甲，差 Owner 四字段）

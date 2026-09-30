@@ -169,6 +169,8 @@ class CableDomainAdapter:
         closure: ClosureRequest,
         intent: Any,
     ) -> ExecutionOutcome:
+        from .audit import validation_evidence_hash
+
         document_id = audit_event.document_id
         try:
             request = AddCableSegmentIntent.model_validate(intent)
@@ -196,7 +198,8 @@ class CableDomainAdapter:
                 model=audit_event.model,
                 intent_hash=audit_event.intent_hash,
                 diff_preview_hash=audit_event.diff_preview_hash,
-                validation_status="valid",
+                validation_status=audit_event.validation_status or "valid",
+                validation_hash=validation_evidence_hash(audit_event.validation_evidence),
                 label=f"Added cable segment {request.segment.id}",
                 evidence={
                     **closure.metadata,
@@ -240,15 +243,22 @@ class CableDomainAdapter:
             )
         except Exception as exc:
             error_code = getattr(exc, "code", type(exc).__name__)
-            self._failure_closeout(authorized, str(error_code))
+            self._failure_closeout(authorized, str(error_code), audit_event=audit_event)
             raise
 
-    def _failure_closeout(self, authorized: Any, error_code: str) -> None:
+    def _failure_closeout(self, authorized: Any, error_code: str, *, audit_event: AuditEvent) -> None:
+        """Rejected audit carries the SAME provenance as the success path (R74-2
+        final): the runtime's AuditEvent is the single carrier — surface (rest/
+        mcp), provider/model, intent/preview hashes and validation evidence all
+        come from it, never guessed from tool-call metadata."""
+        from .audit import validation_evidence_hash
+
         now = datetime.now(UTC)
+        validation_hash = validation_evidence_hash(audit_event.validation_evidence)
         audit = AuditRecordDraft(
             event_type="revision.created",
-            actor=authorized.session.actor,
-            surface=authorized.record.metadata.get("surface", "rest"),
+            actor=audit_event.actor,
+            surface=audit_event.surface,
             tool_name=authorized.definition.name,
             status="rejected",
             error_code=error_code,
@@ -257,9 +267,18 @@ class CableDomainAdapter:
             approval_id=authorized.approval.id if authorized.approval else None,
             tool_call_id=authorized.record.id,
             base_revision=authorized.record.base_revision,
-            intent_hash=authorized.record.intent_hash,
+            provider=audit_event.provider,
+            model=audit_event.model,
+            intent_hash=audit_event.intent_hash,
+            diff_preview_hash=audit_event.diff_preview_hash,
+            validation_status=audit_event.validation_status,
+            validation_hash=validation_hash,
             label=f"Cable write denied: {error_code}",
-            evidence={"cable_document_id": authorized.record.document_id},
+            evidence={
+                **audit_event.metadata,
+                "cable_document_id": authorized.record.document_id,
+                "validation_evidence": audit_event.validation_evidence,
+            },
         )
         self.service.store.cable_failure_closeout(
             tool_call=authorized.record.model_copy(

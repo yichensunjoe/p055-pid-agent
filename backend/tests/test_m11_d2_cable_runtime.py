@@ -27,6 +27,7 @@ from agentcad.harness_models import (
     ToolApprovalResolveRequest,
 )
 from agentcad.models import CreateDocumentRequest
+from agentcad.runtime import models as runtime_models
 from agentcad.runtime.harness import (
     AgentHarnessRuntime,
     ToolIntentMismatchError,
@@ -377,3 +378,82 @@ def test_bootstrap_payload_reload_parity(tmp_path: Path) -> None:
     assert reloaded.document.schema == "pid-agent.cable-document/1"
     assert reloaded.document.segments == ()
     assert reloaded.document.revision == 0
+
+
+def test_success_audit_provenance_parity(tmp_path: Path) -> None:
+    """R74-2: the persisted success audit carries the runtime carrier's full
+    provenance — provider/model/intent/preview/validation — not a rewrite."""
+    store, _, cable, _, runtime = _composition(tmp_path)
+    doc = cable.create_document("prov")
+    session = runtime.ensure_session(
+        doc.document_id, actor="cable-engineer", provider="prov-x", model="m-y"
+    )
+    intent = _intent(0)
+    approval = runtime.request_approval(
+        session.id,
+        ToolApprovalCreateRequest(
+            tool_name=TOOL_ADD_CABLE_SEGMENT,
+            document_id=doc.document_id,
+            intent=intent,
+            requested_by="cable-engineer",
+        ),
+    )
+    runtime.resolve_approval(
+        approval.id, ToolApprovalResolveRequest(approved=True, actor="operator")
+    )
+    authorized = _authorized(runtime, session, approval, doc.document_id, intent, 0)
+    runtime.apply_authorized(
+        authorized, doc.document_id, intent, validation_evidence={"cable": "fresh"}
+    )
+
+    record = next(
+        record
+        for record in store.all_audit_records()
+        if record.event_type == "revision.created"
+        and record.document_id == doc.document_id
+        and record.status == "applied"
+    )
+    assert record.provider == "prov-x"
+    assert record.model == "m-y"
+    assert record.intent_hash == authorized.record.intent_hash
+    assert record.diff_preview_hash == approval.diff_preview_hash
+    assert record.validation_hash
+
+
+def test_failure_audit_provenance_parity_mcp_surface(tmp_path: Path) -> None:
+    """R74-2: an mcp-surface session's failure audit keeps surface=mcp and the
+    full carrier provenance — never degrades to a guessed 'rest'."""
+    store, _, cable, _, runtime = _composition(tmp_path)
+    doc = cable.create_document("mcp")
+    mcp_session = runtime_models.AgentSession(
+        document_id=doc.document_id, actor="agent", start_revision=0, metadata={"surface": "mcp"}
+    )
+    store.create_agent_session(mcp_session)
+    intent = _intent(0)
+    approval = runtime.request_approval(
+        mcp_session.id,
+        ToolApprovalCreateRequest(
+            tool_name=TOOL_ADD_CABLE_SEGMENT,
+            document_id=doc.document_id,
+            intent=intent,
+            requested_by="agent",
+        ),
+    )
+    runtime.resolve_approval(
+        approval.id, ToolApprovalResolveRequest(approved=True, actor="operator")
+    )
+    authorized = _authorized(runtime, mcp_session, approval, doc.document_id, intent, 0)
+    with pytest.raises(ValueError, match="duplicate cable segment id"):
+        runtime.apply_authorized(authorized, doc.document_id, intent)
+        runtime.apply_authorized(authorized, doc.document_id, intent)
+
+    record = next(
+        record
+        for record in store.all_audit_records()
+        if record.event_type == "revision.created"
+        and record.document_id == doc.document_id
+        and record.status == "rejected"
+    )
+    assert record.surface == "mcp"
+    assert record.intent_hash == authorized.record.intent_hash
+    assert record.tool_call_id == authorized.record.id

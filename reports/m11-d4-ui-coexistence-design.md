@@ -30,28 +30,44 @@ GET /api/v2/cable/documents/{document_id}/export.zip?expected_revision=N
 
 HTTP export 返回的字节与 `export_cable_document()` 同 revision 产物**逐字节一致**（测试断言：HTTP body == 直接调 D3 函数的 zip_bytes）；全局 audit chain verify 继续成功。
 
-## 5. E2E 双域共存（真实 local backend，禁 mock）
+## 5. E2E 双域共存（冻结 10 步，真实 local backend，禁 mock）
 
-① seed 一个 P&ID 文档 + 一个含 segment 的 Cable；② 打开 P&ID workspace 选中并确认；③ 切「线缆」→ 列表只见 Cable 不见 P&ID；④ 点入详情见 segment + readiness；⑤ 点 export 完成真实 ZIP 下载；⑥ Cable 页无 add/edit/delete 控件；⑦ 切回 P&ID 原文档 revision/content 不变；⑧ Cable revision/content 不变；⑨ audit count 不因 Cable UI 读/下载增长；⑩ shared-mode 下 Cable GET 走现有 auth/request 边界（不成为匿名旁路，复用既有中间件，硬测 401/403 路径）。
+① P&ID baseline：seed 一个 P&ID 文档并在 workspace 选中确认（记录 revision/content）；
+② 切「线缆」tab；
+③ 真实 Cable list（DB 驱动）只见 Cable、不见 P&ID；
+④ 点入 detail：load/identity 正确（document_id/revision/schema/name）；
+⑤ readiness 投影与 D3 assess() 逐项一致（state/counts/result_hash/profile 三元组）；
+⑥ export byte parity：HTTP body 与直接调用 D3 export_cable_document() 同 revision zip_bytes 逐字节一致；
+⑦ stale expected_revision → 409；
+⑧ P&ID document id 打 Cable endpoint → 404；
+⑨ 切回 P&ID：原文档 intact 且仍可编辑，Cable revision/content 亦不变；
+⑩ shared-mode：Cable GET 走现有 auth/request 边界（非匿名旁路）。
+附加断言（步骤内）：Cable 页无 add/edit/delete 控件；任何 Cable UI 读/下载不增 audit、不改任何 revision/content。
 
-## 6. D4 Closeout 矩阵（固定格式，直接回答 M11 Definition）
+## 6. D4 Closeout 矩阵（冻结 8 问，直接回答 M11 Definition）
 
-| M11 completion candidate | Evidence |
-|---|---|
-| Cable persistence | D1 |
-| Cable validation/readiness | D3 |
-| Harness/runtime governed write | D2 |
-| Minimal Cable UI | D4 |
-| Deterministic export | D3 + D4 HTTP byte parity |
-| P&ID non-regression | D1–D4 CI + D4 共存 e2e |
-| Same-deployment dual-domain coexistence | D2 backend isolation + D4 API/E2E |
-| M11 closeout decision | D4 closeout matrix |
+| # | Definition 问题 | Evidence |
+|---|---|---|
+| 1 | true second domain | Cable Schematic v1 独立模型/载荷/存储面（D1 identity + D2 service） |
+| 2 | shared infrastructure/runtime reuse | M10 runtime 七端口 + 原子 governed write 承载 Cable（D2） |
+| 3 | legacy P&ID preserved | D1–D4 全量 baseline 非回归 + P&ID 模块零行为改动 |
+| 4 | domain isolation | D2 双向 loader fail-closed + D4 e2e 步骤⑦⑧⑩ |
+| 5 | production-real other-system slice | Cable production persistence + governed write + read-only surface（D1/D2/D4） |
+| 6 | engineering semantics | Cable 领域 invariant（from≠to、id 唯一、gauge 语法语义）（D2/D3） |
+| 7 | validation/readiness | D3 两规则 profile + state/counts 契约 |
+| 8 | export delivery | D3 确定性 artifact + D4 HTTP byte parity |
 
-并固定声明：M11 implementation closeout ≠ M9 WS3B closeout；D4 完成不补齐真实项目试点；不改变 M10 FINAL ACCEPTANCE 的 Owner 阻断状态。
+并固定三项声明（冻结）：① expansion_threshold_reached——平台化扩展的阈值已由 D1–D4 证明达到（第二 domain 全链落地）；② workload mix 明文——M11 工作负载 = identity/migration（D1）+ runtime wiring/原子写（D2）+ validation/export（D3）+ 只读 surface/UI/共存证据（D4），全部围绕「第二 domain 复用 runtime」单一目标，无范围漂移；③ Cable Schematic 是真正第二 engineering drawing domain（独立图纸类型、独立载荷契约、独立 validator），不是 logical equipment 或 P&ID 内部对象伪装。
+附加说明：M11 implementation closeout ≠ M9 WS3B closeout；D4 完成不补齐真实项目试点；不改变 M10 FINAL ACCEPTANCE 的 Owner 阻断状态。
 
-## 7. Whitelist / 禁项
+## 7. Whitelist / 禁项（按冻结清单逐字复述 + 明确 amendment）
 
-Whitelist：api_cable.py（3 GET + 错误映射）、store cable 枚举只读方法、main.py 仅 router composition、surface_contract.py + contract 测试、Cable API 测试、frontend/src/cable/*、App.tsx tab wiring、api.ts 只读 client、frontend 测试 + Playwright 共存 e2e、D4 closeout 报告。
-禁：schema v15 / runtime ports/models / audit chain 语义 / P&ID domain behavior / Cable 写 REST|MCP|UI / 新 approval 模型 / Router 迁移 / production deploy。
+Whitelist（D4 PREP 冻结清单逐字）：backend/agentcad/api_cable.py；Cable service/store minimal read enumeration additions；backend/agentcad/main.py 仅 router composition；surface_contract.py + contract tests；Cable API tests；frontend/src/cable*；App.tsx 最小 domain-tab wiring；frontend/src/api.ts Cable read client；Cable frontend tests / Playwright coexistence E2E；D4 closeout report。
+Amendment 声明（如启用冻结清单外路径需逐条列此处，当前无）。
+禁项（两批冻结清单并集）：schema v15；runtime ports/models；audit-chain semantics；P&ID domain behavior changes；Cable write REST/MCP；Cable write UI；new Cable approval model；React Router 大迁移；production deploy；新建 file store；identity/validator/export 契约重定义；auth redesign；arbitrary refactor。
+
+## 8. 治理口径（纠正）
+
+M11 定义 = **Gate 批准的 definition proposal（自称 §55A 草案）**；PROJECT_CHARTER.md 当前正文仍是 §55→§56，**尚无 §55A 文字**。Charter MINOR revision（把 §55A 落入 Charter 正文）是单独的治理动作，已在 Gate 获批定义层面成立、但未提交 Charter 文本修订——D1–D4 代码事实不受影响（main=01cf1ee）。本设计稿所有「§55A」表述均指 Gate-frozen definition，非 Charter 现存条文。
 
 请裁 M11-D4 Design；PASS 请签 M11-D4 CODE GO。

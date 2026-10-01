@@ -1,12 +1,35 @@
 # P&ID-Agent / AgentCAD 总体技术任务书
 
 > 文档性质：项目长期主约束（Canonical Project Charter / Master Task Specification）  
-> 当前版本：1.0.0  
-> 生效日期：2026-09-18  
+> 当前版本：1.1.0  
+> 生效日期：2026-10-01  
 > 当前仓库：P055-PID-Agent  
 > 长期平台方向：AgentCAD Engineering Drawing Harness  
 > 首个生产级领域：P&ID  
 > 状态：长期有效；实施路线可迭代，核心目标不得被普通开发任务覆盖
+
+---
+
+## 0.1 Revision Record
+
+### 1.0.0 → 1.1.0（MINOR，2026-10-01，Gate 批准 + Owner replanning trigger）
+
+本次为 MINOR revision（依据 §59：新增里程碑 = MINOR）。变更：
+
+1. 正文补入 §55A M11（已完成，Gate-approved definition proposal 落正文）；
+2. 新增 §55B M12（多工程域项目图谱与确定性交付包）；
+3. 新增 §55B 附带的 Revision Proposal Record。
+
+不变：§55 M10 原文、M9 全文、Immutable Core（engineering-delivery-first、semantic-first、tool-mediated editing、deterministic validation、audit/rollback、model-agnostic、human formal approval boundary）、audit hash formation / ordinal 语义、P&ID/Cable 已冻结工程语义、正式 approval/release 责任边界。
+
+### Revision Proposal Record（§57 六段）
+
+- **Immutable Core**：不变（见上）。
+- **Mutable Architecture**：允许新增 domain-neutral project graph、project membership、cross-domain engineering links、project-level validator/readiness、deterministic project package、最小 project inspection surface；不得因本 revision 修改 audit hash formation、global audit ordinal semantics、P&ID/Cable 已冻结工程语义或正式 approval/release 责任边界。
+- **Roadmap Changes**：在既有 M10 后正式补入已完成的 M11，并新增 M12。M9 WS3B 保留为独立真实项目 evidence gate，不作为 M12 implementation 前置条件。
+- **Benchmark Impact**：M12 implementation 不得删除、弱化、skip 或 xfail pre-M12 regression evidence。M12 Design Gate 必须在代码实施前冻结新增 cross-domain consistency、deterministic package、shared-mode 与 browser acceptance 的测试矩阵和性能预算。
+- **Migration**：M12-D1 必须先判断是否需要 schema revision。若需要 v15 或更高版本，必须单独冻结 migration-safe 方案、upgrade fixture、backup/restore 与 rollback procedure；不得把 schema bump 作为未经审查的实现细节带入代码 PR。
+- **Owner Approval Requirement**：Owner 已明确要求在 M9 WS3B 延后期间继续启动 M12，该指令构成本次 replanning trigger。任何改变 Immutable Core、正式工程责任边界或 M9 真实试点完成标准的后续变化，仍须另行取得 Owner 明确批准。
 
 ---
 
@@ -1382,6 +1405,27 @@ M4 未通过 M4-6 验收前，Charter 中不得写入 M4 accepted SHA。
 ## 55. M10 — AgentCAD Platform
 
 只有 P&ID 达到稳定工程使用后推进。完成标志：Harness 与 P&ID domain 解耦，第二个 engineering drawing domain 能复用 runtime，且 P&ID 能力不退化。
+
+## 55A. M11 — Production-Ready Second Domain Slice（Cable Schematic v1）
+
+M10 技术完成 ACK 后推进，不依赖 M9 WS3B / M9 Closeout。完成标志（Gate-approved definition proposal，implementation closeout 已签 COMPLETE，main@2cf198e0）：
+
+- Cable 是真正第二 engineering drawing domain（非 logical equipment / 内部对象伪装）；expansion_threshold_reached 成立，workload mix 明文可复用；
+- domain-neutral 文档身份（documents_registry + schema v14）→ runtime production wiring + 原子受治理写 → validator profile + 确定性导出 → 只读 HTTP/UI surface → 双域共存（顶层 domain mode，互不改写、共享 runtime 与审计边界）。
+
+治理口径：本里程碑 ≠ M9 WS3B closeout，不补齐真实项目试点，不改变 M9/M10 Owner 阻断状态。
+
+## 55B. M12 — Multi-Domain Project Graph & Deterministic Delivery Package
+
+不增加第三 domain，不做平台化抽象。目标：把现有 P&ID 与 Cable 两个真域组成一个可验证、可追踪、可确定性交付的工程项目。依赖：M11 technical completion；不依赖 M9 WS3B / M9 Closeout；不重开 M10。完成标志（冻结）：
+
+1. **Domain-neutral Project Graph**：稳定 project_id、项目成员文档索引、{domain, document_id, revision} 身份；P&ID/Cable 不再只靠 UI tab 并列。
+2. **Cross-domain Engineering Link**：domain-neutral link contract，至少一种真实 P&ID↔Cable 工程关系；禁止字符串同名 / 模糊匹配暗推关联。
+3. **Project-level deterministic validation**：确定性检测 dangling reference、wrong-domain reference、missing object、stale pinned revision；stable issue code；readiness 只 eligible/not_eligible，不产生 Approved/Released。
+4. **Governed project mutation**：跨域 link 增删改进入 M10 runtime permission/session/audit 边界；接入现有全局 audit hash chain，不改变 hash formation/ordinal 语义。
+5. **Deterministic Project Delivery Package**：pinned P&ID + Cable revisions → 项目级确定性 artifact（project manifest、domain artifacts、cross-domain links、validation/readiness、hashes）；fresh process byte-for-byte 可复现、可检测篡改；ZIP/member 格式在实现前 Design Gate 冻结。
+6. **Minimal project inspection surface**：只读 API/UI 查看项目成员、跨域 link、project readiness 并下载项目 package；不做新工程编辑器。
+7. **全量非回归**：M11 前已有行为、M5 deterministic gate、backend/frontend/browser/shared-mode 与 surface contracts 不得靠删测、skip/xfail、放宽断言换绿。
 
 ---
 

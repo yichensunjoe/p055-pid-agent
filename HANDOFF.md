@@ -2,13 +2,23 @@
 
 > 交接文档：每次开新会话先读本文件。更新规则见 `AGENTS.md`「HANDOFF 交接规则」。
 
-## 当前状态（2026-10-01 —— **M11（Production-Ready Second Domain Slice · Cable Schematic v1）D1–D4 implementation closeout COMPLETE，Gate 已签**）
+## 当前状态（2026-10-01 —— **M12 已获 Gate DEFINITION APPROVED，DESIGN PREP GO 已批；M9 WS3B 按 Owner 指令押后，M12 独立推进**）
+
+- **Owner 指令（2026-10-01）**：不填 WS3B 试点表，直接开始 M12。WS3B = BLOCKED ON OWNER / DEFERRED，M9 Closeout 未完成，M9 WS1/WS2/WS3A 封账不重开，M10 Technical Completion 保持 ACK。
+- **M12 定义（Gate 已冻结）**：多工程域项目图谱与确定性交付包。7 项完成标志：① domain-neutral Project Graph（稳定 project_id + 成员文档索引 + {domain,document_id,revision} 身份）② Cross-domain Engineering Link（domain-neutral link contract，至少一种真实 P&ID↔Cable 关系，禁止字符串同名暗推）③ project-level deterministic validation（dangling/wrong-domain/missing/stale 跨域错误，stable issue code，readiness 只 eligible/not_eligible）④ governed project mutation（link 增删改走 M10 runtime permission/session/audit 边界，接现有 audit hash chain 不改 formation/ordinal）⑤ deterministic project delivery package（pinned revisions → 项目级 artifact：manifest+domain artifacts+links+readiness+hashes，fresh process byte-for-byte 可复现+篡改可检测；ZIP/member 格式实现前 Design Gate 冻结）⑥ 最小只读 project inspection surface（API/UI 看成员/links/readiness/下载 package，不做新编辑器）⑦ 全量非回归（禁删测/skip/xfail 换绿）。
+- **依赖冻结**：M12 depends on M11 technical completion；NOT depend on WS3B/M9 Closeout；不重开 M10。M12 绝不可替代真实试点证据，不自动解除 M10 FINAL ACCEPTANCE 的 chained condition。
+- **授权口径**：M12 DEFINITION APPROVED；**CHARTER 1.0.0→1.1.0 MINOR revision 必须在任何 M12 产品代码前落地**（新增 §55A M11 + §55B M12，Gate 给了草案全文：Header revision 记录 + Revision Proposal Record 六段——Immutable Core 不变/Mutable Architecture 允许新增 project graph+links+validator+package+inspection/Roadmap 补 M11 新增 M12/Benchmark 禁弱化回归/Migration v15 须单独冻结/Owner approval=本次 replanning trigger）；**M12-D1 DESIGN PREP GO = APPROVED, DOCS ONLY**；M12 CODE GO = HOLD until D1 Design PASS + Charter MINOR merged。
+- **M12-D1 必答六问**：① project identity/membership 复用 project_settings 还是新实体；② EngineeringLink canonical schema（source/target identity、relation type、revision binding、deletion semantics）；③ 第一种真实 P&ID↔Cable 关系精确语义；④ 是否 schema v15 + v14→v15 upgrade/backup/restore/forward rollback；⑤ project validator stable issue codes + readiness 算法 + hash/provenance；⑥ deterministic package 成员清单与格式。
+- **D1 硬约束**：docs-only PR，禁改 backend/**、frontend/**、schema/migration、runtime ports、audit/hash、P&ID/Cable payload、REST/MCP surface、测试实现。代码顺序（D1 PASS 后固定）：D2 identity/membership → D3 links+governed mutation → D4 validator/readiness → D5 package+read surface/UI+frozen e2e+closeout。禁项：第三 domain / Domain SDK / auth redesign / 新 approval-release 状态 / audit hash formation。
+- **WS3B 插回规则**：随时可作独立 evidence lane 插回，须 pin 一个 main SHA、现场证据全绑该 SHA；试点反馈改代码另开 WS3B remediation PR；碰到 M12 冻结 contract 回对应 Design Gate。
+- **Gate 会话**：禹豫 conv `6abd7e9f-10e8-83ea-9f3c-3a7351e04172`。**注意：agent 窗口标签频繁被并行项目劫持（本轮已三次，一度跳 example.com），注入前必须核对 location.href 含 6abd7e9f；劫持后 navigate 回来再发。**
+- **下一动作**：写 Charter 1.1.0 MINOR revision（按 Gate 草案）+ M12-D1 design doc（六问逐项，先研读现有 project_settings/documents_registry/cable service/audit chain），两文档走 docs PR 报 Gate 拿 D1 Design PASS。
+
+## 上一状态（2026-10-01 —— **M11（Production-Ready Second Domain Slice · Cable Schematic v1）D1–D4 implementation closeout COMPLETE，Gate 已签**）
 
 - **M11 全链已合 main**：D1 domain-neutral identity（#73）→ D2 cable runtime wiring + atomic governed write（#74）→ D3 validator profile + deterministic export（#75）→ D4 minimal read-only Cable HTTP surface + 顶层 domain mode（#76）。main = `2cf198e0`（squash），main CI run `36791335881` 四绿。closeout 8 问矩阵在 `reports/m11-closeout.md`（随 #76 进 main）。
 - **M11-D4 终局要点（FINAL FIX GO R76-2/4/6）**：domain-tabs 真正移出 `state.document` 条件（线缆域无 P&ID 文档也可达）；冻结 e2e ⑥ 为三路 byte parity（HTTP == UI download == 直接调 D3 `export_cable_document()` subprocess）；冻结 ⑩ 真实跑在 shared deployment（`security.shared.spec.ts`：匿名 cable 三条 GET 全 401 + 带 token Cable UI list/detail/export 实际工作）；`frontend/node_modules` 符号链接（本机绝对路径）从 Git tree 删除，.gitignore 去尾斜杠。
-- **治理口径不变（Gate 原文）**：本 closeout ≠ M9 WS3B closeout、不补齐真实项目试点、不改变 M9/M10 Owner 阻断状态。**唯一挂起 = M9 WS3B 四字段待 Owner 填**（真实项目试点）；M9 其余（WS1/WS2/WS3A 模板）与 M10 均已封账。
-- **环境**：main 工作树 = `P055-PID-Agent-main`（本地 e2e 端口 8002/4174，venv=主库 `.venv`）；docs 记账分支 = q1r（本树，`m7-semantic-first-synthesis`）。Gate 会话 = 禹豫项目 conv `6abd7e9f-10e8-83ea-9f3c-3a7351e04172`（主线 `6abbdafb` 已硬上限）。linux visual 基线用仓库自带 `visual-baselines.yml` workflow_dispatch 在 pinned ubuntu-24.04 再生。
-- **下一站在 Owner**：填 WS3B 四字段（真实项目试点）→ M9 收口。未经 Gate 明示不自动开新工程。
+- **环境**：main 工作树 = `P055-PID-Agent-main`（本地 e2e 端口 8002/4174，venv=主库 `.venv`）；docs 记账分支 = q1r（本树，`m7-semantic-first-synthesis`）。linux visual 基线用仓库自带 `visual-baselines.yml` workflow_dispatch 在 pinned ubuntu-24.04 再生。
 
 
 ## 早前状态（2026-09-29 R51 —— **M9 推进中：WS1+WS2 均已合并封账（PR #67 squash → main@153c28c；PR #68 squash → main@7d5cfa3，main CI 36548626197 四绿；Gate 裁 M9-WS2 = PASS）。WS2 = release 状态机（两态/双绑定 supersede/守卫顺序冻结）+ evidence 包（Phase A 单 pinned snapshot 内存构建 / Phase B commit_release 原子原语 / v13 release_evidence_packages 表 / 五重导出校验 / audit 快照 cutoff）。WS2 经两轮 CHANGES REQUIRED 收口（R68-1~5：audit TOCTOU 纯函数化、跨面双 hash 绑定、corrupt 全映射+MANIFEST 行序锁、F4 零增长硬锁、Barrier 真并发）。剩：WS3A 模板已交付（等 Owner 填表选真实试点）→ WS3B 真实试点（Gate 说 merge 后重新确认 main SHA 与运行环境再单独放行）→ M9 Closeout。Gate 会话已达硬长度上限（回复仍出但旧消息不渲染，读裁定只信尾部）。worktree=P055-PID-Agent-q1r 在 r51-handoff（docs 记账分支））

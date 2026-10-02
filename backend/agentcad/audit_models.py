@@ -66,6 +66,7 @@ AuditEventType = Literal[
     "engineering_link.created",
     "engineering_link.repinned",
     "engineering_link.deleted",
+    "engineering_link.rejected",
 ]
 
 AuditStatus = Literal["applied", "rejected", "failed"]

@@ -1,35 +1,40 @@
 """M12-D3: cross-domain engineering links + governed mutation (Gate CODE GO).
 
 Design frozen at reports/m12-d1-design.md (M12-D1 DESIGN PASS, R77/F77/R78
-amendments ratified). Scope: create / re-pin / soft-delete of
-`cable_endpoint_equipment` links with fail-closed relation invariants, the
-equipment predicate, and governance audit on the existing global audit hash
-chain (no hash-formation or ordinal change). D4 validator/readiness and D5
-package/UI are explicitly NOT part of this slice.
+amendments ratified). Charter §55B(4) freeze: link mutations enter the M10
+runtime permission/session/audit boundary — there is NO direct actor-bypass
+write path (D79-1). The only write paths are the three commit_engineering_link_*
+store methods, driven through AgentHarnessRuntime + ProjectLinkDomainAdapter;
+each re-validates every frozen invariant inside a BEGIN IMMEDIATE transaction
+(D79-2) and lands mutation + governance audit + tool-call closure + approval
+consumption + session closure atomically.
+
+Equipment predicate (R77-Q3, fail-closed at write time): the target element
+must exist in the current P&ID revision and its symbol category must not be
+the instrument category. The canonical constant is imported from the M7
+layout contract, which engineering_links.py is declared to import (D79-3).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
 from .audit_models import AuditRecordDraft
 from .cable_service import CableDocumentNotFoundError, CableService
+from .m7_layout_contract import INSTRUMENT_SYMBOL_CATEGORY
+from .runtime.ports import AuditEvent, ClosureRequest, ExecutionOutcome
 from .service import DocumentNotFoundError, DocumentService
-from .store import SQLiteDocumentStore, StoreDocumentConflictError
+from .store import (
+    SQLiteDocumentStore,
+    StoreDocumentConflictError,
+    StoreDocumentIdentityError,
+)
 
 RELATION_CABLE_ENDPOINT_EQUIPMENT = "cable_endpoint_equipment"
 _ENDPOINTS = ("from", "to")
-
-# Equipment predicate (frozen at reports/m12-d1-design.md Q3 / R77-Q3): an
-# element is equipment-eligible iff its symbol category is NOT the instrument
-# category — the repo's "equipment is everything that is not an instrument"
-# rule (EQUIPMENT_SYMBOL_CATEGORIES_ARE_THE_REST). The canonical constant lives
-# in the M7 layout contract module, which this module may not import (M7 phase
-# import discipline); this local binding is pinned to the canonical value by
-# test_m12_d3_links.py, so a future change to the contract fails closed here.
-EQUIPMENT_PREDICATE_INSTRUMENT_CATEGORY = "仪表"
 
 
 class EngineeringLinkError(RuntimeError):
@@ -56,20 +61,16 @@ class EngineeringLinkView:
 
 
 class EngineeringLinkService:
-    """Governed cross-domain link mutation.
+    """Governed cross-domain link plane.
 
-    Invariants (R77-Q2, all fail-closed before any write):
-      1. cable_endpoint_equipment: source must be a cable document, target a
-         P&ID document (domains come from documents_registry, never stored).
-      2. source_endpoint in {'from', 'to'}.
-      3. both documents are members of the link's project.
-      4. pins are derived from the CURRENT revisions at create/re-pin time.
-      5. at most one active link per cable endpoint (partial unique index is
-         the transactional backstop).
-      6. equipment predicate: the target element must exist in the current
-         P&ID revision and its symbol category must not be the instrument
-         category (the instrument category; the repo's equipment rule is
-         "everything that is not an instrument", EQUIPMENT_SYMBOL_CATEGORIES_ARE_THE_REST).
+    Public surface:
+      - reads: get_link / list_active_links (zero audit);
+      - preview(intent): early stable-error checks for the adapter (pure reads;
+        the authoritative re-check happens inside the store commit);
+      - binding_document_id(intent): the document a runtime authorization binds
+        to (the cable source document);
+      - execute_create / execute_repin / execute_delete: called ONLY by the
+        runtime adapter with an authorized context.
     """
 
     def __init__(
@@ -81,6 +82,11 @@ class EngineeringLinkService:
         self._store = store
         self._pid = pid_service
         self._cable = cable_service
+        symbols = pid_service.symbols._symbols  # noqa: SLF001 - static catalogue snapshot
+        self._known_symbol_keys = frozenset(symbols)
+        self._instrument_symbol_keys = frozenset(
+            key for key, symbol in symbols.items() if symbol.category == INSTRUMENT_SYMBOL_CATEGORY
+        )
 
     # ---- reads (zero audit) ----
 
@@ -89,139 +95,182 @@ class EngineeringLinkService:
         return None if row is None else self._to_view(row)
 
     def list_active_links(self, project_id: str) -> list[EngineeringLinkView]:
-        return [self._to_view(row) for row in self._store.list_active_engineering_links(project_id)]
+        return [
+            self._to_view(row) for row in self._store.list_active_engineering_links(project_id)
+        ]
 
-    # ---- governed mutations ----
+    # ---- early checks / binding (pure reads) ----
 
-    def create_link(
+    def preview_create(self, intent: Any) -> None:
+        """Raise EngineeringLinkError early when a frozen invariant already
+        fails. The store commit re-checks everything inside the write
+        transaction; this only converts predictable failures into stable codes
+        before the harness is consumed."""
+        self._resolve_pins(
+            project_id=intent.project_id,
+            source_document_id=intent.source_document_id,
+            source_object_ref=intent.source_object_ref,
+            source_endpoint=intent.source_endpoint,
+            target_document_id=intent.target_document_id,
+            target_object_ref=intent.target_object_ref,
+        )
+
+    def binding_document_id(self, intent: Any) -> str:
+        """Runtime authorization binds to the cable source document."""
+        if getattr(intent, "source_document_id", None):
+            return str(intent.source_document_id)
+        link_id = str(intent.link_id)
+        row = self._require_link_row(link_id)
+        return str(row["source_document_id"])
+
+    # ---- governed execution (runtime adapter only) ----
+
+    def execute_create(
         self,
         *,
-        project_id: str,
-        source_document_id: str,
-        source_object_ref: str,
-        source_endpoint: str,
-        target_document_id: str,
-        target_object_ref: str,
-        actor: str,
-    ) -> EngineeringLinkView:
-        pins = self._resolve_pins(
-            project_id=project_id,
-            source_document_id=source_document_id,
-            source_object_ref=source_object_ref,
-            source_endpoint=source_endpoint,
-            target_document_id=target_document_id,
-            target_object_ref=target_object_ref,
-        )
+        authorized: Any,
+        audit_event: AuditEvent,
+        closure: ClosureRequest,
+        intent: Any,
+    ) -> ExecutionOutcome:
         link_id = f"lnk_{uuid4().hex[:12]}"
-        audit = AuditRecordDraft(
+        audit = self._success_audit(
+            authorized,
+            audit_event,
             event_type="engineering_link.created",
-            actor=actor,
-            surface="internal",
-            tool_name="engineering-link-service",
-            status="applied",
-            project_id=project_id,
+            project_id=intent.project_id,
             label=(
                 f"Create {RELATION_CABLE_ENDPOINT_EQUIPMENT} link "
-                f"{source_object_ref}:{source_endpoint} -> {target_object_ref}"
+                f"{intent.source_object_ref}:{intent.source_endpoint} "
+                f"-> {intent.target_object_ref}"
             ),
             evidence={
                 "link_id": link_id,
                 "relation_type": RELATION_CABLE_ENDPOINT_EQUIPMENT,
-                "source_document_id": source_document_id,
-                "source_object_ref": source_object_ref,
-                "source_endpoint": source_endpoint,
-                "target_document_id": target_document_id,
-                "target_object_ref": target_object_ref,
-                "pinned_source_revision": pins[0],
-                "pinned_target_revision": pins[1],
+                "source_object_ref": intent.source_object_ref,
+                "source_endpoint": intent.source_endpoint,
+                "target_document_id": intent.target_document_id,
+                "target_object_ref": intent.target_object_ref,
             },
         )
         try:
-            self._store.insert_engineering_link(
+            pins = self._store.commit_engineering_link_create(
                 link_id=link_id,
-                project_id=project_id,
+                project_id=intent.project_id,
                 relation_type=RELATION_CABLE_ENDPOINT_EQUIPMENT,
-                source_domain="cable",
-                source_document_id=source_document_id,
-                source_object_ref=source_object_ref,
-                source_endpoint=source_endpoint,
-                target_domain="pid",
-                target_document_id=target_document_id,
-                target_object_ref=target_object_ref,
-                pinned_source_revision=pins[0],
-                pinned_target_revision=pins[1],
-                created_by=actor,
+                source_document_id=intent.source_document_id,
+                source_object_ref=intent.source_object_ref,
+                source_endpoint=intent.source_endpoint,
+                target_document_id=intent.target_document_id,
+                target_object_ref=intent.target_object_ref,
+                known_symbol_keys=self._known_symbol_keys,
+                instrument_symbol_keys=self._instrument_symbol_keys,
+                created_by=audit_event.actor,
                 audit=audit,
+                tool_call=self._closed_tool_call(authorized),
+                approval=self._consumed_approval(authorized, closure),
+                session=self._closed_session(authorized, closure),
             )
         except StoreDocumentConflictError as exc:
+            self.failure_closeout(authorized, audit_event, "endpoint_already_connected")
             raise EngineeringLinkError(
                 "endpoint_already_connected",
-                f"cable endpoint {source_object_ref!r}:{source_endpoint!r} already has an "
-                "active cable_endpoint_equipment link",
+                f"cable endpoint {intent.source_object_ref!r}:{intent.source_endpoint!r} "
+                "already has an active cable_endpoint_equipment link",
             ) from exc
-        view = self.get_link(link_id)
-        assert view is not None
-        return view
-
-    def repin_link(self, *, link_id: str, actor: str) -> EngineeringLinkView:
-        row = self._require_active(link_id)
-        pins = self._resolve_pins(
-            project_id=str(row["project_id"]),
-            source_document_id=str(row["source_document_id"]),
-            source_object_ref=str(row["source_object_ref"]),
-            source_endpoint=str(row["source_endpoint"]),
-            target_document_id=str(row["target_document_id"]),
-            target_object_ref=str(row["target_object_ref"]),
+        except (StoreDocumentIdentityError, ValueError) as exc:
+            code = (
+                str(exc).split(":", 1)[0]
+                if isinstance(exc, ValueError)
+                else type(exc).__name__
+            )
+            self.failure_closeout(authorized, audit_event, code)
+            raise
+        return ExecutionOutcome(
+            document_id=intent.source_document_id,
+            base_revision=None,
+            result_revision=pins[0],
+            payload={"link_id": link_id, "pinned_source_revision": pins[0], "pinned_target_revision": pins[1]},
         )
-        audit = AuditRecordDraft(
+
+    def execute_repin(
+        self,
+        *,
+        authorized: Any,
+        audit_event: AuditEvent,
+        closure: ClosureRequest,
+        intent: Any,
+    ) -> ExecutionOutcome:
+        link_id = str(intent.link_id)
+        row = self._require_link_row(link_id)
+        audit = self._success_audit(
+            authorized,
+            audit_event,
             event_type="engineering_link.repinned",
-            actor=actor,
-            surface="internal",
-            tool_name="engineering-link-service",
-            status="applied",
             project_id=str(row["project_id"]),
             label=f"Re-pin link {link_id} to current revisions",
-            evidence={
-                "link_id": link_id,
-                "pinned_source_revision": pins[0],
-                "pinned_target_revision": pins[1],
-            },
+            evidence={"link_id": link_id},
         )
-        if not self._store.update_engineering_link_pins(
-            link_id=link_id,
-            pinned_source_revision=pins[0],
-            pinned_target_revision=pins[1],
-            audit=audit,
-        ):
-            raise EngineeringLinkError("link_not_active", f"link {link_id!r} is not active")
-        view = self.get_link(link_id)
-        assert view is not None
-        return view
+        try:
+            pins = self._store.commit_engineering_link_repin(
+                link_id=link_id,
+                known_symbol_keys=self._known_symbol_keys,
+                instrument_symbol_keys=self._instrument_symbol_keys,
+                audit=audit,
+                tool_call=self._closed_tool_call(authorized),
+                approval=self._consumed_approval(authorized, closure),
+                session=self._closed_session(authorized, closure),
+            )
+        except (StoreDocumentIdentityError, ValueError) as exc:
+            self.failure_closeout(authorized, audit_event, type(exc).__name__)
+            raise
+        return ExecutionOutcome(
+            document_id=str(row["source_document_id"]),
+            base_revision=None,
+            result_revision=pins[0],
+            payload={"link_id": link_id, "pinned_source_revision": pins[0], "pinned_target_revision": pins[1]},
+        )
 
-    def soft_delete_link(self, *, link_id: str, actor: str) -> None:
-        row = self._store.get_engineering_link(link_id)
-        if row is None:
-            raise EngineeringLinkError("link_not_found", f"link {link_id!r} does not exist")
-        if str(row["deleted_at"]):
-            raise EngineeringLinkError("link_already_deleted", f"link {link_id!r} is already deleted")
-        audit = AuditRecordDraft(
+    def execute_delete(
+        self,
+        *,
+        authorized: Any,
+        audit_event: AuditEvent,
+        closure: ClosureRequest,
+        intent: Any,
+    ) -> ExecutionOutcome:
+        link_id = str(intent.link_id)
+        row = self._require_link_row(link_id)
+        audit = self._success_audit(
+            authorized,
+            audit_event,
             event_type="engineering_link.deleted",
-            actor=actor,
-            surface="internal",
-            tool_name="engineering-link-service",
-            status="applied",
             project_id=str(row["project_id"]),
             label=f"Soft-delete link {link_id}",
             evidence={"link_id": link_id},
         )
-        if not self._store.soft_delete_engineering_link(
-            link_id=link_id, deleted_by=actor, audit=audit
-        ):
-            raise EngineeringLinkError("link_not_found", f"link {link_id!r} does not exist")
+        try:
+            self._store.commit_engineering_link_delete(
+                link_id=link_id,
+                deleted_by=audit_event.actor,
+                audit=audit,
+                tool_call=self._closed_tool_call(authorized),
+                approval=self._consumed_approval(authorized, closure),
+                session=self._closed_session(authorized, closure),
+            )
+        except StoreDocumentIdentityError as exc:
+            self.failure_closeout(authorized, audit_event, type(exc).__name__)
+            raise
+        return ExecutionOutcome(
+            document_id=str(row["source_document_id"]),
+            base_revision=None,
+            result_revision=int(row["pinned_source_revision"]),
+            payload={"link_id": link_id, "deleted": True},
+        )
 
     # ---- internals ----
 
-    def _require_active(self, link_id: str) -> dict[str, Any]:
+    def _require_link_row(self, link_id: str) -> dict[str, Any]:
         row = self._store.get_engineering_link(link_id)
         if row is None:
             raise EngineeringLinkError("link_not_found", f"link {link_id!r} does not exist")
@@ -239,12 +288,12 @@ class EngineeringLinkService:
         target_document_id: str,
         target_object_ref: str,
     ) -> tuple[int, int]:
+        """Pure-read mirror of the frozen invariants for early stable errors."""
         source_domain = self._store.document_domain(source_document_id)
         target_domain = self._store.document_domain(target_document_id)
         if source_domain is None or target_domain is None:
             raise EngineeringLinkError(
-                "unknown_document",
-                "both link endpoints must be registered documents",
+                "unknown_document", "both link endpoints must be registered documents"
             )
         if source_domain != "cable" or target_domain != "pid":
             raise EngineeringLinkError(
@@ -253,8 +302,7 @@ class EngineeringLinkService:
             )
         if source_endpoint not in _ENDPOINTS:
             raise EngineeringLinkError(
-                "invalid_endpoint",
-                f"source_endpoint must be one of {_ENDPOINTS}",
+                "invalid_endpoint", f"source_endpoint must be one of {_ENDPOINTS}"
             )
         members = {
             document_id
@@ -274,13 +322,9 @@ class EngineeringLinkService:
             cable_view = self._cable.load(source_document_id)
         except CableDocumentNotFoundError:
             raise EngineeringLinkError(
-                "missing_source_object",
-                f"cable document {source_document_id!r} not found",
+                "missing_source_object", f"cable document {source_document_id!r} not found"
             ) from None
-        segment = next(
-            (s for s in cable_view.document.segments if s.id == source_object_ref), None
-        )
-        if segment is None:
+        if not any(s.id == source_object_ref for s in cable_view.document.segments):
             raise EngineeringLinkError(
                 "missing_source_object",
                 f"cable segment {source_object_ref!r} not found in {source_document_id!r}",
@@ -289,8 +333,7 @@ class EngineeringLinkService:
             document = self._pid.get_document(target_document_id)
         except DocumentNotFoundError:
             raise EngineeringLinkError(
-                "missing_target_object",
-                f"pid document {target_document_id!r} not found",
+                "missing_target_object", f"pid document {target_document_id!r} not found"
             ) from None
         element = next((e for e in document.elements if e.id == target_object_ref), None)
         if element is None:
@@ -299,24 +342,107 @@ class EngineeringLinkService:
                 f"element {target_object_ref!r} not found in {target_document_id!r}",
             )
         symbol_key = getattr(element, "symbol_key", None)
-        if not symbol_key:
+        if not symbol_key or symbol_key not in self._known_symbol_keys:
             raise EngineeringLinkError(
-                "target_not_equipment",
-                f"target element {target_object_ref!r} carries no symbol identity",
+                "target_not_equipment", f"target element symbol {symbol_key!r} is not in the catalogue"
             )
-        try:
-            category = self._pid.symbols.get(symbol_key).category
-        except KeyError:
-            raise EngineeringLinkError(
-                "target_not_equipment",
-                f"target element symbol {symbol_key!r} is not in the catalogue",
-            ) from None
-        if category == EQUIPMENT_PREDICATE_INSTRUMENT_CATEGORY:
+        if symbol_key in self._instrument_symbol_keys:
             raise EngineeringLinkError(
                 "target_not_equipment",
                 f"target element {target_object_ref!r} is an instrument, not equipment",
             )
         return cable_view.document.revision, document.revision
+
+    @staticmethod
+    def _success_audit(
+        authorized: Any,
+        audit_event: AuditEvent,
+        *,
+        event_type: str,
+        project_id: str,
+        label: str,
+        evidence: dict,
+    ) -> AuditRecordDraft:
+        from .audit import validation_evidence_hash
+
+        return AuditRecordDraft(
+            event_type=event_type,
+            actor=audit_event.actor,
+            surface=audit_event.surface,
+            tool_name=authorized.definition.name,
+            status="applied",
+            document_id=authorized.record.document_id,
+            project_id=project_id,
+            session_id=authorized.session.id,
+            approval_id=authorized.approval.id if authorized.approval else None,
+            tool_call_id=authorized.record.id,
+            base_revision=authorized.record.base_revision,
+            provider=audit_event.provider,
+            model=audit_event.model,
+            intent_hash=audit_event.intent_hash,
+            diff_preview_hash=audit_event.diff_preview_hash,
+            validation_status=audit_event.validation_status or "valid",
+            validation_hash=validation_evidence_hash(audit_event.validation_evidence),
+            label=label,
+            evidence={**evidence, "runtime_metadata": audit_event.metadata},
+        )
+
+    def failure_closeout(self, authorized: Any, audit_event: AuditEvent, error_code: str) -> None:
+        from .audit import validation_evidence_hash
+
+        now = datetime.now(UTC)
+        audit = AuditRecordDraft(
+            event_type="engineering_link.rejected",
+            actor=audit_event.actor,
+            surface=audit_event.surface,
+            tool_name=authorized.definition.name,
+            status="rejected",
+            error_code=error_code,
+            document_id=authorized.record.document_id,
+            session_id=authorized.session.id,
+            approval_id=authorized.approval.id if authorized.approval else None,
+            tool_call_id=authorized.record.id,
+            base_revision=authorized.record.base_revision,
+            provider=audit_event.provider,
+            model=audit_event.model,
+            intent_hash=audit_event.intent_hash,
+            diff_preview_hash=audit_event.diff_preview_hash,
+            validation_status=audit_event.validation_status,
+            validation_hash=validation_evidence_hash(audit_event.validation_evidence),
+            label=f"Engineering link mutation denied: {error_code}",
+            evidence=dict(audit_event.metadata),
+        )
+        self._store.engineering_link_failure_closeout(
+            tool_call=authorized.record.model_copy(
+                update={"status": "failed", "error_code": error_code, "completed_at": now}
+            ),
+            session=authorized.session.model_copy(
+                update={"status": "failed", "updated_at": now}
+            ),
+            audit=audit,
+        )
+
+    @staticmethod
+    def _closed_tool_call(authorized: Any) -> Any:
+        return authorized.record.model_copy(
+            update={"status": "completed", "completed_at": datetime.now(UTC)}
+        )
+
+    @staticmethod
+    def _consumed_approval(authorized: Any, closure: ClosureRequest) -> Any:
+        if authorized.approval is None or not closure.consume_approval:
+            return None
+        return authorized.approval.model_copy(
+            update={"status": "consumed", "consumed_at": datetime.now(UTC)}
+        )
+
+    @staticmethod
+    def _closed_session(authorized: Any, closure: ClosureRequest) -> Any:
+        if not closure.close_session:
+            return authorized.session
+        return authorized.session.model_copy(
+            update={"status": "completed", "updated_at": datetime.now(UTC)}
+        )
 
     @staticmethod
     def _to_view(row: dict[str, Any]) -> EngineeringLinkView:

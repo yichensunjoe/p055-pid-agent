@@ -434,9 +434,25 @@ def restore_backup(
             and metadata.schema_version < CURRENT_SCHEMA_VERSION
         ):
             # Frozen rollback chain: yield the backed-up (older) schema version.
-            # Reduced validation — instance identity + SQLite integrity; the
-            # schema-version equality check is deliberately skipped.
+            # R78-1: the restored bytes must actually BE the backed-up schema
+            # version — metadata alone proves nothing. Beyond quick_check and
+            # foreign_key_check, the version-layered required-schema gate runs
+            # so a self-consistent but wrong-era database cannot be smuggled in.
             with closing(_readonly_connection(candidate)) as connection:
+                info = _database_info_from_connection(candidate, connection)
+                if info.schema_version != metadata.schema_version:
+                    raise BackupValidationError(
+                        "restored database schema version "
+                        f"{info.schema_version} does not match backup metadata "
+                        f"schema version {metadata.schema_version}",
+                        code="backup_schema_mismatch",
+                    )
+                if info.schema_version >= CURRENT_SCHEMA_VERSION:
+                    raise BackupValidationError(
+                        "legacy-schema restore requires a backup older than the "
+                        "current schema version",
+                        code="backup_schema_mismatch",
+                    )
                 quick_check = connection.execute("PRAGMA quick_check").fetchall()
                 if not quick_check or any(
                     str(row[0]).lower() != "ok" for row in quick_check
@@ -448,7 +464,7 @@ def restore_backup(
                     raise DatabaseIntegrityError(
                         f"SQLite foreign_key_check found {len(foreign_keys)} violation(s)"
                     )
-                info = _database_info_from_connection(candidate, connection)
+                _validate_required_schema(connection)
             if info.instance_id != metadata.instance_id:
                 raise BackupValidationError(
                     "database instance id does not match backup metadata",

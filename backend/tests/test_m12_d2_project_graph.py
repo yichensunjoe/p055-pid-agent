@@ -10,15 +10,22 @@ Gate-frozen scope (M12-D1 DESIGN PASS, reports/m12-d1-design.md):
   v15 binary re-migrates (R77-Q4 / F77 wording).
 """
 
+import hashlib
+import json
 import sqlite3
+import zipfile
 from pathlib import Path
 
 import pytest
 
 from agentcad import database_recovery as recovery
 from agentcad.database_recovery import (
+    BACKUP_DATABASE_MEMBER,
+    BACKUP_METADATA_MEMBER,
     CURRENT_SCHEMA_VERSION,
     DEFAULT_PROJECT_ID,
+    BackupValidationError,
+    DatabaseMigrationError,
     create_backup,
     inspect_backup,
     restore_backup,
@@ -227,3 +234,77 @@ def test_v15_database_passes_required_schema_validation(tmp_path: Path) -> None:
     connection.close()
     assert version == 15
     assert default_row is not None
+
+
+def _repacked_backup(backup: Path, database: Path, output: Path) -> Path:
+    """Rebuild a backup archive around different database bytes, refreshing
+    database_sha256/database_size_bytes so the digest gate passes — the
+    tampered archive is self-consistent except for the schema truth."""
+    payload = database.read_bytes()
+    with zipfile.ZipFile(backup, mode="r") as source:
+        metadata = json.loads(source.read(BACKUP_METADATA_MEMBER))
+    metadata["database_sha256"] = hashlib.sha256(payload).hexdigest()
+    metadata["database_size_bytes"] = len(payload)
+    with zipfile.ZipFile(output, mode="w", compression=zipfile.ZIP_DEFLATED) as target:
+        target.writestr(BACKUP_DATABASE_MEMBER, payload)
+        target.writestr(
+            BACKUP_METADATA_MEMBER,
+            json.dumps(metadata, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+        )
+    return output
+
+
+def test_restore_pre_current_rejects_schema_version_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R78-1: metadata claiming v14 around actual v15 bytes must fail closed."""
+    database = _seed_v14_database(tmp_path, monkeypatch)
+    genuine = tmp_path / "genuine-v14.backup"
+    monkeypatch.setattr(recovery, "CURRENT_SCHEMA_VERSION", 14)
+    create_backup(database, genuine)
+    metadata = inspect_backup(genuine)
+    monkeypatch.undo()
+    assert metadata.schema_version == 14
+
+    # Drift: the same instance migrated to v15, repacked under v14 metadata.
+    drifted = tmp_path / "drifted.db"
+    drifted.write_bytes(database.read_bytes())
+    _service(drifted)  # migrates the copy to v15
+    tampered = _repacked_backup(genuine, drifted, tmp_path / "tampered.backup")
+
+    with pytest.raises(BackupValidationError, match="does not match backup metadata"):
+        restore_backup(
+            tampered,
+            tmp_path / "restore-target.db",
+            expected_instance_id=metadata.instance_id,
+            allow_pre_current_schema=True,
+        )
+
+
+def test_restore_pre_current_rejects_missing_required_table(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R78-1: user_version=14 bytes missing a v14-required table must fail
+    closed even when the archive digest/metadata are self-consistent."""
+    database = _seed_v14_database(tmp_path, monkeypatch)
+    genuine = tmp_path / "genuine-v14.backup"
+    monkeypatch.setattr(recovery, "CURRENT_SCHEMA_VERSION", 14)
+    create_backup(database, genuine)
+    metadata = inspect_backup(genuine)
+    monkeypatch.undo()
+
+    hollow = tmp_path / "hollow.db"
+    hollow.write_bytes(database.read_bytes())
+    connection = sqlite3.connect(hollow)
+    connection.execute("DROP TABLE cable_documents")
+    connection.commit()
+    connection.close()
+    tampered = _repacked_backup(genuine, hollow, tmp_path / "hollow.backup")
+
+    with pytest.raises(DatabaseMigrationError, match="missing tables"):
+        restore_backup(
+            tampered,
+            tmp_path / "restore-target.db",
+            expected_instance_id=metadata.instance_id,
+            allow_pre_current_schema=True,
+        )

@@ -1,9 +1,8 @@
 # M12-D1 — Project Graph / Cross-Domain Contract Design
 
-> 状态：DESIGN FINAL FIX（R77 修订版，docs-only）。本文回答 Gate 冻结的六问并吸收
-> M12-D1 Design Gate 裁定 R77-Q1~Q6/§7；所有结论在 final Design Gate 签署前均为
-> proposal。base = main@2cf198e0（M11 closeout 后）。Charter 部分（1.0.0→1.1.0）
-> 已获 CONTENT PASS，本修订只动本文件。
+> 状态：FINAL-FINAL DOC FIX（F77-1/F77-2 修订版，docs-only）。回答 Gate 冻结的六问并吸收
+> M12-D1 Design Gate 裁定 R77 与 F77；所有结论在 final Design Gate 签署前均为 proposal。
+> base = main@2cf198e0（M11 closeout 后）。Charter 部分（1.0.0→1.1.0）已获 CONTENT PASS。
 > 依据 PROJECT_CHARTER v1.1.0 §55B 与 §57 Revision Proposal Record。
 
 ## 0. 范围与硬约束（复述冻结口径）
@@ -148,11 +147,16 @@ D3 起作为 link 治理事件的归属列首次生产使用——用列不是�
 
 ## 5. Q5 — Project validator（R77-Q5 修订版）
 
-**成员 readiness 唯一来源（冻结）**：
+**成员 readiness 唯一来源（冻结，含 F77-1 waiver/profile/time 契约）**：
 
-- P&ID：`assess_document_release_readiness()`（release_validator.py:140）——仓库既有
-  canonical 函数，**唯一** P&ID readiness 来源，不另建错误计数通道。
+- P&ID：`assess_document_release_readiness(service, id, load_profile(), now=evaluation_as_of)`
+  （release_validator.py:140）——仓库既有 canonical 函数，**唯一** P&ID readiness 来源，
+  不另建错误计数通道。**profile 必须服务器侧 `load_profile()`，禁止请求方提交/覆盖**
+  （deployment profile 可覆盖 built-in 是现有行为，服务器侧取效后即为 effective profile）。
 - Cable：`assess_cable_document()`（D3 既有）。
+- **evaluation_as_of**：显式、timezone-aware 的时间输入，是 validation 语义输入，
+  **不是 created_at**（waiver 会过期，不指定 as_of 时同一请求不同时刻可返回不同
+  verdict；冻结后语义确定）。
 - 两端都针对文档**当前** revision 评估。
 
 **跨域检查集（stable issue codes）**：
@@ -179,10 +183,13 @@ D3 起作为 link 治理事件的归属列首次生产使用——用列不是�
   失败），才 eligible；否则 not_eligible。绝不产生 Approved/Released。
 - **soft-deleted links 不参与当前 readiness**（不查、不计、不进 package）。
 - 全部检查纯函数、确定性排序（按 link_id 字典序），无时钟、无遍历序依赖。
-- **hash/provenance**：`result_hash` = sha256(canonical JSON(issue 列表 + 各成员
-  content_hash + 各 active link pinned 对))；canonical JSON 复用 cable_export `_canonical`
+- **hash/provenance（F77-1 扩充冻结）**：`result_hash` = sha256(canonical JSON(**至少**绑定：
+  `evaluation_as_of`；每个 P&ID 成员的 readiness_hash / rule-bundle fingerprint；
+  每个 Cable 成员的 result_hash / profile fingerprint；project-level issues；
+  各 active link pinned 对))；canonical JSON 复用 cable_export `_canonical`
   先例；`profile_id='project-built-in'`、`profile_version=1`、`profile_fingerprint`
-  （规则集自身 hash）。验证器只读、零副作用、零 audit 事件。
+  （规则集自身 hash）。profile/waiver 或 evaluation_as_of 改变导致成员 readiness 改变时，
+  project readiness provenance/hash **必须随之改变**。验证器只读、零副作用、零 audit 事件。
 
 ## 6. Q6 — Deterministic Project Delivery Package（R77-Q6 修订版）
 
@@ -198,16 +205,22 @@ ZIP（`ZIP_STORED` + 固定 ZipInfo(1980-01-01) + canonical JSON，照抄 cable_
 | 5 | `domains/pid/<document_id>-r<rev>.json` | 该 revision 的 P&ID 文档确定性导出（复用既有 P&ID JSON 导出纯函数） |
 | 6 | `domains/cable/<document_id>-r<rev>.zip` | 该 revision 的 cable 导出包（复用 D3 `export_cable_document` 字节） |
 
-**R77-Q6 吸收（四点全改）**：
+**R77-Q6 吸收（四点全改）+ F77-1 package 输入修订**：
 
 1. **MANIFEST self-exclusion**：members 只列其余成员，MANIFEST.json 不给自身算 hash；
    MANIFEST 的完整性由 links_sha256/readiness_sha256 与成员 hash 集合共同锚定。
-2. **删除 `created` 字段**：输入只有 {project_id, pins}，不允许调用方传时钟；包内零时间戳。
-3. **pins == 当前 revision（硬前置）**：所有 requested member pins 必须等于各文档当前
-   revision，且所有 active link pins == package member pins；任一不满足 → stable error、
-   不产包。cable exporter 只导出当前 exact revision（stale 即拒），M12 **不声称**能导出
-   任意历史 pinned cable revision——想要历史包，先显式把文档"当前 revision"变回（治理
-   动作），再打包。
+2. **删除 `created` 字段**；**package 输入冻结为 {project_id, member pins,
+   evaluation_as_of}**——evaluation_as_of 是可复现验证必需的 semantic timestamp
+   （Q5 F77-1），与已删除的 created_at 性质不同；包内除此语义输入外零时间戳。
+   **fresh-process byte parity 定义**：相同 pins + 相同 evaluation_as_of +
+   相同 effective server profile → byte-for-byte 相等。
+3. **pins == 当前 revision（硬前置，F77-2 修订表述）**：所有 requested member pins 必须
+   等于各文档当前 revision，且所有 active link pins == package member pins；任一不满足
+   → stable error、不产包。**M12 package builder 只支持当前 exact revision，不支持从
+   live document 重建任意历史 revision package；M12 不允许通过 revision-number rollback
+   模拟历史导出**（现有 undo() 恢复旧内容也保持 revision 单调前进，revision number 永不
+   降回）。历史 artifact 若需长期重取，依赖此前已持久化的 artifact/evidence，或未来单独
+   设计的 immutable revision snapshot 能力——**不属于 M12**。
 4. **package GET/download 只读、零 audit**（与 §55B「只读 API/UI」一致）；原稿"下载写
    audit"删除。正式的 issue/release package 若未来需要审计，另走 governed POST milestone。
 
@@ -234,6 +247,11 @@ ZIP（`ZIP_STORED` + 固定 ZipInfo(1980-01-01) + canonical JSON，照抄 cable_
    恢复 eligible→导出 package→HTTP body==UI download==fresh-process 二次构建字节。
 3. shared-mode：匿名 project/link/package 三族 GET 全 401；带 token UI 只读 surface 可用。
 4. 非回归：全量既有测试零删改零放宽（M5 gate / backend / frontend / browser / shared）。
+5. F77 parity：固定 evaluation_as_of + 固定 effective server profile，跨 fresh process
+   project readiness / package bytes 完全一致。
+6. F77 provenance drift：profile/waiver 或 evaluation_as_of 改变导致 P&ID member
+   readiness 改变时，project readiness provenance/hash 必须随之改变；另断言全库不存在
+   任何"revision number 回退后重建历史包"的路径。
 
 **性能预算（R77-§7 增补，冻结）**：以 main@2cf198e0、同 Python/同机器、后端全量测试
 命令的 wall-clock 记录 pre-M12 基线；M12 closeout 的增量预算 **≤ +10%**；超出须单独

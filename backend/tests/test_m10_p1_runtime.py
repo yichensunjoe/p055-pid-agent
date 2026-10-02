@@ -169,4 +169,4 @@ def test_runtime_isolation_subprocess_lock() -> None:
 def test_schema_version_still_14() -> None:
     from agentcad.database_recovery import CURRENT_SCHEMA_VERSION
 
-    assert CURRENT_SCHEMA_VERSION == 14
+    assert CURRENT_SCHEMA_VERSION == 15

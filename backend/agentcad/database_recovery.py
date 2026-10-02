@@ -16,7 +16,10 @@ from pathlib import Path
 from typing import Any, BinaryIO
 from urllib.parse import quote
 
-CURRENT_SCHEMA_VERSION = 14
+CURRENT_SCHEMA_VERSION = 15
+# M12-D2: deterministic id of the default project seeded by _migration_15 so
+# that upgrading an existing database always lands on the same project identity.
+DEFAULT_PROJECT_ID = "proj_m12default"
 BACKUP_FORMAT = "pid-agent.sqlite-backup"
 BACKUP_VERSION = 1
 BACKUP_DATABASE_MEMBER = "database.sqlite3"
@@ -356,7 +359,16 @@ def restore_backup(
     *,
     expected_instance_id: str | None = None,
     allow_instance_mismatch: bool = False,
+    allow_pre_current_schema: bool = False,
 ) -> RestoreResult:
+    """Restore a verified backup onto the target path.
+
+    allow_pre_current_schema serves the M12 frozen rollback chain
+    (reports/m12-d1-design.md R77-Q4): a backup taken by an older binary has
+    metadata.schema_version < CURRENT_SCHEMA_VERSION, and restoring it must
+    yield exactly that older schema — the current binary migrates it forward
+    on next open. Without the flag, verify_database keeps requiring the
+    current schema version (default behaviour unchanged)."""
     backup = Path(backup_path)
     target = Path(database_path)
     if backup.resolve() == target.resolve():
@@ -417,7 +429,33 @@ def restore_backup(
         digest, size = _hash_file(candidate)
         if digest != metadata.database_sha256 or size != metadata.database_size_bytes:
             raise BackupValidationError("extracted database does not match backup metadata")
-        verify_database(candidate, expected_instance_id=metadata.instance_id)
+        if (
+            allow_pre_current_schema
+            and metadata.schema_version < CURRENT_SCHEMA_VERSION
+        ):
+            # Frozen rollback chain: yield the backed-up (older) schema version.
+            # Reduced validation — instance identity + SQLite integrity; the
+            # schema-version equality check is deliberately skipped.
+            with closing(_readonly_connection(candidate)) as connection:
+                quick_check = connection.execute("PRAGMA quick_check").fetchall()
+                if not quick_check or any(
+                    str(row[0]).lower() != "ok" for row in quick_check
+                ):
+                    detail = "; ".join(str(row[0]) for row in quick_check[:10])
+                    raise DatabaseIntegrityError(f"SQLite quick_check failed: {detail}")
+                foreign_keys = connection.execute("PRAGMA foreign_key_check").fetchall()
+                if foreign_keys:
+                    raise DatabaseIntegrityError(
+                        f"SQLite foreign_key_check found {len(foreign_keys)} violation(s)"
+                    )
+                info = _database_info_from_connection(candidate, connection)
+            if info.instance_id != metadata.instance_id:
+                raise BackupValidationError(
+                    "database instance id does not match backup metadata",
+                    code="backup_instance_mismatch",
+                )
+        else:
+            verify_database(candidate, expected_instance_id=metadata.instance_id)
         if target.exists() or target.is_symlink():
             _reject_unsafe_existing_file(target, allow_missing=False)
         _reject_new_restore_sidecars(target)
@@ -1198,6 +1236,118 @@ def _migration_14(connection: sqlite3.Connection) -> None:
         )
 
 
+def _migration_15(connection: sqlite3.Connection) -> None:
+    """M12-D2: domain-neutral project graph foundation (design frozen at
+    reports/m12-d1-design.md, M12-D1 DESIGN PASS).
+
+    Adds projects + project_documents (identity/membership, activated in D2)
+    and engineering_links (schema foundation ONLY in D2 — no link service/API
+    until D3). Backfills exactly one default project owning every registered
+    document. Membership domain is deliberately NOT stored: it is derived from
+    documents_registry at query time (R77-Q1). document_id UNIQUE enforces the
+    frozen single-active-project ownership.
+    """
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS projects (
+            project_id   TEXT PRIMARY KEY,
+            name         TEXT NOT NULL,
+            created_at   TEXT NOT NULL,
+            archived_at  TEXT NOT NULL DEFAULT ''
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS project_documents (
+            project_id  TEXT NOT NULL,
+            document_id TEXT NOT NULL UNIQUE,
+            added_at    TEXT NOT NULL,
+            added_by    TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY (project_id, document_id),
+            FOREIGN KEY(project_id) REFERENCES projects(project_id),
+            FOREIGN KEY(document_id) REFERENCES documents_registry(document_id)
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS engineering_links (
+            link_id            TEXT PRIMARY KEY,
+            project_id         TEXT NOT NULL,
+            relation_type      TEXT NOT NULL
+                CHECK(relation_type IN ('cable_endpoint_equipment')),
+            source_domain      TEXT NOT NULL CHECK(source_domain IN ('pid','cable')),
+            source_document_id TEXT NOT NULL,
+            source_object_ref  TEXT NOT NULL,
+            source_endpoint    TEXT NOT NULL,
+            target_domain      TEXT NOT NULL CHECK(target_domain IN ('pid','cable')),
+            target_document_id TEXT NOT NULL,
+            target_object_ref  TEXT NOT NULL,
+            pinned_source_revision INTEGER NOT NULL CHECK(pinned_source_revision >= 0),
+            pinned_target_revision INTEGER NOT NULL CHECK(pinned_target_revision >= 0),
+            created_at         TEXT NOT NULL,
+            created_by         TEXT NOT NULL,
+            deleted_at         TEXT NOT NULL DEFAULT '',
+            deleted_by         TEXT NOT NULL DEFAULT '',
+            FOREIGN KEY(project_id) REFERENCES projects(project_id),
+            FOREIGN KEY(source_document_id) REFERENCES documents_registry(document_id),
+            FOREIGN KEY(target_document_id) REFERENCES documents_registry(document_id)
+        )
+        """
+    )
+    # R77-Q2 invariant 5: one active link per cable endpoint for this relation
+    # type (partial unique index over live rows only).
+    connection.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_engineering_links_active_endpoint
+        ON engineering_links(relation_type, source_document_id, source_object_ref, source_endpoint)
+        WHERE deleted_at = ''
+        """
+    )
+    # Backfill: exactly one default project owns every registered document.
+    # A corrupt/missing project_settings row must not block the migration.
+    default_name = "P&ID Project"
+    row = connection.execute(
+        "SELECT data_json FROM project_settings WHERE singleton_id = 1"
+    ).fetchone()
+    if row is not None:
+        try:
+            parsed_name = json.loads(row[0]).get("name")
+            if isinstance(parsed_name, str) and parsed_name:
+                default_name = parsed_name
+        except (json.JSONDecodeError, AttributeError):
+            pass
+    connection.execute(
+        "INSERT OR IGNORE INTO projects (project_id, name, created_at) VALUES (?, ?, ?)",
+        (DEFAULT_PROJECT_ID, default_name, datetime.now(UTC).isoformat()),
+    )
+    connection.execute(
+        """
+        INSERT OR IGNORE INTO project_documents (project_id, document_id, added_at, added_by)
+        SELECT ?, document_id, created_at, '' FROM documents_registry
+        """,
+        (DEFAULT_PROJECT_ID,),
+    )
+    member_count = connection.execute(
+        "SELECT COUNT(*) FROM project_documents WHERE project_id = ?",
+        (DEFAULT_PROJECT_ID,),
+    ).fetchone()[0]
+    registry_count = connection.execute(
+        "SELECT COUNT(*) FROM documents_registry"
+    ).fetchone()[0]
+    if member_count != registry_count:
+        raise DatabaseMigrationError(
+            f"project membership backfill mismatch: {member_count} members for "
+            f"{registry_count} registered documents"
+        )
+    violations = connection.execute("PRAGMA foreign_key_check").fetchall()
+    if violations:
+        raise DatabaseMigrationError(
+            f"PRAGMA foreign_key_check found {len(violations)} violation(s) after v15"
+        )
+
+
 _MIGRATIONS = {
     1: _migration_1,
     2: _migration_2,
@@ -1213,6 +1363,7 @@ _MIGRATIONS = {
     12: _migration_12,
     13: _migration_13,
     14: _migration_14,
+    15: _migration_15,
 }
 
 
@@ -1254,6 +1405,15 @@ def _validate_required_schema(connection: sqlite3.Connection) -> None:
         # v14+ — a v13 database inspected by a v14 binary (migrate=False or a
         # pre-v14 backup) must still validate as v13.
         required_tables = required_tables | {"documents_registry", "cable_documents"}
+    if _schema_version(connection) >= 15:
+        # M12-D2: project graph tables are required only of databases actually
+        # at v15+ — a v14 database inspected by a v15 binary (migrate=False or
+        # a pre-v15 backup) must still validate as v14.
+        required_tables = required_tables | {
+            "projects",
+            "project_documents",
+            "engineering_links",
+        }
     missing = required_tables - _table_names(connection)
     if missing:
         raise DatabaseMigrationError(f"database schema is missing tables: {sorted(missing)}")

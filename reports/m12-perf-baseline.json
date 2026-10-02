@@ -1,0 +1,11 @@
+{
+  "baseline_name": "pre-M12 backend full-suite wall-clock",
+  "pinned_code": "main@2cf198e0ea0edc49c49e980ad0100a582516d69a (M11 closeout; PR #77 docs-only added no code)",
+  "measured_at": "2026-10-02",
+  "machine": "local macOS workstation (Apple Silicon), same machine/python required for closeout comparison",
+  "python": "project venv (/Users/joe/ai/reasonix/projects/active/P055-PID-Agent/.venv)",
+  "command": "PYTHONPATH=backend python -m pytest backend/tests -q -p no:cacheprovider",
+  "result": "1754 passed",
+  "wall_seconds": 105.9,
+  "budget_rule": "M12 closeout increment must be <= +10% of this baseline on the same machine/python; overrun requires a separate Gate amendment (frozen in reports/m12-d1-design.md section 7)"
+}

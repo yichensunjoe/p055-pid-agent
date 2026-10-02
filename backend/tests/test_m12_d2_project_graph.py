@@ -308,3 +308,47 @@ def test_restore_pre_current_rejects_missing_required_table(
             expected_instance_id=metadata.instance_id,
             allow_pre_current_schema=True,
         )
+
+
+def test_pinned_revision_bounds_r0_accept_r_minus_1_reject(tmp_path: Path) -> None:
+    """M12-D2 TEST-LOCK (Gate): the frozen engineering_links CHECK accepts
+    pinned revision 0 (fresh P&ID documents start at r0) and rejects negative
+    pinned revisions."""
+    database = tmp_path / "bounds.db"
+    service = _service(database)
+    request = __import__("agentcad.models", fromlist=["x"]).CreateDocumentRequest(
+        name="pid", width=10, height=10
+    )
+    pid_id = service.create_document(request).id
+    from agentcad.cable_service import CableService
+
+    cable_id = CableService(service.store).create_document("cable").document_id
+
+    connection = sqlite3.connect(database)
+
+    def insert(link_id: str, pinned: int) -> None:
+        connection.execute(
+            "INSERT INTO engineering_links ("
+            "link_id, project_id, relation_type, source_domain, source_document_id,"
+            " source_object_ref, source_endpoint, target_domain, target_document_id,"
+            " target_object_ref, pinned_source_revision, pinned_target_revision,"
+            " created_at, created_by"
+            ") VALUES (?, ?, 'cable_endpoint_equipment', 'cable', ?, 'SEG-1', 'from',"
+            " 'pid', ?, 'EL-1', ?, ?, '2026-10-02T00:00:00+00:00', 'tester')",
+            (link_id, DEFAULT_PROJECT_ID, cable_id, pid_id, pinned, pinned),
+        )
+        connection.commit()
+
+    insert("lnk_r0", 0)  # accepted: r0 pinning is legal (R78 amendment)
+    row = connection.execute(
+        "SELECT COUNT(*) FROM engineering_links WHERE link_id = 'lnk_r0'"
+    ).fetchone()
+    assert row[0] == 1
+    with pytest.raises(sqlite3.IntegrityError):
+        insert("lnk_rneg", -1)  # rejected by the frozen CHECK
+    connection.rollback()
+    row = connection.execute(
+        "SELECT COUNT(*) FROM engineering_links WHERE link_id = 'lnk_rneg'"
+    ).fetchone()
+    assert row[0] == 0
+    connection.close()

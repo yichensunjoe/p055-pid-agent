@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from agentcad import database_recovery as recovery
+from agentcad.database_recovery import CURRENT_SCHEMA_VERSION
 from agentcad.models import CreateDocumentRequest
 from agentcad.service import DocumentService
 from agentcad.store import (
@@ -81,11 +82,11 @@ def test_v13_to_v14_full_row_equivalence(tmp_path: Path, monkeypatch: pytest.Mon
     database = _seed_v13_database(tmp_path, monkeypatch)
     before = _snapshot_tables(database)
 
-    service = _service(database)  # reopens: migrates v13 -> v14
+    service = _service(database)  # reopens: migrates v13 -> current (v15 via v14)
     store = service.store
     with store._connect() as connection:  # noqa: SLF001
         version = connection.execute("PRAGMA user_version").fetchone()[0]
-        assert version == 14
+        assert version == CURRENT_SCHEMA_VERSION == 15
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
         registry_rows = connection.execute(
             "SELECT domain, COUNT(*) AS n FROM documents_registry GROUP BY domain"

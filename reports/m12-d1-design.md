@@ -64,8 +64,8 @@ engineering_links (
     target_domain      TEXT NOT NULL CHECK(target_domain IN ('pid','cable')),
     target_document_id TEXT NOT NULL REFERENCES documents_registry(document_id),
     target_object_ref  TEXT NOT NULL,        -- pid: element id
-    pinned_source_revision INTEGER NOT NULL CHECK(pinned_source_revision >= 1),
-    pinned_target_revision INTEGER NOT NULL CHECK(pinned_target_revision >= 1),
+    pinned_source_revision INTEGER NOT NULL CHECK(pinned_source_revision >= 0),
+    pinned_target_revision INTEGER NOT NULL CHECK(pinned_target_revision >= 0),
     created_at         TEXT NOT NULL,
     created_by         TEXT NOT NULL,
     deleted_at         TEXT NOT NULL DEFAULT '',
@@ -79,7 +79,8 @@ engineering_links (
   link 表自身不理解 pid/cable 语义，`relation_type` CHECK 集是扩展点（M12 只冻一种）。
 - **方向性与 revision binding**：创建/re-pin 时 pin 必须等于两端当前 revision；
   任何一端 revision 前进后 link 不自动跟随，validator 报 `stale_pinned_revision_*`（Q5），
-  由人/agent 显式 re-pin（governed mutation）。
+  由人/agent 显式 re-pin（governed mutation）。pinned revision 允许 0（新建 P&ID 文档
+  从 r0 开始，R78 追认：CHECK >= 0；undo 恢复旧内容仍保持 revision 单调前进）。
 
 **R77-Q2 冻结的 relation invariants（cable_endpoint_equipment，写路径 fail-closed）**：
 
@@ -120,21 +121,27 @@ engineering_links (
 **结论**：需要 v15（Q1/Q2 三张表：projects、project_documents、engineering_links）。
 `CURRENT_SCHEMA_VERSION` 14→15，走既有 `_MIGRATIONS` 注册链（`_migration_15(connection)`）。
 
-**v14→v15 upgrade（冻结步骤）**：
+**v14→v15 upgrade（冻结步骤，含 R78 FK-ON 修订）**：
 
-1. 沿用 v14 先例：跨版本时 `PRAGMA foreign_keys=OFF`（BEGIN 之前切换，事务结束后恢复），
-   `BEGIN EXCLUSIVE` 单事务内建三表 + backfill + `PRAGMA user_version=15`；任何非 SQLite
-   失败显式 rollback（照抄 _migrate 的 R73-3 语义）。
+1. **FK 保持 ON**（R78 修订，Gate 已批）：现有 `_migrate()` 只在跨过 v14 时挂起 FK；
+   v14→v15 只是新增表 + backfill，没有 v14 那种重建已有 FK 表的需求，因此迁移在
+   FK  enforcement 开启下执行，更严格并与收尾的 `foreign_key_check` 相容。其余事务
+   纪律照抄 v14 先例：`BEGIN EXCLUSIVE` 单事务内建三表 + backfill +
+   `PRAGMA user_version=15`；任何非 SQLite 失败显式 rollback（R73-3 语义）。
 2. backfill：seed 一行默认 projects（name 取 project_settings.name，project_id 确定性
    常量 `proj_m12default` + 迁移日志行）；registry 全量 OR IGNORE 进默认项目的
    project_documents。
 3. **upgrade fixture**：既有 v14 fixture → migrate → 断言表结构、默认项目行、成员行数
    == registry 行数、user_version==15；再跑 v14 既有测试集证明存量行为零变化。
-4. **backup/restore（R77-Q4 修订）**：升级前用 **v14 binary/tool** 生成并校验 v14
+4. **backup/restore（R77-Q4 修订 + R78-1 强化）**：升级前用 **v14 binary/tool** 生成并校验 v14
    .pidbak（不得用 v15 binary 对 v14 库调 create_backup()——它会先 initialize_database()
    触发 _migrate() 把库迁到 v15 再备份，备份语义被污染）。部署 v15 binary 后执行
    v14→v15 migration。**restore 该 backup 首先得到 v14 库，随后由 v15 binary 再迁至
-   v15**；不是"restore 后直接是 v15"。
+   v15**；不是"restore 后直接是 v15"。实现载体：`restore_backup(...,
+   allow_pre_current_schema=True)`（keyword-only，默认 False 原路径不变）——legacy 分支
+   必须取实际 schema version 并要求 `actual == metadata.schema_version` 且
+   `< CURRENT_SCHEMA_VERSION`，在 quick/FK 之外调用 `_validate_required_schema()`
+   （按 user_version 分层的 required 检查），instance-id 检查保持（R78-1 冻结）。
 5. **forward rollback**：forward-only。回滚 = v14 backup restore（文档化步骤），不做
    v15→v14 逆迁移。降级检测沿用 `_migrate` 现有限制（newer version 拒开），语义不变。
 

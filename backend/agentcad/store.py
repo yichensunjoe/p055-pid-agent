@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from threading import RLock
 from typing import Any
+from uuid import uuid4
 
 from .audit_hash import GENESIS_HASH, compute_record_hash
 from .audit_models import AuditRecord, AuditRecordDraft
@@ -789,6 +790,96 @@ class SQLiteDocumentStore:
                 "SELECT document_id, revision, data_json FROM cable_documents ORDER BY document_id"
             ).fetchall()
         return [(str(row[0]), int(row[1]), str(row[2])) for row in rows]
+
+    # --- M12-D2: project identity / membership primitives. D2 activates NO link
+    # behaviour — engineering_links is schema foundation only until D3. ---
+
+    def list_projects(self) -> list[tuple[str, str]]:
+        """(project_id, name) of all projects, ordered by project_id."""
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                "SELECT project_id, name FROM projects ORDER BY project_id"
+            ).fetchall()
+        return [(str(row[0]), str(row[1])) for row in rows]
+
+    def get_project(self, project_id: str) -> tuple[str, str] | None:
+        """(project_id, name) of one project, or None."""
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT project_id, name FROM projects WHERE project_id = ?",
+                (project_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return (str(row[0]), str(row[1]))
+
+    def list_project_documents(self, project_id: str) -> list[tuple[str, str, str]]:
+        """Membership of one project as (document_id, domain, added_at), ordered.
+
+        Domain is ALWAYS derived from documents_registry (R77-Q1): membership
+        never stores a domain copy, so {document_id=pid, domain=cable} fake
+        identity is unrepresentable."""
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                "SELECT m.document_id, r.domain, m.added_at "
+                "FROM project_documents m "
+                "JOIN documents_registry r ON r.document_id = m.document_id "
+                "WHERE m.project_id = ? ORDER BY m.document_id",
+                (project_id,),
+            ).fetchall()
+        return [(str(row[0]), str(row[1]), str(row[2])) for row in rows]
+
+    def add_document_to_project(
+        self, project_id: str, document_id: str, *, added_by: str = ""
+    ) -> None:
+        """Add a registered document to a project. Single-active-project
+        ownership is enforced by the UNIQUE(document_id) column: a document
+        already belonging to any project fails closed here."""
+        now = datetime.now(UTC).isoformat()
+        with self._lock, self._connect() as connection:
+            try:
+                connection.execute(
+                    "INSERT INTO project_documents (project_id, document_id, added_at, added_by) "
+                    "VALUES (?, ?, ?, ?)",
+                    (project_id, document_id, now, added_by),
+                )
+                connection.commit()
+            except sqlite3.IntegrityError as exc:
+                connection.rollback()
+                raise StoreDocumentConflictError(str(exc)) from exc
+            except Exception:
+                connection.rollback()
+                raise
+
+    def remove_document_from_project(self, project_id: str, document_id: str) -> bool:
+        """Remove a membership row; True when a row was actually removed."""
+        with self._lock, self._connect() as connection:
+            cursor = connection.execute(
+                "DELETE FROM project_documents WHERE project_id = ? AND document_id = ?",
+                (project_id, document_id),
+            )
+            connection.commit()
+        return cursor.rowcount > 0
+
+    def create_project(self, name: str, *, project_id: str | None = None) -> str:
+        """Provision a project row. Membership mutations stay explicit."""
+        resolved_id = project_id or f"proj_{uuid4().hex[:12]}"
+        now = datetime.now(UTC).isoformat()
+        with self._lock, self._connect() as connection:
+            try:
+                connection.execute(
+                    "INSERT INTO projects (project_id, name, created_at) VALUES (?, ?, ?)",
+                    (resolved_id, name, now),
+                )
+                connection.commit()
+            except sqlite3.IntegrityError as exc:
+                connection.rollback()
+                raise StoreDocumentConflictError(str(exc)) from exc
+            except Exception:
+                connection.rollback()
+                raise
+        return resolved_id
+
 
     def get_cable_envelope(self, document_id: str) -> tuple[int, str] | None:
         """(revision, data_json) of one cable document, or None. Pure read of

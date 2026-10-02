@@ -61,6 +61,11 @@ AuditEventType = Literal[
     "release.released",
     "release.superseded",
     "release.denied",
+    # M12-D3: cross-domain engineering link governance. Same governance plane —
+    # never revision events, never move an engineering digest.
+    "engineering_link.created",
+    "engineering_link.repinned",
+    "engineering_link.deleted",
 ]
 
 AuditStatus = Literal["applied", "rejected", "failed"]

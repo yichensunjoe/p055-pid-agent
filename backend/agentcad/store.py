@@ -880,6 +880,139 @@ class SQLiteDocumentStore:
                 raise
         return resolved_id
 
+    # --- M12-D3: engineering link persistence. Governance (invariants,
+    # equipment predicate) lives in EngineeringLinkService; these methods only
+    # execute the governed write + audit in one transaction. ---
+
+    def document_domain(self, document_id: str) -> str | None:
+        """Registry domain of a registered document, or None. The registry is
+        the single source of domain truth (R77-Q1): membership never stores a
+        domain copy, so identity cannot drift."""
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT domain FROM documents_registry WHERE document_id = ?",
+                (document_id,),
+            ).fetchone()
+        return None if row is None else str(row[0])
+
+    def insert_engineering_link(
+        self,
+        *,
+        link_id: str,
+        project_id: str,
+        relation_type: str,
+        source_domain: str,
+        source_document_id: str,
+        source_object_ref: str,
+        source_endpoint: str,
+        target_domain: str,
+        target_document_id: str,
+        target_object_ref: str,
+        pinned_source_revision: int,
+        pinned_target_revision: int,
+        created_by: str,
+        audit: AuditRecordDraft,
+    ) -> None:
+        """Governed link creation, atomically audited. The partial unique index
+        on active endpoints is the fail-closed backstop for the frozen
+        one-active-link-per-endpoint invariant (R77-Q2 invariant 5)."""
+        now = datetime.now(UTC).isoformat()
+        with self._lock, self._connect() as connection:
+            try:
+                connection.execute(
+                    "INSERT INTO engineering_links ("
+                    " link_id, project_id, relation_type, source_domain,"
+                    " source_document_id, source_object_ref, source_endpoint,"
+                    " target_domain, target_document_id, target_object_ref,"
+                    " pinned_source_revision, pinned_target_revision,"
+                    " created_at, created_by"
+                    ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        link_id,
+                        project_id,
+                        relation_type,
+                        source_domain,
+                        source_document_id,
+                        source_object_ref,
+                        source_endpoint,
+                        target_domain,
+                        target_document_id,
+                        target_object_ref,
+                        pinned_source_revision,
+                        pinned_target_revision,
+                        now,
+                        created_by,
+                    ),
+                )
+                self._append_audit_record(connection, audit)
+                connection.commit()
+            except sqlite3.IntegrityError as exc:
+                connection.rollback()
+                raise StoreDocumentConflictError(str(exc)) from exc
+            except Exception:
+                connection.rollback()
+                raise
+
+    def get_engineering_link(self, link_id: str) -> dict[str, Any] | None:
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM engineering_links WHERE link_id = ?", (link_id,)
+            ).fetchone()
+        if row is None:
+            return None
+        return dict(row)
+
+    def list_active_engineering_links(self, project_id: str) -> list[dict[str, Any]]:
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM engineering_links WHERE project_id = ? AND deleted_at = '' "
+                "ORDER BY link_id",
+                (project_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def update_engineering_link_pins(
+        self,
+        *,
+        link_id: str,
+        pinned_source_revision: int,
+        pinned_target_revision: int,
+        audit: AuditRecordDraft,
+    ) -> bool:
+        """Re-pin to the caller-resolved current revisions; audited. False when
+        the link does not exist or is already soft-deleted."""
+        with self._lock, self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE engineering_links SET pinned_source_revision = ?, "
+                "pinned_target_revision = ? WHERE link_id = ? AND deleted_at = ''",
+                (pinned_source_revision, pinned_target_revision, link_id),
+            )
+            if cursor.rowcount == 0:
+                connection.rollback()
+                return False
+            self._append_audit_record(connection, audit)
+            connection.commit()
+        return True
+
+    def soft_delete_engineering_link(
+        self, *, link_id: str, deleted_by: str, audit: AuditRecordDraft
+    ) -> bool:
+        """Soft delete (M12 has no hard delete). False when missing/already deleted."""
+        now = datetime.now(UTC).isoformat()
+        with self._lock, self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE engineering_links SET deleted_at = ?, deleted_by = ? "
+                "WHERE link_id = ? AND deleted_at = ''",
+                (now, deleted_by, link_id),
+            )
+            if cursor.rowcount == 0:
+                connection.rollback()
+                return False
+            self._append_audit_record(connection, audit)
+            connection.commit()
+        return True
+
+
 
     def get_cable_envelope(self, document_id: str) -> tuple[int, str] | None:
         """(revision, data_json) of one cable document, or None. Pure read of

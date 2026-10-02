@@ -2,7 +2,16 @@
 
 > 交接文档：每次开新会话先读本文件。更新规则见 `AGENTS.md`「HANDOFF 交接规则」。
 
-## 当前状态（2026-10-01 —— **M12 已获 Gate DEFINITION APPROVED，DESIGN PREP GO 已批；M9 WS3B 按 Owner 指令押后，M12 独立推进**）
+## 当前状态（2026-10-02 —— **M12-D2 CLOSED（PR #78 合 main@985eff5c，main CI 四绿）；M12-D3 CODE GO 已生效；D3 未开工**）
+
+- **M12 进度**：D1 design（PR #77，Charter 1.1.0 + 六问冻结，含 R77/F77 两轮修正）已合 main@89a3a52 → D2（PR #78，v15 迁移 + project identity/membership，含 R78-1 restore 加固 + r0/r-1 测试锁）已合 main@985eff5c。**D3 CODE GO（cross-domain links + governed mutation）已批，范围冻结：create/re-pin/soft-delete、relation invariants、equipment predicate fail-closed、M10 runtime permission/session/approval/tool-call/audit 边界；不得提前实现 D4 validator 或 D5 package/UI。**
+- **D2 落地的关键契约**（在 reports/m12-d1-design.md）：v15 三表（projects/project_documents/engineering_links）；membership 不存 domain（join registry 得出）；document_id UNIQUE 单项目归属；pinned_*_revision CHECK>=0（R78 追认，r0 可 pin）；v14→v15 迁移 FK 保持 ON（R78）；restore_backup(allow_pre_current_schema=True) 实现冻结回滚链且 legacy 分支要求 actual==metadata schema + required-schema 门（R78-1）；engineering_links 部分唯一索引（active endpoint 唯一）。D2 无 link service/API、无 HTTP surface、无 audit 写。
+- **pre-M12 性能基线**：reports/m12-perf-baseline.json（105.9s/1754 tests，main@2cf198e0 同机同 Python）；closeout 增量 ≤ +10%。当前 1765 tests ≈ 106s，增量 ≈ 0%。
+- **既有裁定速查**：D1 时 Charter 1.1.0 CONTENT PASS；F77-1（evaluation_as_of 语义输入 + load_profile 服务器侧 + provenance 绑定清单）、F77-2（package 只支持当前 exact revision，禁 revision-number rollback 重建历史包）已闭合。pinned 版本钉断言已维护到 15。
+- **下一动作**：开工 M12-D3——EngineeringLinkService（create/re-pin/soft-delete + 六条 relation invariants fail-closed + equipment predicate=symbol category≠"仪表" + 治理审计走既有 audit hash chain 不改 formation）+ backend 测试。之后报 Gate 拿 D3 Merge Gate。
+- **环境**：main 工作树 = `P055-PID-Agent-main`（分支 m12-d2 已合，D3 新分支从 origin/main 切）；docs 记账 = q1r（`m7-semantic-first-synthesis`）；本地 e2e 端口 8002/4174；venv=主库 `.venv`。**Gate 会话 conv `6abd7e9f`；agent 标签频繁被并行项目劫持，注入前必核 location.href。长消息在页面里会被虚拟化截断——裁定全文用多段 slice + textContent 读，拿不到就问 Gate 重述要点（TEST-LOCK 轮即如此处理）。**
+
+## 上一状态（2026-10-01 —— **M12 已获 Gate DEFINITION APPROVED，DESIGN PREP GO 已批；M9 WS3B 按 Owner 指令押后，M12 独立推进**）
 
 - **Owner 指令（2026-10-01）**：不填 WS3B 试点表，直接开始 M12。WS3B = BLOCKED ON OWNER / DEFERRED，M9 Closeout 未完成，M9 WS1/WS2/WS3A 封账不重开，M10 Technical Completion 保持 ACK。
 - **M12 定义（Gate 已冻结）**：多工程域项目图谱与确定性交付包。7 项完成标志：① domain-neutral Project Graph（稳定 project_id + 成员文档索引 + {domain,document_id,revision} 身份）② Cross-domain Engineering Link（domain-neutral link contract，至少一种真实 P&ID↔Cable 关系，禁止字符串同名暗推）③ project-level deterministic validation（dangling/wrong-domain/missing/stale 跨域错误，stable issue code，readiness 只 eligible/not_eligible）④ governed project mutation（link 增删改走 M10 runtime permission/session/audit 边界，接现有 audit hash chain 不改 formation/ordinal）⑤ deterministic project delivery package（pinned revisions → 项目级 artifact：manifest+domain artifacts+links+readiness+hashes，fresh process byte-for-byte 可复现+篡改可检测；ZIP/member 格式实现前 Design Gate 冻结）⑥ 最小只读 project inspection surface（API/UI 看成员/links/readiness/下载 package，不做新编辑器）⑦ 全量非回归（禁删测/skip/xfail 换绿）。

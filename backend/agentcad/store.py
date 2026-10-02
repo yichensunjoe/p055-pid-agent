@@ -929,10 +929,14 @@ class SQLiteDocumentStore:
         target_object_ref: str,
         known_symbol_keys: frozenset[str],
         instrument_symbol_keys: frozenset[str],
+        expected: tuple[int, int] | None = None,
     ) -> tuple[int, int]:
         """Frozen R77-Q2 invariants 1-4 + the equipment predicate, re-checked
         on the WRITE connection so the check-then-write window cannot race
-        (D79-2). Returns (current cable revision, current pid revision)."""
+        (D79-2). When ``expected`` is given (the approval-bound revisions), the
+        current revisions must match it exactly — approval against one state
+        can never commit onto another. Returns (current cable revision,
+        current pid revision)."""
         domains = dict(
             connection.execute(
                 "SELECT document_id, domain FROM documents_registry "
@@ -941,10 +945,7 @@ class SQLiteDocumentStore:
             ).fetchall()
         )
         if domains.get(source_document_id) != "cable" or domains.get(target_document_id) != "pid":
-            raise StoreDocumentIdentityError(
-                "cable_endpoint_equipment requires source=cable and target=pid "
-                "per documents_registry"
-            )
+            raise ValueError("relation_orientation: source must be cable and target pid")
         if source_endpoint not in ("from", "to"):
             raise ValueError(f"invalid_endpoint: {source_endpoint!r}")
         membership = connection.execute(
@@ -953,17 +954,13 @@ class SQLiteDocumentStore:
             (project_id, source_document_id, target_document_id),
         ).fetchone()[0]
         if membership != 2:
-            raise StoreDocumentIdentityError(
-                "both link endpoints must be members of the link's project"
-            )
+            raise ValueError("not_in_project: both endpoints must be project members")
         cable_row = connection.execute(
             "SELECT revision, data_json FROM cable_documents WHERE document_id = ?",
             (source_document_id,),
         ).fetchone()
         if cable_row is None:
-            raise StoreDocumentIdentityError(
-                f"cable document {source_document_id!r} not found"
-            )
+            raise ValueError(f"missing_source_object: cable document {source_document_id!r}")
         cable_revision = int(cable_row["revision"])
         cable_document = parse_cable_payload(
             str(cable_row["data_json"]), envelope_revision=cable_revision
@@ -978,9 +975,7 @@ class SQLiteDocumentStore:
             (target_document_id,),
         ).fetchone()
         if pid_row is None:
-            raise StoreDocumentIdentityError(
-                f"pid document {target_document_id!r} not found"
-            )
+            raise ValueError(f"missing_target_object: pid document {target_document_id!r}")
         pid_revision = int(pid_row["revision"])
         pid_document = Document.model_validate(json.loads(str(pid_row["data_json"])))
         element = next(
@@ -993,6 +988,11 @@ class SQLiteDocumentStore:
             raise ValueError(f"target_not_equipment: symbol {symbol_key!r} unknown")
         if symbol_key in instrument_symbol_keys:
             raise ValueError(f"target_not_equipment: symbol {symbol_key!r} is an instrument")
+        if expected is not None and (cable_revision, pid_revision) != expected:
+            raise StoreRevisionConflictError(
+                "revision_conflict: approval-bound revisions "
+                f"{expected} but current is {(cable_revision, pid_revision)}"
+            )
         return cable_revision, pid_revision
 
     def commit_engineering_link_create(
@@ -1008,6 +1008,7 @@ class SQLiteDocumentStore:
         target_object_ref: str,
         known_symbol_keys: frozenset[str],
         instrument_symbol_keys: frozenset[str],
+        expected: tuple[int, int],
         created_by: str,
         audit: AuditRecordDraft,
         tool_call: ToolCallRecord,
@@ -1033,39 +1034,43 @@ class SQLiteDocumentStore:
                     target_object_ref=target_object_ref,
                     known_symbol_keys=known_symbol_keys,
                     instrument_symbol_keys=instrument_symbol_keys,
+                    expected=expected,
                 )
-                connection.execute(
-                    "INSERT INTO engineering_links ("
-                    " link_id, project_id, relation_type, source_domain,"
-                    " source_document_id, source_object_ref, source_endpoint,"
-                    " target_domain, target_document_id, target_object_ref,"
-                    " pinned_source_revision, pinned_target_revision,"
-                    " created_at, created_by"
-                    ") VALUES (?, ?, ?, 'cable', ?, ?, ?, 'pid', ?, ?, ?, ?, ?, ?)",
-                    (
-                        link_id,
-                        project_id,
-                        relation_type,
-                        source_document_id,
-                        source_object_ref,
-                        source_endpoint,
-                        target_document_id,
-                        target_object_ref,
-                        pins[0],
-                        pins[1],
-                        now,
-                        created_by,
-                    ),
-                )
+                try:
+                    connection.execute(
+                        "INSERT INTO engineering_links ("
+                        " link_id, project_id, relation_type, source_domain,"
+                        " source_document_id, source_object_ref, source_endpoint,"
+                        " target_domain, target_document_id, target_object_ref,"
+                        " pinned_source_revision, pinned_target_revision,"
+                        " created_at, created_by"
+                        ") VALUES (?, ?, ?, 'cable', ?, ?, ?, 'pid', ?, ?, ?, ?, ?, ?)",
+                        (
+                            link_id,
+                            project_id,
+                            relation_type,
+                            source_document_id,
+                            source_object_ref,
+                            source_endpoint,
+                            target_document_id,
+                            target_object_ref,
+                            pins[0],
+                            pins[1],
+                            now,
+                            created_by,
+                        ),
+                    )
+                except sqlite3.IntegrityError as exc:
+                    # ONLY the link INSERT may map to endpoint conflict; a
+                    # tool-call/approval/session constraint fault must keep
+                    # its real error instead of masquerading (D79-2).
+                    raise StoreDocumentConflictError(str(exc)) from exc
                 self._write_tool_call(connection, tool_call)
                 if approval is not None:
                     self._write_tool_approval(connection, approval)
                 self._write_agent_session(connection, session)
                 self._append_audit_record(connection, audit)
                 connection.commit()
-            except sqlite3.IntegrityError as exc:
-                connection.rollback()
-                raise StoreDocumentConflictError(str(exc)) from exc
             except Exception:
                 connection.rollback()
                 raise
@@ -1077,6 +1082,7 @@ class SQLiteDocumentStore:
         link_id: str,
         known_symbol_keys: frozenset[str],
         instrument_symbol_keys: frozenset[str],
+        expected: tuple[int, int],
         audit: AuditRecordDraft,
         tool_call: ToolCallRecord,
         approval: ToolApproval | None,
@@ -1106,6 +1112,7 @@ class SQLiteDocumentStore:
                     target_object_ref=str(row["target_object_ref"]),
                     known_symbol_keys=known_symbol_keys,
                     instrument_symbol_keys=instrument_symbol_keys,
+                    expected=expected,
                 )
                 connection.execute(
                     "UPDATE engineering_links SET pinned_source_revision = ?, "

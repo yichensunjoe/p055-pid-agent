@@ -11,8 +11,9 @@ consumption + session closure atomically.
 
 Equipment predicate (R77-Q3, fail-closed at write time): the target element
 must exist in the current P&ID revision and its symbol category must not be
-the instrument category. The canonical constant is imported from the M7
-layout contract, which engineering_links.py is declared to import (D79-3).
+the instrument category. The canonical constant lives in the M7 layout
+contract, which this module may not import (M7 phase import discipline); the
+local binding below is pinned to the canonical value by test.
 """
 
 from __future__ import annotations
@@ -24,17 +25,26 @@ from uuid import uuid4
 
 from .audit_models import AuditRecordDraft
 from .cable_service import CableDocumentNotFoundError, CableService
-from .m7_layout_contract import INSTRUMENT_SYMBOL_CATEGORY
 from .runtime.ports import AuditEvent, ClosureRequest, ExecutionOutcome
 from .service import DocumentNotFoundError, DocumentService
 from .store import (
     SQLiteDocumentStore,
     StoreDocumentConflictError,
     StoreDocumentIdentityError,
+    StoreRevisionConflictError,
 )
 
 RELATION_CABLE_ENDPOINT_EQUIPMENT = "cable_endpoint_equipment"
 _ENDPOINTS = ("from", "to")
+
+# Equipment predicate (frozen at reports/m12-d1-design.md Q3 / R77-Q3): an
+# element is equipment-eligible iff its symbol category is NOT the instrument
+# category — the repo's "equipment is everything that is not an instrument"
+# rule (EQUIPMENT_SYMBOL_CATEGORIES_ARE_THE_REST). The canonical constant lives
+# in the M7 layout contract module, which this module may not import (M7
+# phase import discipline, enforced textually by the existing test); this
+# local binding is pinned to the canonical value by test_m12_d3_links.py.
+EQUIPMENT_PREDICATE_INSTRUMENT_CATEGORY = "仪表"
 
 
 class EngineeringLinkError(RuntimeError):
@@ -85,7 +95,8 @@ class EngineeringLinkService:
         symbols = pid_service.symbols._symbols  # noqa: SLF001 - static catalogue snapshot
         self._known_symbol_keys = frozenset(symbols)
         self._instrument_symbol_keys = frozenset(
-            key for key, symbol in symbols.items() if symbol.category == INSTRUMENT_SYMBOL_CATEGORY
+            key for key, symbol in symbols.items()
+            if symbol.category == EQUIPMENT_PREDICATE_INSTRUMENT_CATEGORY
         )
 
     # ---- reads (zero audit) ----
@@ -100,6 +111,18 @@ class EngineeringLinkService:
         ]
 
     # ---- early checks / binding (pure reads) ----
+
+    def resolve_current_pins(self, intent: Any) -> tuple[int, int]:
+        """Approval-time revision binding: the exact state the approval is
+        issued against (D79-2). Returns (current cable, current pid)."""
+        return self._resolve_pins(
+            project_id=intent.project_id,
+            source_document_id=intent.source_document_id,
+            source_object_ref=intent.source_object_ref,
+            source_endpoint=intent.source_endpoint,
+            target_document_id=intent.target_document_id,
+            target_object_ref=intent.target_object_ref,
+        )
 
     def preview_create(self, intent: Any) -> None:
         """Raise EngineeringLinkError early when a frozen invariant already
@@ -133,6 +156,16 @@ class EngineeringLinkService:
         closure: ClosureRequest,
         intent: Any,
     ) -> ExecutionOutcome:
+        try:
+            self._check_document_binding(authorized, intent.source_document_id)
+            self._check_revision_binding(
+                authorized,
+                intent.expected_source_revision,
+                getattr(intent, "expected_target_revision", None),
+            )
+        except EngineeringLinkError as exc:
+            self.failure_closeout(authorized, audit_event, exc.code)
+            raise
         link_id = f"lnk_{uuid4().hex[:12]}"
         audit = self._success_audit(
             authorized,
@@ -165,6 +198,10 @@ class EngineeringLinkService:
                 target_object_ref=intent.target_object_ref,
                 known_symbol_keys=self._known_symbol_keys,
                 instrument_symbol_keys=self._instrument_symbol_keys,
+                expected=(
+                    intent.expected_source_revision,
+                    intent.expected_target_revision,
+                ),
                 created_by=audit_event.actor,
                 audit=audit,
                 tool_call=self._closed_tool_call(authorized),
@@ -178,13 +215,11 @@ class EngineeringLinkService:
                 f"cable endpoint {intent.source_object_ref!r}:{intent.source_endpoint!r} "
                 "already has an active cable_endpoint_equipment link",
             ) from exc
-        except (StoreDocumentIdentityError, ValueError) as exc:
-            code = (
-                str(exc).split(":", 1)[0]
-                if isinstance(exc, ValueError)
-                else type(exc).__name__
-            )
-            self.failure_closeout(authorized, audit_event, code)
+        except StoreRevisionConflictError as exc:
+            self.failure_closeout(authorized, audit_event, "revision_conflict")
+            raise EngineeringLinkError("revision_conflict", str(exc)) from exc
+        except ValueError as exc:
+            self.failure_closeout(authorized, audit_event, str(exc).split(":", 1)[0])
             raise
         return ExecutionOutcome(
             document_id=intent.source_document_id,
@@ -203,6 +238,16 @@ class EngineeringLinkService:
     ) -> ExecutionOutcome:
         link_id = str(intent.link_id)
         row = self._require_link_row(link_id)
+        try:
+            self._check_document_binding(authorized, str(row["source_document_id"]))
+            self._check_revision_binding(
+                authorized,
+                intent.expected_source_revision,
+                getattr(intent, "expected_target_revision", None),
+            )
+        except EngineeringLinkError as exc:
+            self.failure_closeout(authorized, audit_event, exc.code)
+            raise
         audit = self._success_audit(
             authorized,
             audit_event,
@@ -216,13 +261,20 @@ class EngineeringLinkService:
                 link_id=link_id,
                 known_symbol_keys=self._known_symbol_keys,
                 instrument_symbol_keys=self._instrument_symbol_keys,
+                expected=(
+                    intent.expected_source_revision,
+                    intent.expected_target_revision,
+                ),
                 audit=audit,
                 tool_call=self._closed_tool_call(authorized),
                 approval=self._consumed_approval(authorized, closure),
                 session=self._closed_session(authorized, closure),
             )
-        except (StoreDocumentIdentityError, ValueError) as exc:
-            self.failure_closeout(authorized, audit_event, type(exc).__name__)
+        except StoreRevisionConflictError as exc:
+            self.failure_closeout(authorized, audit_event, "revision_conflict")
+            raise EngineeringLinkError("revision_conflict", str(exc)) from exc
+        except ValueError as exc:
+            self.failure_closeout(authorized, audit_event, str(exc).split(":", 1)[0])
             raise
         return ExecutionOutcome(
             document_id=str(row["source_document_id"]),
@@ -241,6 +293,11 @@ class EngineeringLinkService:
     ) -> ExecutionOutcome:
         link_id = str(intent.link_id)
         row = self._require_link_row(link_id)
+        try:
+            self._check_document_binding(authorized, str(row["source_document_id"]))
+        except EngineeringLinkError as exc:
+            self.failure_closeout(authorized, audit_event, exc.code)
+            raise
         audit = self._success_audit(
             authorized,
             audit_event,
@@ -269,6 +326,33 @@ class EngineeringLinkService:
         )
 
     # ---- internals ----
+
+    def _check_document_binding(self, authorized: Any, source_document_id: str) -> None:
+        """D79-1: the runtime authorization must be bound to the mutation's
+        real cable source document — never some other document the caller
+        happened to open a session on."""
+        if authorized.record.document_id != source_document_id:
+            raise EngineeringLinkError(
+                "document_binding_mismatch",
+                "authorization document does not match the link cable source",
+            )
+
+    def _check_revision_binding(
+        self, authorized: Any, expected_source: int | None, expected_target: int | None
+    ) -> None:
+        """D79-2: the authorization base_revision must equal the
+        approval-bound source revision, and the approval must carry both
+        expected revisions (server-enriched at request time)."""
+        if expected_source is None or expected_target is None:
+            raise EngineeringLinkError(
+                "approval_state_unbound",
+                "approval intent lacks server-bound expected revisions",
+            )
+        if authorized.record.base_revision != expected_source:
+            raise EngineeringLinkError(
+                "authorization_binding_mismatch",
+                "authorization base_revision does not match the approved source revision",
+            )
 
     def _require_link_row(self, link_id: str) -> dict[str, Any]:
         row = self._store.get_engineering_link(link_id)

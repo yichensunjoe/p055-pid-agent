@@ -216,7 +216,9 @@ def test_create_invariants_fail_closed_via_runtime(tmp_path: Path, intent_patch,
         _governed(plane, TOOL_CREATE_LINK, cable_id, intent, 1)
     assert exc_info.value.code == code
     assert plane.links.list_active_links(DEFAULT_PROJECT) == []
-    assert code in _rejected_events(plane)
+    # refusal lands before any approval is consumed: no link-plane events
+    events = [e.event_type for e in plane.recorder.store.all_audit_records()]
+    assert not any(e.startswith("engineering_link.") for e in events)
     assert plane.recorder.verify_chain().ok
 
 
@@ -235,7 +237,7 @@ def test_relation_orientation_fail_closed(tmp_path: Path) -> None:
     with pytest.raises(EngineeringLinkError) as exc_info:
         _governed(plane, TOOL_CREATE_LINK, cable_id, intent, 1)
     assert exc_info.value.code == "relation_orientation"
-    assert "relation_orientation" in _rejected_events(plane)
+    assert plane.links.list_active_links(DEFAULT_PROJECT) == []
 
 
 def test_cross_project_membership_fail_closed(tmp_path: Path) -> None:
@@ -246,7 +248,6 @@ def test_cross_project_membership_fail_closed(tmp_path: Path) -> None:
     with pytest.raises(EngineeringLinkError) as exc_info:
         _governed(plane, TOOL_CREATE_LINK, cable_id, intent, 1)
     assert exc_info.value.code == "target_not_in_project"
-    assert "target_not_in_project" in _rejected_events(plane)
 
 
 def test_membership_removal_between_authorize_and_apply_fails_closed(tmp_path: Path) -> None:
@@ -286,6 +287,45 @@ def test_membership_removal_between_authorize_and_apply_fails_closed(tmp_path: P
     assert plane.recorder.verify_chain().ok
 
 
+def test_membership_removal_hits_the_transaction_gate(tmp_path: Path, monkeypatch) -> None:
+    """D79-2: with the read-layer checks bypassed, the store's in-transaction
+    membership re-check is the gate that refuses — proving the window between
+    preview and BEGIN cannot slip a link in."""
+    plane = Plane(tmp_path, "txn_gate.db")
+    cable_id = _seed_cable_envelope(plane, "cab_gate")
+    pid_id = _seed_pid(plane, "PMP-101", "agitator")
+    intent = _create_intent(cable_id, pid_id)
+    monkeypatch.setattr(plane.links, "resolve_current_pins", lambda intent: (1, 1))
+    monkeypatch.setattr(plane.links, "preview_create", lambda intent: None)
+    session = plane.runtime.ensure_session(cable_id, actor="engineer")
+    approval = plane.runtime.request_approval(
+        session.id,
+        ToolApprovalCreateRequest(
+            tool_name=TOOL_CREATE_LINK,
+            document_id=cable_id,
+            intent=intent,
+            requested_by="engineer",
+        ),
+    )
+    plane.runtime.resolve_approval(
+        approval.id, ToolApprovalResolveRequest(approved=True, actor="operator")
+    )
+    authorized = plane.runtime.authorize(
+        session_id=session.id,
+        tool_name=TOOL_CREATE_LINK,
+        document_id=cable_id,
+        intent=intent,
+        approval_id=approval.id,
+        base_revision=1,
+    )
+    plane.store.remove_document_from_project(DEFAULT_PROJECT, pid_id)
+    with pytest.raises(ValueError, match="not_in_project"):
+        plane.runtime.apply_authorized(authorized, cable_id, intent)
+    assert plane.links.list_active_links(DEFAULT_PROJECT) == []
+    assert "not_in_project" in _rejected_events(plane)
+    assert plane.recorder.verify_chain().ok
+
+
 def test_equipment_predicate_rejects_instrument_fail_closed(tmp_path: Path) -> None:
     plane = Plane(tmp_path, "instr.db")
     cable_id = _seed_cable_envelope(plane, "cab_instr")
@@ -294,7 +334,6 @@ def test_equipment_predicate_rejects_instrument_fail_closed(tmp_path: Path) -> N
         _governed(plane, TOOL_CREATE_LINK, cable_id, _create_intent(cable_id, pid_id, target="AI-1001"), 1)
     assert exc_info.value.code == "target_not_equipment"
     assert plane.links.list_active_links(DEFAULT_PROJECT) == []
-    assert "target_not_equipment" in _rejected_events(plane)
 
 
 def test_active_endpoint_uniqueness_fail_closed(tmp_path: Path) -> None:
@@ -364,12 +403,78 @@ def test_link_mutations_grow_audit_chain_with_bound_provenance(tmp_path: Path) -
 
 
 def test_instrument_keyset_matches_contract_category(tmp_path: Path) -> None:
-    """The service's instrument predicate keyset is exactly the catalogue keys
-    whose category is the canonical instrument category (D79-3)."""
+    """D79-3: the local predicate constant and the service's instrument
+    keyset track the canonical M7 contract category exactly; the module keeps
+    its no-import discipline (textual test in test_m7_layout_contract)."""
+    from agentcad.engineering_links import EQUIPMENT_PREDICATE_INSTRUMENT_CATEGORY
+
     plane = Plane(tmp_path, "keyset.db")
     symbols = plane.service.symbols._symbols  # noqa: SLF001 - test assertion
     expected = frozenset(
         key for key, symbol in symbols.items() if symbol.category == INSTRUMENT_SYMBOL_CATEGORY
     )
+    assert EQUIPMENT_PREDICATE_INSTRUMENT_CATEGORY == INSTRUMENT_SYMBOL_CATEGORY
     assert plane.links._instrument_symbol_keys == expected  # noqa: SLF001
     assert "analyzer_indicator" in expected
+
+
+def test_create_wrong_document_binding_fail_closed(tmp_path: Path) -> None:
+    """D79-1: authorization bound to cable A cannot create a link whose real
+    source is cable B."""
+    plane = Plane(tmp_path, "bind_create.db")
+    _seed_cable_envelope(plane, "cab_a")
+    cable_b = _seed_cable_envelope(plane, "cab_b")
+    pid_id = _seed_pid(plane, "PMP-101", "agitator")
+    intent = _create_intent(cable_b, pid_id)
+    with pytest.raises(EngineeringLinkError) as exc_info:
+        _governed(plane, TOOL_CREATE_LINK, "cab_a", intent, 1)  # bound to cab_a
+    assert exc_info.value.code == "document_binding_mismatch"
+    assert "document_binding_mismatch" in _rejected_events(plane)
+    assert plane.links.list_active_links(DEFAULT_PROJECT) == []
+    assert plane.recorder.verify_chain().ok
+
+
+def test_repin_wrong_document_binding_fail_closed(tmp_path: Path) -> None:
+    plane, _cable_id, _pid_id, link_id = _make_linked(tmp_path, "bind_repin.db")
+    _seed_cable_envelope(plane, "cab_other")
+    with pytest.raises(EngineeringLinkError) as exc_info:
+        _governed(plane, TOOL_REPIN_LINK, "cab_other", {"link_id": link_id}, 1)
+    assert exc_info.value.code == "document_binding_mismatch"
+    assert "document_binding_mismatch" in _rejected_events(plane)
+    assert plane.links.get_link(link_id).deleted is False  # type: ignore[union-attr]
+    assert plane.recorder.verify_chain().ok
+
+
+def test_state_change_after_approval_conflicts_fail_closed(tmp_path: Path) -> None:
+    """D79-2: approval binds one exact state; an endpoint revision advancing
+    before apply must produce a stable revision_conflict with zero mutation."""
+    plane, cable_id, _pid_id, link_id = _make_linked(tmp_path, "conflict.db")
+    session = plane.runtime.ensure_session(cable_id, actor="engineer")
+    approval = plane.runtime.request_approval(
+        session.id,
+        ToolApprovalCreateRequest(
+            tool_name=TOOL_REPIN_LINK,
+            document_id=cable_id,
+            intent={"link_id": link_id},
+            requested_by="engineer",
+        ),
+    )
+    plane.runtime.resolve_approval(
+        approval.id, ToolApprovalResolveRequest(approved=True, actor="operator")
+    )
+    authorized = plane.runtime.authorize(
+        session_id=session.id,
+        tool_name=TOOL_REPIN_LINK,
+        document_id=cable_id,
+        intent={"link_id": link_id},
+        approval_id=approval.id,
+        base_revision=1,
+    )
+    _bump_cable_revision(plane, cable_id, 2)  # state moves after authorization
+    with pytest.raises(EngineeringLinkError) as exc_info:
+        plane.runtime.apply_authorized(authorized, cable_id, {"link_id": link_id})
+    assert exc_info.value.code == "revision_conflict"
+    assert "revision_conflict" in _rejected_events(plane)
+    view = plane.links.get_link(link_id)
+    assert view is not None and view.pinned_source_revision == 1  # zero mutation
+    assert plane.recorder.verify_chain().ok

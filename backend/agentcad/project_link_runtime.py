@@ -45,10 +45,16 @@ class CreateLinkIntent(StrictModel):
     source_endpoint: str = Field(min_length=1)
     target_document_id: str = Field(min_length=1)
     target_object_ref: str = Field(min_length=1)
+    # Server-bound approval-time revisions (D79-2): injected by
+    # canonicalize_intent from the current state, never caller-supplied.
+    expected_source_revision: int | None = Field(default=None, ge=0)
+    expected_target_revision: int | None = Field(default=None, ge=0)
 
 
 class RepinLinkIntent(StrictModel):
     link_id: str = Field(min_length=1)
+    expected_source_revision: int | None = Field(default=None, ge=0)
+    expected_target_revision: int | None = Field(default=None, ge=0)
 
 
 class DeleteLinkIntent(StrictModel):
@@ -151,7 +157,31 @@ class ProjectLinkDomainAdapter:
         return model.model_validate(intent).model_dump(mode="json")
 
     def canonicalize_intent(self, tool_name: str, intent: Any) -> Any:
-        return self._canonical_intent(tool_name, intent)
+        canonical = self._canonical_intent(tool_name, intent)
+        if isinstance(canonical, dict):
+            canonical = dict(canonical)
+            canonical.pop("expected_source_revision", None)
+            canonical.pop("expected_target_revision", None)
+            if tool_name == TOOL_CREATE_LINK:
+                from types import SimpleNamespace
+
+                pins = self.service.resolve_current_pins(SimpleNamespace(**canonical))
+                canonical["expected_source_revision"] = pins[0]
+                canonical["expected_target_revision"] = pins[1]
+            elif tool_name in (TOOL_REPIN_LINK, TOOL_DELETE_LINK):
+                row = self.service._require_link_row(str(canonical["link_id"]))  # noqa: SLF001
+                pins = self.service._resolve_pins(
+                    project_id=str(row["project_id"]),
+                    source_document_id=str(row["source_document_id"]),
+                    source_object_ref=str(row["source_object_ref"]),
+                    source_endpoint=str(row["source_endpoint"]),
+                    target_document_id=str(row["target_document_id"]),
+                    target_object_ref=str(row["target_object_ref"]),
+                )
+                if tool_name == TOOL_REPIN_LINK:
+                    canonical["expected_source_revision"] = pins[0]
+                    canonical["expected_target_revision"] = pins[1]
+        return canonical
 
     def preview_diff_hash(self, *, document_id: str, intent: Any) -> str:
         """Deterministic intent hash; never blocks an approval."""
@@ -202,6 +232,33 @@ class ProjectLinkDomainAdapter:
 
     # --------------------------------------------------------------- execution
 
+    def _approved_intent(self, authorized: Any, audit_event: AuditEvent, intent: Any) -> dict:
+        """D79-2 state binding: re-canonicalize the caller intent and demand
+        it hash-match the authorized record. canonicalize_intent enriches the
+        server-bound expected revisions from the CURRENT state, so any state
+        change since authorization (either endpoint moving revision) changes
+        the hash and fails closed here — before any store write."""
+        from .runtime.harness import tool_intent_hash
+
+        name = authorized.definition.name
+        try:
+            canonical = self.canonicalize_intent(name, intent)
+        except EngineeringLinkError as exc:
+            # State changed since authorization (or the intent was tampered):
+            # the harness was already authorized, so close it out honestly.
+            self.service.failure_closeout(authorized, audit_event, exc.code)
+            raise
+        if (
+            tool_intent_hash(name, authorized.record.document_id, canonical)
+            != authorized.record.intent_hash
+        ):
+            self.service.failure_closeout(authorized, audit_event, "revision_conflict")
+            raise EngineeringLinkError(
+                "revision_conflict",
+                "endpoint state changed since approval; re-request approval",
+            )
+        return canonical if isinstance(canonical, dict) else dict(intent)
+
     def execute(
         self,
         *,
@@ -211,8 +268,9 @@ class ProjectLinkDomainAdapter:
         intent: Any,
     ) -> ExecutionOutcome:
         name = authorized.definition.name
+        approved = self._approved_intent(authorized, audit_event, intent)
         if name == TOOL_CREATE_LINK:
-            intent_model = CreateLinkIntent.model_validate(intent)
+            intent_model = CreateLinkIntent.model_validate(approved)
             try:
                 self.service.preview_create(intent_model)
             except EngineeringLinkError as exc:
@@ -229,13 +287,13 @@ class ProjectLinkDomainAdapter:
                 authorized=authorized,
                 audit_event=audit_event,
                 closure=closure,
-                intent=RepinLinkIntent.model_validate(intent),
+                intent=RepinLinkIntent.model_validate(approved),
             )
         if name == TOOL_DELETE_LINK:
             return self.service.execute_delete(
                 authorized=authorized,
                 audit_event=audit_event,
                 closure=closure,
-                intent=DeleteLinkIntent.model_validate(intent),
+                intent=DeleteLinkIntent.model_validate(approved),
             )
         raise KeyError(f"unknown project-link tool: {name}")

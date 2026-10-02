@@ -1688,13 +1688,7 @@ PHASE_3_MATERIALIZATION_STEP = "materialize_finalized_canonical_layout"
 MATERIALIZER_MODULE = "m7_layout_materialization.py"
 #: The phase-3 modules that read this contract. Kept apart from the phase-2B list so that
 #: "what phase 2B may build" and "what phase 3 may build" stay separate declarations.
-#: M12-D3 (D79-3): engineering_links reads only the instrument-category constant for the
-#: frozen cross-domain equipment predicate — declared here per the allow-list mechanism
-#: rather than worked around.
-PHASE_3_MAY_IMPORT_THE_CONTRACT: tuple[str, ...] = (
-    MATERIALIZER_MODULE,
-    "engineering_links.py",
-)
+PHASE_3_MAY_IMPORT_THE_CONTRACT: tuple[str, ...] = (MATERIALIZER_MODULE,)
 #: Only a layout whose identity has been computed may be materialized: writing geometry no
 #: identity names is the state the whole milestone exists to remove.
 MATERIALIZATION_REQUIRES_THE_FINALIZED_CANONICAL_LAYOUT = True

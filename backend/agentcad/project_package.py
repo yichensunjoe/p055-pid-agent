@@ -99,10 +99,18 @@ def build_project_package(
     pid_service: DocumentService,
     cable_service: CableService,
     project_id: str,
+    member_pins: dict[str, int],
     evaluation_as_of: datetime,
 ) -> bytes:
     """Build the deterministic project package; fail closed with a stable
-    code and no bytes when any frozen precondition does not hold."""
+    code and no bytes when any frozen precondition does not hold.
+
+    D81-1: ``member_pins`` is the caller-declared delivery state — the exact
+    {document_id: revision} set being delivered. The server re-reads the
+    current revisions and compares each one; historical revisions are never
+    rebuilt (F77-2). D81-4: an active-link snapshot is captured once and
+    re-verified before ZIP emission, so the package is one consistent
+    project state, never a check-then-read composite."""
     if evaluation_as_of.tzinfo is None:
         raise ProjectPackageError("invalid_input", "evaluation_as_of must be timezone-aware")
     if store.get_project(project_id) is None:
@@ -111,28 +119,57 @@ def build_project_package(
     if not members:
         raise ProjectPackageError("empty_project", "project has no member documents")
 
-    # Server-resolved pins: current revision, re-checked immediately before
-    # each artifact is produced (current-exact-revision-only, F77-2).
+    requested = set(member_pins)
+    expected = {document_id for document_id, _domain, _added_at in members}
+    if requested != expected:
+        raise ProjectPackageError(
+            "member_pins_mismatch",
+            "member pins must be exactly the project member set; "
+            f"missing={sorted(expected - requested)} extra={sorted(requested - expected)}",
+        )
+
+    # Pin gate: every requested pin must equal the CURRENT revision.
     pins: dict[str, tuple[int, str]] = {}
     for document_id, domain, _added_at in members:
         revision = _member_revision(store, document_id, domain)
-        if revision is None:
+        if revision is None or revision != int(member_pins[document_id]):
             raise ProjectPackageError(
-                "member_revision_not_current", f"member {document_id!r} is missing"
+                "member_revision_not_current",
+                f"member {document_id!r} pin {member_pins[document_id]!r} "
+                f"is not the current revision {revision!r}",
             )
         pins[document_id] = (revision, domain)
-    for row in store.list_active_engineering_links(project_id):
-        source_pin = pins.get(str(row["source_document_id"]))
-        target_pin = pins.get(str(row["target_document_id"]))
+
+    def _canonical_link(row: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "link_id": str(row["link_id"]),
+            "relation_type": str(row["relation_type"]),
+            "source_domain": str(row["source_domain"]),
+            "source_document_id": str(row["source_document_id"]),
+            "source_object_ref": str(row["source_object_ref"]),
+            "source_endpoint": str(row["source_endpoint"]),
+            "target_domain": str(row["target_domain"]),
+            "target_document_id": str(row["target_document_id"]),
+            "target_object_ref": str(row["target_object_ref"]),
+            "pinned_source_revision": int(row["pinned_source_revision"]),
+            "pinned_target_revision": int(row["pinned_target_revision"]),
+        }
+
+    links_snapshot = [
+        _canonical_link(row) for row in store.list_active_engineering_links(project_id)
+    ]
+    for link in links_snapshot:
+        source_pin = pins.get(link["source_document_id"])
+        target_pin = pins.get(link["target_document_id"])
         if (
             source_pin is None
             or target_pin is None
-            or source_pin[0] != int(row["pinned_source_revision"])
-            or target_pin[0] != int(row["pinned_target_revision"])
+            or source_pin[0] != link["pinned_source_revision"]
+            or target_pin[0] != link["pinned_target_revision"]
         ):
             raise ProjectPackageError(
                 "link_pin_not_current",
-                f"active link {row['link_id']!r} pins are not the current revisions",
+                f"active link {link['link_id']!r} pins are not the current revisions",
             )
 
     readiness = ProjectReadinessService(store, pid_service, cable_service).assess(
@@ -159,20 +196,7 @@ def build_project_package(
             for document_id, domain, _added_at in members
         ],
     }
-    links_payload = [
-        {
-            "link_id": str(row["link_id"]),
-            "relation_type": str(row["relation_type"]),
-            "source_document_id": str(row["source_document_id"]),
-            "source_object_ref": str(row["source_object_ref"]),
-            "source_endpoint": str(row["source_endpoint"]),
-            "target_document_id": str(row["target_document_id"]),
-            "target_object_ref": str(row["target_object_ref"]),
-            "pinned_source_revision": int(row["pinned_source_revision"]),
-            "pinned_target_revision": int(row["pinned_target_revision"]),
-        }
-        for row in store.list_active_engineering_links(project_id)
-    ]
+    links_payload = links_snapshot  # D81-4: one captured snapshot, not a re-read
     readiness_payload = {
         "project_id": readiness.project_id,
         "evaluation_as_of": readiness.evaluation_as_of.isoformat(),
@@ -228,6 +252,21 @@ def build_project_package(
             artifact = _canonical(envelope_payload).encode("utf-8")
             artifacts[f"domains/pid/{document_id}-r{revision}.json"] = artifact
 
+    # D81-4 final gate: the package must be ONE project state. Re-verify
+    # member revisions and the active-link snapshot immediately before ZIP
+    # emission; any drift is a stable refusal, never an inconsistent bag.
+    for document_id, domain, _added_at in members:
+        if _member_revision(store, document_id, domain) != pins[document_id][0]:
+            raise ProjectPackageError(
+                "package_state_changed",
+                f"member {document_id!r} revision moved during the build",
+            )
+    final_links = [_canonical_link(row) for row in store.list_active_engineering_links(project_id)]
+    if final_links != links_snapshot:
+        raise ProjectPackageError(
+            "package_state_changed", "active links changed during the build"
+        )
+
     members_payload = {path: data for path, data in artifacts.items()}
     members_payload["links/engineering_links.json"] = _canonical(links_payload).encode("utf-8")
     members_payload["readiness/project_readiness.json"] = _canonical(readiness_payload).encode(
@@ -235,8 +274,22 @@ def build_project_package(
     )
     members_payload["project.json"] = _canonical(project_payload).encode("utf-8")
 
-    # Frozen member order for the MANIFEST: sorted by path.
-    ordered_paths = sorted(members_payload)
+    # Frozen member order (Q6): manifest-excluded metadata first, then pid
+    # artifacts, then cable artifacts; each domain block sorted by
+    # document_id. The verifier rejects any order drift (D81-2).
+    pid_paths = sorted(
+        path for path in artifacts if path.startswith("domains/pid/")
+    )
+    cable_paths = sorted(
+        path for path in artifacts if path.startswith("domains/cable/")
+    )
+    ordered_paths = [
+        "project.json",
+        "links/engineering_links.json",
+        "readiness/project_readiness.json",
+        *pid_paths,
+        *cable_paths,
+    ]
     manifest = {
         "schema": PACKAGE_SCHEMA,
         "project_id": project_id,
@@ -316,6 +369,13 @@ def _verify_archive(archive: zipfile.ZipFile) -> None:
             extra = sorted(names - expected)
             raise ProjectPackageError(
                 "tamper_detected", f"member mismatch: missing={missing} extra={extra}"
+            )
+        # D81-2: order is part of the frozen format — the zip's non-manifest
+        # entries must follow the MANIFEST row order exactly.
+        zip_order = [info.filename for info in entries if info.filename != _MANIFEST_PATH]
+        if zip_order != listed:
+            raise ProjectPackageError(
+                "tamper_detected", "member order drift between MANIFEST and archive"
             )
         for member in manifest["members"]:
             data = archive.read(member["path"])

@@ -1042,9 +1042,10 @@ export async function fetchProjectReadiness(
 export async function downloadProjectPackage(
   projectId: string,
   evaluationAsOf: string,
+  memberPins: Record<string, number>,
 ): Promise<void> {
   await downloadApiResource(
-    `/api/v2/projects/${encodeURIComponent(projectId)}/package.zip?evaluation_as_of=${encodeURIComponent(evaluationAsOf)}`,
+    `/api/v2/projects/${encodeURIComponent(projectId)}/package.zip?evaluation_as_of=${encodeURIComponent(evaluationAsOf)}&pins=${encodeURIComponent(JSON.stringify(memberPins))}`,
     `${projectId}-package.zip`,
   );
 }

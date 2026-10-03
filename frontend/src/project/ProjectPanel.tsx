@@ -27,7 +27,15 @@ export function ProjectPanel() {
   const downloadPackage = useCallback(async () => {
     setError("");
     try {
-      await downloadProjectPackage(DEFAULT_PROJECT_ID, asOf);
+      // D81-1: the download declares the exact delivery state. Pins come
+      // from the freshly fetched summary; if any revision moved since, the
+      // server refuses with a stable 409 instead of building a stale bag.
+      const summary = await fetchProjectSummary(DEFAULT_PROJECT_ID);
+      const memberPins: Record<string, number> = {};
+      for (const member of summary.members) {
+        if (member.revision !== null) memberPins[member.document_id] = member.revision;
+      }
+      await downloadProjectPackage(DEFAULT_PROJECT_ID, asOf, memberPins);
     } catch (downloadError) {
       setError(downloadError instanceof Error ? downloadError.message : String(downloadError));
     }

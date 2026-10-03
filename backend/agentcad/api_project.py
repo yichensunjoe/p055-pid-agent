@@ -9,6 +9,7 @@ member_revision_not_current / empty_project, 422 invalid evaluation_as_of.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Query, Response
@@ -50,6 +51,8 @@ def _package_error(exc: ProjectPackageError) -> HTTPException:
         "project_not_found": 404,
         "link_pin_not_current": 409,
         "member_revision_not_current": 409,
+        "member_pins_mismatch": 409,
+        "package_state_changed": 409,
         "empty_project": 409,
         "invalid_input": 422,
     }
@@ -145,15 +148,32 @@ def create_project_router(
         }
 
     @router.get("/{project_id}/package.zip")
-    def project_package(project_id: str, evaluation_as_of: str = Query(...)) -> Response:
+    def project_package(
+        project_id: str,
+        evaluation_as_of: str = Query(...),
+        pins: str = Query(..., description="JSON object {document_id: pinned_revision}"),
+    ) -> Response:
         _require_project(project_id)
         as_of = _parse_as_of(evaluation_as_of)
+        try:
+            parsed_pins = json.loads(pins)
+            if not isinstance(parsed_pins, dict) or not all(
+                isinstance(key, str) and isinstance(value, int)
+                for key, value in parsed_pins.items()
+            ):
+                raise ValueError("pins must be a JSON object of document_id -> int")
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "invalid_pins", "message": str(exc)},
+            ) from exc
         try:
             package = build_project_package(
                 store=store,
                 pid_service=pid_service,
                 cable_service=CableService(store),
                 project_id=project_id,
+                member_pins=parsed_pins,
                 evaluation_as_of=as_of,
             )
         except ProjectPackageError as exc:

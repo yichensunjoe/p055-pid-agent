@@ -1,6 +1,6 @@
 # M12 Closeout — Multi-Domain Project Graph & Deterministic Delivery Package
 
-> Gate 口径：M12 DEFINITION APPROVED（Charter v1.1.0 §55B）；D1–D5 逐片 Design/Merge Gate 已签。
+> Gate 口径：M12 DEFINITION APPROVED（Charter v1.1.0 §55B）；D1–D4 已签 CLOSED，D5（本 PR）待签 Merge Gate。
 > 本矩阵按 §55B 七项完成标志逐项给证据。治理声明与 M11 相同：本 closeout ≠ M9 WS3B closeout、
 > 不补齐真实项目试点、不改变 M9/M10 Owner 阻断状态、不产生 deploy 授权。
 
@@ -55,22 +55,30 @@
 
 ## 5. Deterministic Project Delivery Package — D5（本 PR）
 
-- 输入 {project_id, evaluation_as_of}；member pins 服务器解析为当前 revision——current exact
-  revision only，不支持历史重建（F77-2）。
+- 输入 {project_id, member pins, evaluation_as_of}（D81-1）：pins 为调用方声明的交付状态
+  （CAS 边界），服务器逐一重读当前 revision 比对——current exact revision only，
+  绝不历史重建（F77-2）；pins 集合≠成员集或任一 pin≠当前 → 稳定 409 不产包。
+  UI 先从 summary 取当前 pins 再携带下载，两步间 revision 变动即 409。
 - 硬前置（各为稳定错误且不产包）：project_not_found / empty_project /
   member_revision_not_current / link_pin_not_current。
-- 冻结成员：MANIFEST.json（members 不含自身）→ project.json → links/engineering_links.json
-  （active）→ readiness/project_readiness.json → domains/pid/<id>-r<rev>.json（envelope 剥离
-  墙钟）→ domains/cable/<id>-r<rev>.zip（D3 导出字节）。ZIP_STORED + 1980 ZipInfo + canonical JSON。
-- verify 纯函数：成员 hash、缺/多/重成员、MANIFEST self-listing、ZIP metadata 漂移
-  （含字节翻转 CRC）全部 tamper_detected。
+- 冻结成员序（Q6，D81-2）：ZIP 最前 MANIFEST.json（members 不含自身），其后
+  project.json → links/engineering_links.json（active，含两端 domain 声明，D81-3）→
+  readiness/project_readiness.json → domains/pid/<id>-r<rev>.json（envelope 剥离墙钟，按
+  document_id 排序）→ domains/cable/<id>-r<rev>.zip（D3 导出字节，按 document_id 排序）。
+  verifier 对「集合+顺序」双校验，顺序漂移即 tamper_detected。ZIP_STORED + 1980 ZipInfo +
+  canonical JSON。
+- 一致状态快照（D81-4）：active-link canonical 快照一次捕获，ZIP 写出前最终重验成员
+  revision 与链接快照，任何漂移 → package_state_changed 稳定 409，绝不产内部不一致包。
+- verify 纯函数：成员 hash、缺/多/duplicate 成员、MANIFEST self-listing、成员顺序漂移、
+  ZIP metadata 漂移（含字节翻转 CRC）全部 tamper_detected（缺/多/重复/顺序各有独立测试）。
 - 字节 parity：同 pins+as_of+profile 重建逐字节相等；e2e 三路 parity
   （HTTP body == UI download == fresh-process 直接构建）。
 
 ## 6. Minimal project inspection surface — D5（本 PR）
 
 - 只读 GET：`/api/v2/projects/{id}`（成员+revision）、`/links`（active）、`/readiness`
-  （evaluation_as_of 必填 tz-aware，否则 422）、`/package.zip`。零 audit（read 前后计数相等）。
+  （evaluation_as_of 必填 tz-aware，否则 422）、`/package.zip`（显式 pins 参数）。
+  零 audit：四个 GET 前后 audit 计数相等有 hard-lock 测试（D81-5）。
 - 最小 UI：第三个 domain tab「项目」——成员表、跨域 links、readiness（可编辑
   evaluation_as_of + 重新评估）、交付包下载（错误如实显示，如 409）。
 - shared-mode：匿名四族 GET 全 401，带 token 可用（security.shared.spec.ts）。
@@ -81,10 +89,11 @@
 - frontend：npm test 163 pass。
 - CI 四 job 全绿：Backend / Frontend / Chromium（local e2e 含 project spec）/
   M5 72-case deterministic gate；shared-mode security acceptance 在内。
-- 视觉基线：darwin 本机再生 + linux 经 visual-baselines workflow（pinned ubuntu-24.04，
-  sentinel+re-assert）——第三 domain tab 属冻结 app-shell 变化的机械性更新。
-- 性能对账（CI Backend job，同构 runner）：pre-M12 基线 5m18s（run 36791335881）→
-  D4 后 5m02s（run 37107269356）：-5%，≤ +10% 预算内。
+- 视觉基线：darwin 本机随第三 tab 再生；linux committed baselines 在 exact-head CI 重新
+  断言通过（第三 domain tab 属冻结 app-shell 变化的机械性更新）。
+- 性能对账（PERFORMANCE EVIDENCE METHOD AMENDMENT，Gate 已批）：采用同一 GitHub Backend
+  workflow / Python 3.11 / pytest 命令的 exact logs 对比——pre-M12 基线 274.87s（run
+  36791335881）→ D5 exact-head run（见下）：约 -15%，≤ +10% 预算内（阈值未放宽）。
 
 ## 治理与遗留
 

@@ -168,8 +168,16 @@ test.describe("M12-D5 project inspection surface", () => {
     await expect(page.getByTestId("project-readiness")).toContainText("eligible");
 
     // ⑤ UI download == HTTP body == fresh-process rebuild
+    const summaryBody = (
+      await (await request.get(`/api/v2/projects/${DEFAULT_PROJECT}`)).json()
+    ) as { members: Array<{ document_id: string; revision: number | null }> };
+    const pins = Object.fromEntries(
+      summaryBody.members
+        .filter((member) => member.revision !== null)
+        .map((member) => [member.document_id, member.revision as number]),
+    );
     const httpPackage = await request.get(
-      `/api/v2/projects/${DEFAULT_PROJECT}/package.zip?evaluation_as_of=${encodeURIComponent(AS_OF)}`,
+      `/api/v2/projects/${DEFAULT_PROJECT}/package.zip?evaluation_as_of=${encodeURIComponent(AS_OF)}&pins=${encodeURIComponent(JSON.stringify(pins))}`,
     );
     expect(httpPackage.status()).toBe(200);
     const httpBytes = await httpPackage.body();
@@ -181,7 +189,7 @@ test.describe("M12-D5 project inspection surface", () => {
     const { readFileSync } = await import("node:fs");
     expect(readFileSync((await download.path())!)).toEqual(Buffer.from(httpBytes));
 
-    const directBytes = directPackageBytes(cableId, pidId);
+    const directBytes = directPackageBytes(pins);
     expect(directBytes).toEqual(Buffer.from(httpBytes));
 
     // P&ID domain intact: switch back, canvas still renders the document
@@ -191,10 +199,10 @@ test.describe("M12-D5 project inspection surface", () => {
   });
 });
 
-function directPackageBytes(cableId: string, pidId: string): Buffer {
+function directPackageBytes(pins: Record<string, number>): Buffer {
   const python = process.env.PID_AGENT_E2E_PYTHON ?? "python";
   const script = `
-import base64, sys
+import base64, json, sys
 from datetime import datetime, timezone
 from agentcad.cable_service import CableService
 from agentcad.project_package import build_project_package
@@ -209,13 +217,13 @@ package = build_project_package(
     pid_service=service,
     cable_service=CableService(store),
     project_id="${DEFAULT_PROJECT}",
+    member_pins=json.loads(sys.argv[2]),
     evaluation_as_of=datetime(2026, 10, 3, 12, 0, tzinfo=timezone.utc),
 )
-assert "${cableId}" and "${pidId}"  # fixture identity bound into the check
 sys.stdout.buffer.write(base64.b64encode(package))
 `;
   const database = databasePath();
-  const out = execFileSync(python, ["-c", script, database], {
+  const out = execFileSync(python, ["-c", script, database, JSON.stringify(pins)], {
     env: { ...process.env, PYTHONPATH: path.resolve("..", "backend") },
   });
   return Buffer.from(out.toString("utf8").trim(), "base64");

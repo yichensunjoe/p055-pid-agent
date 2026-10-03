@@ -2,9 +2,14 @@
 
 > 交接文档：每次开新会话先读本文件。更新规则见 `AGENTS.md`「HANDOFF 交接规则」。
 
-## 当前状态（2026-10-02 —— **M12-D2 CLOSED（PR #78 合 main@985eff5c，main CI 四绿）；M12-D3 CODE GO 已生效；D3 未开工**）
+## 当前状态（2026-10-03 —— **M12-D3 CLOSED（PR #79 合 main@af31819，main CI 四绿）；M12-D4 CODE GO 已生效；D4 未开工**）
 
-- **M12 进度**：D1 design（PR #77，Charter 1.1.0 + 六问冻结，含 R77/F77 两轮修正）已合 main@89a3a52 → D2（PR #78，v15 迁移 + project identity/membership，含 R78-1 restore 加固 + r0/r-1 测试锁）已合 main@985eff5c。**D3 CODE GO（cross-domain links + governed mutation）已批，范围冻结：create/re-pin/soft-delete、relation invariants、equipment predicate fail-closed、M10 runtime permission/session/approval/tool-call/audit 边界；不得提前实现 D4 validator 或 D5 package/UI。**
+- **M12 进度**：D1 design（#77，Charter 1.1.0 + 六问冻结）→ D2（#78，v15 迁移 + identity/membership）→ D3（#79，cross-domain links + governed mutation，经 R77/F77/R78/D79/R79 六轮 Gate 修正）全部合 main。**D4 CODE GO（project validator/readiness）已批：七 issue code（dangling/missing/wrong-domain=blocker，stale×2=warning 但列 fail-on-warning）；P&ID readiness 唯一来源 = assess_document_release_readiness(service,id,load_profile(),now=evaluation_as_of)；Cable = assess_cable_document；project eligible = 全 active member eligible 且 failing rule=0，只 eligible/not_eligible；readiness hash 绑定 evaluation_asof+成员 readiness hash+member issues+active link pins；soft-deleted 不参与；先查 revision、stale 后只报 stale。禁：approval/release 新状态、D5 package/UI。**
+- **D3 终局架构**（重要，D4/D5 直接复用）：link 写路径 = ProjectLinkToolRegistry 三中性 tool（ask/engineering_change）→ ProjectLinkDomainAdapter → EngineeringLinkService.execute_* → store.commit_engineering_link_*（BEGIN IMMEDIATE 单事务：mutation+audit+tool_call+approval+session）；canonicalize 服务器注入 expected revisions + tool_intent_hash 锁批准状态，apply 重 canonicalize 比对（revision_conflict）；execute 内 binding 检查（document_binding_mismatch）；delete canonicalize 只验身份=坏 link 可清理（R79-F1）；授权后一切失败 → failure_closeout（稳定码+failed tool call+failed session+恰好一条 rejected 审计）；endpoint 冲突映射只看部分唯一索引列组合（R79-F3）。无 HTTP surface（D5 再做）。
+- **D2 契约**（不变，见 reports/m12-d1-design.md）：v15 三表、membership 无 domain、document_id UNIQUE、pinned>=0、FK-ON 迁移、restore legacy 加固、部分唯一索引。
+- **性能**：基线 105.9s/1754（main@2cf198e0）；当前 1785 tests ≈ 103.6s（-2.2%，≤+10% 预算内）。
+- **环境**：main 树 = `P055-PID-Agent-main`（m12-d3 已合；D4 新分支从 origin/main 切）；docs = q1r；e2e 端口 8002/4174。**Gate conv 6abd7e9f 标签劫持依旧频繁，注入后立刻二次核对；长消息会被虚拟化截断，读裁定用多段 slice。**
+- **下一动作**：开工 M12-D4——ProjectReadinessService（七 code 纯函数 + evaluation_as_of 语义输入 + readiness hash 绑定清单 + eligible/not_eligible）+ backend 测试（正负例/stale 只报 stale/soft-deleted 不参与/canonical 聚合双 fresh-process 字节一致），报 Gate 拿 D4 Merge Gate。
 - **D2 落地的关键契约**（在 reports/m12-d1-design.md）：v15 三表（projects/project_documents/engineering_links）；membership 不存 domain（join registry 得出）；document_id UNIQUE 单项目归属；pinned_*_revision CHECK>=0（R78 追认，r0 可 pin）；v14→v15 迁移 FK 保持 ON（R78）；restore_backup(allow_pre_current_schema=True) 实现冻结回滚链且 legacy 分支要求 actual==metadata schema + required-schema 门（R78-1）；engineering_links 部分唯一索引（active endpoint 唯一）。D2 无 link service/API、无 HTTP surface、无 audit 写。
 - **pre-M12 性能基线**：reports/m12-perf-baseline.json（105.9s/1754 tests，main@2cf198e0 同机同 Python）；closeout 增量 ≤ +10%。当前 1765 tests ≈ 106s，增量 ≈ 0%。
 - **既有裁定速查**：D1 时 Charter 1.1.0 CONTENT PASS；F77-1（evaluation_as_of 语义输入 + load_profile 服务器侧 + provenance 绑定清单）、F77-2（package 只支持当前 exact revision，禁 revision-number rollback 重建历史包）已闭合。pinned 版本钉断言已维护到 15。

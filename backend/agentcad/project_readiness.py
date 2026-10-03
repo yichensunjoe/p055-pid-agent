@@ -1,0 +1,260 @@
+"""M12-D4: project-level deterministic validation / readiness (Gate CODE GO).
+
+Design frozen at reports/m12-d1-design.md Q5 + F77-1 + the D4 CODE GO:
+- P&ID member readiness comes ONLY from assess_document_release_readiness(
+  service, id, load_profile(), now=evaluation_as_of) — server-side profile,
+  the caller cannot submit or override one;
+- Cable member readiness comes from assess_cable_document();
+- cross-domain checks use stable issue codes; stale is checked FIRST and
+  once stale, only the stale finding is reported for that endpoint;
+- soft-deleted links do not participate;
+- readiness is only eligible / not_eligible — never Approved/Released;
+- result_hash binds evaluation_as_of + per-member readiness hashes +
+  project-level issues + active link pins (F77-1);
+- the assessor is a pure read: zero audit events, zero writes.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any
+
+from .cable_service import CableService
+from .cable_validation import assess_cable_document
+from .release_validator import assess_document_release_readiness
+from .service import DocumentService
+from .store import SQLiteDocumentStore
+from .validation_profile import load_profile
+
+PROFILE_ID = "project-built-in"
+PROFILE_VERSION = 1
+
+ISSUE_DANGLING_SOURCE = "dangling_link_source"
+ISSUE_DANGLING_TARGET = "dangling_link_target"
+ISSUE_MISSING_SOURCE = "missing_source_object"
+ISSUE_MISSING_TARGET = "missing_target_object"
+ISSUE_WRONG_DOMAIN = "wrong_domain_reference"
+ISSUE_STALE_SOURCE = "stale_pinned_revision_source"
+ISSUE_STALE_TARGET = "stale_pinned_revision_target"
+
+_SEVERITY: dict[str, str] = {
+    ISSUE_DANGLING_SOURCE: "blocker",
+    ISSUE_DANGLING_TARGET: "blocker",
+    ISSUE_MISSING_SOURCE: "blocker",
+    ISSUE_MISSING_TARGET: "blocker",
+    ISSUE_WRONG_DOMAIN: "blocker",
+    ISSUE_STALE_SOURCE: "warning",
+    ISSUE_STALE_TARGET: "warning",
+}
+_FAIL_ON_WARNING = frozenset({ISSUE_STALE_SOURCE, ISSUE_STALE_TARGET})
+
+_RULE_SET_FROZEN = [
+    [code, _SEVERITY[code], code in _FAIL_ON_WARNING] for code in sorted(_SEVERITY)
+]
+
+
+def _canonical(payload: Any) -> str:
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def _sha256(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+PROFILE_FINGERPRINT = _sha256(
+    f"{PROFILE_ID}/v{PROFILE_VERSION}:" + _canonical(_RULE_SET_FROZEN)
+)
+
+
+@dataclass(frozen=True)
+class ProjectIssue:
+    code: str
+    severity: str
+    link_id: str
+
+
+@dataclass(frozen=True)
+class MemberReadinessSnapshot:
+    document_id: str
+    domain: str
+    state: str
+    readiness_hash: str
+    revision: int
+
+
+@dataclass(frozen=True)
+class ProjectReadiness:
+    project_id: str
+    evaluation_as_of: datetime
+    state: str  # "eligible" | "not_eligible" — never Approved/Released
+    issues: tuple[ProjectIssue, ...]
+    members: tuple[MemberReadinessSnapshot, ...]
+    result_hash: str
+    profile_id: str = PROFILE_ID
+    profile_version: int = PROFILE_VERSION
+    profile_fingerprint: str = PROFILE_FINGERPRINT
+
+
+class ProjectReadinessService:
+    """Deterministic, read-only project readiness assessor."""
+
+    def __init__(
+        self,
+        store: SQLiteDocumentStore,
+        pid_service: DocumentService,
+        cable_service: CableService,
+    ) -> None:
+        self._store = store
+        self._pid = pid_service
+        self._cable = cable_service
+
+    def assess(self, *, project_id: str, evaluation_as_of: datetime) -> ProjectReadiness:
+        if evaluation_as_of.tzinfo is None:
+            raise ValueError("evaluation_as_of must be timezone-aware")
+
+        members = self._member_snapshots(project_id, evaluation_as_of)
+        member_ids = {snapshot.document_id for snapshot in members}
+        links = self._store.list_active_engineering_links(project_id)  # ordered by link_id
+
+        issues: list[ProjectIssue] = []
+        pins: list[dict[str, Any]] = []
+        for row in links:
+            link_id = str(row["link_id"])
+            source_id = str(row["source_document_id"])
+            target_id = str(row["target_document_id"])
+            pins.append(
+                {
+                    "link_id": link_id,
+                    "pinned_source_revision": int(row["pinned_source_revision"]),
+                    "pinned_target_revision": int(row["pinned_target_revision"]),
+                }
+            )
+            if source_id not in member_ids:
+                issues.append(ProjectIssue(ISSUE_DANGLING_SOURCE, _SEVERITY[ISSUE_DANGLING_SOURCE], link_id))
+            if target_id not in member_ids:
+                issues.append(ProjectIssue(ISSUE_DANGLING_TARGET, _SEVERITY[ISSUE_DANGLING_TARGET], link_id))
+            source_domain = self._store.document_domain(source_id)
+            target_domain = self._store.document_domain(target_id)
+            if source_domain != "cable" or target_domain != "pid":
+                issues.append(ProjectIssue(ISSUE_WRONG_DOMAIN, _SEVERITY[ISSUE_WRONG_DOMAIN], link_id))
+
+            # Stale FIRST: once an endpoint's pinned revision is behind, only
+            # the stale finding is reported for that endpoint — we never claim
+            # to have inspected a historical pinned object (F77/Q5 freeze).
+            source_stale = self._is_stale_source(row)
+            target_stale = self._is_stale_target(row)
+            if source_stale:
+                issues.append(ProjectIssue(ISSUE_STALE_SOURCE, _SEVERITY[ISSUE_STALE_SOURCE], link_id))
+            if target_stale:
+                issues.append(ProjectIssue(ISSUE_STALE_TARGET, _SEVERITY[ISSUE_STALE_TARGET], link_id))
+            if not source_stale and not self._segment_exists(source_id, str(row["source_object_ref"])):
+                issues.append(ProjectIssue(ISSUE_MISSING_SOURCE, _SEVERITY[ISSUE_MISSING_SOURCE], link_id))
+            if not target_stale and not self._element_exists(target_id, str(row["target_object_ref"])):
+                issues.append(ProjectIssue(ISSUE_MISSING_TARGET, _SEVERITY[ISSUE_MISSING_TARGET], link_id))
+
+        failing = sum(
+            1
+            for issue in issues
+            if issue.severity == "blocker" or issue.code in _FAIL_ON_WARNING
+        )
+        member_ready = all(snapshot.state == "eligible" for snapshot in members)
+        state = "eligible" if (member_ready and failing == 0) else "not_eligible"
+
+        result_hash = _sha256(
+            _canonical(
+                {
+                    "evaluation_as_of": evaluation_as_of.isoformat(),
+                    "issues": [
+                        [issue.code, issue.severity, issue.link_id] for issue in issues
+                    ],
+                    "members": [
+                        [
+                            snapshot.document_id,
+                            snapshot.domain,
+                            snapshot.state,
+                            snapshot.readiness_hash,
+                            snapshot.revision,
+                        ]
+                        for snapshot in members
+                    ],
+                    "pins": pins,
+                    "profile_fingerprint": PROFILE_FINGERPRINT,
+                    "project_id": project_id,
+                }
+            )
+        )
+        return ProjectReadiness(
+            project_id=project_id,
+            evaluation_as_of=evaluation_as_of,
+            state=state,
+            issues=tuple(issues),
+            members=tuple(members),
+            result_hash=result_hash,
+        )
+
+    # ---- internals (pure reads) ----
+
+    def _member_snapshots(
+        self, project_id: str, evaluation_as_of: datetime
+    ) -> list[MemberReadinessSnapshot]:
+        rows = sorted(self._store.list_project_documents(project_id))
+        snapshots = []
+        for document_id, domain, _added_at in rows:
+            if domain == "cable":
+                readiness = assess_cable_document(self._cable, document_id)
+                snapshots.append(
+                    MemberReadinessSnapshot(
+                        document_id=document_id,
+                        domain="cable",
+                        state=readiness.state,
+                        readiness_hash=readiness.result_hash,
+                        revision=readiness.revision,
+                    )
+                )
+            else:
+                readiness = assess_document_release_readiness(
+                    self._pid,
+                    document_id,
+                    load_profile(),
+                    project_id=project_id,
+                    now=evaluation_as_of,
+                )
+                snapshots.append(
+                    MemberReadinessSnapshot(
+                        document_id=document_id,
+                        domain="pid",
+                        state=readiness.state,
+                        readiness_hash=readiness.readiness_hash,
+                        revision=readiness.revision,
+                    )
+                )
+        return snapshots
+
+    def _is_stale_source(self, row: dict[str, Any]) -> bool:
+        envelope = self._store.get_cable_envelope(str(row["source_document_id"]))
+        if envelope is None:
+            return False  # absence is a missing_object finding, not staleness
+        return int(envelope[0]) != int(row["pinned_source_revision"])
+
+    def _is_stale_target(self, row: dict[str, Any]) -> bool:
+        stored = self._store.get(str(row["target_document_id"]))
+        if stored is None:
+            return False
+        return stored.document.revision != int(row["pinned_target_revision"])
+
+    def _segment_exists(self, cable_id: str, segment_id: str) -> bool:
+        try:
+            view = self._cable.load(cable_id)
+        except Exception:
+            return False
+        return any(segment.id == segment_id for segment in view.document.segments)
+
+    def _element_exists(self, pid_id: str, element_id: str) -> bool:
+        try:
+            document = self._pid.get_document(pid_id)
+        except Exception:
+            return False
+        return any(element.id == element_id for element in document.elements)

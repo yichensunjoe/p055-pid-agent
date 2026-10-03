@@ -970,3 +970,81 @@ export async function downloadCableExport(documentId: string, revision: number):
     `${documentId}-r${revision}.zip`,
   );
 }
+
+
+export type ProjectSummary = {
+  project_id: string;
+  name: string;
+  members: Array<{
+    document_id: string;
+    domain: string;
+    revision: number | null;
+    added_at: string;
+  }>;
+};
+
+export type ProjectLinks = {
+  project_id: string;
+  links: Array<{
+    link_id: string;
+    relation_type: string;
+    source_document_id: string;
+    source_object_ref: string;
+    source_endpoint: string;
+    target_document_id: string;
+    target_object_ref: string;
+    pinned_source_revision: number;
+    pinned_target_revision: number;
+  }>;
+};
+
+export type ProjectReadiness = {
+  project_id: string;
+  evaluation_as_of: string;
+  state: string;
+  issues: Array<{ code: string; severity: string; link_id: string }>;
+  members: Array<{
+    document_id: string;
+    domain: string;
+    state: string;
+    readiness_hash: string;
+    revision: number;
+  }>;
+  result_hash: string;
+  profile_id: string;
+  profile_version: number;
+  profile_fingerprint: string;
+};
+
+export async function fetchProjectSummary(projectId: string): Promise<ProjectSummary> {
+  const response = await authorizedFetch(`/api/v2/projects/${encodeURIComponent(projectId)}`);
+  if (!response.ok) throw new Error(`Project summary failed: HTTP ${response.status}`);
+  return (await response.json()) as ProjectSummary;
+}
+
+export async function fetchProjectLinks(projectId: string): Promise<ProjectLinks> {
+  const response = await authorizedFetch(`/api/v2/projects/${encodeURIComponent(projectId)}/links`);
+  if (!response.ok) throw new Error(`Project links failed: HTTP ${response.status}`);
+  return (await response.json()) as ProjectLinks;
+}
+
+export async function fetchProjectReadiness(
+  projectId: string,
+  evaluationAsOf: string,
+): Promise<ProjectReadiness> {
+  const response = await authorizedFetch(
+    `/api/v2/projects/${encodeURIComponent(projectId)}/readiness?evaluation_as_of=${encodeURIComponent(evaluationAsOf)}`,
+  );
+  if (!response.ok) throw new Error(`Project readiness failed: HTTP ${response.status}`);
+  return (await response.json()) as ProjectReadiness;
+}
+
+export async function downloadProjectPackage(
+  projectId: string,
+  evaluationAsOf: string,
+): Promise<void> {
+  await downloadApiResource(
+    `/api/v2/projects/${encodeURIComponent(projectId)}/package.zip?evaluation_as_of=${encodeURIComponent(evaluationAsOf)}`,
+    `${projectId}-package.zip`,
+  );
+}

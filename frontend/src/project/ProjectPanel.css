@@ -1,0 +1,83 @@
+.project-panel {
+  flex: 1;
+  overflow: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  font-size: 13px;
+}
+
+.project-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.project-panel-header h2 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.project-panel-header label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.project-panel-header input {
+  width: 260px;
+  padding: 4px 6px;
+  border: 1px solid var(--border, #cbd5e1);
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+}
+
+.project-panel-header button {
+  padding: 4px 10px;
+  border: 1px solid var(--border, #cbd5e1);
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.project-panel-error {
+  color: #dc2626;
+  margin: 0;
+}
+
+.project-readiness {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--border, #cbd5e1);
+  border-radius: 6px;
+}
+
+.project-readiness ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+
+.project-panel h3 {
+  margin: 0 0 6px;
+  font-size: 13px;
+}
+
+.project-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.project-table th,
+.project-table td {
+  text-align: left;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border, #e2e8f0);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}

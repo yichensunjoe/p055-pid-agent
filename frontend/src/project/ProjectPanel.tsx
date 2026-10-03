@@ -24,6 +24,15 @@ export function ProjectPanel() {
   const [asOf, setAsOf] = useState(defaultAsOf);
   const [error, setError] = useState("");
 
+  const downloadPackage = useCallback(async () => {
+    setError("");
+    try {
+      await downloadProjectPackage(DEFAULT_PROJECT_ID, asOf);
+    } catch (downloadError) {
+      setError(downloadError instanceof Error ? downloadError.message : String(downloadError));
+    }
+  }, [asOf]);
+
   const refresh = useCallback(async () => {
     setError("");
     try {
@@ -57,10 +66,7 @@ export function ProjectPanel() {
           />
         </label>
         <button type="button" onClick={() => void refresh()}>重新评估</button>
-        <button
-          type="button"
-          onClick={() => void downloadProjectPackage(DEFAULT_PROJECT_ID, asOf)}
-        >
+        <button type="button" onClick={() => void downloadPackage()}>
           下载项目交付包
         </button>
       </header>

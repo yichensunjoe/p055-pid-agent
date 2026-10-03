@@ -1243,6 +1243,10 @@ export default function App() {
             <div className="cable-workspace" data-testid="cable-workspace">
               <CablePanel />
             </div>
+          ) : domainMode === "project" ? (
+            <div className="project-workspace" data-testid="project-workspace">
+              <ProjectPanel />
+            </div>
           ) : state.document ? <>
             <div className="document-bar">
               <strong>{state.document.name}</strong>

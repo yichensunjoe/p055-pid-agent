@@ -169,7 +169,14 @@ class ProjectReadinessService:
                 issues.append(ProjectIssue(ISSUE_STALE_SOURCE, _SEVERITY[ISSUE_STALE_SOURCE], link_id))
             if target_stale:
                 issues.append(ProjectIssue(ISSUE_STALE_TARGET, _SEVERITY[ISSUE_STALE_TARGET], link_id))
-            if not source_stale and not self._segment_exists(source_id, str(row["source_object_ref"])):
+            if not source_stale and not self._source_reference_exists(
+                source_id,
+                str(row["source_object_ref"]),
+                str(row["source_endpoint"]),
+            ):
+                # D80-2 frozen definition: the source reference exists only
+                # when the segment exists in the CURRENT cable revision AND
+                # the endpoint is a legal 'from'/'to' for this relation.
                 issues.append(ProjectIssue(ISSUE_MISSING_SOURCE, _SEVERITY[ISSUE_MISSING_SOURCE], link_id))
             if not target_stale and not self._element_exists(target_id, str(row["target_object_ref"])):
                 issues.append(ProjectIssue(ISSUE_MISSING_TARGET, _SEVERITY[ISSUE_MISSING_TARGET], link_id))
@@ -264,7 +271,11 @@ class ProjectReadinessService:
             return False
         return stored.document.revision != int(row["pinned_target_revision"])
 
-    def _segment_exists(self, cable_id: str, segment_id: str) -> bool:
+    def _source_reference_exists(
+        self, cable_id: str, segment_id: str, endpoint: str
+    ) -> bool:
+        if endpoint not in ("from", "to"):
+            return False
         try:
             view = self._cable.load(cable_id)
         except Exception:

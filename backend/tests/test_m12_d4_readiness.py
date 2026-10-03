@@ -114,6 +114,7 @@ def _insert_link(
     *,
     source_id: str,
     source_ref: str = "SEG-1",
+    source_endpoint: str = "from",
     source_domain: str = "cable",
     target_id: str,
     target_ref: str = "PMP-101",
@@ -130,13 +131,14 @@ def _insert_link(
             " source_object_ref, source_endpoint, target_domain, target_document_id,"
             " target_object_ref, pinned_source_revision, pinned_target_revision,"
             " created_at, created_by, deleted_at, deleted_by"
-            ") VALUES (?, ?, 'cable_endpoint_equipment', ?, ?, ?, 'from', ?, ?, ?, ?, ?, ?, 'tester', ?, '')",
+            ") VALUES (?, ?, 'cable_endpoint_equipment', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'tester', ?, '')",
             (
                 link_id,
                 DEFAULT_PROJECT,
                 source_domain,
                 source_id,
                 source_ref,
+                source_endpoint,
                 target_domain,
                 target_id,
                 target_ref,
@@ -413,3 +415,25 @@ def test_profile_drift_propagates_into_project_hash(tmp_path: Path, monkeypatch)
     assert pid_after.readiness_hash != pid_before.readiness_hash
     assert cable_after.readiness_hash == cable_before.readiness_hash  # cable untouched
     assert drifted.result_hash != baseline.result_hash
+
+
+def test_missing_source_object_covers_illegal_endpoint_corruption(tmp_path: Path) -> None:
+    """D80-2 hard-lock: the frozen definition requires BOTH the segment in the
+    current cable revision AND a legal from/to endpoint. A corrupted row (an
+    endpoint the D3 write path would never store) must fail closed as
+    missing_source_object."""
+    plane = Plane(tmp_path, "corrupt_endpoint.db")
+    cable_id = _seed_cable_envelope(plane, "cab_ce")  # SEG-1 exists at r1
+    pid_id = _seed_pid(plane)
+    _insert_link(
+        plane,
+        "lnk_ce",
+        source_id=cable_id,
+        source_ref="SEG-1",  # segment exists…
+        source_endpoint="middle",  # …but the endpoint is not a legal from/to
+        target_id=pid_id,
+    )
+    result = plane.readiness.assess(project_id=DEFAULT_PROJECT, evaluation_as_of=AS_OF)
+    assert "missing_source_object" in _codes(result)
+    assert "stale_pinned_revision_source" not in _codes(result)
+    assert result.state == "not_eligible"

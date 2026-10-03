@@ -90,6 +90,17 @@ async function pidCurrentRevision(request, pidId: string): Promise<number> {
 }
 
 test.describe("M12-D5 project inspection surface", () => {
+  // The suite shares one SQLite database across specs; membership/link rows
+  // carry FK references that would make later specs' resetDocuments fail, so
+  // this spec cleans its own graph rows (registry/envelope leftovers cascade
+  // like the cable spec's, and are inert without membership/links).
+  test.afterEach(() => {
+    const database = new DatabaseSync(databasePath());
+    database.prepare("DELETE FROM engineering_links WHERE created_by = 'e2e'").run();
+    database.prepare("DELETE FROM project_documents WHERE added_by = 'e2e'").run();
+    database.close();
+  });
+
   test("members, links, readiness, stale refusal, re-pin recovery and byte parity", async ({
     page,
     request,

@@ -11,6 +11,7 @@ from uuid import uuid4
 
 from .audit_hash import GENESIS_HASH, compute_record_hash
 from .audit_models import AuditRecord, AuditRecordDraft
+from .cable_models import parse_cable_payload
 from .database_recovery import (
     database_instance_id as read_database_instance_id,
 )
@@ -880,6 +881,316 @@ class SQLiteDocumentStore:
                 raise
         return resolved_id
 
+    # --- M12-D3: engineering link persistence. The three commit_* methods are
+    # the ONLY link write paths: each re-validates every frozen invariant
+    # inside a BEGIN IMMEDIATE transaction (D79-2) and writes mutation +
+    # governance audit + tool-call closure + approval consumption + session
+    # closure atomically (D79-1). Early stable errors and preview live in
+    # EngineeringLinkService / the runtime adapter. ---
+
+    def document_domain(self, document_id: str) -> str | None:
+        """Registry domain of a registered document, or None. The registry is
+        the single source of domain truth (R77-Q1): membership never stores a
+        domain copy, so identity cannot drift."""
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT domain FROM documents_registry WHERE document_id = ?",
+                (document_id,),
+            ).fetchone()
+        return None if row is None else str(row[0])
+
+    def get_engineering_link(self, link_id: str) -> dict[str, Any] | None:
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM engineering_links WHERE link_id = ?", (link_id,)
+            ).fetchone()
+        if row is None:
+            return None
+        return dict(row)
+
+    def list_active_engineering_links(self, project_id: str) -> list[dict[str, Any]]:
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM engineering_links WHERE project_id = ? AND deleted_at = '' "
+                "ORDER BY link_id",
+                (project_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def _link_endpoint_facts(
+        self,
+        connection,
+        *,
+        project_id: str,
+        source_document_id: str,
+        source_object_ref: str,
+        source_endpoint: str,
+        target_document_id: str,
+        target_object_ref: str,
+        known_symbol_keys: frozenset[str],
+        instrument_symbol_keys: frozenset[str],
+        expected: tuple[int, int] | None = None,
+    ) -> tuple[int, int]:
+        """Frozen R77-Q2 invariants 1-4 + the equipment predicate, re-checked
+        on the WRITE connection so the check-then-write window cannot race
+        (D79-2). When ``expected`` is given (the approval-bound revisions), the
+        current revisions must match it exactly — approval against one state
+        can never commit onto another. Returns (current cable revision,
+        current pid revision)."""
+        domains = dict(
+            connection.execute(
+                "SELECT document_id, domain FROM documents_registry "
+                "WHERE document_id IN (?, ?)",
+                (source_document_id, target_document_id),
+            ).fetchall()
+        )
+        if domains.get(source_document_id) != "cable" or domains.get(target_document_id) != "pid":
+            raise ValueError("relation_orientation: source must be cable and target pid")
+        if source_endpoint not in ("from", "to"):
+            raise ValueError(f"invalid_endpoint: {source_endpoint!r}")
+        membership = connection.execute(
+            "SELECT COUNT(*) FROM project_documents WHERE project_id = ? "
+            "AND document_id IN (?, ?)",
+            (project_id, source_document_id, target_document_id),
+        ).fetchone()[0]
+        if membership != 2:
+            raise ValueError("not_in_project: both endpoints must be project members")
+        cable_row = connection.execute(
+            "SELECT revision, data_json FROM cable_documents WHERE document_id = ?",
+            (source_document_id,),
+        ).fetchone()
+        if cable_row is None:
+            raise ValueError(f"missing_source_object: cable document {source_document_id!r}")
+        cable_revision = int(cable_row["revision"])
+        cable_document = parse_cable_payload(
+            str(cable_row["data_json"]), envelope_revision=cable_revision
+        )
+        segment = next(
+            (s for s in cable_document.segments if s.id == source_object_ref), None
+        )
+        if segment is None:
+            raise ValueError(f"missing_source_object: segment {source_object_ref!r}")
+        pid_row = connection.execute(
+            "SELECT revision, data_json FROM documents WHERE id = ?",
+            (target_document_id,),
+        ).fetchone()
+        if pid_row is None:
+            raise ValueError(f"missing_target_object: pid document {target_document_id!r}")
+        pid_revision = int(pid_row["revision"])
+        pid_document = Document.model_validate(json.loads(str(pid_row["data_json"])))
+        element = next(
+            (e for e in pid_document.elements if e.id == target_object_ref), None
+        )
+        if element is None:
+            raise ValueError(f"missing_target_object: element {target_object_ref!r}")
+        symbol_key = getattr(element, "symbol_key", "")
+        if not symbol_key or symbol_key not in known_symbol_keys:
+            raise ValueError(f"target_not_equipment: symbol {symbol_key!r} unknown")
+        if symbol_key in instrument_symbol_keys:
+            raise ValueError(f"target_not_equipment: symbol {symbol_key!r} is an instrument")
+        if expected is not None and (cable_revision, pid_revision) != expected:
+            raise StoreRevisionConflictError(
+                "revision_conflict: approval-bound revisions "
+                f"{expected} but current is {(cable_revision, pid_revision)}"
+            )
+        return cable_revision, pid_revision
+
+    def commit_engineering_link_create(
+        self,
+        *,
+        link_id: str,
+        project_id: str,
+        relation_type: str,
+        source_document_id: str,
+        source_object_ref: str,
+        source_endpoint: str,
+        target_document_id: str,
+        target_object_ref: str,
+        known_symbol_keys: frozenset[str],
+        instrument_symbol_keys: frozenset[str],
+        expected: tuple[int, int],
+        created_by: str,
+        audit: AuditRecordDraft,
+        tool_call: ToolCallRecord,
+        approval: ToolApproval | None,
+        session: AgentSession,
+    ) -> tuple[int, int]:
+        """Atomic governed link creation (D79-1/D79-2): full in-transaction
+        invariant re-check, INSERT (active-endpoint uniqueness enforced by the
+        partial unique index), governance audit, tool-call closure, approval
+        consumption and session closure in one BEGIN IMMEDIATE. Any failure
+        rolls back everything. Returns the pinned (cable, pid) revisions."""
+        now = datetime.now(UTC).isoformat()
+        with self._lock, self._connect() as connection:
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                pins = self._link_endpoint_facts(
+                    connection,
+                    project_id=project_id,
+                    source_document_id=source_document_id,
+                    source_object_ref=source_object_ref,
+                    source_endpoint=source_endpoint,
+                    target_document_id=target_document_id,
+                    target_object_ref=target_object_ref,
+                    known_symbol_keys=known_symbol_keys,
+                    instrument_symbol_keys=instrument_symbol_keys,
+                    expected=expected,
+                )
+                try:
+                    connection.execute(
+                        "INSERT INTO engineering_links ("
+                        " link_id, project_id, relation_type, source_domain,"
+                        " source_document_id, source_object_ref, source_endpoint,"
+                        " target_domain, target_document_id, target_object_ref,"
+                        " pinned_source_revision, pinned_target_revision,"
+                        " created_at, created_by"
+                        ") VALUES (?, ?, ?, 'cable', ?, ?, ?, 'pid', ?, ?, ?, ?, ?, ?)",
+                        (
+                            link_id,
+                            project_id,
+                            relation_type,
+                            source_document_id,
+                            source_object_ref,
+                            source_endpoint,
+                            target_document_id,
+                            target_object_ref,
+                            pins[0],
+                            pins[1],
+                            now,
+                            created_by,
+                        ),
+                    )
+                except sqlite3.IntegrityError as exc:
+                    # R79-F3: ONLY the active-endpoint partial unique index may
+                    # map to endpoint conflict; any other constraint fault
+                    # keeps its real error instead of masquerading.
+                    message = str(exc)
+                    if (
+                        "UNIQUE constraint failed: engineering_links.relation_type,"
+                        in message
+                        and "engineering_links.source_endpoint" in message
+                    ):
+                        raise StoreDocumentConflictError(str(exc)) from exc
+                    raise
+                self._write_tool_call(connection, tool_call)
+                if approval is not None:
+                    self._write_tool_approval(connection, approval)
+                self._write_agent_session(connection, session)
+                self._append_audit_record(connection, audit)
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+        return pins
+
+    def commit_engineering_link_repin(
+        self,
+        *,
+        link_id: str,
+        known_symbol_keys: frozenset[str],
+        instrument_symbol_keys: frozenset[str],
+        expected: tuple[int, int],
+        audit: AuditRecordDraft,
+        tool_call: ToolCallRecord,
+        approval: ToolApproval | None,
+        session: AgentSession,
+    ) -> tuple[int, int]:
+        """Atomic governed re-pin: the link must be active; every invariant is
+        re-checked and pins re-derived from the CURRENT revisions inside the
+        write transaction (D79-2). Returns the new (cable, pid) pins."""
+        with self._lock, self._connect() as connection:
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                row = connection.execute(
+                    "SELECT * FROM engineering_links WHERE link_id = ? AND deleted_at = ''",
+                    (link_id,),
+                ).fetchone()
+                if row is None:
+                    raise StoreDocumentIdentityError(
+                        f"active link {link_id!r} not found"
+                    )
+                pins = self._link_endpoint_facts(
+                    connection,
+                    project_id=str(row["project_id"]),
+                    source_document_id=str(row["source_document_id"]),
+                    source_object_ref=str(row["source_object_ref"]),
+                    source_endpoint=str(row["source_endpoint"]),
+                    target_document_id=str(row["target_document_id"]),
+                    target_object_ref=str(row["target_object_ref"]),
+                    known_symbol_keys=known_symbol_keys,
+                    instrument_symbol_keys=instrument_symbol_keys,
+                    expected=expected,
+                )
+                connection.execute(
+                    "UPDATE engineering_links SET pinned_source_revision = ?, "
+                    "pinned_target_revision = ? WHERE link_id = ? AND deleted_at = ''",
+                    (pins[0], pins[1], link_id),
+                )
+                self._write_tool_call(connection, tool_call)
+                if approval is not None:
+                    self._write_tool_approval(connection, approval)
+                self._write_agent_session(connection, session)
+                self._append_audit_record(connection, audit)
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+        return pins
+
+    def commit_engineering_link_delete(
+        self,
+        *,
+        link_id: str,
+        deleted_by: str,
+        audit: AuditRecordDraft,
+        tool_call: ToolCallRecord,
+        approval: ToolApproval | None,
+        session: AgentSession,
+    ) -> None:
+        """Atomic governed soft delete (M12 has no hard delete)."""
+        now = datetime.now(UTC).isoformat()
+        with self._lock, self._connect() as connection:
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                cursor = connection.execute(
+                    "UPDATE engineering_links SET deleted_at = ?, deleted_by = ? "
+                    "WHERE link_id = ? AND deleted_at = ''",
+                    (now, deleted_by, link_id),
+                )
+                if cursor.rowcount != 1:
+                    raise StoreDocumentIdentityError(
+                        f"active link {link_id!r} not found"
+                    )
+                self._write_tool_call(connection, tool_call)
+                if approval is not None:
+                    self._write_tool_approval(connection, approval)
+                self._write_agent_session(connection, session)
+                self._append_audit_record(connection, audit)
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+
+    def engineering_link_failure_closeout(
+        self,
+        *,
+        tool_call: ToolCallRecord,
+        session: AgentSession,
+        audit: AuditRecordDraft,
+    ) -> None:
+        """Failure closeout (mirrors cable_failure_closeout): failed tool call
+        + session closure + refusal audit in one transaction — a refused link
+        mutation never leaves a successful audit or a half-closed harness."""
+        with self._lock, self._connect() as connection:
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                self._write_tool_call(connection, tool_call)
+                self._write_agent_session(connection, session)
+                self._append_audit_record(connection, audit)
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
 
     def get_cable_envelope(self, document_id: str) -> tuple[int, str] | None:
         """(revision, data_json) of one cable document, or None. Pure read of

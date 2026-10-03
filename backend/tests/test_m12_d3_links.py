@@ -1,0 +1,602 @@
+"""M12-D3 hard locks: cross-domain engineering links through the M10 runtime.
+
+Gate-frozen scope (M12-D3 CODE GO + D79-1/D79-2/D79-3):
+- the only link write paths are AgentHarnessRuntime-driven: neutral tool
+  definitions (permission=ask, risk=engineering_change), session / approval /
+  authorization bound, mutation + governance audit + tool-call closure +
+  approval consumption + session closure in ONE transaction;
+- every frozen invariant is re-checked inside the BEGIN IMMEDIATE write
+  transaction (TOCTOU fail-closed), including membership;
+- equipment predicate: target element exists in the current P&ID revision and
+  its symbol category is not the instrument category (canonical constant
+  imported from the M7 contract under a declared allow-list entry).
+
+Cable envelopes are SQL-seeded at a pinned revision (fixture pattern as in
+the M11-D4 e2e); the governed cable write path itself is M11-D2-tested.
+"""
+
+import json
+from datetime import UTC, datetime
+from pathlib import Path
+
+import pytest
+
+from agentcad.audit import AuditRecorder
+from agentcad.cable_service import CableService
+from agentcad.engineering_links import (
+    EngineeringLinkError,
+    EngineeringLinkService,
+)
+from agentcad.harness_models import (
+    ToolApprovalCreateRequest,
+    ToolApprovalResolveRequest,
+)
+from agentcad.m7_layout_contract import INSTRUMENT_SYMBOL_CATEGORY
+from agentcad.models import (
+    AddElementOperation,
+    CreateDocumentRequest,
+    SymbolElement,
+    TransactionRequest,
+)
+from agentcad.project_link_runtime import (
+    TOOL_CREATE_LINK,
+    TOOL_DELETE_LINK,
+    TOOL_REPIN_LINK,
+    ProjectLinkAuditAdapter,
+    ProjectLinkDomainAdapter,
+    ProjectLinkToolRegistry,
+)
+from agentcad.runtime.harness import AgentHarnessRuntime
+from agentcad.service import DocumentService
+from agentcad.store import SQLiteDocumentStore
+from agentcad.symbols import SymbolRegistry
+
+DEFAULT_PROJECT = "proj_m12default"
+
+
+class Plane:
+    def __init__(self, tmp_path: Path, name: str) -> None:
+        self.store = SQLiteDocumentStore(tmp_path / name)
+        self.service = DocumentService(self.store, SymbolRegistry())
+        self.cable = CableService(self.store)
+        self.links = EngineeringLinkService(self.store, self.service, self.cable)
+        self.recorder = AuditRecorder(store=self.store, symbols=SymbolRegistry())
+        self.runtime = AgentHarnessRuntime(
+            store=self.store,
+            registry=ProjectLinkToolRegistry(),
+            adapter=ProjectLinkDomainAdapter(self.links),
+            audit=ProjectLinkAuditAdapter(self.recorder),
+        )
+
+
+def _seed_cable_envelope(
+    plane: Plane, cable_id: str, segment_id: str = "SEG-1", revision: int = 1
+) -> str:
+    now = datetime.now(UTC).isoformat()
+    payload = json.dumps(
+        {
+            "schema": "pid-agent.cable-document/1",
+            "name": "cable",
+            "segments": [
+                {"id": segment_id, "from_node": "MCC-1", "to_node": "PMP-101"}
+            ],
+        }
+    )
+    with plane.store._connect() as connection:  # noqa: SLF001 - test fixture
+        connection.execute(
+            "INSERT INTO documents_registry (document_id, domain, created_at) "
+            "VALUES (?, 'cable', ?)",
+            (cable_id, now),
+        )
+        connection.execute(
+            "INSERT INTO cable_documents (document_id, revision, data_json, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (cable_id, revision, payload, now, now),
+        )
+        connection.commit()
+    plane.store.add_document_to_project(DEFAULT_PROJECT, cable_id, added_by="tester")
+    return cable_id
+
+
+def _bump_cable_revision(plane: Plane, cable_id: str, revision: int) -> None:
+    with plane.store._connect() as connection:  # noqa: SLF001 - test fixture
+        connection.execute(
+            "UPDATE cable_documents SET revision = ?, updated_at = ? WHERE document_id = ?",
+            (revision, datetime.now(UTC).isoformat(), cable_id),
+        )
+        connection.commit()
+
+
+def _seed_pid(plane: Plane, element_id: str, symbol_key: str) -> str:
+    document = plane.service.create_document(
+        CreateDocumentRequest(name="pid", width=800, height=600)
+    )
+    element = SymbolElement(
+        id=element_id,
+        symbol_key=symbol_key,
+        position={"x": 100, "y": 100},
+        width=60,
+        height=40,
+        label=element_id,
+    )
+    plane.service.apply_transaction(
+        document.id,
+        TransactionRequest(
+            expected_revision=0,
+            label="seed element",
+            operations=[AddElementOperation(element=element)],
+        ),
+    )
+    plane.store.add_document_to_project(DEFAULT_PROJECT, document.id, added_by="tester")
+    return document.id
+
+
+def _governed(plane: Plane, tool_name: str, binding_document_id: str, intent: dict, base_revision: int):
+    """Full M10 runtime flow: session -> approval -> authorization -> execution."""
+    session = plane.runtime.ensure_session(binding_document_id, actor="engineer")
+    approval = plane.runtime.request_approval(
+        session.id,
+        ToolApprovalCreateRequest(
+            tool_name=tool_name,
+            document_id=binding_document_id,
+            intent=intent,
+            requested_by="engineer",
+        ),
+    )
+    plane.runtime.resolve_approval(
+        approval.id, ToolApprovalResolveRequest(approved=True, actor="operator")
+    )
+    authorized = plane.runtime.authorize(
+        session_id=session.id,
+        tool_name=tool_name,
+        document_id=binding_document_id,
+        intent=intent,
+        approval_id=approval.id,
+        base_revision=base_revision,
+    )
+    return plane.runtime.apply_authorized(authorized, binding_document_id, intent)
+
+
+def _create_intent(cable_id: str, pid_id: str, segment: str = "SEG-1", endpoint: str = "from", target: str = "PMP-101") -> dict:
+    return {
+        "project_id": DEFAULT_PROJECT,
+        "source_document_id": cable_id,
+        "source_object_ref": segment,
+        "source_endpoint": endpoint,
+        "target_document_id": pid_id,
+        "target_object_ref": target,
+    }
+
+
+def _make_linked(tmp_path: Path, name: str = "ok.db"):
+    plane = Plane(tmp_path, name)
+    cable_id = _seed_cable_envelope(plane, "cab_test1")
+    pid_id = _seed_pid(plane, "PMP-101", "agitator")
+    outcome = _governed(plane, TOOL_CREATE_LINK, cable_id, _create_intent(cable_id, pid_id), 1)
+    return plane, cable_id, pid_id, outcome.payload["link_id"]
+
+
+def _rejected_events(plane: Plane) -> list[str]:
+    return [
+        record.error_code
+        for record in plane.recorder.store.all_audit_records()
+        if record.event_type == "engineering_link.rejected"
+    ]
+
+
+def test_create_link_via_runtime_pins_current_and_closes_harness(tmp_path: Path) -> None:
+    plane, cable_id, pid_id, link_id = _make_linked(tmp_path)
+    view = plane.links.get_link(link_id)
+    assert view is not None
+    assert (view.pinned_source_revision, view.pinned_target_revision) == (1, 1)
+    assert [link.link_id for link in plane.links.list_active_links(DEFAULT_PROJECT)] == [link_id]
+    events = plane.recorder.store.all_audit_records()
+    created = [e for e in events if e.event_type == "engineering_link.created"]
+    assert len(created) == 1
+    assert created[0].session_id and created[0].approval_id and created[0].tool_call_id
+    assert created[0].project_id == DEFAULT_PROJECT
+    assert plane.recorder.verify_chain().ok
+
+
+@pytest.mark.parametrize(
+    ("intent_patch", "code"),
+    [
+        ({"source_endpoint": "middle"}, "invalid_endpoint"),
+        ({"source_object_ref": "NOPE"}, "missing_source_object"),
+        ({"target_object_ref": "NOPE"}, "missing_target_object"),
+    ],
+)
+def test_create_invariants_fail_closed_via_runtime(tmp_path: Path, intent_patch, code) -> None:
+    plane = Plane(tmp_path, f"inv_{code}.db")
+    cable_id = _seed_cable_envelope(plane, "cab_inv")
+    pid_id = _seed_pid(plane, "PMP-101", "agitator")
+    intent = _create_intent(cable_id, pid_id)
+    intent.update(intent_patch)
+    with pytest.raises(EngineeringLinkError) as exc_info:
+        _governed(plane, TOOL_CREATE_LINK, cable_id, intent, 1)
+    assert exc_info.value.code == code
+    assert plane.links.list_active_links(DEFAULT_PROJECT) == []
+    # refusal lands before any approval is consumed: no link-plane events
+    events = [e.event_type for e in plane.recorder.store.all_audit_records()]
+    assert not any(e.startswith("engineering_link.") for e in events)
+    assert plane.recorder.verify_chain().ok
+
+
+def test_relation_orientation_fail_closed(tmp_path: Path) -> None:
+    plane = Plane(tmp_path, "orient.db")
+    cable_id = _seed_cable_envelope(plane, "cab_orient")
+    pid_id = _seed_pid(plane, "PMP-101", "agitator")
+    intent = {
+        "project_id": DEFAULT_PROJECT,
+        "source_document_id": pid_id,  # pid as source: forbidden
+        "source_object_ref": "PMP-101",
+        "source_endpoint": "from",
+        "target_document_id": cable_id,
+        "target_object_ref": "SEG-1",
+    }
+    with pytest.raises(EngineeringLinkError) as exc_info:
+        _governed(plane, TOOL_CREATE_LINK, cable_id, intent, 1)
+    assert exc_info.value.code == "relation_orientation"
+    assert plane.links.list_active_links(DEFAULT_PROJECT) == []
+
+
+def test_cross_project_membership_fail_closed(tmp_path: Path) -> None:
+    plane = Plane(tmp_path, "members.db")
+    cable_id = _seed_cable_envelope(plane, "cab_members")
+    other_pid = plane.service.create_document(CreateDocumentRequest(name="other", width=10, height=10))
+    intent = _create_intent(cable_id, other_pid.id, target="EL-1")
+    with pytest.raises(EngineeringLinkError) as exc_info:
+        _governed(plane, TOOL_CREATE_LINK, cable_id, intent, 1)
+    assert exc_info.value.code == "target_not_in_project"
+
+
+def test_membership_removal_between_authorize_and_apply_fails_closed(tmp_path: Path) -> None:
+    """D79-2: the write transaction re-checks membership; a removal that lands
+    after authorization cannot slip a link in."""
+    plane = Plane(tmp_path, "race.db")
+    cable_id = _seed_cable_envelope(plane, "cab_race")
+    pid_id = _seed_pid(plane, "PMP-101", "agitator")
+    intent = _create_intent(cable_id, pid_id)
+    session = plane.runtime.ensure_session(cable_id, actor="engineer")
+    approval = plane.runtime.request_approval(
+        session.id,
+        ToolApprovalCreateRequest(
+            tool_name=TOOL_CREATE_LINK,
+            document_id=cable_id,
+            intent=intent,
+            requested_by="engineer",
+        ),
+    )
+    plane.runtime.resolve_approval(
+        approval.id, ToolApprovalResolveRequest(approved=True, actor="operator")
+    )
+    authorized = plane.runtime.authorize(
+        session_id=session.id,
+        tool_name=TOOL_CREATE_LINK,
+        document_id=cable_id,
+        intent=intent,
+        approval_id=approval.id,
+        base_revision=1,
+    )
+    plane.store.remove_document_from_project(DEFAULT_PROJECT, pid_id)
+    with pytest.raises(EngineeringLinkError) as exc_info:
+        plane.runtime.apply_authorized(authorized, cable_id, intent)
+    assert exc_info.value.code == "target_not_in_project"
+    assert plane.links.list_active_links(DEFAULT_PROJECT) == []
+    assert "target_not_in_project" in _rejected_events(plane)
+    assert plane.recorder.verify_chain().ok
+
+
+def test_membership_removal_hits_the_transaction_gate(tmp_path: Path, monkeypatch) -> None:
+    """D79-2: with the read-layer checks bypassed, the store's in-transaction
+    membership re-check is the gate that refuses — proving the window between
+    preview and BEGIN cannot slip a link in."""
+    plane = Plane(tmp_path, "txn_gate.db")
+    cable_id = _seed_cable_envelope(plane, "cab_gate")
+    pid_id = _seed_pid(plane, "PMP-101", "agitator")
+    intent = _create_intent(cable_id, pid_id)
+    monkeypatch.setattr(plane.links, "resolve_current_pins", lambda intent: (1, 1))
+    monkeypatch.setattr(plane.links, "preview_create", lambda intent: None)
+    session = plane.runtime.ensure_session(cable_id, actor="engineer")
+    approval = plane.runtime.request_approval(
+        session.id,
+        ToolApprovalCreateRequest(
+            tool_name=TOOL_CREATE_LINK,
+            document_id=cable_id,
+            intent=intent,
+            requested_by="engineer",
+        ),
+    )
+    plane.runtime.resolve_approval(
+        approval.id, ToolApprovalResolveRequest(approved=True, actor="operator")
+    )
+    authorized = plane.runtime.authorize(
+        session_id=session.id,
+        tool_name=TOOL_CREATE_LINK,
+        document_id=cable_id,
+        intent=intent,
+        approval_id=approval.id,
+        base_revision=1,
+    )
+    plane.store.remove_document_from_project(DEFAULT_PROJECT, pid_id)
+    with pytest.raises(ValueError, match="not_in_project"):
+        plane.runtime.apply_authorized(authorized, cable_id, intent)
+    assert plane.links.list_active_links(DEFAULT_PROJECT) == []
+    assert "not_in_project" in _rejected_events(plane)
+    assert plane.recorder.verify_chain().ok
+
+
+def test_equipment_predicate_rejects_instrument_fail_closed(tmp_path: Path) -> None:
+    plane = Plane(tmp_path, "instr.db")
+    cable_id = _seed_cable_envelope(plane, "cab_instr")
+    pid_id = _seed_pid(plane, "AI-1001", "analyzer_indicator")
+    with pytest.raises(EngineeringLinkError) as exc_info:
+        _governed(plane, TOOL_CREATE_LINK, cable_id, _create_intent(cable_id, pid_id, target="AI-1001"), 1)
+    assert exc_info.value.code == "target_not_equipment"
+    assert plane.links.list_active_links(DEFAULT_PROJECT) == []
+
+
+def test_active_endpoint_uniqueness_fail_closed(tmp_path: Path) -> None:
+    plane, cable_id, _pid_id, first = _make_linked(tmp_path, "unique.db")
+    pid_two = _seed_pid(plane, "PMP-102", "agitator")
+    with pytest.raises(EngineeringLinkError) as exc_info:
+        _governed(
+            plane,
+            TOOL_CREATE_LINK,
+            cable_id,
+            _create_intent(cable_id, pid_two, target="PMP-102"),
+            1,
+        )
+    assert exc_info.value.code == "endpoint_already_connected"
+    assert "endpoint_already_connected" in _rejected_events(plane)
+    # the other endpoint of the same segment remains free
+    outcome = _governed(
+        plane,
+        TOOL_CREATE_LINK,
+        cable_id,
+        _create_intent(cable_id, pid_two, endpoint="to", target="PMP-102"),
+        1,
+    )
+    assert outcome.payload["link_id"] != first
+
+
+def test_repin_via_runtime_advances_pins_and_closes_harness(tmp_path: Path) -> None:
+    plane, cable_id, _pid_id, link_id = _make_linked(tmp_path, "repin.db")
+    _bump_cable_revision(plane, cable_id, 2)
+    outcome = _governed(plane, TOOL_REPIN_LINK, cable_id, {"link_id": link_id}, 2)
+    assert (outcome.payload["pinned_source_revision"], outcome.payload["pinned_target_revision"]) == (2, 1)
+    events = plane.recorder.store.all_audit_records()
+    assert len([e for e in events if e.event_type == "engineering_link.repinned"]) == 1
+    assert plane.recorder.verify_chain().ok
+
+
+def test_soft_delete_via_runtime_and_double_delete_fail_closed(tmp_path: Path) -> None:
+    plane, cable_id, _pid_id, link_id = _make_linked(tmp_path, "delete.db")
+    outcome = _governed(plane, TOOL_DELETE_LINK, cable_id, {"link_id": link_id}, 1)
+    assert outcome.payload["deleted"] is True
+    view = plane.links.get_link(link_id)
+    assert view is not None and view.deleted is True
+    assert plane.links.list_active_links(DEFAULT_PROJECT) == []
+    with pytest.raises(EngineeringLinkError) as exc_info:
+        _governed(plane, TOOL_DELETE_LINK, cable_id, {"link_id": link_id}, 1)
+    assert exc_info.value.code == "link_already_deleted"
+    events = plane.recorder.store.all_audit_records()
+    assert len([e for e in events if e.event_type == "engineering_link.deleted"]) == 1
+    assert plane.recorder.verify_chain().ok
+
+
+def test_link_mutations_grow_audit_chain_with_bound_provenance(tmp_path: Path) -> None:
+    plane, cable_id, _pid_id, link_id = _make_linked(tmp_path, "audit.db")
+    _bump_cable_revision(plane, cable_id, 2)
+    _governed(plane, TOOL_REPIN_LINK, cable_id, {"link_id": link_id}, 2)
+    _governed(plane, TOOL_DELETE_LINK, cable_id, {"link_id": link_id}, 2)
+    assert plane.recorder.verify_chain().ok
+    events = plane.recorder.store.all_audit_records()
+    for event_type, count in (
+        ("engineering_link.created", 1),
+        ("engineering_link.repinned", 1),
+        ("engineering_link.deleted", 1),
+    ):
+        matched = [e for e in events if e.event_type == event_type]
+        assert len(matched) == count
+        assert all(e.session_id and e.approval_id and e.tool_call_id for e in matched)
+
+
+def test_instrument_keyset_matches_contract_category(tmp_path: Path) -> None:
+    """D79-3: the local predicate constant and the service's instrument
+    keyset track the canonical M7 contract category exactly; the module keeps
+    its no-import discipline (textual test in test_m7_layout_contract)."""
+    from agentcad.engineering_links import EQUIPMENT_PREDICATE_INSTRUMENT_CATEGORY
+
+    plane = Plane(tmp_path, "keyset.db")
+    symbols = plane.service.symbols._symbols  # noqa: SLF001 - test assertion
+    expected = frozenset(
+        key for key, symbol in symbols.items() if symbol.category == INSTRUMENT_SYMBOL_CATEGORY
+    )
+    assert EQUIPMENT_PREDICATE_INSTRUMENT_CATEGORY == INSTRUMENT_SYMBOL_CATEGORY
+    assert plane.links._instrument_symbol_keys == expected  # noqa: SLF001
+    assert "analyzer_indicator" in expected
+
+
+def test_create_wrong_document_binding_fail_closed(tmp_path: Path) -> None:
+    """D79-1: authorization bound to cable A cannot create a link whose real
+    source is cable B."""
+    plane = Plane(tmp_path, "bind_create.db")
+    _seed_cable_envelope(plane, "cab_a")
+    cable_b = _seed_cable_envelope(plane, "cab_b")
+    pid_id = _seed_pid(plane, "PMP-101", "agitator")
+    intent = _create_intent(cable_b, pid_id)
+    with pytest.raises(EngineeringLinkError) as exc_info:
+        _governed(plane, TOOL_CREATE_LINK, "cab_a", intent, 1)  # bound to cab_a
+    assert exc_info.value.code == "document_binding_mismatch"
+    assert "document_binding_mismatch" in _rejected_events(plane)
+    assert plane.links.list_active_links(DEFAULT_PROJECT) == []
+    assert plane.recorder.verify_chain().ok
+
+
+def test_repin_wrong_document_binding_fail_closed(tmp_path: Path) -> None:
+    plane, _cable_id, _pid_id, link_id = _make_linked(tmp_path, "bind_repin.db")
+    _seed_cable_envelope(plane, "cab_other")
+    with pytest.raises(EngineeringLinkError) as exc_info:
+        _governed(plane, TOOL_REPIN_LINK, "cab_other", {"link_id": link_id}, 1)
+    assert exc_info.value.code == "document_binding_mismatch"
+    assert "document_binding_mismatch" in _rejected_events(plane)
+    assert plane.links.get_link(link_id).deleted is False  # type: ignore[union-attr]
+    assert plane.recorder.verify_chain().ok
+
+
+def test_state_change_after_approval_conflicts_fail_closed(tmp_path: Path) -> None:
+    """D79-2: approval binds one exact state; an endpoint revision advancing
+    before apply must produce a stable revision_conflict with zero mutation."""
+    plane, cable_id, _pid_id, link_id = _make_linked(tmp_path, "conflict.db")
+    session = plane.runtime.ensure_session(cable_id, actor="engineer")
+    approval = plane.runtime.request_approval(
+        session.id,
+        ToolApprovalCreateRequest(
+            tool_name=TOOL_REPIN_LINK,
+            document_id=cable_id,
+            intent={"link_id": link_id},
+            requested_by="engineer",
+        ),
+    )
+    plane.runtime.resolve_approval(
+        approval.id, ToolApprovalResolveRequest(approved=True, actor="operator")
+    )
+    authorized = plane.runtime.authorize(
+        session_id=session.id,
+        tool_name=TOOL_REPIN_LINK,
+        document_id=cable_id,
+        intent={"link_id": link_id},
+        approval_id=approval.id,
+        base_revision=1,
+    )
+    _bump_cable_revision(plane, cable_id, 2)  # state moves after authorization
+    with pytest.raises(EngineeringLinkError) as exc_info:
+        plane.runtime.apply_authorized(authorized, cable_id, {"link_id": link_id})
+    assert exc_info.value.code == "revision_conflict"
+    assert "revision_conflict" in _rejected_events(plane)
+    view = plane.links.get_link(link_id)
+    assert view is not None and view.pinned_source_revision == 1  # zero mutation
+    assert plane.recorder.verify_chain().ok
+
+
+def test_delete_recovers_a_stale_link_after_target_element_removed(tmp_path: Path) -> None:
+    """R79-F1: soft-delete is the recovery path for stale links — it must not
+    re-validate the link's current semantic state."""
+    plane, cable_id, pid_id, link_id = _make_linked(tmp_path, "stale_delete.db")
+    document = plane.service.get_document(pid_id)
+    plane.service.apply_transaction(
+        pid_id,
+        TransactionRequest(
+            expected_revision=document.revision,
+            label="remove target element",
+            operations=[
+                __import__(
+                    "agentcad.models", fromlist=["DeleteElementOperation"]
+                ).DeleteElementOperation(element_id="PMP-101")
+            ],
+        ),
+    )
+    # the link is now dangling; deleting it must still be possible
+    outcome = _governed(plane, TOOL_DELETE_LINK, cable_id, {"link_id": link_id}, 1)
+    assert outcome.payload["deleted"] is True
+    assert plane.links.get_link(link_id).deleted is True  # type: ignore[union-attr]
+    assert plane.recorder.verify_chain().ok
+
+
+def test_authorized_repin_after_link_deleted_fails_closed_with_closeout(tmp_path: Path) -> None:
+    """R79-F2: an authorization that races a soft-delete fails closed with a
+    stable code, failed tool call, failed session and exactly one rejected
+    audit — never a half-open harness."""
+    plane, cable_id, _pid_id, link_id = _make_linked(tmp_path, "race_repin.db")
+    session = plane.runtime.ensure_session(cable_id, actor="engineer")
+    approval = plane.runtime.request_approval(
+        session.id,
+        ToolApprovalCreateRequest(
+            tool_name=TOOL_REPIN_LINK,
+            document_id=cable_id,
+            intent={"link_id": link_id},
+            requested_by="engineer",
+        ),
+    )
+    plane.runtime.resolve_approval(
+        approval.id, ToolApprovalResolveRequest(approved=True, actor="operator")
+    )
+    authorized = plane.runtime.authorize(
+        session_id=session.id,
+        tool_name=TOOL_REPIN_LINK,
+        document_id=cable_id,
+        intent={"link_id": link_id},
+        approval_id=approval.id,
+        base_revision=1,
+    )
+    # the link goes away between authorization and application
+    _governed(plane, TOOL_DELETE_LINK, cable_id, {"link_id": link_id}, 1)
+    with pytest.raises(EngineeringLinkError) as exc_info:
+        plane.runtime.apply_authorized(authorized, cable_id, {"link_id": link_id})
+    assert exc_info.value.code == "link_already_deleted"
+    rejected = [
+        record
+        for record in plane.recorder.store.all_audit_records()
+        if record.event_type == "engineering_link.rejected"
+    ]
+    assert [record.error_code for record in rejected] == ["link_already_deleted"]
+    assert plane.recorder.verify_chain().ok
+
+
+def test_non_endpoint_constraint_fault_keeps_its_real_error(tmp_path: Path) -> None:
+    """R79-F3: only the active-endpoint partial unique index maps to
+    endpoint_already_connected; a primary-key conflict keeps its real
+    sqlite error instead of masquerading."""
+    import sqlite3
+
+    from agentcad.audit_models import AuditRecordDraft
+    from agentcad.harness_models import AgentSession, ToolCallRecord
+    from agentcad.store import StoreDocumentConflictError
+
+    plane, cable_id, pid_id, link_id = _make_linked(tmp_path, "pk_conflict.db")
+    session = AgentSession(document_id=cable_id, actor="tester", start_revision=1)
+    tool_call = ToolCallRecord(
+        session_id=session.id,
+        tool_name="create_engineering_link",
+        document_id=cable_id,
+        permission="ask",
+        risk="engineering_change",
+        intent_hash="h",
+    )
+    audit = AuditRecordDraft(
+        event_type="engineering_link.created",
+        actor="tester",
+        surface="internal",
+        tool_name="create_engineering_link",
+    )
+
+    def attempt(new_link_id: str, endpoint: str, target_ref: str) -> None:
+        plane.store.commit_engineering_link_create(
+            link_id=new_link_id,
+            project_id=DEFAULT_PROJECT,
+            relation_type="cable_endpoint_equipment",
+            source_document_id=cable_id,
+            source_object_ref="SEG-1",
+            source_endpoint=endpoint,
+            target_document_id=pid_id,
+            target_object_ref=target_ref,
+            known_symbol_keys=plane.links._known_symbol_keys,  # noqa: SLF001
+            instrument_symbol_keys=plane.links._instrument_symbol_keys,  # noqa: SLF001
+            expected=(1, 1),
+            created_by="tester",
+            audit=audit,
+            tool_call=tool_call,
+            approval=None,
+            session=session,
+        )
+
+    with pytest.raises(sqlite3.IntegrityError) as exc_info:
+        # duplicate PK + a free endpoint: the PRIMARY KEY conflict must keep
+        # its real error instead of masquerading as an endpoint conflict
+        attempt(link_id, "to", "PMP-101")
+    assert "engineering_links.source_endpoint" not in str(exc_info.value)
+    with pytest.raises(StoreDocumentConflictError):
+        # fresh PK but the 'from' endpoint is already taken: only NOW the
+        # partial unique index fires and maps to the endpoint conflict
+        attempt("lnk_fresh", "from", "PMP-101")

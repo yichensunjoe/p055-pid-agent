@@ -159,3 +159,29 @@ test("shared deployment protects the Cable surface with the same token boundary"
     Buffer.from(await authedExport.body()),
   );
 });
+
+
+// M12-D5: the project inspection surface rides the same shared-mode token
+// boundary as every other route — anonymous probes are rejected, never
+// bypassed.
+test("shared deployment protects the project inspection surface", async ({ request }) => {
+  const base = `${API}/projects/proj_m12default`;
+  for (const path of [
+    `${base}`,
+    `${base}/links`,
+    `${base}/readiness?evaluation_as_of=${encodeURIComponent("2026-10-03T12:00:00+00:00")}`,
+    `${base}/package.zip?evaluation_as_of=${encodeURIComponent("2026-10-03T12:00:00+00:00")}`,
+  ]) {
+    const anonymous = await request.get(path);
+    expect(anonymous.status(), path).toBe(401);
+  }
+
+  // with a token the read surface actually works
+  const summary = await request.get(base, { headers: authorization });
+  expect(summary.status()).toBe(200);
+  const readiness = await request.get(
+    `${base}/readiness?evaluation_as_of=${encodeURIComponent("2026-10-03T12:00:00+00:00")}`,
+    { headers: authorization },
+  );
+  expect(readiness.status()).toBe(200);
+});

@@ -18,6 +18,7 @@ import { EngineeringGraphPanel } from "./editor/EngineeringGraphPanel";
 import { EngineeringReportPanel } from "./editor/EngineeringReportPanel";
 import { ValidationPanel } from "./editor/ValidationPanel";
 import { CablePanel } from "./cable/CablePanel";
+import { ProjectPanel } from "./project/ProjectPanel";
 import { ReviewPanel } from "./editor/ReviewPanel";
 import { ViewNavigator } from "./editor/ViewNavigator";
 import { elementPaletteCommands, type PaletteCommand } from "./editor/paletteCommands";
@@ -161,7 +162,7 @@ export default function App() {
   const preferences = useEditorPreferences();
   const resolvedAppearance = useResolvedAppearance();
   const shortcutMap = useMemo(() => resolvedShortcutMap(preferences.shortcutOverrides), [preferences.shortcutOverrides]);
-  const [domainMode, setDomainMode] = useState<"pid" | "cable">("pid");
+  const [domainMode, setDomainMode] = useState<"pid" | "cable" | "project">("pid");
   const [prompt, setPrompt] = useState("");
   const [context, setContext] = useState("");
   const [referenceImages, setReferenceImages] = useState<VisionAttachment[]>([]);
@@ -1236,10 +1237,15 @@ export default function App() {
           <div className="domain-tabs" role="tablist" aria-label="工程域">
             <button type="button" role="tab" aria-selected={domainMode === "pid"} className={domainMode === "pid" ? "active" : ""} onClick={() => setDomainMode("pid")}>P&ID</button>
             <button type="button" role="tab" aria-selected={domainMode === "cable"} className={domainMode === "cable" ? "active" : ""} onClick={() => setDomainMode("cable")}>线缆</button>
+            <button type="button" role="tab" aria-selected={domainMode === "project"} className={domainMode === "project" ? "active" : ""} onClick={() => setDomainMode("project")}>项目</button>
           </div>
           {domainMode === "cable" ? (
             <div className="cable-workspace" data-testid="cable-workspace">
               <CablePanel />
+            </div>
+          ) : domainMode === "project" ? (
+            <div className="project-workspace" data-testid="project-workspace">
+              <ProjectPanel />
             </div>
           ) : state.document ? <>
             <div className="document-bar">

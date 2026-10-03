@@ -93,7 +93,8 @@
   断言通过（第三 domain tab 属冻结 app-shell 变化的机械性更新）。
 - 性能对账（PERFORMANCE EVIDENCE METHOD AMENDMENT，Gate 已批）：采用同一 GitHub Backend
   workflow / Python 3.11 / pytest 命令的 exact logs 对比——pre-M12 基线 274.87s（run
-  36791335881）→ D5 exact-head run（见下）：约 -15%，≤ +10% 预算内（阈值未放宽）。
+  36791335881，1754 passed）→ D5 exact-head run 37133970220（242.14s，1808 passed）：
+  约 -11.9%，≤ +10% 预算内（阈值未放宽）。
 
 ## 治理与遗留
 

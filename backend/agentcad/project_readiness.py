@@ -98,6 +98,14 @@ class ProjectReadiness:
     profile_fingerprint: str = PROFILE_FINGERPRINT
 
 
+class ProjectReadinessError(RuntimeError):
+    """Fail-closed assessment refusal with a stable machine-readable code."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(f"[{code}] {message}")
+        self.code = code
+
+
 class ProjectReadinessService:
     """Deterministic, read-only project readiness assessor."""
 
@@ -114,6 +122,12 @@ class ProjectReadinessService:
     def assess(self, *, project_id: str, evaluation_as_of: datetime) -> ProjectReadiness:
         if evaluation_as_of.tzinfo is None:
             raise ValueError("evaluation_as_of must be timezone-aware")
+        if self._store.get_project(project_id) is None:
+            # D80-3: a nonexistent Project Graph must fail closed — never
+            # grade an empty member/link set as an eligible deliverable.
+            raise ProjectReadinessError(
+                "project_not_found", f"project {project_id!r} does not exist"
+            )
 
         members = self._member_snapshots(project_id, evaluation_as_of)
         member_ids = {snapshot.document_id for snapshot in members}
@@ -136,9 +150,14 @@ class ProjectReadinessService:
                 issues.append(ProjectIssue(ISSUE_DANGLING_SOURCE, _SEVERITY[ISSUE_DANGLING_SOURCE], link_id))
             if target_id not in member_ids:
                 issues.append(ProjectIssue(ISSUE_DANGLING_TARGET, _SEVERITY[ISSUE_DANGLING_TARGET], link_id))
-            source_domain = self._store.document_domain(source_id)
-            target_domain = self._store.document_domain(target_id)
-            if source_domain != "cable" or target_domain != "pid":
+            # D80-1 frozen definition: the finding fires when the link row's
+            # DECLARED domain drifts from the registry's actual domain — the
+            # registry is the only source of domain truth (R77-Q1).
+            declared_source = str(row["source_domain"])
+            declared_target = str(row["target_domain"])
+            registry_source = self._store.document_domain(source_id)
+            registry_target = self._store.document_domain(target_id)
+            if declared_source != registry_source or declared_target != registry_target:
                 issues.append(ProjectIssue(ISSUE_WRONG_DOMAIN, _SEVERITY[ISSUE_WRONG_DOMAIN], link_id))
 
             # Stale FIRST: once an endpoint's pinned revision is behind, only

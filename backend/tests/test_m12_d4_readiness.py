@@ -53,6 +53,7 @@ def _seed_cable_envelope(
     segment_id: str = "SEG-1",
     revision: int = 1,
     with_segment: bool = True,
+    member: bool = True,
 ) -> str:
     now = datetime.now(UTC).isoformat()
     segments = [{"id": segment_id, "from_node": "MCC-1", "to_node": "PMP-101"}] if with_segment else []
@@ -71,7 +72,8 @@ def _seed_cable_envelope(
             (cable_id, revision, payload, now, now),
         )
         connection.commit()
-    plane.store.add_document_to_project(DEFAULT_PROJECT, cable_id, added_by="tester")
+    if member:
+        plane.store.add_document_to_project(DEFAULT_PROJECT, cable_id, added_by="tester")
     return cable_id
 
 
@@ -275,3 +277,139 @@ def test_member_readiness_aggregation_cable_not_eligible(tmp_path: Path) -> None
     cable_member = next(m for m in result.members if m.document_id == cable_id)
     assert cable_member.state == "not_eligible"
     assert result.state == "not_eligible"
+
+
+def test_dangling_source_positive(tmp_path: Path) -> None:
+    """Frozen-matrix positive coverage: dangling_link_source."""
+    plane = Plane(tmp_path, "dangle_src.db")
+    _seed_cable_envelope(plane, "cab_unaffiliated", member=False)  # registered, NOT a member
+    pid_id = _seed_pid(plane)
+    _insert_link(plane, "lnk_ds", source_id="cab_unaffiliated", target_id=pid_id)
+    result = plane.readiness.assess(project_id=DEFAULT_PROJECT, evaluation_as_of=AS_OF)
+    assert "dangling_link_source" in _codes(result)
+    assert result.state == "not_eligible"
+
+
+def test_missing_source_object_positive(tmp_path: Path) -> None:
+    """Frozen-matrix positive coverage: missing_source_object at the CURRENT
+    cable revision (pins are current, the segment simply does not exist)."""
+    plane = Plane(tmp_path, "missing_src.db")
+    cable_id = _seed_cable_envelope(plane, "cab_ms")
+    pid_id = _seed_pid(plane)
+    _insert_link(plane, "lnk_ms", source_id=cable_id, source_ref="NOPE", target_id=pid_id)
+    result = plane.readiness.assess(project_id=DEFAULT_PROJECT, evaluation_as_of=AS_OF)
+    assert "missing_source_object" in _codes(result)
+    assert "stale_pinned_revision_source" not in _codes(result)
+    assert result.state == "not_eligible"
+
+
+def test_stale_target_positive_reports_only_stale(tmp_path: Path) -> None:
+    """Frozen-matrix positive coverage: stale_pinned_revision_target."""
+    plane = Plane(tmp_path, "stale_tgt.db")
+    cable_id = _seed_cable_envelope(plane, "cab_st")
+    pid_id = _seed_pid(plane)
+    _insert_link(plane, "lnk_st", source_id=cable_id, target_id=pid_id, pinned_target=1)
+    # advance the pid document so the pinned target revision is behind
+    document = plane.service.get_document(pid_id)
+    plane.service.apply_transaction(
+        pid_id,
+        TransactionRequest(
+            expected_revision=document.revision,
+            label="touch revision",
+            operations=[
+                AddElementOperation(
+                    element=SymbolElement(
+                        id="PMP-102",
+                        symbol_key="agitator",
+                        position={"x": 300, "y": 100},
+                        width=60,
+                        height=40,
+                        label="PMP-102",
+                    )
+                )
+            ],
+        ),
+    )
+    result = plane.readiness.assess(project_id=DEFAULT_PROJECT, evaluation_as_of=AS_OF)
+    assert "stale_pinned_revision_target" in _codes(result)
+    assert "missing_target_object" not in _codes(result)
+    assert result.state == "not_eligible"
+
+
+def test_wrong_domain_isolated_declaration_vs_registry(tmp_path: Path) -> None:
+    """D80-1: wrong_domain_reference fires exactly when the link row's DECLARED
+    domain drifts from the registry's actual domain — not merely when a
+    semantically odd link exists."""
+    plane = Plane(tmp_path, "wd_iso.db")
+    cable_id = _seed_cable_envelope(plane, "cab_wi")
+    pid_id = _seed_pid(plane)
+    # honest link: declaration matches registry truth -> no finding
+    _insert_link(plane, "lnk_ok", source_id=cable_id, target_id=pid_id)
+    # drifted declaration: row claims 'cable' for a document the registry
+    # records as 'pid' -> exactly one wrong_domain finding on this link
+    _insert_link(
+        plane,
+        "lnk_drift",
+        source_id=pid_id,
+        source_ref="PMP-101",
+        source_domain="cable",
+        target_id=pid_id,
+        target_ref="PMP-101",
+        target_domain="pid",
+    )
+    result = plane.readiness.assess(project_id=DEFAULT_PROJECT, evaluation_as_of=AS_OF)
+    findings = [i for i in result.issues if i.code == "wrong_domain_reference"]
+    assert [i.link_id for i in findings] == ["lnk_drift"]
+
+
+def test_nonexistent_project_fails_closed(tmp_path: Path) -> None:
+    """D80-3: a nonexistent Project Graph must fail closed — never eligible."""
+    plane = Plane(tmp_path, "no_project.db")
+    from agentcad.project_readiness import ProjectReadinessError
+
+    with pytest.raises(ProjectReadinessError) as exc_info:
+        plane.readiness.assess(project_id="proj_nope", evaluation_as_of=AS_OF)
+    assert exc_info.value.code == "project_not_found"
+
+
+def test_profile_drift_propagates_into_project_hash(tmp_path: Path, monkeypatch) -> None:
+    """F77 hard-lock: with evaluation_as_of FIXED, changing the effective P&ID
+    profile (an added waiver) changes the P&ID member readiness_hash and the
+    project result_hash together — member provenance really propagates."""
+    from agentcad import project_readiness as readiness_module
+    from agentcad.validation_models import Waiver
+    from agentcad.validation_profile import _fingerprint, load_profile
+
+    plane = Plane(tmp_path, "profile_drift.db")
+    cable_id = _seed_cable_envelope(plane, "cab_pd")
+    pid_id = _seed_pid(plane)
+    _insert_link(plane, "lnk_pd", source_id=cable_id, target_id=pid_id)
+
+    baseline = plane.readiness.assess(project_id=DEFAULT_PROJECT, evaluation_as_of=AS_OF)
+
+    base_profile = load_profile()
+    waived = base_profile.model_copy(
+        update={
+            "waivers": base_profile.waivers
+            + [
+                Waiver(
+                    waiver_id="w-test-drift",
+                    rule_id="*",
+                    actor="gate-test",
+                    reason="F77 drift hard-lock",
+                    granted_at=AS_OF,
+                )
+            ]
+        }
+    )
+    waived = waived.model_copy(update={"fingerprint": _fingerprint(waived.taints())})
+    monkeypatch.setattr(readiness_module, "load_profile", lambda: waived)
+
+    drifted = plane.readiness.assess(project_id=DEFAULT_PROJECT, evaluation_as_of=AS_OF)
+    pid_before = next(m for m in baseline.members if m.document_id == pid_id)
+    pid_after = next(m for m in drifted.members if m.document_id == pid_id)
+    cable_after = next(m for m in drifted.members if m.document_id == cable_id)
+    cable_before = next(m for m in baseline.members if m.document_id == cable_id)
+    assert pid_after.readiness_hash != pid_before.readiness_hash
+    assert cable_after.readiness_hash == cable_before.readiness_hash  # cable untouched
+    assert drifted.result_hash != baseline.result_hash

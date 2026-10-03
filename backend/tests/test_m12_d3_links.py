@@ -478,3 +478,125 @@ def test_state_change_after_approval_conflicts_fail_closed(tmp_path: Path) -> No
     view = plane.links.get_link(link_id)
     assert view is not None and view.pinned_source_revision == 1  # zero mutation
     assert plane.recorder.verify_chain().ok
+
+
+def test_delete_recovers_a_stale_link_after_target_element_removed(tmp_path: Path) -> None:
+    """R79-F1: soft-delete is the recovery path for stale links — it must not
+    re-validate the link's current semantic state."""
+    plane, cable_id, pid_id, link_id = _make_linked(tmp_path, "stale_delete.db")
+    document = plane.service.get_document(pid_id)
+    plane.service.apply_transaction(
+        pid_id,
+        TransactionRequest(
+            expected_revision=document.revision,
+            label="remove target element",
+            operations=[
+                __import__(
+                    "agentcad.models", fromlist=["DeleteElementOperation"]
+                ).DeleteElementOperation(element_id="PMP-101")
+            ],
+        ),
+    )
+    # the link is now dangling; deleting it must still be possible
+    outcome = _governed(plane, TOOL_DELETE_LINK, cable_id, {"link_id": link_id}, 1)
+    assert outcome.payload["deleted"] is True
+    assert plane.links.get_link(link_id).deleted is True  # type: ignore[union-attr]
+    assert plane.recorder.verify_chain().ok
+
+
+def test_authorized_repin_after_link_deleted_fails_closed_with_closeout(tmp_path: Path) -> None:
+    """R79-F2: an authorization that races a soft-delete fails closed with a
+    stable code, failed tool call, failed session and exactly one rejected
+    audit — never a half-open harness."""
+    plane, cable_id, _pid_id, link_id = _make_linked(tmp_path, "race_repin.db")
+    session = plane.runtime.ensure_session(cable_id, actor="engineer")
+    approval = plane.runtime.request_approval(
+        session.id,
+        ToolApprovalCreateRequest(
+            tool_name=TOOL_REPIN_LINK,
+            document_id=cable_id,
+            intent={"link_id": link_id},
+            requested_by="engineer",
+        ),
+    )
+    plane.runtime.resolve_approval(
+        approval.id, ToolApprovalResolveRequest(approved=True, actor="operator")
+    )
+    authorized = plane.runtime.authorize(
+        session_id=session.id,
+        tool_name=TOOL_REPIN_LINK,
+        document_id=cable_id,
+        intent={"link_id": link_id},
+        approval_id=approval.id,
+        base_revision=1,
+    )
+    # the link goes away between authorization and application
+    _governed(plane, TOOL_DELETE_LINK, cable_id, {"link_id": link_id}, 1)
+    with pytest.raises(EngineeringLinkError) as exc_info:
+        plane.runtime.apply_authorized(authorized, cable_id, {"link_id": link_id})
+    assert exc_info.value.code == "link_already_deleted"
+    rejected = [
+        record
+        for record in plane.recorder.store.all_audit_records()
+        if record.event_type == "engineering_link.rejected"
+    ]
+    assert [record.error_code for record in rejected] == ["link_already_deleted"]
+    assert plane.recorder.verify_chain().ok
+
+
+def test_non_endpoint_constraint_fault_keeps_its_real_error(tmp_path: Path) -> None:
+    """R79-F3: only the active-endpoint partial unique index maps to
+    endpoint_already_connected; a primary-key conflict keeps its real
+    sqlite error instead of masquerading."""
+    import sqlite3
+
+    from agentcad.audit_models import AuditRecordDraft
+    from agentcad.harness_models import AgentSession, ToolCallRecord
+    from agentcad.store import StoreDocumentConflictError
+
+    plane, cable_id, pid_id, link_id = _make_linked(tmp_path, "pk_conflict.db")
+    session = AgentSession(document_id=cable_id, actor="tester", start_revision=1)
+    tool_call = ToolCallRecord(
+        session_id=session.id,
+        tool_name="create_engineering_link",
+        document_id=cable_id,
+        permission="ask",
+        risk="engineering_change",
+        intent_hash="h",
+    )
+    audit = AuditRecordDraft(
+        event_type="engineering_link.created",
+        actor="tester",
+        surface="internal",
+        tool_name="create_engineering_link",
+    )
+
+    def attempt(new_link_id: str, endpoint: str, target_ref: str) -> None:
+        plane.store.commit_engineering_link_create(
+            link_id=new_link_id,
+            project_id=DEFAULT_PROJECT,
+            relation_type="cable_endpoint_equipment",
+            source_document_id=cable_id,
+            source_object_ref="SEG-1",
+            source_endpoint=endpoint,
+            target_document_id=pid_id,
+            target_object_ref=target_ref,
+            known_symbol_keys=plane.links._known_symbol_keys,  # noqa: SLF001
+            instrument_symbol_keys=plane.links._instrument_symbol_keys,  # noqa: SLF001
+            expected=(1, 1),
+            created_by="tester",
+            audit=audit,
+            tool_call=tool_call,
+            approval=None,
+            session=session,
+        )
+
+    with pytest.raises(sqlite3.IntegrityError) as exc_info:
+        # duplicate PK + a free endpoint: the PRIMARY KEY conflict must keep
+        # its real error instead of masquerading as an endpoint conflict
+        attempt(link_id, "to", "PMP-101")
+    assert "engineering_links.source_endpoint" not in str(exc_info.value)
+    with pytest.raises(StoreDocumentConflictError):
+        # fresh PK but the 'from' endpoint is already taken: only NOW the
+        # partial unique index fires and maps to the endpoint conflict
+        attempt("lnk_fresh", "from", "PMP-101")

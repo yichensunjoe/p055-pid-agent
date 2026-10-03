@@ -168,7 +168,7 @@ class ProjectLinkDomainAdapter:
                 pins = self.service.resolve_current_pins(SimpleNamespace(**canonical))
                 canonical["expected_source_revision"] = pins[0]
                 canonical["expected_target_revision"] = pins[1]
-            elif tool_name in (TOOL_REPIN_LINK, TOOL_DELETE_LINK):
+            elif tool_name == TOOL_REPIN_LINK:
                 row = self.service._require_link_row(str(canonical["link_id"]))  # noqa: SLF001
                 pins = self.service._resolve_pins(
                     project_id=str(row["project_id"]),
@@ -178,9 +178,15 @@ class ProjectLinkDomainAdapter:
                     target_document_id=str(row["target_document_id"]),
                     target_object_ref=str(row["target_object_ref"]),
                 )
-                if tool_name == TOOL_REPIN_LINK:
-                    canonical["expected_source_revision"] = pins[0]
-                    canonical["expected_target_revision"] = pins[1]
+                canonical["expected_source_revision"] = pins[0]
+                canonical["expected_target_revision"] = pins[1]
+            elif tool_name == TOOL_DELETE_LINK:
+                # R79-F1: deletion is the recovery path for stale/broken
+                # links. Canonicalization binds ONLY the link identity and
+                # source document — never current semantic/revision validity,
+                # otherwise a link whose target element was deleted could not
+                # be cleaned up at all.
+                self.service._require_link_row(str(canonical["link_id"]))  # noqa: SLF001
         return canonical
 
     def preview_diff_hash(self, *, document_id: str, intent: Any) -> str:

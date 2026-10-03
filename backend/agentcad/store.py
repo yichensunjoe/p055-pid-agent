@@ -1061,10 +1061,17 @@ class SQLiteDocumentStore:
                         ),
                     )
                 except sqlite3.IntegrityError as exc:
-                    # ONLY the link INSERT may map to endpoint conflict; a
-                    # tool-call/approval/session constraint fault must keep
-                    # its real error instead of masquerading (D79-2).
-                    raise StoreDocumentConflictError(str(exc)) from exc
+                    # R79-F3: ONLY the active-endpoint partial unique index may
+                    # map to endpoint conflict; any other constraint fault
+                    # keeps its real error instead of masquerading.
+                    message = str(exc)
+                    if (
+                        "UNIQUE constraint failed: engineering_links.relation_type,"
+                        in message
+                        and "engineering_links.source_endpoint" in message
+                    ):
+                        raise StoreDocumentConflictError(str(exc)) from exc
+                    raise
                 self._write_tool_call(connection, tool_call)
                 if approval is not None:
                     self._write_tool_approval(connection, approval)

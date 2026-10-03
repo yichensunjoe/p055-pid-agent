@@ -18,6 +18,7 @@ local binding below is pinned to the canonical value by test.
 
 from __future__ import annotations
 
+import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -221,6 +222,11 @@ class EngineeringLinkService:
         except ValueError as exc:
             self.failure_closeout(authorized, audit_event, str(exc).split(":", 1)[0])
             raise
+        except sqlite3.IntegrityError:
+            # R79-F3: a non-endpoint storage constraint fault keeps its real
+            # identity instead of masquerading as an endpoint conflict.
+            self.failure_closeout(authorized, audit_event, "storage_integrity_failure")
+            raise
         return ExecutionOutcome(
             document_id=intent.source_document_id,
             base_revision=None,
@@ -237,7 +243,14 @@ class EngineeringLinkService:
         intent: Any,
     ) -> ExecutionOutcome:
         link_id = str(intent.link_id)
-        row = self._require_link_row(link_id)
+        try:
+            row = self._require_link_row(link_id)
+        except EngineeringLinkError as exc:
+            # R79-F2: authorized harness must never half-close — a link that
+            # vanished (or was deleted) after authorization fails closed with
+            # a stable code and a full rejection closeout.
+            self.failure_closeout(authorized, audit_event, exc.code)
+            raise
         try:
             self._check_document_binding(authorized, str(row["source_document_id"]))
             self._check_revision_binding(
@@ -273,6 +286,9 @@ class EngineeringLinkService:
         except StoreRevisionConflictError as exc:
             self.failure_closeout(authorized, audit_event, "revision_conflict")
             raise EngineeringLinkError("revision_conflict", str(exc)) from exc
+        except StoreDocumentIdentityError as exc:
+            self.failure_closeout(authorized, audit_event, "link_not_active")
+            raise EngineeringLinkError("link_not_active", str(exc)) from exc
         except ValueError as exc:
             self.failure_closeout(authorized, audit_event, str(exc).split(":", 1)[0])
             raise
@@ -292,7 +308,11 @@ class EngineeringLinkService:
         intent: Any,
     ) -> ExecutionOutcome:
         link_id = str(intent.link_id)
-        row = self._require_link_row(link_id)
+        try:
+            row = self._require_link_row(link_id)
+        except EngineeringLinkError as exc:
+            self.failure_closeout(authorized, audit_event, exc.code)
+            raise
         try:
             self._check_document_binding(authorized, str(row["source_document_id"]))
         except EngineeringLinkError as exc:
@@ -316,8 +336,8 @@ class EngineeringLinkService:
                 session=self._closed_session(authorized, closure),
             )
         except StoreDocumentIdentityError as exc:
-            self.failure_closeout(authorized, audit_event, type(exc).__name__)
-            raise
+            self.failure_closeout(authorized, audit_event, "link_not_active")
+            raise EngineeringLinkError("link_not_active", str(exc)) from exc
         return ExecutionOutcome(
             document_id=str(row["source_document_id"]),
             base_revision=None,

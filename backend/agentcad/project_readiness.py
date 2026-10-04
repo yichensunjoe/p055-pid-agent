@@ -98,6 +98,122 @@ class ProjectReadiness:
     profile_fingerprint: str = PROFILE_FINGERPRINT
 
 
+def assess_project_readiness_core(
+    *,
+    project_id: str,
+    evaluation_as_of: datetime,
+    member_snapshots: list[MemberReadinessSnapshot],
+    link_rows: list[dict[str, Any]],
+) -> ProjectReadiness:
+    """Pure readiness engine (M13-D3 extraction): issue scan, eligible state
+    and result_hash from already-assessed member snapshots plus canonical link
+    rows. Rows may carry reader-resolved extras — ``_registry_source`` /
+    ``_registry_target`` domains, ``_source_revision`` / ``_target_revision``
+    current revisions, and ``_source_reference_exists`` / ``_target_object_exists``
+    booleans. The core never touches storage: the D4 service reader fills the
+    extras from the store; the M13 commit path fills them from staged state.
+    Same engine + same inputs keeps D4 service semantics and the in-transaction
+    snapshot hash-identical."""
+    members = sorted(member_snapshots, key=lambda snapshot: snapshot.document_id)
+    member_ids = {snapshot.document_id for snapshot in members}
+
+    issues: list[ProjectIssue] = []
+    pins: list[dict[str, Any]] = []
+    for row in sorted(link_rows, key=lambda item: str(item["link_id"])):
+        link_id = str(row["link_id"])
+        source_id = str(row["source_document_id"])
+        target_id = str(row["target_document_id"])
+        pins.append(
+            {
+                "link_id": link_id,
+                "pinned_source_revision": int(row["pinned_source_revision"]),
+                "pinned_target_revision": int(row["pinned_target_revision"]),
+            }
+        )
+        if source_id not in member_ids:
+            issues.append(ProjectIssue(ISSUE_DANGLING_SOURCE, _SEVERITY[ISSUE_DANGLING_SOURCE], link_id))
+        if target_id not in member_ids:
+            issues.append(ProjectIssue(ISSUE_DANGLING_TARGET, _SEVERITY[ISSUE_DANGLING_TARGET], link_id))
+        # D80-1 frozen definition: the finding fires when the link row's
+        # DECLARED domain drifts from the registry's actual domain.
+        declared_source = str(row["source_domain"])
+        declared_target = str(row["target_domain"])
+        registry_source = row.get("_registry_source")
+        registry_target = row.get("_registry_target")
+        if (
+            registry_source is not None
+            and registry_target is not None
+            and (
+                declared_source != registry_source
+                or declared_target != registry_target
+            )
+        ):
+            issues.append(ProjectIssue(ISSUE_WRONG_DOMAIN, _SEVERITY[ISSUE_WRONG_DOMAIN], link_id))
+
+        # Stale FIRST: once an endpoint's pinned revision is behind, only the
+        # stale finding is reported for that endpoint (F77/Q5 freeze).
+        source_revision = row.get("_source_revision")
+        target_revision = row.get("_target_revision")
+        source_stale = source_revision is not None and source_revision != int(
+            row["pinned_source_revision"]
+        )
+        target_stale = target_revision is not None and target_revision != int(
+            row["pinned_target_revision"]
+        )
+        if source_stale:
+            issues.append(ProjectIssue(ISSUE_STALE_SOURCE, _SEVERITY[ISSUE_STALE_SOURCE], link_id))
+        if target_stale:
+            issues.append(ProjectIssue(ISSUE_STALE_TARGET, _SEVERITY[ISSUE_STALE_TARGET], link_id))
+        # D80-2 frozen definition: the source reference exists only when the
+        # segment exists in the CURRENT cable revision AND the endpoint is a
+        # legal 'from'/'to'. Absence (revision None / load failure) surfaces
+        # as a missing finding, never as staleness.
+        if not source_stale and not bool(row.get("_source_reference_exists")):
+            issues.append(ProjectIssue(ISSUE_MISSING_SOURCE, _SEVERITY[ISSUE_MISSING_SOURCE], link_id))
+        if not target_stale and not bool(row.get("_target_object_exists")):
+            issues.append(ProjectIssue(ISSUE_MISSING_TARGET, _SEVERITY[ISSUE_MISSING_TARGET], link_id))
+
+    failing = sum(
+        1
+        for issue in issues
+        if issue.severity == "blocker" or issue.code in _FAIL_ON_WARNING
+    )
+    member_ready = all(snapshot.state == "eligible" for snapshot in members)
+    state = "eligible" if (member_ready and failing == 0) else "not_eligible"
+
+    result_hash = _sha256(
+        _canonical(
+            {
+                "evaluation_as_of": evaluation_as_of.isoformat(),
+                "issues": [
+                    [issue.code, issue.severity, issue.link_id] for issue in issues
+                ],
+                "members": [
+                    [
+                        snapshot.document_id,
+                        snapshot.domain,
+                        snapshot.state,
+                        snapshot.readiness_hash,
+                        snapshot.revision,
+                    ]
+                    for snapshot in members
+                ],
+                "pins": pins,
+                "profile_fingerprint": PROFILE_FINGERPRINT,
+                "project_id": project_id,
+            }
+        )
+    )
+    return ProjectReadiness(
+        project_id=project_id,
+        evaluation_as_of=evaluation_as_of,
+        state=state,
+        issues=tuple(issues),
+        members=tuple(members),
+        result_hash=result_hash,
+    )
+
+
 class ProjectReadinessError(RuntimeError):
     """Fail-closed assessment refusal with a stable machine-readable code."""
 
@@ -130,95 +246,44 @@ class ProjectReadinessService:
             )
 
         members = self._member_snapshots(project_id, evaluation_as_of)
-        member_ids = {snapshot.document_id for snapshot in members}
-        links = self._store.list_active_engineering_links(project_id)  # ordered by link_id
-
-        issues: list[ProjectIssue] = []
-        pins: list[dict[str, Any]] = []
-        for row in links:
-            link_id = str(row["link_id"])
-            source_id = str(row["source_document_id"])
-            target_id = str(row["target_document_id"])
-            pins.append(
-                {
-                    "link_id": link_id,
-                    "pinned_source_revision": int(row["pinned_source_revision"]),
-                    "pinned_target_revision": int(row["pinned_target_revision"]),
-                }
-            )
-            if source_id not in member_ids:
-                issues.append(ProjectIssue(ISSUE_DANGLING_SOURCE, _SEVERITY[ISSUE_DANGLING_SOURCE], link_id))
-            if target_id not in member_ids:
-                issues.append(ProjectIssue(ISSUE_DANGLING_TARGET, _SEVERITY[ISSUE_DANGLING_TARGET], link_id))
-            # D80-1 frozen definition: the finding fires when the link row's
-            # DECLARED domain drifts from the registry's actual domain — the
-            # registry is the only source of domain truth (R77-Q1).
-            declared_source = str(row["source_domain"])
-            declared_target = str(row["target_domain"])
-            registry_source = self._store.document_domain(source_id)
-            registry_target = self._store.document_domain(target_id)
-            if declared_source != registry_source or declared_target != registry_target:
-                issues.append(ProjectIssue(ISSUE_WRONG_DOMAIN, _SEVERITY[ISSUE_WRONG_DOMAIN], link_id))
-
-            # Stale FIRST: once an endpoint's pinned revision is behind, only
-            # the stale finding is reported for that endpoint — we never claim
-            # to have inspected a historical pinned object (F77/Q5 freeze).
-            source_stale = self._is_stale_source(row)
-            target_stale = self._is_stale_target(row)
-            if source_stale:
-                issues.append(ProjectIssue(ISSUE_STALE_SOURCE, _SEVERITY[ISSUE_STALE_SOURCE], link_id))
-            if target_stale:
-                issues.append(ProjectIssue(ISSUE_STALE_TARGET, _SEVERITY[ISSUE_STALE_TARGET], link_id))
-            if not source_stale and not self._source_reference_exists(
-                source_id,
+        raw_rows = self._store.list_active_engineering_links(project_id)
+        # One batch read for every endpoint's registry domain + current
+        # revision (the per-assess hot path must not open a connection per
+        # endpoint — that regressed the suite past the perf budget).
+        endpoint_ids = sorted(
+            {
+                str(row["source_document_id"])
+                for row in raw_rows
+            }
+            | {
+                str(row["target_document_id"])
+                for row in raw_rows
+            }
+        )
+        batch = self._store.batch_document_state(endpoint_ids)
+        link_rows = []
+        for row in raw_rows:  # ordered by link_id
+            enriched = dict(row)
+            source_state = batch.get(str(row["source_document_id"]))
+            target_state = batch.get(str(row["target_document_id"]))
+            enriched["_registry_source"] = None if source_state is None else source_state[0]
+            enriched["_registry_target"] = None if target_state is None else target_state[0]
+            enriched["_source_revision"] = None if source_state is None else source_state[1]
+            enriched["_target_revision"] = None if target_state is None else target_state[1]
+            enriched["_source_reference_exists"] = self._source_reference_exists(
+                str(row["source_document_id"]),
                 str(row["source_object_ref"]),
                 str(row["source_endpoint"]),
-            ):
-                # D80-2 frozen definition: the source reference exists only
-                # when the segment exists in the CURRENT cable revision AND
-                # the endpoint is a legal 'from'/'to' for this relation.
-                issues.append(ProjectIssue(ISSUE_MISSING_SOURCE, _SEVERITY[ISSUE_MISSING_SOURCE], link_id))
-            if not target_stale and not self._element_exists(target_id, str(row["target_object_ref"])):
-                issues.append(ProjectIssue(ISSUE_MISSING_TARGET, _SEVERITY[ISSUE_MISSING_TARGET], link_id))
-
-        failing = sum(
-            1
-            for issue in issues
-            if issue.severity == "blocker" or issue.code in _FAIL_ON_WARNING
-        )
-        member_ready = all(snapshot.state == "eligible" for snapshot in members)
-        state = "eligible" if (member_ready and failing == 0) else "not_eligible"
-
-        result_hash = _sha256(
-            _canonical(
-                {
-                    "evaluation_as_of": evaluation_as_of.isoformat(),
-                    "issues": [
-                        [issue.code, issue.severity, issue.link_id] for issue in issues
-                    ],
-                    "members": [
-                        [
-                            snapshot.document_id,
-                            snapshot.domain,
-                            snapshot.state,
-                            snapshot.readiness_hash,
-                            snapshot.revision,
-                        ]
-                        for snapshot in members
-                    ],
-                    "pins": pins,
-                    "profile_fingerprint": PROFILE_FINGERPRINT,
-                    "project_id": project_id,
-                }
             )
-        )
-        return ProjectReadiness(
+            enriched["_target_object_exists"] = self._element_exists(
+                str(row["target_document_id"]), str(row["target_object_ref"])
+            )
+            link_rows.append(enriched)
+        return assess_project_readiness_core(
             project_id=project_id,
             evaluation_as_of=evaluation_as_of,
-            state=state,
-            issues=tuple(issues),
-            members=tuple(members),
-            result_hash=result_hash,
+            member_snapshots=members,
+            link_rows=link_rows,
         )
 
     # ---- internals (pure reads) ----
@@ -258,18 +323,6 @@ class ProjectReadinessService:
                     )
                 )
         return snapshots
-
-    def _is_stale_source(self, row: dict[str, Any]) -> bool:
-        envelope = self._store.get_cable_envelope(str(row["source_document_id"]))
-        if envelope is None:
-            return False  # absence is a missing_object finding, not staleness
-        return int(envelope[0]) != int(row["pinned_source_revision"])
-
-    def _is_stale_target(self, row: dict[str, Any]) -> bool:
-        stored = self._store.get(str(row["target_document_id"]))
-        if stored is None:
-            return False
-        return stored.document.revision != int(row["pinned_target_revision"])
 
     def _source_reference_exists(
         self, cable_id: str, segment_id: str, endpoint: str

@@ -1111,3 +1111,10 @@
 - 结论做法：①加字段前先分类：是 **geometry identity**（进 projection、动 digest、全链版本联动）还是 **runtime-only evidence**（随 fact 冻结但不进 identity projection——合同用两个字段表声明并查重叠）。②semantic 谓词必须经**声明的 surface-token 反查**（canonical 值↔中文闭集），解析测试不等于匹配测试，要拿真实符号逐口断言。
 - 踩坑点：「顺手 bump 版本」是最贵的省事——存储侧 chain_versions 是写死的兼容闸，bump=全员迁移。局部 selector 不能把全图 inferred 事实升级为用户语义（selected-only 持久化边界）。
 - 适用场景：任何向 frozen model/digest 投影加字段的工作。
+
+## 2026-10-05 · 交付物 verifier 不能信「自诉顺序」；e2e 共享库种子必须自清理；多标签页要定向 tab-id（P055-PID-Agent）
+
+- 场景：M12-D5 三轮 Gate 修正全在同一主题：①package 的 MANIFEST 自述成员顺序，verifier 只比对「zip 与 MANIFEST 一致」——攻击者把两者同步重排就绕过，必须独立推导冻结 canonical order（固定头序也要写死，不能从 manifest 相对顺序得出）；② builder 多次独立读库（pins/readiness/links/artifacts），任何中途变动产出内部不一致包——要捕获快照+写出前重验；③ e2e 全套共享一个 SQLite 文件，spec 种子的 FK 行（membership/links）不清理会让后续 spec 的 resetDocuments 撞 FK 500；④ Gate 会话页面长消息被虚拟化截断 + 并行项目多标签页劫持，`evaluate` 默认打到别的标签（B 站）。
+- 结论做法：①verifier 独立推导期望结构（集合+顺序双冻结），同步重排负例必测；②「交付物=一个一致状态」：identity 快照+最终 gate+稳定 409；③ e2e 种子 afterEach 按标记字段（created_by/added_by）自删；④ `bsk evaluate --session X --tab-id <GateTab>` 定向，发送后立刻二次核对；长裁定分多段 slice 读，读不到就如实请 Gate 重述。
+- 踩坑点：python heredoc 里 str.replace 静默 no-match（大段替换失败但不报错）——替换后必须断言关键标记存在；cwd 陷阱（Bash cwd 作用于整条命令， heredoc 里的相对路径从仓库根写）。
+- 适用场景：任何「文件格式/清单自校验」设计；共享 fixture 的端到端套件；长会话远端 Gate 自动化。

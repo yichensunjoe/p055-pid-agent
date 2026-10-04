@@ -421,8 +421,11 @@ def test_repin_algorithm_non_diffusion_and_unmutated_pins(tmp_path: Path) -> Non
         ],
     )
     impact = analyzer.analyze(pid_only)
-    assert impact.affected_documents == (plane.pid_id,)
-    # only the link touching the mutated document is affected
+    # mutated doc PLUS its direct link counterpart; no transitive diffusion
+    assert impact.affected_documents == tuple(sorted([plane.pid_id, plane.cable_id]))
+    assert impact.affected_links == tuple(
+        link for link in impact.affected_links if link["link_id"] == "lnk_seed"
+    )
     assert [link["link_id"] for link in impact.affected_links] == ["lnk_seed"]
     action = impact.derived_repin_actions[0]
     assert action.pinned_target_revision == pins[plane.pid_id] + 1  # mutated side
@@ -524,7 +527,30 @@ def test_unlinked_element_may_become_instrument(tmp_path: Path) -> None:
         ],
     )
     impact = analyzer.analyze(intent)  # must NOT raise
-    assert impact.affected_documents == (plane.pid_id,)
+    assert impact.affected_documents == tuple(sorted([plane.pid_id, plane.cable_id]))
+
+
+def test_clear_document_invalidates_linked_objects(tmp_path: Path) -> None:
+    """clear_document removes every element; a linked element therefore fails
+    the change set closed via the staged post-state."""
+    plane = Plane(tmp_path, "clear.db")
+    analyzer = ChangeSetImpactAnalyzer(plane.store, plane.service, plane.cable)
+    intent = ChangeSetIntent(
+        project_id=DEFAULT_PROJECT,
+        base_member_pins=plane.pins(),
+        evaluation_as_of=AS_OF,
+        mutations=[
+            ChangeSetMutation(
+                domain="pid",
+                document_id=plane.pid_id,
+                kind="pid_transaction",
+                payload={"operations": [{"op": "clear_document"}]},
+            )
+        ],
+    )
+    with pytest.raises(ChangeSetError) as exc_info:
+        analyzer.analyze(intent)
+    assert exc_info.value.code == "change_set_invalidates_link"
 
 
 def test_pid_payload_rejects_revision_keys_at_any_depth(tmp_path: Path) -> None:
@@ -618,11 +644,21 @@ def test_preview_readiness_projection_and_persistence(tmp_path: Path) -> None:
     )
     assert plane.store.save_change_set_analysis(
         change_set_id=change_set_id,
-        impacted=json.dumps(impact.affected_documents),
+        impacted=json.dumps(impact.canonical(), sort_keys=True),
         preview=json.dumps(result.canonical(), sort_keys=True),
     ) is True
     row = plane.store.get_change_set(change_set_id)
-    assert json.loads(row["impacted"]) == list(impact.affected_documents)
+    persisted_impact = json.loads(row["impacted"])
+    # the FULL impacted snapshot is persisted for D4 exact-approval binding
+    assert persisted_impact == impact.canonical()
+    assert persisted_impact["derived_repin_actions"] == [
+        {
+            "link_id": action.link_id,
+            "pinned_source_revision": action.pinned_source_revision,
+            "pinned_target_revision": action.pinned_target_revision,
+        }
+        for action in impact.derived_repin_actions
+    ]
     assert json.loads(row["preview"])["intent_hash"] == result.intent_hash
     # CAS: only a staged row accepts analysis snapshots
     assert plane.store.save_change_set_analysis(

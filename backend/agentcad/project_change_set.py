@@ -205,18 +205,35 @@ def validate_declared_pins(
 
 
 @dataclass(frozen=True)
-class RepinAction:
-    link_id: str
-    pinned_source_revision: int
-    pinned_target_revision: int
-
-
-@dataclass(frozen=True)
 class ImpactResult:
     affected_documents: tuple[str, ...]
     affected_links: tuple[dict[str, Any], ...]
     derived_repin_actions: tuple[RepinAction, ...]
     removed_object_refs: tuple[tuple[str, str, str], ...]  # (link_id, endpoint_role, object_ref)
+
+    def canonical(self) -> dict[str, Any]:
+        """Full impacted snapshot — exactly what D4 exact-approval binding and
+        the change-set row persist (D1 frozen contract)."""
+        return {
+            "affected_documents": list(self.affected_documents),
+            "affected_links": [dict(link) for link in self.affected_links],
+            "derived_repin_actions": [
+                {
+                    "link_id": action.link_id,
+                    "pinned_source_revision": action.pinned_source_revision,
+                    "pinned_target_revision": action.pinned_target_revision,
+                }
+                for action in self.derived_repin_actions
+            ],
+            "removed_object_refs": [list(ref) for ref in self.removed_object_refs],
+        }
+
+
+@dataclass(frozen=True)
+class RepinAction:
+    link_id: str
+    pinned_source_revision: int
+    pinned_target_revision: int
 
 
 def _canonical_link_row(row: dict[str, Any]) -> dict[str, Any]:
@@ -252,31 +269,6 @@ def _parse_pid_operations(payload: dict[str, Any]) -> list[Any]:
         raise ChangeSetError(
             "impact_unknown_kind", f"pid operation is not a valid Operation: {exc}"
         ) from exc
-
-
-def _pid_touched_element_ids(payload: dict[str, Any]) -> tuple[set[str], set[str]]:
-    """(all_touched_ids, removed_ids) from a pid_transaction op list."""
-    touched: set[str] = set()
-    removed: set[str] = set()
-    for operation in payload.get("operations", []):
-        if not isinstance(operation, dict):
-            raise ChangeSetError("impact_unknown_kind", "pid operation must be an object")
-        op = operation.get("op")
-        element = operation.get("element")
-        if op == "add_element" and isinstance(element, dict):
-            touched.add(str(element["id"]))
-        elif op in ("update_element", "delete_element"):
-            element_id = operation.get("element_id")
-            if not element_id:
-                raise ChangeSetError(
-                    "impact_unknown_object", f"{op} requires element_id"
-                )
-            touched.add(str(element_id))
-            if op == "delete_element":
-                removed.add(str(element_id))
-        else:
-            raise ChangeSetError("impact_unknown_kind", f"unknown pid op: {op!r}")
-    return touched, removed
 
 
 class ChangeSetImpactAnalyzer:
@@ -316,7 +308,7 @@ class ChangeSetImpactAnalyzer:
                     f"mutation target {mutation.document_id!r} is not a {mutation.domain} member",
                 )
             if mutation.kind == MUTATION_PID_TRANSACTION:
-                _touched, removed = _pid_touched_element_ids(mutation.payload)
+                removed = self._removed_pid_elements(mutation)
                 if removed:
                     removed_pid[mutation.document_id] = removed
             else:  # cable_update
@@ -352,10 +344,19 @@ class ChangeSetImpactAnalyzer:
         # equipment predicate re-check for updated pid elements (staged, in-memory).
         self._validate_equipment_predicate(intent)
 
-        # Only documents with an actual mutation advance to base+1; peers of
-        # mutated documents stay at their declared pin and must never inherit
-        # a revision bump or transmit impact to further links (no diffusion).
-        affected_documents = sorted(set(mutated))
+        # affected = mutated documents ∪ DIRECT link counterparts. Peers keep
+        # their declared pin, never inherit a revision bump, and their own
+        # links are untouched — no transitive diffusion.
+        direct_peers = {
+            link["source_document_id"]
+            for link in links
+            if link["target_document_id"] in mutated
+        } | {
+            link["target_document_id"]
+            for link in links
+            if link["source_document_id"] in mutated
+        }
+        affected_documents = sorted(set(mutated) | (direct_peers - set(mutated)))
         affected_links = tuple(
             link
             for link in links
@@ -387,6 +388,30 @@ class ChangeSetImpactAnalyzer:
             derived_repin_actions=tuple(actions),
             removed_object_refs=tuple(sorted(invalidated)),
         )
+
+    def _removed_pid_elements(self, mutation: ChangeSetMutation) -> set[str]:
+        """Removed element ids from the STAGED post-state: explicit
+        delete_element ops plus clear_document, which removes every element in
+        the document. Typed via the real Operation union (all ten kinds)."""
+        operations = _parse_pid_operations(mutation.payload)
+        removed = {
+            operation.element_id
+            for operation in operations
+            if operation.__class__.__name__ == "DeleteElementOperation"
+        }
+        if any(
+            operation.__class__.__name__ == "ClearDocumentOperation"
+            for operation in operations
+        ):
+            try:
+                document = self._pid.get_document(mutation.document_id)
+            except Exception as exc:
+                raise ChangeSetError(
+                    "impact_unknown_object",
+                    f"pid document {mutation.document_id!r} not found",
+                ) from exc
+            removed = removed | {element.id for element in document.elements}
+        return set(removed)
 
     def _validate_cable_payload(self, mutation: ChangeSetMutation) -> None:
         try:
@@ -424,7 +449,7 @@ class ChangeSetImpactAnalyzer:
             if symbol.category == "仪表"
         )
         linked_targets = {
-            str(row["target_object_ref"])
+            (str(row["target_document_id"]), str(row["target_object_ref"]))
             for row in self._store.list_active_engineering_links(intent.project_id)
         }
         for mutation in intent.mutations:
@@ -434,7 +459,7 @@ class ChangeSetImpactAnalyzer:
                 operation
                 for operation in _parse_pid_operations(mutation.payload)
                 if isinstance(operation, UpdateElementOperation)
-                and operation.element_id in linked_targets
+                and (mutation.document_id, operation.element_id) in linked_targets
             ]
             if not update_ops:
                 continue
@@ -628,7 +653,11 @@ class ChangeSetPreviewer:
 
                 document = self._pid.get_document(document_id)
                 readiness = assess_release_readiness(
-                    document, self._pid.symbols, profile, now=intent.evaluation_as_of
+                    document,
+                    self._pid.symbols,
+                    profile,
+                    project_id=intent.project_id,
+                    now=intent.evaluation_as_of,
                 )
                 snapshots.append(
                     MemberReadinessSnapshot(

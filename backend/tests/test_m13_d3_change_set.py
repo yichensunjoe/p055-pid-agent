@@ -651,6 +651,17 @@ def test_preview_readiness_projection_and_persistence(tmp_path: Path) -> None:
     persisted_impact = json.loads(row["impacted"])
     # the FULL impacted snapshot is persisted for D4 exact-approval binding
     assert persisted_impact == impact.canonical()
+    # D1 frozen six fields are all present in the persisted snapshot
+    for key in (
+        "affected_documents",
+        "affected_objects",
+        "affected_links",
+        "derived_repin_actions",
+        "validation_scope",
+        "issues",
+    ):
+        assert key in persisted_impact
+    assert persisted_impact["issues"] == []
     assert persisted_impact["derived_repin_actions"] == [
         {
             "link_id": action.link_id,

@@ -207,15 +207,22 @@ def validate_declared_pins(
 @dataclass(frozen=True)
 class ImpactResult:
     affected_documents: tuple[str, ...]
+    affected_objects: tuple[tuple[str, str], ...]  # (document_id, object_ref)
     affected_links: tuple[dict[str, Any], ...]
     derived_repin_actions: tuple[RepinAction, ...]
+    validation_scope: dict[str, Any]
+    issues: tuple[str, ...]
     removed_object_refs: tuple[tuple[str, str, str], ...]  # (link_id, endpoint_role, object_ref)
 
     def canonical(self) -> dict[str, Any]:
-        """Full impacted snapshot — exactly what D4 exact-approval binding and
-        the change-set row persist (D1 frozen contract)."""
+        """Full impacted snapshot — the D1 frozen six fields
+        (affected_documents / affected_objects / affected_links /
+        derived_repin_actions / validation_scope / issues), exactly what D4
+        exact-approval binding and the change-set row persist.
+        removed_object_refs is kept as additional internal evidence."""
         return {
             "affected_documents": list(self.affected_documents),
+            "affected_objects": [list(ref) for ref in self.affected_objects],
             "affected_links": [dict(link) for link in self.affected_links],
             "derived_repin_actions": [
                 {
@@ -225,6 +232,8 @@ class ImpactResult:
                 }
                 for action in self.derived_repin_actions
             ],
+            "validation_scope": self.validation_scope,
+            "issues": list(self.issues),
             "removed_object_refs": [list(ref) for ref in self.removed_object_refs],
         }
 
@@ -382,10 +391,19 @@ class ChangeSetImpactAnalyzer:
                     ),
                 )
             )
+        affected_objects = self._affected_objects(intent, removed_pid)
+        validation_scope = {
+            "member_documents": list(affected_documents),
+            "link_rules": "m12-seven-code-subset-over-affected",
+            "single_domain_readiness": "canonical-assess",
+        }
         return ImpactResult(
             affected_documents=tuple(affected_documents),
+            affected_objects=affected_objects,
             affected_links=affected_links,
             derived_repin_actions=tuple(actions),
+            validation_scope=validation_scope,
+            issues=(),
             removed_object_refs=tuple(sorted(invalidated)),
         )
 
@@ -412,6 +430,48 @@ class ChangeSetImpactAnalyzer:
                 ) from exc
             removed = removed | {element.id for element in document.elements}
         return set(removed)
+
+    def _affected_objects(
+        self, intent: ChangeSetIntent, removed_pid: dict[str, set[str]]
+    ) -> tuple[tuple[str, str], ...]:
+        """Object-level impact: touched pid element ids (add/update/delete)
+        and cable segment deltas, as (document_id, object_ref) pairs."""
+        objects: set[tuple[str, str]] = set()
+        for mutation in intent.mutations:
+            if mutation.kind == MUTATION_PID_TRANSACTION:
+                operations = _parse_pid_operations(mutation.payload)
+                for operation in operations:
+                    name = operation.__class__.__name__
+                    if name == "AddElementOperation":
+                        objects.add((mutation.document_id, operation.element.id))
+                    elif name in ("UpdateElementOperation", "DeleteElementOperation"):
+                        objects.add((mutation.document_id, operation.element_id))
+                    elif name == "ClearDocumentOperation":
+                        try:
+                            document = self._pid.get_document(mutation.document_id)
+                        except Exception:
+                            continue
+                        objects |= {
+                            (mutation.document_id, element.id)
+                            for element in document.elements
+                        }
+            else:
+                try:
+                    view = self._cable.load(mutation.document_id)
+                except Exception:
+                    continue
+                from .cable_models import CableDocument
+
+                staged = CableDocument.model_validate(
+                    {**mutation.payload, "revision": 0}
+                )
+                base_ids = {segment.id for segment in view.document.segments}
+                staged_ids = {segment.id for segment in staged.segments}
+                objects |= {
+                    (mutation.document_id, segment_id)
+                    for segment_id in (base_ids ^ staged_ids)
+                }
+        return tuple(sorted(objects))
 
     def _validate_cable_payload(self, mutation: ChangeSetMutation) -> None:
         try:

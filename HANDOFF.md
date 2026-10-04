@@ -2,7 +2,15 @@
 
 > 交接文档：每次开新会话先读本文件。更新规则见 `AGENTS.md`「HANDOFF 交接规则」。
 
-## 当前状态（2026-10-05 —— **M12 implementation closeout COMPLETE（PR #81 合 main@b9e125f，main CI run 37210734487 四绿，Gate 已签）；全项目唯一挂起 = M9 WS3B 四字段待 Owner**）
+## 当前状态（2026-10-06 —— **M13 推进中：D1（#82 Charter 1.2.0+设计）、D2（#83 v16+持久化）、D3（#84 契约+impact+preview）已 CLOSED 合 main@d219869；M13-D4 CODE GO 生效（原子执行器，独立 Gate）；D5 未开工。其余收口（WS3B/M9/M10 FINAL）按 Owner 指示挂起**）
+
+- **M13 = 受治理多域变更集（Charter v1.2.0 §55C）**：变更集契约（C1 declared pins 只比对不替换/C2 单一 CAS 来源/C3 不猜 link/C4 approved≠授权）→ v16 project_change_sets（四状态机三条合法边）→ impact（六字段 canonical：documents/objects/links/re-pins/validation_scope/issues；一跳对象扩展无传递）+ 零写入 preview（工程状态零变化硬锁）→ **D4 = exact intent approval + 单事务原子多域执行（当前）** → D5 evidence/read UI/e2e/closeout。
+- **D4 冻结范围（CODE GO 原文）**：中性 tool apply_project_change_set（ask/engineering_change）；approval 绑定 project_id+declared pins+evaluation_as_of+ordered mutations+D3 canonical impacted/re-pins+effective profile fingerprint；apply 前重算比对（drift→change_set_conflict 零写入）；C4 四要素（真实 M10 approval+intent hash+未消费+C1）；成功事务=pid CAS+cable CAS+existing link re-pin+change-set approved→applied+evidence（事务内 readiness hash=post-commit D4 hash）+五元组 closeout+恰好一条 applied 审计；失败=rollback+独立 closeout（refused+failed tool call+failed session+恰好一条 rejected）。
+- **性能**：基线 260.37s/ceiling 286.407s（reports/m13-perf-baseline.json）；D3 期间 runner 方差 252~304s，Gate 裁定 **defer 至 M13 closeout 复测**；内核抽取曾致 CI 302s，已用 batch_document_state 优化回落。
+- **环境**：main 树 = `P055-PID-Agent-main`（m13-d3 已合；D4 新分支从 origin/main 切）；docs = q1r；性能/裁定读取同 M12（evaluate --tab-id、多段 slice、劫持即重发）。
+- **下一动作**：开工 M13-D4（approval binding + atomic executor + 两事务纪律 + race/failure-injection 测试），完成后报 Gate 独立 Merge Gate。
+
+## 上一状态（2026-10-05 —— **M12 implementation closeout COMPLETE（PR #81 合 main@b9e125f，main CI run 37210734487 四绿，Gate 已签）；全项目唯一挂起 = M9 WS3B 四字段待 Owner**）
 
 - **M12 全链已合 main**：D1（#77 Charter 1.1.0 + 六问冻结）→ D2（#78 v15 + identity/membership）→ D3（#79 links + governed mutation，M10 runtime 边界无旁路）→ D4（#80 ProjectReadinessService）→ D5（#81 确定性交付包 + 只读 surface/UI + 冻结 e2e + closeout，经 D81-1~5/FINAL/FINAL-FINAL 三轮修正）。closeout 矩阵在 `reports/m12-closeout.md`。**性能对账（Gate 批的 CI exact-logs 口径）：274.87s/1754（pre-M12）→ 178.46s/1809（D5 code head）=-35%，≤+10%。**
 - **D5 终局要点（复用价值高）**：显式 member pins CAS 边界（服务器重读当前逐一比对，绝不历史重建）；冻结 canonical order（固定三头→pid→cable，verifier 独立校验不依赖 MANIFEST 自述）；一致状态快照（membership+links+revisions 捕获+写出前重验，package_state_changed 稳定 409）；e2e 共享库种子的 FK 自清理（afterEach 按 created_by/added_by 删）；Gate 会话长消息虚拟化截断——读裁定用 evaluate --tab-id 定向 + 多段 slice。

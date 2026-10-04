@@ -1,0 +1,11 @@
+{
+  "baseline_name": "pre-M13 backend full-suite wall-clock (frozen at M13-D2)",
+  "baseline_run": "37210734487",
+  "baseline_head": "b9e125f9c50dac332745fad146ea6ba56dc39177",
+  "job": "Backend · Python 3.11",
+  "result": "1809 passed",
+  "pytest_wall_seconds": 260.37,
+  "budget_rule": "M13 closeout increment must be <= +10% of this baseline",
+  "ceiling_seconds": 286.407,
+  "evidence_method": "GitHub same-workflow / same-runner exact pytest log comparison (Gate-approved PERFORMANCE EVIDENCE METHOD AMENDMENT); local wall-clock is not the Gate evidence"
+}

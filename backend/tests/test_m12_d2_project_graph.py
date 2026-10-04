@@ -75,7 +75,7 @@ def test_v14_to_v15_migration_backfills_default_project(
     assert _user_version(database) == 14
 
     service = _service(database)  # reopens: migrates v14 -> v15
-    assert _user_version(database) == CURRENT_SCHEMA_VERSION == 15
+    assert _user_version(database) == CURRENT_SCHEMA_VERSION == 16
 
     store = service.store
     projects = store.list_projects()
@@ -140,7 +140,7 @@ def test_v14_backup_then_v15_migrate_then_restore_re_migrates(
 
     # v15 binary migrates the original.
     _service(database)
-    assert _user_version(database) == 15
+    assert _user_version(database) == 16
 
     # Rollback = restore (first yields v14), then v15 binary re-migrates.
     restored = tmp_path / "restored.db"
@@ -152,7 +152,7 @@ def test_v14_backup_then_v15_migrate_then_restore_re_migrates(
     )
     assert _user_version(restored) == 14
     service = _service(restored)
-    assert _user_version(restored) == 15
+    assert _user_version(restored) == 16
     assert service.store.get_project(DEFAULT_PROJECT_ID) is not None
 
 
@@ -223,7 +223,7 @@ def test_engineering_links_schema_foundation_only(tmp_path: Path) -> None:
         assert not hasattr(store, forbidden)
 
 
-def test_v15_database_passes_required_schema_validation(tmp_path: Path) -> None:
+def test_v16_database_passes_required_schema_validation(tmp_path: Path) -> None:
     database = tmp_path / "fresh.db"
     _service(database)
     connection = sqlite3.connect(database)
@@ -232,7 +232,7 @@ def test_v15_database_passes_required_schema_validation(tmp_path: Path) -> None:
         "SELECT name FROM projects WHERE project_id = ?", (DEFAULT_PROJECT_ID,)
     ).fetchone()
     connection.close()
-    assert version == 15
+    assert version == 16
     assert default_row is not None
 
 

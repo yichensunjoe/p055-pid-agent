@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, BinaryIO
 from urllib.parse import quote
 
-CURRENT_SCHEMA_VERSION = 15
+CURRENT_SCHEMA_VERSION = 16
 # M12-D2: deterministic id of the default project seeded by _migration_15 so
 # that upgrading an existing database always lands on the same project identity.
 DEFAULT_PROJECT_ID = "proj_m12default"
@@ -1364,6 +1364,47 @@ def _migration_15(connection: sqlite3.Connection) -> None:
         )
 
 
+def _migration_16(connection: sqlite3.Connection) -> None:
+    """M13-D2: durable project change-set persistence (design frozen at
+    reports/m13-d1-design.md §1, M13-D1 DESIGN PASS).
+
+    Adds project_change_sets only: additive single table, no backfill (a
+    fresh table is the correct state). FK enforcement stays ON; any failure
+    rolls back explicitly (same discipline as v15). Status machine is
+    deliberately minimal: staged -> approved -> applied / refused. An
+    `approved` row is a persisted fact, never authorization by itself
+    (C4 in the frozen design)."""
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS project_change_sets (
+            change_set_id TEXT PRIMARY KEY,
+            project_id    TEXT NOT NULL,
+            status        TEXT NOT NULL
+                CHECK(status IN ('staged','approved','applied','refused')),
+            base_pins     TEXT NOT NULL,
+            intent        TEXT NOT NULL,
+            intent_hash   TEXT NOT NULL,
+            impacted      TEXT NOT NULL DEFAULT '{}',
+            preview       TEXT NOT NULL DEFAULT '{}',
+            result_pins   TEXT NOT NULL DEFAULT '{}',
+            evidence      TEXT NOT NULL DEFAULT '{}',
+            session_id    TEXT,
+            approval_id   TEXT,
+            tool_call_id  TEXT,
+            created_at    TEXT NOT NULL,
+            created_by    TEXT NOT NULL,
+            updated_at    TEXT NOT NULL,
+            FOREIGN KEY(project_id) REFERENCES projects(project_id)
+        )
+        """
+    )
+    violations = connection.execute("PRAGMA foreign_key_check").fetchall()
+    if violations:
+        raise DatabaseMigrationError(
+            f"PRAGMA foreign_key_check found {len(violations)} violation(s) after v16"
+        )
+
+
 _MIGRATIONS = {
     1: _migration_1,
     2: _migration_2,
@@ -1380,6 +1421,7 @@ _MIGRATIONS = {
     13: _migration_13,
     14: _migration_14,
     15: _migration_15,
+    16: _migration_16,
 }
 
 
@@ -1430,6 +1472,11 @@ def _validate_required_schema(connection: sqlite3.Connection) -> None:
             "project_documents",
             "engineering_links",
         }
+    if _schema_version(connection) >= 16:
+        # M13-D2: change-set table is required only of databases actually at
+        # v16+ — a v15 database inspected by a v16 binary (migrate=False or a
+        # pre-v16 backup) must still validate as v15.
+        required_tables = required_tables | {"project_change_sets"}
     missing = required_tables - _table_names(connection)
     if missing:
         raise DatabaseMigrationError(f"database schema is missing tables: {sorted(missing)}")

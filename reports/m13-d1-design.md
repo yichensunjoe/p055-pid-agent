@@ -59,6 +59,7 @@ project_change_sets (
 ChangeSetIntent {
   project_id: str
   base_member_pins: {document_id: int}     # 唯一 CAS 来源（铁律 C1/C2）
+  evaluation_as_of: datetime               # 必填、tz-aware；进入 canonical hash
   mutations: [                              # 有序；顺序即应用顺序
     {
       domain: 'pid'|'cable'
@@ -75,10 +76,11 @@ intent_hash = sha256(canonical_intent)
 
 铁律：
 
-- **C1（declared pins 不得被静默替换）**：服务器独立重读当前 pins，要求 declared pins
-  集合精确等于 project members 且每个 value == 当前 revision；不等立即拒绝
-  （`change_set_base_not_current`）。验证通过后 canonical material 使用同一 declared
-  pins——绝不把用户基于 revision A 的请求静默升级成 revision B 再让人批准。
+- **C1（declared pins 不得被静默替换）**：服务器独立重读当前 pins，**仅用于比对**——
+  要求 declared pins 集合精确等于 project members 且每个 value == 当前 revision，不等
+  立即拒绝（`change_set_base_not_current`）。当前 pins 绝不进入 canonical material；
+  canonical intent / preview / approval / evidence 一律使用 declared pins——绝不把用户
+  基于 revision A 的请求静默升级成 revision B 再让人批准。
 - **C2（单一 CAS 来源）**：base_member_pins 是整个 change set 唯一的 revision 真源；
   mutation payload 不得携带 revision；若任何下层结构机械要求 revision 字段，必须断言
   它等于对应 base pin，冲突即失败。
@@ -124,11 +126,14 @@ revision、link pins、文档内容哈希前后相等（e2e hard-lock）。
 复用 M10 与 D79-2 机制，另加铁律：
 
 - 中性 tool `apply_project_change_set`（permission=ask, risk=engineering_change）；
-  canonicalize 由服务器注入当前 pins + impacted 摘要（调用方字段剥离重算，同 D79-2），
+  canonicalize 时服务器剥离调用方注入字段、重算 server-derived 摘要（impacted /
+  derived re-pins / **effective profile fingerprint**，同 D79-2 的注入纪律），
   `tool_intent_hash` 锁批准状态。
-- apply 时重 canonicalize + hash 比对：任何 member revision、mutation、affected identity
-  或 intent 变化 → `change_set_conflict` 稳定 409，零写入。
-- approval 单次消费 + C1（base pins == 当前）双闸防 replay。
+- **exact approval 绑定（冻结）**：project_id + declared base pins + evaluation_as_of +
+  ordered mutations + server-derived impacted/derived re-pins + **effective profile
+  fingerprint**——任一变化 → `change_set_conflict` 稳定 409 零写入，须重新 preview +
+  approval。profile 漂移因此不可能被旧批准放行。
+- apply 时重 canonicalize + hash 比对 + C1 重验 + approval 单次消费，四闸防 replay。
 - **C4（状态≠授权）**：change_set 行的 `approved` 状态只是持久化事实，任何时候都不
   能独立充当授权；执行前必须重新验证 M10 四要素（approval 记录存在、intent_hash 匹配、
   未消费、base pins == 当前）。

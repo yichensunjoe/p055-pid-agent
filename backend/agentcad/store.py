@@ -1309,6 +1309,123 @@ class SQLiteDocumentStore:
             connection.commit()
         return cursor.rowcount == 1
 
+    def commit_project_change_set(
+        self,
+        *,
+        change_set_id: str,
+        pid_writes: list[tuple[str, int, str]],
+        cable_writes: list[tuple[str, int, str]],
+        repin_actions: list[tuple[str, int, int]],
+        result_pins: str,
+        evidence: str,
+        audit: AuditRecordDraft,
+        tool_call: ToolCallRecord,
+        approval: ToolApproval,
+        session: AgentSession,
+    ) -> None:
+        """M13-D4 atomic governed multi-domain commit: every P&ID CAS write,
+        every Cable CAS write, every existing-link re-pin, the change-set
+        approved->applied transition and the full governance closeout land in
+        ONE BEGIN IMMEDIATE. Any failure rolls back everything — a change set
+        can never leave a half-project state. undo/redo stacks and revision
+        history are untouched here; the change-set evidence is the audit
+        trail for these revisions (frozen M13-D4 contract)."""
+        now = datetime.now(UTC).isoformat()
+        with self._lock, self._connect() as connection:
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                for document_id, new_revision, data_json in pid_writes:
+                    cursor = connection.execute(
+                        "UPDATE documents SET revision = ?, data_json = ?, updated_at = ? "
+                        "WHERE id = ? AND revision = ?",
+                        (new_revision, data_json, now, document_id, new_revision - 1),
+                    )
+                    if cursor.rowcount != 1:
+                        raise StoreRevisionConflictError(
+                            f"pid document {document_id!r} no longer has revision "
+                            f"{new_revision - 1}"
+                        )
+                for document_id, new_revision, data_json in cable_writes:
+                    cursor = connection.execute(
+                        "UPDATE cable_documents SET revision = ?, data_json = ?, "
+                        "updated_at = ? WHERE document_id = ? AND revision = ?",
+                        (new_revision, data_json, now, document_id, new_revision - 1),
+                    )
+                    if cursor.rowcount != 1:
+                        raise StoreRevisionConflictError(
+                            f"cable document {document_id!r} no longer has revision "
+                            f"{new_revision - 1}"
+                        )
+                for link_id, pinned_source, pinned_target in repin_actions:
+                    cursor = connection.execute(
+                        "UPDATE engineering_links SET pinned_source_revision = ?, "
+                        "pinned_target_revision = ? WHERE link_id = ? AND deleted_at = ''",
+                        (pinned_source, pinned_target, link_id),
+                    )
+                    if cursor.rowcount != 1:
+                        raise StoreDocumentIdentityError(
+                            f"active link {link_id!r} not found for re-pin"
+                        )
+                cursor = connection.execute(
+                    "UPDATE project_change_sets SET status = 'applied', updated_at = ?,"
+                    " result_pins = ?, evidence = ?, session_id = ?, approval_id = ?,"
+                    " tool_call_id = ? WHERE change_set_id = ? AND status = 'approved'",
+                    (
+                        now,
+                        result_pins,
+                        evidence,
+                        session.id,
+                        approval.id,
+                        tool_call.id,
+                        change_set_id,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise StoreDocumentIdentityError(
+                        f"change set {change_set_id!r} is not in 'approved' state"
+                    )
+                self._write_tool_call(connection, tool_call)
+                self._write_tool_approval(connection, approval)
+                self._write_agent_session(connection, session)
+                self._append_audit_record(connection, audit)
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+
+    def change_set_failure_closeout(
+        self,
+        *,
+        change_set_id: str,
+        tool_call: ToolCallRecord,
+        session: AgentSession,
+        audit: AuditRecordDraft,
+    ) -> None:
+        """M13-D4 failure closeout (separate transaction, after the
+        engineering transaction rolled back): change set -> refused (when it
+        was approved), failed tool call, failed session, exactly one rejected
+        audit — never any domain/link residue, never a half-closed harness."""
+        now = datetime.now(UTC).isoformat()
+        with self._lock, self._connect() as connection:
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                # Best-effort row transition: only an approved row becomes
+                # refused here. A staged/applied row was never authorized in
+                # this execution, so its status is left untouched; the failed
+                # tool call / session / rejected audit are still recorded.
+                connection.execute(
+                    "UPDATE project_change_sets SET status = 'refused', updated_at = ?"
+                    " WHERE change_set_id = ? AND status = 'approved'",
+                    (now, change_set_id),
+                )
+                self._write_tool_call(connection, tool_call)
+                self._write_agent_session(connection, session)
+                self._append_audit_record(connection, audit)
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+
     def save_change_set_analysis(
         self,
         *,

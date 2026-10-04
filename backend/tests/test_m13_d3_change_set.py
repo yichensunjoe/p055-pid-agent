@@ -423,6 +423,11 @@ def test_repin_algorithm_non_diffusion_and_unmutated_pins(tmp_path: Path) -> Non
     impact = analyzer.analyze(pid_only)
     # mutated doc PLUS its direct link counterpart; no transitive diffusion
     assert impact.affected_documents == tuple(sorted([plane.pid_id, plane.cable_id]))
+    # object impact spans the link one hop: touched equipment + linked segment
+    assert set(impact.affected_objects) == {
+        (plane.pid_id, "PMP-101"),
+        (plane.cable_id, "SEG-1"),
+    }
     assert impact.affected_links == tuple(
         link for link in impact.affected_links if link["link_id"] == "lnk_seed"
     )
@@ -452,6 +457,11 @@ def test_repin_algorithm_non_diffusion_and_unmutated_pins(tmp_path: Path) -> Non
         ],
     )
     cable_impact = analyzer.analyze(cable_only)
+    # same-id gauge change still counts the segment as touched, and the linked
+    # equipment comes along one hop
+    assert (plane.cable_id, "SEG-1") in cable_impact.affected_objects
+    assert (plane.pid_id, "PMP-101") in cable_impact.affected_objects
+    assert (other.id, "PMP-102") in cable_impact.affected_objects
     assert sorted(link["link_id"] for link in cable_impact.affected_links) == [
         "lnk_bc",
         "lnk_seed",

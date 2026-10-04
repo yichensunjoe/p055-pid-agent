@@ -391,7 +391,18 @@ class ChangeSetImpactAnalyzer:
                     ),
                 )
             )
-        affected_objects = self._affected_objects(intent, removed_pid)
+        touched_objects = self._touched_objects(intent)
+        # one-hop object expansion across existing active links: touching a
+        # linked object affects its counterpart; no transitive diffusion.
+        linked_objects: set[tuple[str, str]] = set()
+        for link in links:
+            pair_source = (link["source_document_id"], link["source_object_ref"])
+            pair_target = (link["target_document_id"], link["target_object_ref"])
+            if pair_target in touched_objects:
+                linked_objects.add(pair_source)
+            if pair_source in touched_objects:
+                linked_objects.add(pair_target)
+        affected_objects = tuple(sorted(touched_objects | linked_objects))
         validation_scope = {
             "member_documents": list(affected_documents),
             "link_rules": "m12-seven-code-subset-over-affected",
@@ -431,10 +442,8 @@ class ChangeSetImpactAnalyzer:
             removed = removed | {element.id for element in document.elements}
         return set(removed)
 
-    def _affected_objects(
-        self, intent: ChangeSetIntent, removed_pid: dict[str, set[str]]
-    ) -> tuple[tuple[str, str], ...]:
-        """Object-level impact: touched pid element ids (add/update/delete)
+    def _touched_objects(self, intent: ChangeSetIntent) -> set[tuple[str, str]]:
+        """Directly touched objects: pid element ids (add/update/delete/clear)
         and cable segment deltas, as (document_id, object_ref) pairs."""
         objects: set[tuple[str, str]] = set()
         for mutation in intent.mutations:
@@ -465,13 +474,14 @@ class ChangeSetImpactAnalyzer:
                 staged = CableDocument.model_validate(
                     {**mutation.payload, "revision": 0}
                 )
-                base_ids = {segment.id for segment in view.document.segments}
-                staged_ids = {segment.id for segment in staged.segments}
+                base_map = {segment.id: segment for segment in view.document.segments}
+                staged_map = {segment.id: segment for segment in staged.segments}
                 objects |= {
                     (mutation.document_id, segment_id)
-                    for segment_id in (base_ids ^ staged_ids)
+                    for segment_id in set(base_map) | set(staged_map)
+                    if base_map.get(segment_id) != staged_map.get(segment_id)
                 }
-        return tuple(sorted(objects))
+        return objects
 
     def _validate_cable_payload(self, mutation: ChangeSetMutation) -> None:
         try:

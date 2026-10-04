@@ -2,7 +2,15 @@
 
 > 交接文档：每次开新会话先读本文件。更新规则见 `AGENTS.md`「HANDOFF 交接规则」。
 
-## 当前状态（2026-10-03 —— **M12-D4 CLOSED（PR #80 合 main@aace880，main CI 四绿）；M12-D5 CODE GO 已生效；D5 未开工**）
+## 当前状态（2026-10-05 —— **M12 implementation closeout COMPLETE（PR #81 合 main@b9e125f，main CI run 37210734487 四绿，Gate 已签）；全项目唯一挂起 = M9 WS3B 四字段待 Owner**）
+
+- **M12 全链已合 main**：D1（#77 Charter 1.1.0 + 六问冻结）→ D2（#78 v15 + identity/membership）→ D3（#79 links + governed mutation，M10 runtime 边界无旁路）→ D4（#80 ProjectReadinessService）→ D5（#81 确定性交付包 + 只读 surface/UI + 冻结 e2e + closeout，经 D81-1~5/FINAL/FINAL-FINAL 三轮修正）。closeout 矩阵在 `reports/m12-closeout.md`。**性能对账（Gate 批的 CI exact-logs 口径）：274.87s/1754（pre-M12）→ 178.46s/1809（D5 code head）=-35%，≤+10%。**
+- **D5 终局要点（复用价值高）**：显式 member pins CAS 边界（服务器重读当前逐一比对，绝不历史重建）；冻结 canonical order（固定三头→pid→cable，verifier 独立校验不依赖 MANIFEST 自述）；一致状态快照（membership+links+revisions 捕获+写出前重验，package_state_changed 稳定 409）；e2e 共享库种子的 FK 自清理（afterEach 按 created_by/added_by 删）；Gate 会话长消息虚拟化截断——读裁定用 evaluate --tab-id 定向 + 多段 slice。
+- **治理口径（Gate 原文）**：M12 closeout ≠ WS3B、不解除 M9 Closeout / M10 FINAL ACCEPTANCE 的 Owner 阻断、无 deploy 授权。**WS3B 随时可作独立 evidence lane 插回（pin 一个 main SHA）。**
+- **环境**：main 树 = `P055-PID-Agent-main`（m12-d5 已合）；docs = q1r；e2e 8002/4174；性能基线 reports/m12-perf-baseline.json 已被 CI exact-logs 口径取代（Gate amendment）。**bsk：多标签页环境必须 `evaluate --tab-id` 定向 Gate 标签（并行项目在看 B 站）；劫持频繁，注入后立刻二次核对。**
+- **下一站在 Owner**：填 WS3B 四字段 → M9 收口。未经 Gate 明示不自动开新工程。
+
+## 上一状态（2026-10-03 —— **M12-D4 CLOSED（PR #80 合 main@aace880，main CI 四绿）；M12-D5 CODE GO 已生效；D5 未开工**）
 
 - **M12 进度**：D1（#77 Charter 1.1.0+六问）→ D2（#78 v15+identity）→ D3（#79 links+governed mutation）→ D4（#80 ProjectReadinessService，经 D80-1~4 四轮修正）全部合 main。**D5 CODE GO（最后一片）已批：deterministic Project Delivery Package + 只读 inspection API/UI + 冻结真实后端 e2e + M12 closeout；继续遵守 current-exact-revision-only、固定 evaluation_as_of、fresh-process byte parity、MANIFEST self-exclusion、tamper verification、只读 GET 零 audit、不新增 approval/release state。**
 - **D4 终局要点**：七 issue code（dangling×2/missing×2/wrong_domain=blocker；stale×2=warning+fail-on-warning）；wrong_domain=声明 vs registry 真值（D80-1）；missing_source_object=段存在+endpoint 合法双条件（D80-2）；project_not_found fail-closed（D80-3）；stale-first；soft-deleted 不参与；PID readiness 唯一来源 assess_document_release_readiness+load_profile()+evaluation_as_of；F77 hash 绑定清单含 member readiness_hash；profile 漂移→member hash→project hash 传播有 hard-lock 测试。

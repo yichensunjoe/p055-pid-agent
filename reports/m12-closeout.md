@@ -85,16 +85,18 @@
 
 ## 7. 全量非回归
 
-- backend：1806 passed + ruff 净（pre-M12 基线 1754；净增 52 个新测试，零删测零放宽）。
+- backend：1809 passed + ruff 净（pre-M12 基线 1754；净增 55 个新测试，零删测零放宽）。
+  实现证据 = code head 77e0cd1 / CI run 37191981718；若随后仅有 closeout 文档机械修正，
+  该 run 即 code-identical implementation evidence，不称后续纯文档 commit 的 exact-head run。
 - frontend：npm test 163 pass。
 - CI 四 job 全绿：Backend / Frontend / Chromium（local e2e 含 project spec）/
   M5 72-case deterministic gate；shared-mode security acceptance 在内。
 - 视觉基线：darwin 本机随第三 tab 再生；linux committed baselines 在 exact-head CI 重新
   断言通过（第三 domain tab 属冻结 app-shell 变化的机械性更新）。
-- 性能对账（PERFORMANCE EVIDENCE METHOD AMENDMENT，Gate 已批）：采用同一 GitHub Backend
+- 性能对账（PERFORMANCE EVIDENCE METHOD AMENDMENT，Gate 已批）：同一 GitHub Backend
   workflow / Python 3.11 / pytest 命令的 exact logs 对比——pre-M12 基线 274.87s（run
-  36791335881，1754 passed）→ D5 exact-head run 37134350541（283.11s，1808 passed）：
-  约 +3.0%，≤ +10% 预算内（阈值未放宽）。
+  36791335881，1754 passed）→ code head 77e0cd1 / run 37191981718（178.46s，1809 passed）：
+  约 -35%，≤ +10% 预算内（阈值未放宽；实现证据以该 code run 为准，见非回归节注记）。
 
 ## 治理与遗留
 

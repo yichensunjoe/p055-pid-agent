@@ -1228,6 +1228,10 @@ class SQLiteDocumentStore:
             return None
         return dict(row)
 
+    _CHANGE_SET_TRANSITIONS = frozenset(
+        {("staged", "approved"), ("approved", "applied"), ("approved", "refused")}
+    )
+
     def update_change_set_status(
         self,
         *,
@@ -1240,8 +1244,13 @@ class SQLiteDocumentStore:
         approval_id: str | None = None,
         tool_call_id: str | None = None,
     ) -> bool:
-        """CAS state-machine transition. False when the change set is missing
-        or not in expected_status. Never an authorization by itself (C4)."""
+        """CAS state-machine transition over legal edges only: staged->approved,
+        approved->applied, approved->refused (applied/refused are terminal).
+        False when the change set is missing, not in expected_status, or the
+        transition is illegal; the row is never modified. Never an
+        authorization by itself (C4)."""
+        if (expected_status, new_status) not in self._CHANGE_SET_TRANSITIONS:
+            return False
         now = datetime.now(UTC).isoformat()
         with self._lock, self._connect() as connection:
             cursor = connection.execute(

@@ -200,6 +200,54 @@ def test_change_set_status_check_rejects_unknown_status(tmp_path: Path) -> None:
     connection.close()
 
 
+def test_change_set_transition_machine_locked(tmp_path: Path) -> None:
+    """D83-1: only staged->approved, approved->applied, approved->refused are
+    legal; terminal states cannot reopen and illegal edges leave the row
+    completely unchanged."""
+    store = SQLiteDocumentStore(tmp_path / "machine.db")
+    _stage(store, "cs_t")
+
+    # the three legal edges
+    assert store.update_change_set_status(
+        change_set_id="cs_t", expected_status="staged", new_status="approved"
+    ) is True
+    assert store.get_change_set("cs_t")["status"] == "approved"
+
+    # illegal: approved -> approved (no self-loop), approved -> staged
+    assert store.update_change_set_status(
+        change_set_id="cs_t", expected_status="approved", new_status="approved"
+    ) is False
+    assert store.update_change_set_status(
+        change_set_id="cs_t", expected_status="approved", new_status="staged"
+    ) is False
+    row = store.get_change_set("cs_t")
+    assert row["status"] == "approved"
+    assert row["updated_at"] == store.get_change_set("cs_t")["updated_at"]
+
+    # legal: approved -> refused is terminal
+    assert store.update_change_set_status(
+        change_set_id="cs_t", expected_status="approved", new_status="refused"
+    ) is True
+    refused = dict(store.get_change_set("cs_t"))
+    assert store.update_change_set_status(
+        change_set_id="cs_t", expected_status="refused", new_status="applied"
+    ) is False
+    assert store.update_change_set_status(
+        change_set_id="cs_t", expected_status="refused", new_status="staged"
+    ) is False
+    assert store.get_change_set("cs_t") == refused  # byte-identical row
+
+    # staged -> applied / staged -> refused are not legal shortcuts
+    _stage(store, "cs_u")
+    assert store.update_change_set_status(
+        change_set_id="cs_u", expected_status="staged", new_status="applied"
+    ) is False
+    assert store.update_change_set_status(
+        change_set_id="cs_u", expected_status="staged", new_status="refused"
+    ) is False
+    assert store.get_change_set("cs_u")["status"] == "staged"
+
+
 def test_change_set_duplicate_id_conflicts(tmp_path: Path) -> None:
     store = SQLiteDocumentStore(tmp_path / "dup.db")
     _stage(store, "cs_dup")

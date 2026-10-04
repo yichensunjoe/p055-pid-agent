@@ -285,6 +285,36 @@ def test_final_gate_rejects_state_drift_during_build(tmp_path: Path, monkeypatch
     assert exc_info.value.code == "package_state_changed"
 
 
+def test_final_gate_rejects_membership_drift_during_build(tmp_path: Path, monkeypatch) -> None:
+    """FINAL-FINAL: membership changes between the pin gate and ZIP emission
+    must refuse — readiness over one set and artifacts over another would be
+    an inconsistent package."""
+    store, service, cable, _pid_id, _cable_id = _seed_members(tmp_path)
+    pins = _current_pins(store)
+    original = store.list_project_documents
+    calls = {"n": 0}
+
+    def flaky(project_id: str):
+        calls["n"] += 1
+        rows = list(original(project_id))
+        if calls["n"] >= 3:
+            # membership shrinks mid-build: drop the cable member
+            rows = [row for row in rows if row[1] != "cable"]
+        return rows
+
+    monkeypatch.setattr(store, "list_project_documents", flaky)
+    with pytest.raises(ProjectPackageError) as exc_info:
+        build_project_package(
+            store=store,
+            pid_service=service,
+            cable_service=cable,
+            project_id=DEFAULT_PROJECT,
+            member_pins=pins,
+            evaluation_as_of=AS_OF,
+        )
+    assert exc_info.value.code == "package_state_changed"
+
+
 def _rewrite_zip(package: bytes, transform) -> bytes:
     archive = zipfile.ZipFile(io.BytesIO(package))
     entries = [(info.filename, archive.read(info.filename)) for info in archive.infolist()]
@@ -338,6 +368,26 @@ def test_verify_rejects_missing_extra_duplicate_and_order_drift(tmp_path: Path) 
         return [entries[0], *reversed(body)]  # D81-2: same set, wrong order
     with pytest.raises(ProjectPackageError, match="member order drift"):
         verify_project_package(_rewrite_zip(package, reordered))
+
+    # FINAL-FINAL: manifest AND zip reordered CONSISTENTLY must still fail —
+    # the verifier validates the frozen canonical order independently.
+    archive = zipfile.ZipFile(io.BytesIO(package))
+    manifest = json.loads(archive.read("MANIFEST.json"))
+    manifest["members"] = list(reversed(manifest["members"]))
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_STORED) as target:
+        fixed = zipfile.ZipInfo("MANIFEST.json", date_time=(1980, 1, 1, 0, 0, 0))
+        fixed.compress_type = zipfile.ZIP_STORED
+        fixed.extra = b""
+        target.writestr(fixed, (json.dumps(manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8"))
+        for member in manifest["members"]:
+            data = archive.read(member["path"])
+            fixed = zipfile.ZipInfo(member["path"], date_time=(1980, 1, 1, 0, 0, 0))
+            fixed.compress_type = zipfile.ZIP_STORED
+            fixed.extra = b""
+            target.writestr(fixed, data)
+    with pytest.raises(ProjectPackageError, match="frozen canonical order"):
+        verify_project_package(buffer.getvalue())
 
 
 def test_api_surface_read_only_and_stable_errors(tmp_path: Path) -> None:

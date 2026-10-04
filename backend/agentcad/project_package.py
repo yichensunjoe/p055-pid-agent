@@ -155,6 +155,8 @@ def build_project_package(
             "pinned_target_revision": int(row["pinned_target_revision"]),
         }
 
+    member_identity_snapshot = [(document_id, domain) for document_id, domain, _ in members]
+
     links_snapshot = [
         _canonical_link(row) for row in store.list_active_engineering_links(project_id)
     ]
@@ -255,6 +257,13 @@ def build_project_package(
     # D81-4 final gate: the package must be ONE project state. Re-verify
     # member revisions and the active-link snapshot immediately before ZIP
     # emission; any drift is a stable refusal, never an inconsistent bag.
+    final_identity = [
+        (document_id, domain) for document_id, domain, _ in store.list_project_documents(project_id)
+    ]
+    if final_identity != member_identity_snapshot:
+        raise ProjectPackageError(
+            "package_state_changed", "project membership changed during the build"
+        )
     for document_id, domain, _added_at in members:
         if _member_revision(store, document_id, domain) != pins[document_id][0]:
             raise ProjectPackageError(
@@ -370,8 +379,35 @@ def _verify_archive(archive: zipfile.ZipFile) -> None:
             raise ProjectPackageError(
                 "tamper_detected", f"member mismatch: missing={missing} extra={extra}"
             )
-        # D81-2: order is part of the frozen format — the zip's non-manifest
-        # entries must follow the MANIFEST row order exactly.
+        # D81-2/FINAL: order is part of the frozen format, and the verifier
+        # must validate it INDEPENDENTLY — not just manifest-vs-zip agreement
+        # (a attacker could reorder both consistently). The frozen canonical
+        # order is fixed heads, then pid artifacts, then cable artifacts,
+        # each domain block sorted by path.
+        pid_paths = sorted(p for p in listed if p.startswith("domains/pid/"))
+        cable_paths = sorted(p for p in listed if p.startswith("domains/cable/"))
+        head_paths = [
+            p
+            for p in listed
+            if p in (
+                "project.json",
+                "links/engineering_links.json",
+                "readiness/project_readiness.json",
+            )
+        ]
+        canonical_order = [
+            *head_paths,
+            *pid_paths,
+            *cable_paths,
+        ]
+        if len(head_paths) != 3 or len(canonical_order) != len(listed):
+            raise ProjectPackageError(
+                "tamper_detected", "frozen member set does not match the canonical layout"
+            )
+        if listed != canonical_order:
+            raise ProjectPackageError(
+                "tamper_detected", "MANIFEST member order violates the frozen canonical order"
+            )
         zip_order = [info.filename for info in entries if info.filename != _MANIFEST_PATH]
         if zip_order != listed:
             raise ProjectPackageError(

@@ -112,10 +112,15 @@ class Plane:
         self.store.add_document_to_project(DEFAULT_PROJECT, self.cable_id, added_by="tester")
 
     def pins(self) -> dict[str, int]:
-        return {
-            self.cable_id: int(self.store.get_cable_envelope(self.cable_id)[0]),
-            self.pid_id: self.store.get(self.pid_id).document.revision,
-        }
+        pins: dict[str, int] = {}
+        for document_id, domain, _added in self.store.list_project_documents(
+            DEFAULT_PROJECT
+        ):
+            if domain == "cable":
+                pins[document_id] = int(self.store.get_cable_envelope(document_id)[0])
+            else:
+                pins[document_id] = self.store.get(document_id).document.revision
+        return pins
 
     def cable_payload(self, gauge: str = "6mm2") -> dict:
         view = self.cable.load(self.cable_id)
@@ -339,6 +344,216 @@ def test_impact_repin_derivation_and_fail_closed_codes(tmp_path: Path) -> None:
             ],
         ))
     assert exc_info.value.code == "change_set_invalidates_link"
+
+
+def test_repin_algorithm_non_diffusion_and_unmutated_pins(tmp_path: Path) -> None:
+    """R84-3 hard-locks: only mutated documents advance to base+1; unmutated
+    members keep their pin; re-pins touch only links with a mutated endpoint,
+    and only the mutated side moves; impact never diffuses transitively."""
+    plane = Plane(tmp_path, "repin.db")
+    analyzer = ChangeSetImpactAnalyzer(plane.store, plane.service, plane.cable)
+
+    # third member + a second link from the same cable to another pid doc
+    other = plane.service.create_document(CreateDocumentRequest(name="pid2", width=800, height=600))
+    plane.service.apply_transaction(
+        other.id,
+        TransactionRequest(
+            expected_revision=0,
+            label="seed2",
+            operations=[
+                AddElementOperation(
+                    element=SymbolElement(
+                        id="PMP-102",
+                        symbol_key="agitator",
+                        position={"x": 300, "y": 100},
+                        width=60,
+                        height=40,
+                        label="PMP-102",
+                    )
+                )
+            ],
+        ),
+    )
+    plane.store.add_document_to_project(DEFAULT_PROJECT, other.id, added_by="tester")
+    connection = plane.store._connect()  # noqa: SLF001
+    try:
+        connection.execute(
+            "INSERT INTO engineering_links ("
+            " link_id, project_id, relation_type, source_domain, source_document_id,"
+            " source_object_ref, source_endpoint, target_domain, target_document_id,"
+            " target_object_ref, pinned_source_revision, pinned_target_revision,"
+            " created_at, created_by"
+            ") VALUES ('lnk_bc', ?, 'cable_endpoint_equipment', 'cable', ?, 'SEG-1',"
+            " 'to', 'pid', ?, 'PMP-102', ?, ?, ?, 'tester')",
+            (
+                DEFAULT_PROJECT,
+                plane.cable_id,
+                other.id,
+                plane.pins()[plane.cable_id],
+                plane.service.get_document(other.id).revision,
+                datetime.now(UTC).isoformat(),
+            ),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    pins = plane.pins()
+    pid_only = ChangeSetIntent(
+        project_id=DEFAULT_PROJECT,
+        base_member_pins=pins,
+        evaluation_as_of=AS_OF,
+        mutations=[
+            ChangeSetMutation(
+                domain="pid",
+                document_id=plane.pid_id,
+                kind="pid_transaction",
+                payload={
+                    "operations": [
+                        {
+                            "op": "update_element",
+                            "element_id": "PMP-101",
+                            "patch": {"label": "PMP-101A"},
+                        }
+                    ]
+                },
+            )
+        ],
+    )
+    impact = analyzer.analyze(pid_only)
+    assert impact.affected_documents == (plane.pid_id,)
+    # only the link touching the mutated document is affected
+    assert [link["link_id"] for link in impact.affected_links] == ["lnk_seed"]
+    action = impact.derived_repin_actions[0]
+    assert action.pinned_target_revision == pins[plane.pid_id] + 1  # mutated side
+    assert action.pinned_source_revision == pins[plane.cable_id]  # unmutated side keeps pin
+
+    previewer = ChangeSetPreviewer(plane.store, plane.service, plane.cable)
+    result = previewer.preview(pid_only, impact)
+    assert result.revision_projection[plane.pid_id] == pins[plane.pid_id] + 1
+    assert result.revision_projection[plane.cable_id] == pins[plane.cable_id]
+    assert result.revision_projection[other.id] == pins[other.id]
+
+    # cable-only: the pid side of the link keeps its pin
+    cable_only = ChangeSetIntent(
+        project_id=DEFAULT_PROJECT,
+        base_member_pins=pins,
+        evaluation_as_of=AS_OF,
+        mutations=[
+            ChangeSetMutation(
+                domain="cable",
+                document_id=plane.cable_id,
+                kind="cable_update",
+                payload=plane.cable_payload(),
+            )
+        ],
+    )
+    cable_impact = analyzer.analyze(cable_only)
+    assert sorted(link["link_id"] for link in cable_impact.affected_links) == [
+        "lnk_bc",
+        "lnk_seed",
+    ]
+    for action in cable_impact.derived_repin_actions:
+        assert action.pinned_source_revision == pins[plane.cable_id] + 1
+        target_doc = next(
+            link["target_document_id"]
+            for link in cable_impact.affected_links
+            if link["link_id"] == action.link_id
+        )
+        assert action.pinned_target_revision == pins[target_doc]
+
+    # both-mutated: the cable side and the mutated pid side advance; the
+    # unmutated pid2 (lnk_bc target) keeps its pin even here
+    both = analyzer.analyze(_mutate_both_intent(plane))
+    for action in both.derived_repin_actions:
+        assert action.pinned_source_revision == pins[plane.cable_id] + 1
+        target_doc = next(
+            link["target_document_id"]
+            for link in both.affected_links
+            if link["link_id"] == action.link_id
+        )
+        expected_target = (
+            pins[target_doc] + 1 if target_doc == plane.pid_id else pins[target_doc]
+        )
+        assert action.pinned_target_revision == expected_target
+
+
+def test_unlinked_element_may_become_instrument(tmp_path: Path) -> None:
+    """R84-5: the equipment predicate only guards elements referenced by active
+    engineering links; an unlinked element may change category."""
+    plane = Plane(tmp_path, "unlinked.db")
+    plane.service.apply_transaction(
+        plane.pid_id,
+        TransactionRequest(
+            expected_revision=plane.service.get_document(plane.pid_id).revision,
+            label="add unlinked",
+            operations=[
+                AddElementOperation(
+                    element=SymbolElement(
+                        id="AI-9",
+                        symbol_key="agitator",
+                        position={"x": 500, "y": 100},
+                        width=60,
+                        height=40,
+                        label="AI-9",
+                    )
+                )
+            ],
+        ),
+    )
+    analyzer = ChangeSetImpactAnalyzer(plane.store, plane.service, plane.cable)
+    intent = ChangeSetIntent(
+        project_id=DEFAULT_PROJECT,
+        base_member_pins=plane.pins(),
+        evaluation_as_of=AS_OF,
+        mutations=[
+            ChangeSetMutation(
+                domain="pid",
+                document_id=plane.pid_id,
+                kind="pid_transaction",
+                payload={
+                    "operations": [
+                        {
+                            "op": "update_element",
+                            "element_id": "AI-9",
+                            "patch": {"symbol_key": "analyzer_indicator"},
+                        }
+                    ]
+                },
+            )
+        ],
+    )
+    impact = analyzer.analyze(intent)  # must NOT raise
+    assert impact.affected_documents == (plane.pid_id,)
+
+
+def test_pid_payload_rejects_revision_keys_at_any_depth(tmp_path: Path) -> None:
+    plane = Plane(tmp_path, "depth.db")
+    analyzer = ChangeSetImpactAnalyzer(plane.store, plane.service, plane.cable)
+    intent = ChangeSetIntent(
+        project_id=DEFAULT_PROJECT,
+        base_member_pins=plane.pins(),
+        evaluation_as_of=AS_OF,
+        mutations=[
+            ChangeSetMutation(
+                domain="pid",
+                document_id=plane.pid_id,
+                kind="pid_transaction",
+                payload={
+                    "operations": [
+                        {
+                            "op": "update_element",
+                            "element_id": "PMP-101",
+                            "patch": {"metadata": {"revision": 3}},
+                        }
+                    ]
+                },
+            )
+        ],
+    )
+    with pytest.raises(ChangeSetError) as exc_info:
+        analyzer.analyze(intent)
+    assert exc_info.value.code == "change_set_revision_leak"
 
 
 def test_preview_zero_state_change_and_determinism(tmp_path: Path) -> None:

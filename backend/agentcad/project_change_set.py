@@ -22,12 +22,11 @@ from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, TypeAdapter, field_validator, model_validator
 
 from .cable_service import CableDocumentView, CableService
 from .models import (
-    AddElementOperation,
-    DeleteElementOperation,
+    Operation,
     StrictModel,
     UpdateElementOperation,
 )
@@ -40,14 +39,14 @@ from .service import DocumentService
 from .store import SQLiteDocumentStore
 from .validation_profile import load_profile
 
+_OPERATION_ADAPTER = TypeAdapter(list[Operation])
+
 MUTATION_PID_TRANSACTION = "pid_transaction"
 MUTATION_CABLE_UPDATE = "cable_update"
 _MUTATION_KINDS = (MUTATION_PID_TRANSACTION, MUTATION_CABLE_UPDATE)
 
-# C2: mutation payloads must not carry revision truth. CableDocument payloads
-# are allowed a top-level "revision" ONLY when it equals the declared base pin
-# (mechanical assert below); everything else is rejected.
-_REVISION_TRUTH_KEYS = {"expected_revision"}
+# C2: mutation payloads must not carry revision truth anywhere.
+_REVISION_TRUTH_KEYS = {"expected_revision", "revision"}
 
 
 class ChangeSetError(RuntimeError):
@@ -146,6 +145,9 @@ def validate_single_cas_source(intent: ChangeSetIntent) -> None:
     at any depth. Declared base_member_pins remains the sole CAS truth."""
     for mutation in intent.mutations:
         if mutation.domain == "cable":
+            # Only the top-level CableDocument revision is mechanically
+            # tolerated, and only when it equals the declared base pin; any
+            # other depth is rejected like pid payloads.
             revision = mutation.payload.get("revision")
             if revision is not None and int(revision) != int(
                 intent.base_member_pins[mutation.document_id]
@@ -154,6 +156,13 @@ def validate_single_cas_source(intent: ChangeSetIntent) -> None:
                     "change_set_revision_leak",
                     f"cable payload revision {revision!r} != declared base pin "
                     f"{intent.base_member_pins[mutation.document_id]!r}",
+                )
+            remainder = {k: v for k, v in mutation.payload.items() if k != "revision"}
+            leak = _scan_revision_leak(remainder)
+            if leak is not None:
+                raise ChangeSetError(
+                    "change_set_revision_leak",
+                    f"cable payload carries revision truth at {leak!r}",
                 )
             continue
         leak = _scan_revision_leak(mutation.payload)
@@ -227,27 +236,22 @@ def _canonical_link_row(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def _parse_pid_operations(payload: dict[str, Any]) -> list[Any]:
-    """Canonical payload ops are plain JSON; stage/validation needs typed
-    operation models (the same discriminated union the HTTP layer uses)."""
-    models = []
-    for operation in payload.get("operations", []):
-        if not isinstance(operation, dict):
-            raise ChangeSetError("impact_unknown_kind", "pid operation must be an object")
-        op = operation.get("op")
-        if op == "add_element":
-            models.append(AddElementOperation(element=operation["element"]))
-        elif op == "update_element":
-            models.append(
-                UpdateElementOperation(
-                    element_id=operation["element_id"],
-                    patch=operation.get("patch", {}),
-                )
-            )
-        elif op == "delete_element":
-            models.append(DeleteElementOperation(element_id=operation["element_id"]))
-        else:
-            raise ChangeSetError("impact_unknown_kind", f"unknown pid op: {op!r}")
-    return models
+    """Canonical payload ops are plain JSON; validation uses the SAME
+    discriminated union the HTTP layer uses (all ten operation kinds,
+    min_length=1 / max_length=1000), so one pid_transaction speaks one
+    language at every entry point."""
+    raw = payload.get("operations")
+    if not isinstance(raw, list) or not 1 <= len(raw) <= 1000:
+        raise ChangeSetError(
+            "impact_unknown_kind",
+            "pid operations must be a list of 1..1000 items",
+        )
+    try:
+        return _OPERATION_ADAPTER.validate_python(raw)
+    except Exception as exc:
+        raise ChangeSetError(
+            "impact_unknown_kind", f"pid operation is not a valid Operation: {exc}"
+        ) from exc
 
 
 def _pid_touched_element_ids(payload: dict[str, Any]) -> tuple[set[str], set[str]]:
@@ -348,29 +352,33 @@ class ChangeSetImpactAnalyzer:
         # equipment predicate re-check for updated pid elements (staged, in-memory).
         self._validate_equipment_predicate(intent)
 
-        link_touches_mutated = [
+        # Only documents with an actual mutation advance to base+1; peers of
+        # mutated documents stay at their declared pin and must never inherit
+        # a revision bump or transmit impact to further links (no diffusion).
+        affected_documents = sorted(set(mutated))
+        affected_links = tuple(
             link
             for link in links
-            if link["source_document_id"] in mutated or link["target_document_id"] in mutated
-        ]
-        affected_documents = sorted(
-            set(mutated)
-            | {link["source_document_id"] for link in link_touches_mutated}
-            | {link["target_document_id"] for link in link_touches_mutated}
-        )
-        affected_links = tuple(
-            link for link in links if link["source_document_id"] in affected_documents
-            or link["target_document_id"] in affected_documents
+            if link["source_document_id"] in mutated
+            or link["target_document_id"] in mutated
         )
         actions = []
         for link in affected_links:
-            source_pin = intent.base_member_pins[link["source_document_id"]]
-            target_pin = intent.base_member_pins[link["target_document_id"]]
+            source_mutated = link["source_document_id"] in mutated
+            target_mutated = link["target_document_id"] in mutated
             actions.append(
                 RepinAction(
                     link_id=link["link_id"],
-                    pinned_source_revision=source_pin + 1,
-                    pinned_target_revision=target_pin + 1,
+                    pinned_source_revision=(
+                        intent.base_member_pins[link["source_document_id"]] + 1
+                        if source_mutated
+                        else intent.base_member_pins[link["source_document_id"]]
+                    ),
+                    pinned_target_revision=(
+                        intent.base_member_pins[link["target_document_id"]] + 1
+                        if target_mutated
+                        else intent.base_member_pins[link["target_document_id"]]
+                    ),
                 )
             )
         return ImpactResult(
@@ -415,6 +423,10 @@ class ChangeSetImpactAnalyzer:
             for key, symbol in self._pid.symbols._symbols.items()  # noqa: SLF001
             if symbol.category == "仪表"
         )
+        linked_targets = {
+            str(row["target_object_ref"])
+            for row in self._store.list_active_engineering_links(intent.project_id)
+        }
         for mutation in intent.mutations:
             if mutation.kind != MUTATION_PID_TRANSACTION:
                 continue
@@ -422,6 +434,7 @@ class ChangeSetImpactAnalyzer:
                 operation
                 for operation in _parse_pid_operations(mutation.payload)
                 if isinstance(operation, UpdateElementOperation)
+                and operation.element_id in linked_targets
             ]
             if not update_ops:
                 continue
@@ -500,8 +513,12 @@ class ChangeSetPreviewer:
         self._cable = cable_service
 
     def preview(self, intent: ChangeSetIntent, impact: ImpactResult) -> PreviewResult:
+        mutated_docs = {mutation.document_id for mutation in intent.mutations}
         revision_projection = {
-            document_id: int(pin) + 1 for document_id, pin in intent.base_member_pins.items()
+            document_id: (
+                int(pin) + 1 if document_id in mutated_docs else int(pin)
+            )
+            for document_id, pin in intent.base_member_pins.items()
         }
         pid_diffs: dict[str, dict[str, Any]] = {}
         cable_diffs: dict[str, dict[str, Any]] = {}
@@ -563,7 +580,11 @@ class ChangeSetPreviewer:
                     from .release_validator import assess_release_readiness
 
                     readiness = assess_release_readiness(
-                        staged, self._pid.symbols, profile, now=intent.evaluation_as_of
+                        staged,
+                        self._pid.symbols,
+                        profile,
+                        project_id=intent.project_id,
+                        now=intent.evaluation_as_of,
                     )
                     snapshots.append(
                         MemberReadinessSnapshot(

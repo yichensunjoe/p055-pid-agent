@@ -1,8 +1,8 @@
 # P&ID-Agent / AgentCAD 总体技术任务书
 
 > 文档性质：项目长期主约束（Canonical Project Charter / Master Task Specification）  
-> 当前版本：1.1.0  
-> 生效日期：2026-10-01  
+> 当前版本：1.2.0  
+> 生效日期：2026-10-05  
 > 当前仓库：P055-PID-Agent  
 > 长期平台方向：AgentCAD Engineering Drawing Harness  
 > 首个生产级领域：P&ID  
@@ -11,6 +11,17 @@
 ---
 
 ## 0.1 Revision Record
+
+### 1.1.0 → 1.2.0（MINOR，2026-10-05，Owner replanning trigger + Gate-approved M13 definition）
+
+本次为 MINOR revision（依据 §59：新增里程碑 = MINOR）。变更：新增 §55C M13 —— Governed
+Multi-Domain Change Sets & Impact Analysis；允许在现有 P&ID + Cable Project Graph 上增加
+project-level change-set、deterministic impact analysis、shadow preview 与受治理多域原子
+提交能力；明确 M13 依赖 M12 implementation completion，不依赖 M9 WS3B / M9 Closeout /
+M10 FINAL ACCEPTANCE。
+
+不变：M9 真实项目试点完成标准、M10 原技术完成 ACK、M11/M12 已冻结语义、Immutable Core、
+audit hash formation/global ordinal semantics、正式 approval/release 人工责任边界。
 
 ### 1.0.0 → 1.1.0（MINOR，2026-10-01，Gate 批准 + Owner replanning trigger）
 
@@ -30,6 +41,15 @@
 - **Benchmark Impact**：M12 implementation 不得删除、弱化、skip 或 xfail pre-M12 regression evidence。M12 Design Gate 必须在代码实施前冻结新增 cross-domain consistency、deterministic package、shared-mode 与 browser acceptance 的测试矩阵和性能预算。
 - **Migration**：M12-D1 必须先判断是否需要 schema revision。若需要 v15 或更高版本，必须单独冻结 migration-safe 方案、upgrade fixture、backup/restore 与 rollback procedure；不得把 schema bump 作为未经审查的实现细节带入代码 PR。
 - **Owner Approval Requirement**：Owner 已明确要求在 M9 WS3B 延后期间继续启动 M12，该指令构成本次 replanning trigger。任何改变 Immutable Core、正式工程责任边界或 M9 真实试点完成标准的后续变化，仍须另行取得 Owner 明确批准。
+
+### 1.1.0 → 1.2.0 Revision Proposal Record
+
+- **Immutable Core**：不变。继续要求 engineering-delivery-first、semantic-first、tool-mediated editing、deterministic validation、audit/rollback、model-agnostic、human formal approval boundary。
+- **Mutable Architecture**：允许新增 domain-neutral project change-set contract、cross-domain deterministic impact analyzer、multi-domain shadow preview、project change coordinator，以及复用 M10 governance 的 atomic multi-domain commit；不得形成第二条直接数据库工程写路径。
+- **Roadmap Changes**：在已完成 M12 后增加 M13。M13 是 M12 project graph 的 mutation/orchestration 层，不新增第三 engineering domain。M9 WS3B 保持独立真实项目 evidence gate，并非 M13 implementation prerequisite。
+- **Benchmark Impact**：不得删除、skip、xfail、弱化既有 M5/M11/M12 regression。M13 Design Gate 必须冻结 atomicity、TOCTOU、approval-binding、impact-analysis、two-domain acceptance 与 performance matrix；继续使用 pre-M13 baseline ≤ +10% 性能预算，除非 D1 有证据重新裁定。
+- **Migration**：D1 必须先决定 change-set 是否需要 durable persistence/schema revision，D1 不得顺手 bump schema；若需要 v16，必须单独冻结 schema、migration transaction、pre-v16 backup/restore、upgrade fixture 与 rollback procedure 再进入实现。
+- **Owner Approval Requirement**：Owner 已明确指令在 WS3B/M9/M10 FINAL ACCEPTANCE 延后期间直接启动 M13，本指令构成本次 replanning trigger。任何改变 Immutable Core、M9 真实试点标准、正式 release responsibility 或引入新项目边界，仍需 Owner 另行明确批准。
 
 ---
 
@@ -1426,6 +1446,18 @@ M10 技术完成 ACK 后推进，不依赖 M9 WS3B / M9 Closeout。完成标志�
 5. **Deterministic Project Delivery Package**：pinned P&ID + Cable revisions → 项目级确定性 artifact（project manifest、domain artifacts、cross-domain links、validation/readiness、hashes）；fresh process byte-for-byte 可复现、可检测篡改；ZIP/member 格式在实现前 Design Gate 冻结。
 6. **Minimal project inspection surface**：只读 API/UI 查看项目成员、跨域 link、project readiness 并下载项目 package；不做新工程编辑器。
 7. **全量非回归**：M11 前已有行为、M5 deterministic gate、backend/frontend/browser/shared-mode 与 surface contracts 不得靠删测、skip/xfail、放宽断言换绿。
+
+## 55C. M13 — Governed Multi-Domain Change Sets & Impact Analysis
+
+M12 project graph 的 mutation/orchestration 层，不新增第三 engineering domain。完成标志（冻结）：
+
+1. **Project Change Set Contract**：domain-neutral 项目级 change set，绑定 change_set_id / project_id / base member pins / intended mutations / impacted identities / canonical intent hash；必须表达「这一次用户工程动作到底改哪些 P&ID/Cable 状态」，不是互不相关 API 请求的堆砌。
+2. **Deterministic Cross-Domain Impact Analysis**：基于 M12 project membership、engineering links 与 domain semantics 确定性计算 affected documents/objects/links/validation scope；禁止名称相似、LLM 猜测、fuzzy match 作 authoritative impact；未知/歧义 fail closed + stable codes。
+3. **Multi-Domain Shadow Preview**：零工程写入下对整个 change set 做 shadow execution，输出每域 semantic diff、revision projection、link impact、project readiness delta 与 validation result；preview 成功不等于批准，不写正式工程状态。
+4. **Exact Intent Approval Binding**：复用 M10 session/permission/approval；approval 绑定 exact project_id + base pins + canonical change-set intent hash；任何 member revision、mutation、affected identity 或 intent 变化使批准失效，不得 replay。
+5. **Atomic Governed Multi-Domain Commit**：一个 change set 是一个用户级工程动作，P&ID mutation、Cable mutation、必要 link mutation 与 governance closeout 具备明确 all-or-nothing 边界；任何 CAS/validator/link invariant/写入失败不得留下半项目状态；禁止依次调用两个现有 write endpoint 冒充原子性。
+6. **Post-Commit Project Evidence**：确定性绑定 before/after member pins、per-domain diffs、link snapshot、project readiness/result hash、validation evidence 与 audit references；新 result pins 必须能直接进入 M12 deterministic package；仍只 eligible/not_eligible，不产生 Approved/Released。
+7. **Frozen Two-Domain Acceptance + Full Non-Regression**：至少一个真正同时修改 P&ID 与 Cable 的工程场景走通 preview → exact approval → atomic apply → project validation → deterministic package 全链；failure injection / revision race / membership-link drift / approval replay / partial-commit 全负例；M5 gate、P&ID、Cable、M12 package、browser/shared-mode 全量不退化。
 
 ---
 

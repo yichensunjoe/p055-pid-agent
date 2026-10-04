@@ -1171,6 +1171,111 @@ class SQLiteDocumentStore:
                 connection.rollback()
                 raise
 
+    # --- M13-D2: change-set persistence primitives. Governance audits ride
+    # the D4 executor transactions; these methods are plain durable state. ---
+
+    def insert_change_set(
+        self,
+        *,
+        change_set_id: str,
+        project_id: str,
+        base_pins: str,
+        intent: str,
+        intent_hash: str,
+        impacted: str = "{}",
+        preview: str = "{}",
+        created_by: str,
+    ) -> None:
+        """Stage a change set (status='staged'). base_pins/intent are already
+        canonical JSON; the caller owns C1/C2 validation (D3/D4)."""
+        now = datetime.now(UTC).isoformat()
+        with self._lock, self._connect() as connection:
+            try:
+                connection.execute(
+                    "INSERT INTO project_change_sets ("
+                    " change_set_id, project_id, status, base_pins, intent,"
+                    " intent_hash, impacted, preview, created_at, created_by,"
+                    " updated_at"
+                    ") VALUES (?, ?, 'staged', ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        change_set_id,
+                        project_id,
+                        base_pins,
+                        intent,
+                        intent_hash,
+                        impacted,
+                        preview,
+                        now,
+                        created_by,
+                        now,
+                    ),
+                )
+                connection.commit()
+            except sqlite3.IntegrityError as exc:
+                connection.rollback()
+                raise StoreDocumentConflictError(str(exc)) from exc
+            except Exception:
+                connection.rollback()
+                raise
+
+    def get_change_set(self, change_set_id: str) -> dict[str, Any] | None:
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM project_change_sets WHERE change_set_id = ?",
+                (change_set_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return dict(row)
+
+    def update_change_set_status(
+        self,
+        *,
+        change_set_id: str,
+        expected_status: str,
+        new_status: str,
+        result_pins: str | None = None,
+        evidence: str | None = None,
+        session_id: str | None = None,
+        approval_id: str | None = None,
+        tool_call_id: str | None = None,
+    ) -> bool:
+        """CAS state-machine transition. False when the change set is missing
+        or not in expected_status. Never an authorization by itself (C4)."""
+        now = datetime.now(UTC).isoformat()
+        with self._lock, self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE project_change_sets SET status = ?, updated_at = ?,"
+                " result_pins = COALESCE(?, result_pins),"
+                " evidence = COALESCE(?, evidence),"
+                " session_id = COALESCE(?, session_id),"
+                " approval_id = COALESCE(?, approval_id),"
+                " tool_call_id = COALESCE(?, tool_call_id)"
+                " WHERE change_set_id = ? AND status = ?",
+                (
+                    new_status,
+                    now,
+                    result_pins,
+                    evidence,
+                    session_id,
+                    approval_id,
+                    tool_call_id,
+                    change_set_id,
+                    expected_status,
+                ),
+            )
+            connection.commit()
+        return cursor.rowcount == 1
+
+    def list_change_sets(self, project_id: str) -> list[dict[str, Any]]:
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM project_change_sets WHERE project_id = ?"
+                " ORDER BY change_set_id",
+                (project_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def engineering_link_failure_closeout(
         self,
         *,

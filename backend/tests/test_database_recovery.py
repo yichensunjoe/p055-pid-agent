@@ -70,7 +70,7 @@ def test_v13_release_evidence_table_is_additive_and_required(tmp_path: Path) -> 
     store = SQLiteDocumentStore(database)
     with store._connect() as check:  # noqa: SLF001 - schema assertion
         version = check.execute("PRAGMA user_version").fetchone()[0]
-        assert version == CURRENT_SCHEMA_VERSION == 15
+        assert version == CURRENT_SCHEMA_VERSION == 16
         tables = {
             row["name"]
             for row in check.execute("SELECT name FROM sqlite_master WHERE type='table'")

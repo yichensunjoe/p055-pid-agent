@@ -86,7 +86,7 @@ def test_v13_to_v14_full_row_equivalence(tmp_path: Path, monkeypatch: pytest.Mon
     store = service.store
     with store._connect() as connection:  # noqa: SLF001
         version = connection.execute("PRAGMA user_version").fetchone()[0]
-        assert version == CURRENT_SCHEMA_VERSION == 15
+        assert version == CURRENT_SCHEMA_VERSION == 16
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
         registry_rows = connection.execute(
             "SELECT domain, COUNT(*) AS n FROM documents_registry GROUP BY domain"

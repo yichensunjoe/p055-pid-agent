@@ -1276,6 +1276,29 @@ class SQLiteDocumentStore:
             connection.commit()
         return cursor.rowcount == 1
 
+    def save_change_set_analysis(
+        self,
+        *,
+        change_set_id: str,
+        expected_status: str = "staged",
+        impacted: str | None = None,
+        preview: str | None = None,
+    ) -> bool:
+        """Controlled primitive for persisting impact/preview snapshots onto a
+        staged change-set row (M13-D3). CAS on expected_status; False changes
+        nothing."""
+        now = datetime.now(UTC).isoformat()
+        with self._lock, self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE project_change_sets SET updated_at = ?,"
+                " impacted = COALESCE(?, impacted),"
+                " preview = COALESCE(?, preview)"
+                " WHERE change_set_id = ? AND status = ?",
+                (now, impacted, preview, change_set_id, expected_status),
+            )
+            connection.commit()
+        return cursor.rowcount == 1
+
     def list_change_sets(self, project_id: str) -> list[dict[str, Any]]:
         with self._lock, self._connect() as connection:
             rows = connection.execute(

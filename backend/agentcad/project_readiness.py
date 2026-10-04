@@ -246,17 +246,30 @@ class ProjectReadinessService:
             )
 
         members = self._member_snapshots(project_id, evaluation_as_of)
-        link_rows = []
-        for row in self._store.list_active_engineering_links(project_id):  # ordered by link_id
-            enriched = dict(row)
-            enriched["_registry_source"] = self._store.document_domain(
+        raw_rows = self._store.list_active_engineering_links(project_id)
+        # One batch read for every endpoint's registry domain + current
+        # revision (the per-assess hot path must not open a connection per
+        # endpoint — that regressed the suite past the perf budget).
+        endpoint_ids = sorted(
+            {
                 str(row["source_document_id"])
-            )
-            enriched["_registry_target"] = self._store.document_domain(
+                for row in raw_rows
+            }
+            | {
                 str(row["target_document_id"])
-            )
-            enriched["_source_revision"] = self._current_source_revision(row)
-            enriched["_target_revision"] = self._current_target_revision(row)
+                for row in raw_rows
+            }
+        )
+        batch = self._store.batch_document_state(endpoint_ids)
+        link_rows = []
+        for row in raw_rows:  # ordered by link_id
+            enriched = dict(row)
+            source_state = batch.get(str(row["source_document_id"]))
+            target_state = batch.get(str(row["target_document_id"]))
+            enriched["_registry_source"] = None if source_state is None else source_state[0]
+            enriched["_registry_target"] = None if target_state is None else target_state[0]
+            enriched["_source_revision"] = None if source_state is None else source_state[1]
+            enriched["_target_revision"] = None if target_state is None else target_state[1]
             enriched["_source_reference_exists"] = self._source_reference_exists(
                 str(row["source_document_id"]),
                 str(row["source_object_ref"]),
@@ -310,18 +323,6 @@ class ProjectReadinessService:
                     )
                 )
         return snapshots
-
-    def _current_source_revision(self, row: dict[str, Any]) -> int | None:
-        envelope = self._store.get_cable_envelope(str(row["source_document_id"]))
-        if envelope is None:
-            return None  # absence stays a missing_object finding, not staleness
-        return int(envelope[0])
-
-    def _current_target_revision(self, row: dict[str, Any]) -> int | None:
-        stored = self._store.get(str(row["target_document_id"]))
-        if stored is None:
-            return None
-        return stored.document.revision
 
     def _source_reference_exists(
         self, cable_id: str, segment_id: str, endpoint: str

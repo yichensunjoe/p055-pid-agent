@@ -888,6 +888,39 @@ class SQLiteDocumentStore:
     # closure atomically (D79-1). Early stable errors and preview live in
     # EngineeringLinkService / the runtime adapter. ---
 
+    def batch_document_state(
+        self, document_ids: list[str]
+    ) -> dict[str, tuple[str, int | None]]:
+        """One-connection batch read of (registry domain, current revision)
+        for many documents — pid revisions come from the documents table,
+        cable revisions from cable_documents. Unknown ids are absent."""
+        unique = sorted(set(document_ids))
+        if not unique:
+            return {}
+        placeholders = ",".join("?" for _ in unique)
+        state: dict[str, tuple[str, int | None]] = {}
+        with self._lock, self._connect() as connection:
+            for document_id, domain in connection.execute(
+                f"SELECT document_id, domain FROM documents_registry "
+                f"WHERE document_id IN ({placeholders})",
+                unique,
+            ).fetchall():
+                state[str(document_id)] = (str(domain), None)
+            for document_id, revision in connection.execute(
+                f"SELECT document_id, revision FROM cable_documents "
+                f"WHERE document_id IN ({placeholders})",
+                unique,
+            ).fetchall():
+                if str(document_id) in state:
+                    state[str(document_id)] = (state[str(document_id)][0], int(revision))
+            for document_id, revision in connection.execute(
+                f"SELECT id, revision FROM documents WHERE id IN ({placeholders})",
+                unique,
+            ).fetchall():
+                if str(document_id) in state:
+                    state[str(document_id)] = (state[str(document_id)][0], int(revision))
+        return state
+
     def document_domain(self, document_id: str) -> str | None:
         """Registry domain of a registered document, or None. The registry is
         the single source of domain truth (R77-Q1): membership never stores a

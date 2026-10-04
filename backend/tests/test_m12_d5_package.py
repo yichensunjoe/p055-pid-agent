@@ -389,6 +389,29 @@ def test_verify_rejects_missing_extra_duplicate_and_order_drift(tmp_path: Path) 
     with pytest.raises(ProjectPackageError, match="frozen canonical order"):
         verify_project_package(buffer.getvalue())
 
+    # FINAL: the three fixed heads have their own frozen sequence — reorder
+    # heads only (manifest and zip consistently) and it must still fail.
+    archive = zipfile.ZipFile(io.BytesIO(package))
+    manifest = json.loads(archive.read("MANIFEST.json"))
+    heads = [m for m in manifest["members"] if not m["path"].startswith("domains/")]
+    tail = [m for m in manifest["members"] if m["path"].startswith("domains/")]
+    heads = [heads[1], heads[0], heads[2]]  # swap project.json / links
+    manifest["members"] = [*heads, *tail]
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_STORED) as target:
+        fixed = zipfile.ZipInfo("MANIFEST.json", date_time=(1980, 1, 1, 0, 0, 0))
+        fixed.compress_type = zipfile.ZIP_STORED
+        fixed.extra = b""
+        target.writestr(fixed, (json.dumps(manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8"))
+        for member in manifest["members"]:
+            data = archive.read(member["path"])
+            fixed = zipfile.ZipInfo(member["path"], date_time=(1980, 1, 1, 0, 0, 0))
+            fixed.compress_type = zipfile.ZIP_STORED
+            fixed.extra = b""
+            target.writestr(fixed, data)
+    with pytest.raises(ProjectPackageError, match="frozen canonical order"):
+        verify_project_package(buffer.getvalue())
+
 
 def test_api_surface_read_only_and_stable_errors(tmp_path: Path) -> None:
     app = _app(tmp_path)

@@ -381,29 +381,17 @@ def _verify_archive(archive: zipfile.ZipFile) -> None:
             )
         # D81-2/FINAL: order is part of the frozen format, and the verifier
         # must validate it INDEPENDENTLY — not just manifest-vs-zip agreement
-        # (a attacker could reorder both consistently). The frozen canonical
-        # order is fixed heads, then pid artifacts, then cable artifacts,
-        # each domain block sorted by path.
+        # (an attacker could reorder both consistently). The frozen canonical
+        # order is the FIXED head sequence, then pid artifacts sorted by
+        # path, then cable artifacts sorted by path — nothing else.
+        frozen_heads = [
+            "project.json",
+            "links/engineering_links.json",
+            "readiness/project_readiness.json",
+        ]
         pid_paths = sorted(p for p in listed if p.startswith("domains/pid/"))
         cable_paths = sorted(p for p in listed if p.startswith("domains/cable/"))
-        head_paths = [
-            p
-            for p in listed
-            if p in (
-                "project.json",
-                "links/engineering_links.json",
-                "readiness/project_readiness.json",
-            )
-        ]
-        canonical_order = [
-            *head_paths,
-            *pid_paths,
-            *cable_paths,
-        ]
-        if len(head_paths) != 3 or len(canonical_order) != len(listed):
-            raise ProjectPackageError(
-                "tamper_detected", "frozen member set does not match the canonical layout"
-            )
+        canonical_order = [*frozen_heads, *pid_paths, *cable_paths]
         if listed != canonical_order:
             raise ProjectPackageError(
                 "tamper_detected", "MANIFEST member order violates the frozen canonical order"

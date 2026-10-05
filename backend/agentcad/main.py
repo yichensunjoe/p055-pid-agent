@@ -17,6 +17,7 @@ from .api_acceptance import create_acceptance_router
 from .api_audit import create_audit_router
 from .api_cable import create_cable_router
 from .api_cad_import import create_cad_import_router
+from .api_change_set import create_change_set_router
 from .api_documents import create_documents_router
 from .api_drafting import create_drafting_router
 from .api_dxf import create_dxf_router
@@ -300,6 +301,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(create_dxf_router(service, diagnostics))
     app.include_router(create_cable_router(store))
     app.include_router(create_project_router(store, service))
+    app.include_router(create_change_set_router(store, service, settings))
     app.include_router(create_layout_router(service, diagnostics))
     app.include_router(create_drafting_router(service, diagnostics))
     app.include_router(

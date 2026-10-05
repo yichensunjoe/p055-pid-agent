@@ -523,3 +523,53 @@ def test_result_pins_cover_unmutated_members(tmp_path: Path) -> None:
     assert stored_pins == outcome.payload["result_pins"]
     # stored pins equal the current project pins -> M12 package-ready
     assert stored_pins == plane.pins()
+
+
+def test_change_set_read_surface_zero_audit(tmp_path: Path) -> None:
+    """M13-D5: the change-set read surface exposes every durable fact and is
+    zero-audit."""
+    from fastapi.testclient import TestClient
+
+    from agentcad.config import Settings
+    from agentcad.main import create_app
+
+    plane = Plane(tmp_path, "read.db")
+    intent = plane.intent()
+    authorized, change_set_id, payload = _stage_approve_authorize(plane, intent)
+    binding_doc = sorted(payload["intent"]["mutations"], key=lambda m: m["document_id"])[0]["document_id"]
+    plane.runtime.apply_authorized(authorized, binding_doc, payload)
+
+    settings = Settings(
+        database_path=tmp_path / "read.db",
+        cors_origins=["http://localhost:5173"],
+        frontend_dist=tmp_path / "dist",
+        deployment_mode="local",  # type: ignore[arg-type]
+        operator_identity="李工",
+    )
+    client = TestClient(create_app(settings))
+
+    audits_before = len(client.get("/api/v2/audit/records").json())
+    listing = client.get(f"/api/v2/projects/{DEFAULT_PROJECT}/change-sets")
+    assert listing.status_code == 200
+    assert [c["change_set_id"] for c in listing.json()["change_sets"]] == [change_set_id]
+
+    detail = client.get(
+        f"/api/v2/projects/{DEFAULT_PROJECT}/change-sets/{change_set_id}"
+    )
+    assert detail.status_code == 200
+    body = detail.json()
+    assert body["status"] == "applied"
+    assert body["impacted"]["affected_documents"]
+    assert body["preview"]["intent_hash"] == change_set_intent_hash(intent)
+    assert body["result_pins"] == plane.pins()
+    evidence = body["evidence"]
+    assert evidence["readiness_result_hash"]
+    assert evidence["audit_record_ids"]
+    assert set(body["base_pins"]) == set(plane.pins())
+
+    assert client.get(
+        f"/api/v2/projects/{DEFAULT_PROJECT}/change-sets/cs_nope"
+    ).status_code == 404
+    audits_after = len(client.get("/api/v2/audit/records").json())
+    assert audits_after == audits_before
+    assert plane.recorder.verify_chain().ok

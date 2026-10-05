@@ -2,6 +2,8 @@ import { expect, test, type APIRequestContext } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 
+import { symbol } from "./fixtures";
+
 const TOKEN = process.env.PID_AGENT_E2E_SHARED_TOKEN ?? "pid-agent-shared-e2e-token";
 // The config's port override (PID_AGENT_E2E_API_PORT) has to reach the direct API calls too, or
 // the suite talks to a different server than the browser does.
@@ -171,10 +173,22 @@ test("shared deployment protects the project inspection surface", async ({ reque
     `${base}/links`,
     `${base}/readiness?evaluation_as_of=${encodeURIComponent("2026-10-03T12:00:00+00:00")}`,
     `${base}/package.zip?evaluation_as_of=${encodeURIComponent("2026-10-03T12:00:00+00:00")}`,
+    // M13-D5: the change-set read surface rides the same boundary
+    `${base}/change-sets`,
+    `${base}/change-sets/cs_nope`,
   ]) {
     const anonymous = await request.get(path);
     expect(anonymous.status(), path).toBe(401);
   }
+
+  // M13-D5: the governed write endpoints are also token-gated — an anonymous
+  // caller hits the auth boundary before any staged-row or apply logic.
+  const anonymousStage = await request.post(`${base}/change-sets`, {
+    data: { base_member_pins: {}, mutations: [] },
+  });
+  expect(anonymousStage.status()).toBe(401);
+  const anonymousApply = await request.post(`${base}/change-sets/cs_nope/apply`);
+  expect(anonymousApply.status()).toBe(401);
 
   // with a token the read surface actually works
   const summary = await request.get(base, { headers: authorization });
@@ -184,4 +198,155 @@ test("shared deployment protects the project inspection surface", async ({ reque
     { headers: authorization },
   );
   expect(readiness.status()).toBe(200);
+  const changeSets = await request.get(`${base}/change-sets`, { headers: authorization });
+  expect(changeSets.status()).toBe(200);
+});
+
+
+// M13-D5 / D86-1: shared mode is not "fail closed and done" — with a token the
+// full governed chain works: stage -> approval-request -> HUMAN resolve ->
+// apply -> 200. The human decision can never be self-served by the endpoint.
+test("shared deployment runs the full governed change-set chain with a human approval", async ({
+  request,
+}) => {
+  const databasePath = `test-results/pid-agent-shared-e2e-${process.ppid}.db`;
+  const now = new Date().toISOString();
+  const asOf = "2026-10-06T12:00:00.000Z";
+
+  // dual-domain fixture: pid member (with the linked equipment element) +
+  // cable envelope + active link + memberships (link rows are D3-governed,
+  // so they are SQL-seeded fixtures like the local change_set spec)
+  const created = await request.post(`${API}/documents`, {
+    headers: authorization,
+    data: { name: "shared-cs-pid", width: 1600, height: 900 },
+  });
+  expect(created.ok()).toBeTruthy();
+  const { id: pidId } = await created.json();
+  const seeded = await request.post(`${API}/documents/${pidId}/transactions`, {
+    headers: authorization,
+    data: {
+      expected_revision: 0,
+      label: "seed",
+      operations: [
+        { op: "add_element", element: symbol("PMP-SHR", "agitator", { x: 200, y: 200 }, 60, 40, "PMP-SHR") },
+      ],
+    },
+  });
+  expect(seeded.ok()).toBeTruthy();
+  const pidRevision = (
+    await (await request.get(`${API}/documents/${pidId}`, { headers: authorization })).json()
+  ).revision as number;
+  const cableId = `cab_shrcs${Date.now().toString(36)}`;
+  const database = new DatabaseSync(databasePath);
+  database
+    .prepare(
+      "INSERT INTO documents_registry (document_id, domain, created_at) VALUES (?, 'cable', ?)",
+    )
+    .run(cableId, now);
+  database
+    .prepare(
+      "INSERT INTO cable_documents (document_id, revision, data_json, created_at, updated_at) VALUES (?, 1, ?, ?, ?)",
+    )
+    .run(
+      cableId,
+      JSON.stringify({
+        schema: "pid-agent.cable-document/1",
+        name: "shared 线缆",
+        segments: [{ id: "CBL-SHR", from_node: "MCC-1", to_node: "PMP-101" }],
+      }),
+      now,
+      now,
+    );
+  database
+    .prepare(
+      "INSERT INTO project_documents (project_id, document_id, added_at, added_by) VALUES ('proj_m12default', ?, ?, 'e2e')",
+    )
+    .run(cableId, now);
+  database
+    .prepare(
+      "INSERT INTO project_documents (project_id, document_id, added_at, added_by) VALUES ('proj_m12default', ?, ?, 'e2e')",
+    )
+    .run(pidId, now);
+  database
+    .prepare(
+      "INSERT INTO engineering_links ("
+        + " link_id, project_id, relation_type, source_domain, source_document_id,"
+        + " source_object_ref, source_endpoint, target_domain, target_document_id,"
+        + " target_object_ref, pinned_source_revision, pinned_target_revision,"
+        + " created_at, created_by"
+        + ") VALUES ('lnk_shrcs', 'proj_m12default', 'cable_endpoint_equipment', 'cable', ?,"
+        + " 'CBL-SHR', 'from', 'pid', ?, 'PMP-SHR', 1, ?, ?, 'e2e')",
+    )
+    .run(cableId, pidId, pidRevision, now);
+  database.close();
+
+  const base = `${API}/projects/proj_m12default`;
+  const staged = await request.post(`${base}/change-sets`, {
+    headers: authorization,
+    data: {
+      base_member_pins: { [pidId]: pidRevision, [cableId]: 1 },
+      evaluation_as_of: asOf,
+      mutations: [
+        {
+          domain: "pid",
+          document_id: pidId,
+          kind: "pid_transaction",
+          payload: {
+            operations: [
+              { op: "update_element", element_id: "PMP-SHR", patch: { label: "PMP-SHR-A" } },
+            ],
+          },
+        },
+        {
+          domain: "cable",
+          document_id: cableId,
+          kind: "cable_update",
+          payload: {
+            schema: "pid-agent.cable-document/1",
+            name: "shared 线缆",
+            segments: [
+              { id: "CBL-SHR", from_node: "MCC-1", to_node: "PMP-101", gauge: "6mm2" },
+            ],
+          },
+        },
+      ],
+    },
+  });
+  expect(staged.status()).toBe(200);
+  const { change_set_id: changeSetId } = await staged.json();
+
+  const requested = await request.post(
+    `${base}/change-sets/${changeSetId}/approval-requests`,
+    { headers: authorization },
+  );
+  expect(requested.status()).toBe(200);
+  const { session_id: sessionId, approval_id: approvalId } = await requested.json();
+
+  const resolved = await request.post(`${API}/agent/approvals/${approvalId}/resolve`, {
+    headers: authorization,
+    data: { approved: true, actor: "共享复核人", note: "shared-mode human decision" },
+  });
+  expect(resolved.status()).toBe(200);
+  expect((await resolved.json()).status).toBe("approved");
+
+  const applied = await request.post(`${base}/change-sets/${changeSetId}/apply`, {
+    headers: authorization,
+    data: { session_id: sessionId, approval_id: approvalId },
+  });
+  expect(applied.status()).toBe(200);
+  const appliedBody = await applied.json();
+  expect(appliedBody.result_pins).toEqual({ [pidId]: pidRevision + 1, [cableId]: 2 });
+
+  // token-less caller still cannot apply anything
+  const anonymous = await request.post(`${base}/change-sets/${changeSetId}/apply`, {
+    data: { session_id: sessionId, approval_id: approvalId },
+  });
+  expect(anonymous.status()).toBe(401);
+
+  // clean our own governance rows (shared-suite FK discipline)
+  const cleanup = new DatabaseSync(databasePath);
+  cleanup.prepare("DELETE FROM engineering_links WHERE created_by = 'e2e'").run();
+  cleanup.prepare("DELETE FROM project_documents WHERE added_by = 'e2e'").run();
+  cleanup.prepare("DELETE FROM project_change_sets WHERE created_by = 'web-user'").run();
+  cleanup.close();
 });

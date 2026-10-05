@@ -1039,6 +1039,39 @@ export async function fetchProjectReadiness(
   return (await response.json()) as ProjectReadiness;
 }
 
+export type ProjectChangeSet = {
+  change_set_id: string;
+  project_id: string;
+  status: string;
+  base_pins: Record<string, number>;
+  intent: Record<string, unknown>;
+  intent_hash: string;
+  impacted: Record<string, unknown>;
+  preview: Record<string, unknown>;
+  result_pins: Record<string, number>;
+  evidence: {
+    readiness_result_hash?: string;
+    audit_record_ids?: string[];
+    before_pins?: Record<string, number>;
+    after_pins?: Record<string, number>;
+  } & Record<string, unknown>;
+  session_id: string | null;
+  approval_id: string | null;
+  tool_call_id: string | null;
+  created_at: string;
+  created_by: string;
+  updated_at: string;
+};
+
+export async function fetchProjectChangeSets(projectId: string): Promise<ProjectChangeSet[]> {
+  const response = await authorizedFetch(
+    `/api/v2/projects/${encodeURIComponent(projectId)}/change-sets`,
+  );
+  if (!response.ok) throw new Error(`Project change sets failed: HTTP ${response.status}`);
+  const body = (await response.json()) as { change_sets: ProjectChangeSet[] };
+  return body.change_sets;
+}
+
 export async function downloadProjectPackage(
   projectId: string,
   evaluationAsOf: string,

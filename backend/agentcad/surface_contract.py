@@ -465,6 +465,36 @@ HTTP_SURFACE_BINDINGS: tuple[SurfaceBinding, ...] = (
         "harness_lifecycle",
         audited=True,
     ),
+    # --- M13-D5: governed change-set surface ------------------------------------
+    # Stage persists a change-set governance row via the sealed D3 analyzer +
+    # zero-write shadow previewer — never moves an engineering revision or
+    # digest; it records one governance-plane audit fact. Apply routes ONLY
+    # into the sealed M10/D4 flow (session -> approval -> authorization ->
+    # atomic executor) and inherits its exactly-one applied/rejected audit;
+    # shared deployments fail closed (approval_not_self_served).
+    _http(
+        "POST",
+        "/api/v2/projects/{project_id}/change-sets",
+        "governance_write",
+        audited=True,
+        notes=(
+            "Stages a governed change set: D3 impact analysis + zero-write shadow "
+            "preview persisted via D2 primitives; zero engineering writes. "
+            "Verified by test_stage_runs_shadow_preview_with_zero_engineering_writes."
+        ),
+    ),
+    _http(
+        "POST",
+        "/api/v2/projects/{project_id}/change-sets/{change_set_id}/apply",
+        "governance_write",
+        audited=True,
+        notes=(
+            "Applies via the sealed M10/D4 governed runtime only — no copied domain "
+            "logic. Local mode may auto-resolve the operator approval; shared mode "
+            "refuses (approval_not_self_served). Verified by "
+            "test_apply_fail_closed_in_shared_mode."
+        ),
+    ),
     # --- derived engineering index ----------------------------------------------
     _http(
         "POST",
@@ -578,8 +608,7 @@ def mcp(
         name=name,
         category=category,
         tool=tool,
-        has_side_effect=category
-        not in {"read", "agent_runtime"},
+        has_side_effect=category not in {"read", "agent_runtime"},
         audited=audited,
         notes=notes,
     )

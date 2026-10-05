@@ -171,10 +171,22 @@ test("shared deployment protects the project inspection surface", async ({ reque
     `${base}/links`,
     `${base}/readiness?evaluation_as_of=${encodeURIComponent("2026-10-03T12:00:00+00:00")}`,
     `${base}/package.zip?evaluation_as_of=${encodeURIComponent("2026-10-03T12:00:00+00:00")}`,
+    // M13-D5: the change-set read surface rides the same boundary
+    `${base}/change-sets`,
+    `${base}/change-sets/cs_nope`,
   ]) {
     const anonymous = await request.get(path);
     expect(anonymous.status(), path).toBe(401);
   }
+
+  // M13-D5: the governed write endpoints are also token-gated — an anonymous
+  // caller hits the auth boundary before any staged-row or apply logic.
+  const anonymousStage = await request.post(`${base}/change-sets`, {
+    data: { base_member_pins: {}, mutations: [] },
+  });
+  expect(anonymousStage.status()).toBe(401);
+  const anonymousApply = await request.post(`${base}/change-sets/cs_nope/apply`);
+  expect(anonymousApply.status()).toBe(401);
 
   // with a token the read surface actually works
   const summary = await request.get(base, { headers: authorization });
@@ -184,4 +196,6 @@ test("shared deployment protects the project inspection surface", async ({ reque
     { headers: authorization },
   );
   expect(readiness.status()).toBe(200);
+  const changeSets = await request.get(`${base}/change-sets`, { headers: authorization });
+  expect(changeSets.status()).toBe(200);
 });

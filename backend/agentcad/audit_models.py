@@ -67,7 +67,8 @@ AuditEventType = Literal[
     "engineering_link.repinned",
     "engineering_link.deleted",
     "engineering_link.rejected",
-    # M13-D4: governed multi-domain change-set governance plane.
+    # M13-D4/D5: governed multi-domain change-set governance plane.
+    "project_change_set.staged",
     "project_change_set.applied",
     "project_change_set.rejected",
 ]

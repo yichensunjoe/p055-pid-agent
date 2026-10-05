@@ -301,7 +301,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(create_dxf_router(service, diagnostics))
     app.include_router(create_cable_router(store))
     app.include_router(create_project_router(store, service))
-    app.include_router(create_change_set_router(store))
+    app.include_router(create_change_set_router(store, service, settings))
     app.include_router(create_layout_router(service, diagnostics))
     app.include_router(create_drafting_router(service, diagnostics))
     app.include_router(

@@ -2,9 +2,11 @@ import { useCallback, useEffect, useState } from "react";
 
 import {
   downloadProjectPackage,
+  fetchProjectChangeSets,
   fetchProjectLinks,
   fetchProjectReadiness,
   fetchProjectSummary,
+  type ProjectChangeSet,
   type ProjectReadiness,
 } from "../api";
 import "./ProjectPanel.css";
@@ -21,6 +23,7 @@ export function ProjectPanel() {
   const [summary, setSummary] = useState<Awaited<ReturnType<typeof fetchProjectSummary>> | null>(null);
   const [links, setLinks] = useState<Awaited<ReturnType<typeof fetchProjectLinks>> | null>(null);
   const [readiness, setReadiness] = useState<ProjectReadiness | null>(null);
+  const [changeSets, setChangeSets] = useState<ProjectChangeSet[]>([]);
   const [asOf, setAsOf] = useState(defaultAsOf);
   const [error, setError] = useState("");
 
@@ -44,14 +47,16 @@ export function ProjectPanel() {
   const refresh = useCallback(async () => {
     setError("");
     try {
-      const [nextSummary, nextLinks, nextReadiness] = await Promise.all([
+      const [nextSummary, nextLinks, nextReadiness, nextChangeSets] = await Promise.all([
         fetchProjectSummary(DEFAULT_PROJECT_ID),
         fetchProjectLinks(DEFAULT_PROJECT_ID),
         fetchProjectReadiness(DEFAULT_PROJECT_ID, asOf),
+        fetchProjectChangeSets(DEFAULT_PROJECT_ID),
       ]);
       setSummary(nextSummary);
       setLinks(nextLinks);
       setReadiness(nextReadiness);
+      setChangeSets(nextChangeSets);
     } catch (refreshError) {
       setError(refreshError instanceof Error ? refreshError.message : String(refreshError));
     }
@@ -143,6 +148,33 @@ export function ProjectPanel() {
               </tbody>
             </table>
           )}
+        </section>
+      ) : null}
+      {changeSets.length ? (
+        <section data-testid="project-change-sets">
+          <h3>变更集</h3>
+          <table className="project-table">
+            <thead>
+              <tr><th>change_set_id</th><th>status</th><th>updated_at</th><th>evidence</th></tr>
+            </thead>
+            <tbody>
+              {changeSets.map((changeSet) => (
+                <tr key={changeSet.change_set_id}>
+                  <td>{changeSet.change_set_id}</td>
+                  <td>{changeSet.status}</td>
+                  <td>{changeSet.updated_at}</td>
+                  <td>
+                    {changeSet.evidence.readiness_result_hash
+                      ? `readiness ${changeSet.evidence.readiness_result_hash.slice(0, 16)}…`
+                      : "—"}
+                    {Object.keys(changeSet.result_pins).length
+                      ? ` · pins +${Object.keys(changeSet.result_pins).length}`
+                      : ""}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </section>
       ) : null}
     </div>

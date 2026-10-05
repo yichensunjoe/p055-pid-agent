@@ -20,6 +20,12 @@ from fastapi import APIRouter, HTTPException
 from .audit import AuditRecorder
 from .audit_models import AuditRecordDraft
 from .config import Settings
+from .harness import (
+    AgentSessionNotFoundError,
+    HarnessError,
+    ToolApprovalNotFoundError,
+    ToolPermissionDeniedError,
+)
 from .harness_models import (
     ToolApprovalCreateRequest,
     ToolApprovalResolveRequest,
@@ -205,20 +211,7 @@ def create_change_set_router(
             "preview": preview.canonical(),
         }
 
-    @router.post("/{change_set_id}/apply")
-    def apply_change_set(project_id: str, change_set_id: str) -> dict[str, Any]:
-        """Apply via the sealed D4 governed flow. Local deployment only may
-        auto-resolve the operator approval; shared mode refuses (a human
-        decision can never be self-served by an endpoint)."""
-        _require_project(project_id)
-        if settings.deployment_mode != "local":
-            raise HTTPException(
-                status_code=403,
-                detail={
-                    "code": "approval_not_self_served",
-                    "message": "change-set apply requires a human-approved M10 approval in this deployment",
-                },
-            )
+    def _get_staged_row(project_id: str, change_set_id: str) -> dict[str, Any]:
         row = store.get_change_set(change_set_id)
         if row is None or str(row["project_id"]) != project_id:
             raise HTTPException(
@@ -236,20 +229,39 @@ def create_change_set_router(
                     "message": f"change set {change_set_id!r} is {row['status']!r}",
                 },
             )
+        return row
+
+    def _apply_payload(row: dict[str, Any], change_set_id: str):
+        intent = ChangeSetIntent.model_validate(_parse_json_column(row["intent"], {}))
+        payload = {
+            "change_set_id": change_set_id,
+            "intent": json.loads(canonical_change_set_intent(intent)),
+        }
+        binding_doc = sorted(m.document_id for m in intent.mutations)[0]
+        return intent, payload, binding_doc
+
+    def _map_harness_error(exc: Exception) -> HTTPException:
+        status = 409
+        if isinstance(exc, (AgentSessionNotFoundError, ToolApprovalNotFoundError)):
+            status = 404
+        elif isinstance(exc, ToolPermissionDeniedError):
+            status = 403
+        return HTTPException(
+            status_code=status,
+            detail={"code": getattr(exc, "code", "harness_error"), "message": str(exc)},
+        )
+
+    @router.post("/{change_set_id}/approval-requests")
+    def request_change_set_approval(project_id: str, change_set_id: str) -> dict[str, Any]:
+        """D86-1: shared-mode humans need a project-change approval bound to
+        the SEALED runtime. The approval carries the exact stored intent hash,
+        so a human resolve of THIS approval is the only shared-mode gate into
+        apply. Anonymous callers still hit the auth boundary first."""
+        _require_project(project_id)
+        row = _get_staged_row(project_id, change_set_id)
+        _intent, payload, binding_doc = _apply_payload(row, change_set_id)
+        actor = settings.operator_identity or "web-user"
         try:
-            intent = ChangeSetIntent.model_validate(_parse_json_column(row["intent"], {}))
-            # the local operator's explicit decision, recorded in governance
-            store.update_change_set_status(
-                change_set_id=change_set_id,
-                expected_status="staged",
-                new_status="approved",
-            )
-            payload = {
-                "change_set_id": change_set_id,
-                "intent": json.loads(canonical_change_set_intent(intent)),
-            }
-            binding_doc = sorted(m.document_id for m in intent.mutations)[0]
-            actor = settings.operator_identity or "local-operator"
             session = runtime.ensure_session(binding_doc, actor=actor)
             approval = runtime.request_approval(
                 session.id,
@@ -260,21 +272,98 @@ def create_change_set_router(
                     requested_by=actor,
                 ),
             )
-            runtime.resolve_approval(
-                approval.id,
-                ToolApprovalResolveRequest(approved=True, actor=actor),
+        except HarnessError as exc:
+            raise _map_harness_error(exc) from exc
+        return {
+            "change_set_id": change_set_id,
+            "session_id": session.id,
+            "approval_id": approval.id,
+            "status": approval.status,
+        }
+
+    @router.post("/{change_set_id}/apply")
+    def apply_change_set(
+        project_id: str, change_set_id: str, body: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """Apply via the sealed D4 governed flow. Local deployment may
+        auto-resolve the operator approval. Shared deployment consumes ONLY a
+        human-resolved approval created by this router's approval-request
+        endpoint (a human decision can never be self-served by an endpoint);
+        the M10 authorize step re-validates the exact session/tool/intent
+        binding before anything engineering can move."""
+        _require_project(project_id)
+        approval_id = (body or {}).get("approval_id")
+        session_id = (body or {}).get("session_id")
+        if settings.deployment_mode != "local" and (not approval_id or not session_id):
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "approval_not_self_served",
+                    "message": (
+                        "shared deployments apply a change set only with a "
+                        "human-resolved approval from POST "
+                        ".../change-sets/{id}/approval-requests"
+                    ),
+                },
             )
-            authorized = runtime.authorize(
-                session_id=session.id,
-                tool_name=TOOL_APPLY_CHANGE_SET,
-                document_id=binding_doc,
-                intent=payload,
-                approval_id=approval.id,
-                base_revision=None,
-            )
+        row = _get_staged_row(project_id, change_set_id)
+        _intent, payload, binding_doc = _apply_payload(row, change_set_id)
+        actor = settings.operator_identity or "local-operator"
+        try:
+            if settings.deployment_mode == "local":
+                # the local operator's explicit decision, recorded in governance
+                store.update_change_set_status(
+                    change_set_id=change_set_id,
+                    expected_status="staged",
+                    new_status="approved",
+                )
+                session = runtime.ensure_session(binding_doc, actor=actor)
+                approval = runtime.request_approval(
+                    session.id,
+                    ToolApprovalCreateRequest(
+                        tool_name=TOOL_APPLY_CHANGE_SET,
+                        document_id=binding_doc,
+                        intent=payload,
+                        requested_by=actor,
+                    ),
+                )
+                runtime.resolve_approval(
+                    approval.id,
+                    ToolApprovalResolveRequest(approved=True, actor=actor),
+                )
+                authorized = runtime.authorize(
+                    session_id=session.id,
+                    tool_name=TOOL_APPLY_CHANGE_SET,
+                    document_id=binding_doc,
+                    intent=payload,
+                    approval_id=approval.id,
+                    base_revision=None,
+                )
+            else:
+                # validate the human approval binding BEFORE the governance
+                # transition; authorize is zero-engineering-write
+                authorized = runtime.authorize(
+                    session_id=str(session_id),
+                    tool_name=TOOL_APPLY_CHANGE_SET,
+                    document_id=binding_doc,
+                    intent=payload,
+                    approval_id=str(approval_id),
+                    base_revision=None,
+                )
+                if not store.update_change_set_status(
+                    change_set_id=change_set_id,
+                    expected_status="staged",
+                    new_status="approved",
+                ):
+                    raise ChangeSetError(
+                        f"change set {change_set_id!r} left staged during approval validation",
+                        code="change_set_conflict",
+                    )
             outcome = runtime.apply_authorized(authorized, binding_doc, payload)
         except ChangeSetError as exc:
             raise _map_error(exc) from exc
+        except HarnessError as exc:
+            raise _map_harness_error(exc) from exc
         return {
             "change_set_id": change_set_id,
             "status": store.get_change_set(change_set_id)["status"],

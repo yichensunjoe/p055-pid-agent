@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { DatabaseSync } from "node:sqlite";
 import path from "node:path";
 
-import { symbol } from "./fixtures";
+import { openDocument, symbol } from "./fixtures";
 
 // M13-D5 frozen browser acceptance: the governed change-set surface end to
 // end — stage (zero-write shadow preview), apply (sealed M10/D4 flow with
@@ -125,6 +125,7 @@ test.describe("M13-D5 governed change-set surface", () => {
   });
 
   test("stage zero-write preview, governed apply, evidence parity and package bytes", async ({
+    page,
     request,
   }) => {
     // ① seed: pid member (with the linked equipment element) + cable member
@@ -212,6 +213,22 @@ test.describe("M13-D5 governed change-set surface", () => {
     const httpBytes = await httpPackage.body();
     const directBytes = directPackageBytes(after.evidence.after_pins);
     expect(directBytes).toEqual(Buffer.from(httpBytes));
+
+    // ⑤-b frozen UI parity (D86-2): the ProjectPanel download at the same
+    // evaluation_as_of produces byte-identical content (UI pins == the
+    // post-apply current pins == evidence after_pins).
+    await openDocument(page, pidId);
+    await page.getByRole("tab", { name: "项目" }).click();
+    await expect(page.getByTestId("project-panel")).toBeVisible();
+    await page.getByTestId("project-as-of").fill(AS_OF);
+    const [download] = await Promise.all([
+      page.waitForEvent("download"),
+      page.getByRole("button", { name: "下载项目交付包" }).click(),
+    ]);
+    const { readFileSync } = await import("node:fs");
+    const uiBytes = readFileSync((await download.path())!);
+    expect(uiBytes).toEqual(Buffer.from(httpBytes));
+    expect(uiBytes).toEqual(directBytes);
 
     // re-apply is refused: terminal closeout already landed
     const second = await request.post(

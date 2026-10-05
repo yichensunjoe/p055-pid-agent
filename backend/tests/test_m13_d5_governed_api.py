@@ -165,3 +165,127 @@ def test_apply_fail_closed_in_shared_mode(tmp_path: Path) -> None:
     row = plane.store.get_change_set(change_set_id)
     assert row["status"] == "staged"
     assert json.loads(row["result_pins"]) == {}
+
+
+def test_shared_full_chain_with_human_approval(tmp_path: Path) -> None:
+    """D86-1: shared mode is fully usable with a token — stage, request the
+    project-change approval, a HUMAN resolves it, then apply consumes that
+    exact binding through the sealed M10 authorize validation."""
+    plane = Plane(tmp_path, "shared_chain.db")
+    headers = {"Authorization": "Bearer deployment-token"}
+    client = _client(tmp_path, "shared_chain.db", plane, "shared")
+    pins = plane.pins()
+
+    change_set_id = client.post(
+        f"/api/v2/projects/{DEFAULT_PROJECT}/change-sets",
+        json=_stage_payload(plane),
+        headers=headers,
+    ).json()["change_set_id"]
+
+    requested = client.post(
+        f"/api/v2/projects/{DEFAULT_PROJECT}/change-sets/{change_set_id}/approval-requests",
+        headers=headers,
+    )
+    assert requested.status_code == 200
+    request_body = requested.json()
+    assert request_body["status"] == "pending"
+
+    # the human decision rides the existing M10 resolve surface
+    resolved = client.post(
+        f"/api/v2/agent/approvals/{request_body['approval_id']}/resolve",
+        json={"approved": True, "actor": "王工", "note": "现场复核通过"},
+        headers=headers,
+    )
+    assert resolved.status_code == 200
+    assert resolved.json()["status"] == "approved"
+
+    applied = client.post(
+        f"/api/v2/projects/{DEFAULT_PROJECT}/change-sets/{change_set_id}/apply",
+        json={
+            "session_id": request_body["session_id"],
+            "approval_id": request_body["approval_id"],
+        },
+        headers=headers,
+    )
+    assert applied.status_code == 200
+    assert applied.json()["result_pins"] == {doc: pin + 1 for doc, pin in pins.items()}
+    assert plane.pins() == applied.json()["result_pins"]
+
+    detail = client.get(
+        f"/api/v2/projects/{DEFAULT_PROJECT}/change-sets/{change_set_id}",
+        headers=headers,
+    ).json()
+    assert detail["status"] == "applied"
+    assert detail["evidence"]["after_pins"] == applied.json()["result_pins"]
+    assert plane.recorder.verify_chain().ok
+
+
+def test_shared_apply_rejects_mismatched_human_approval(tmp_path: Path) -> None:
+    """An approval bound to change set A can never authorize change set B:
+    the M10 authorize step hash-compares the exact intent binding."""
+    plane = Plane(tmp_path, "shared_mismatch.db")
+    headers = {"Authorization": "Bearer deployment-token"}
+    client = _client(tmp_path, "shared_mismatch.db", plane, "shared")
+    pins = plane.pins()
+
+    cs_a = client.post(
+        f"/api/v2/projects/{DEFAULT_PROJECT}/change-sets",
+        json=_stage_payload(plane),
+        headers=headers,
+    ).json()["change_set_id"]
+    cs_b = client.post(
+        f"/api/v2/projects/{DEFAULT_PROJECT}/change-sets",
+        json=_stage_payload(plane),
+        headers=headers,
+    ).json()["change_set_id"]
+    approval_b = client.post(
+        f"/api/v2/projects/{DEFAULT_PROJECT}/change-sets/{cs_b}/approval-requests",
+        headers=headers,
+    ).json()
+    client.post(
+        f"/api/v2/agent/approvals/{approval_b['approval_id']}/resolve",
+        json={"approved": True, "actor": "王工"},
+        headers=headers,
+    )
+
+    refused = client.post(
+        f"/api/v2/projects/{DEFAULT_PROJECT}/change-sets/{cs_a}/apply",
+        json={
+            "session_id": approval_b["session_id"],
+            "approval_id": approval_b["approval_id"],
+        },
+        headers=headers,
+    )
+    assert refused.status_code == 409
+    assert refused.json()["detail"]["code"] == "tool_intent_mismatch"
+    # zero engineering movement, and both rows are still staged
+    assert plane.pins() == pins
+    assert plane.store.get_change_set(cs_a)["status"] == "staged"
+    assert plane.store.get_change_set(cs_b)["status"] == "staged"
+
+
+def test_approval_request_requires_staged_row(tmp_path: Path) -> None:
+    plane = Plane(tmp_path, "local_req.db")
+    client = _client(tmp_path, "local_req.db", plane, "local")
+    change_set_id = client.post(
+        f"/api/v2/projects/{DEFAULT_PROJECT}/change-sets",
+        json=_stage_payload(plane),
+    ).json()["change_set_id"]
+    assert (
+        client.post(
+            f"/api/v2/projects/{DEFAULT_PROJECT}/change-sets/{change_set_id}/approval-requests"
+        ).status_code
+        == 200
+    )
+    # once approved/applied the row is no longer staged
+    assert (
+        client.post(
+            f"/api/v2/projects/{DEFAULT_PROJECT}/change-sets/{change_set_id}/apply"
+        ).status_code
+        == 200
+    )
+    conflict = client.post(
+        f"/api/v2/projects/{DEFAULT_PROJECT}/change-sets/{change_set_id}/approval-requests"
+    )
+    assert conflict.status_code == 409
+    assert conflict.json()["detail"]["code"] == "change_set_not_staged"

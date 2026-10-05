@@ -499,7 +499,8 @@ def test_losing_closeout_never_rewrites_terminal_records(tmp_path: Path) -> None
     assert session.status == "completed"
     assert plane.store.get_change_set(change_set_id)["status"] == "applied"
     events_after = plane.recorder.store.all_audit_records()
-    assert len(events_after) == events_before + 1  # only the rejection evidence
+    # terminal closeout is a pure no-op: no rejected audit, no chain growth
+    assert len(events_after) == events_before
     assert plane.recorder.verify_chain().ok
 
 

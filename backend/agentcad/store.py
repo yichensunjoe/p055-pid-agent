@@ -1595,7 +1595,11 @@ class SQLiteDocumentStore:
                             session.id,
                         ),
                     )
-                self._append_audit_record(connection, audit)
+                    # Only a closeout that actually closed something records
+                    # the rejection evidence; a pure no-op (the execution
+                    # already reached a terminal state elsewhere) appends
+                    # nothing — the raised refusal is the evidence.
+                    self._append_audit_record(connection, audit)
                 connection.commit()
             except Exception:
                 connection.rollback()

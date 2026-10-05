@@ -2,6 +2,21 @@
 
 > 交接文档：每次开新会话先读本文件。更新规则见 `AGENTS.md`「HANDOFF 交接规则」。
 
+## 当前状态（2026-10-05，**M13 MILESTONE CLOSEOUT APPROVED；main = `15d9bac`（#82–#86 五个 squash 全合），main CI 四绿（run 37255329750，Backend 1845 passed / 275.31s）**）
+
+- **M13（Charter v1.2.0 §55C 受治理多域变更集）全部 CLOSED**：D1 Charter+设计（#82）→ D2 v16 持久化（#83）→ D3 契约+确定性 impact+零写 shadow preview（#84）→ D4 exact intent 批准绑定+原子执行器（#85）→ D5 evidence/read API + 治理写面（stage/apply/approval-requests）+ 最小 UI + frozen 双域 e2e（#86）。封账 artifact：`reports/m13-closeout.md`（§55C 七完成标志逐项证据 + 性能六样本表）。
+- **M13 关键终态**：change-set 四状态机仅 (staged→approved, approved→applied, approved→refused) 三条合法边；apply 唯一提交路径 = sealed M10/D4 flow（session→approval→authorize→atomic executor），HTTP 层零复制域逻辑；shared 模式 token 全链（approval-requests → 人工 resolve → apply），无人工批准 403 fail-closed；package 字节 parity 三向（UI==HTTP==fresh-process）。
+- **性能**：Gate 两次裁定均 PASS（f0ba95b 样本 275.87s +5.96%；最终 main 样本 275.31s +5.7%，ceiling 286.407s 内）。教训：该 runner 同工作量 wall-clock 噪声 >±40%，单次样本在 ceiling 附近不可分辨，证据须多样本如实呈现。
+- **治理口径**：WS3B / M9 Closeout / M10 FINAL ACCEPTANCE 维持 Owner 挂起（M10 Technical Completion、M11、M12 不重开）；DEPLOY 未授权；不直接 push main（代码经 Gate exact-head MERGE GO + PR squash）。
+- **下一项工程工作不要自动开始**：等远端（ChatGPT Gate 会话 `6abd7e9f`）对下一 milestone 的 CODE GO，或 Owner 决定收口挂起项。
+- 2026-09-29 及更早的 M8/M5 历史段落保留在下供考古。
+
+## 近期轮次（2026-10-05：M13-D5 + D86 FINAL ACCEPTANCE FIXES → M13 收口）
+
+- **完成**：D5 全部交付（stage/apply/approval-requests API、ProjectPanel 变更集只读区、change_set.spec 全链+三向字节 parity、shared spec 扩展）；Gate 回 HOLD 三项（D86-1 shared token 全链缺路径 / D86-2 缺 UI parity / D86-3 closeout 报告事实过期），本轮全部闭合后 Gate 签署 MERGE GO + M13-D5 CLOSED + MILESTONE CLOSEOUT APPROVED。
+- **关键结论**：generic `/agent/sessions/{id}/approvals` 表面无法为 project-change 工具建 approval（默认 registry 无 `apply_project_change_set`），需 change-set router 自建 approval-requests 端点绑 sealed runtime；`authorize` 在治理迁移前 hash 校验 exact 绑定，跨 change set 借 approval = 409 零写。
+- **下一步**：向 Gate 报合并确认（已发）；等下一 milestone 授权。
+
 ## 当前状态（2026-09-29，**M8-Q2 OVERALL GATE = PASS / CLOSED；main = `7f39d92`（#56–#65 十个 squash 全合）**）
 
 - **M8-Q1/Q2 当前已授权范围已收口（M8-Q2 Catalogue Correction / Expansion 封账）**：M8-Q1 测量完整性（P1 B' 原子性/G7 route parity/G2 子句分解/系统声明 fail-closed）→ M8-Q2 catalogue correction/expansion 全链（TT visibility、condenser hint、内嵌添加、label pool、instrument attachment 语义→受治理 tap→物化、零连接窄批）。逐子阶段 CLOSED 状态、冻结的 fail-closed 契约清单、关键场景终态与 deferred future scope 见 **reports/m8-q2-closeout.md**（封账 artifact）；批间设计往返全记录在文档分支 `m7-semantic-first-synthesis` 的 `reports/m8-q2-design.md`。

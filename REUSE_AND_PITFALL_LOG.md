@@ -1,5 +1,18 @@
 # REUSE_AND_PITFALL_LOG — P055-PID-Agent
 
+## 2026-10-05 · M13-D5/D86 收口：shared 人工批准链 + CI 性能噪声 + bsk 会话漂移（P055-PID-Agent）
+
+**场景**：M13-D5 Gate 回 HOLD 三项 final acceptance blocker，闭合过程中踩三个值得记录的坑。
+
+**结论做法**：
+1. generic M10 approval HTTP 表面（`/agent/sessions/{id}/approvals`）绑默认 tool registry，`request_approval` 会 `registry.require(tool_name)`——project-change 工具（`apply_project_change_set`）不在默认 registry，必须给 change-set router 自建 `POST .../change-sets/{id}/approval-requests` 端点（绑 sealed ProjectChangeToolRegistry runtime）；human resolve 复用既有 `/agent/approvals/{id}/resolve`（resolve 是纯 store 操作，不查 registry）。shared apply 在治理迁移前先 `authorize`（零工程写）hash 校验 approval 的 session/tool/document/intent 四元绑定，跨 change set 借用 → 409 `tool_intent_mismatch`。
+2. GitHub Actions 该 runner 上后端全量 pytest wall-clock 同工作量（仅 md 差异的相邻 commit）样本极差 89s/±40%+；ceiling ±10% 预算用单次样本在临界点附近不可分辨。如实呈现多样本、交 Gate 裁定是唯一干净路径；Gate 最终以「final exact-head 自有样本」裁定。
+3. bsk 浏览器会话在长跑任务中多次被 daemon 回收（`(no active sessions)`）；`bsk fill` 对 ChatGPT ProseMirror 输入框报 "fill target changed"。解法：`bsk session start` 重建 + 新 agent tab navigate 回会话 URL；输入改用 evaluate + `document.execCommand('insertText', false, text)`（React/ProseMirror 能正确接收），注入后必读回尾部核对再点 aria-label「发送」按钮。
+
+**踩坑点**：不要把两个 SHA 片段拼进回报（曾把 965b7d2 与 cd9feaf 拼错被 Gate 纠正）——head 一律 `git rev-parse HEAD` 原文拷贝。surface_contract 的 `test_every_mutating_route_is_declared` 会在新增 POST 路由时红，必须同步声明。
+
+**适用场景**：后续 milestone 的共享模式治理面设计；一切用 CI wall-clock 做性能门禁的场景；一切经 bsk 驱动 ChatGPT 的回报任务。
+
 ## 2026-09-21 · 只记 fingerprint 不记 body，等于把旧身份变成只能“信”的数字（P055-PID-Agent）
 
 - 场景：M5 coverage-promotion 要把 `BENCHMARK_SPEC_VERSION` 从 2 切到 3（4 个 reachable code 晋升为正式 case）。

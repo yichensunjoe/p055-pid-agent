@@ -2,7 +2,13 @@
 
 > 交接文档：每次开新会话先读本文件。更新规则见 `AGENTS.md`「HANDOFF 交接规则」。
 
-## 当前状态（2026-10-06 —— **M13 推进中：D1（#82 Charter 1.2.0+设计）、D2（#83 v16+持久化）、D3（#84 契约+impact+preview）已 CLOSED 合 main@d219869；M13-D4 CODE GO 生效（原子执行器，独立 Gate）；D5 未开工。其余收口（WS3B/M9/M10 FINAL）按 Owner 指示挂起**）
+## 当前状态（2026-10-06 —— **M13：D1（#82）/D2（#83）/D3（#84）/D4（#85，经 D85-1~5+并发+terminal-closeout 三轮修正）全部 CLOSED 合 main@b4cdd0b；M13-D5 CODE GO 生效（最后一片），read API 已提交（m13-d5 分支 a60da9f）；剩 UI + frozen e2e + closeout 报告**）
+
+- **D4 终局架构（复用价值高）**：store.commit_project_change_set 单事务七步（全量 C1[期望集来自 declared pins]→approval liveness CAS→pid 写带 undo/redo+history→cable CAS→re-pin 写内 _link_endpoint_facts 重验→applied 审计[record_id 入 evidence]→change set CAS）；executor C4 四要素+tool_intent_hash 重算比对；replay 查持久化 running 状态，terminal no-op closeout 零写入零审计；result_pins=全量 pins。
+- **D5 已做**：change-set read API（GET-only 零审计：list/detail 全事实含 evidence/audit ids）+ 测试。
+- **D5 剩余**：①最小 UI（change-set 事实展示，挂 ProjectPanel 或新 tab）②frozen e2e（active-linked 双端→preview 零写→approval→atomic apply→同事务 re-pin→D4 readiness→result_pins 建 M12 package 三路字节）③shared 401 ④reports/m13-closeout.md（七完成标志矩阵+性能复测裁定）→ PR → Gate。
+- **性能**：基线 260.37s/ceiling 286.407s；D4 末次 CI 287.94s（+0.5%）——closeout 复测裁定（Gate 已 defer）。
+- **环境/治理**：同前（main 树 P055-PID-Agent-main，分支 m13-d5；WS3B 等挂起；DEPLOY 未授权；Gate conv 用 evaluate --tab-id 定向）。
 
 - **M13 = 受治理多域变更集（Charter v1.2.0 §55C）**：变更集契约（C1 declared pins 只比对不替换/C2 单一 CAS 来源/C3 不猜 link/C4 approved≠授权）→ v16 project_change_sets（四状态机三条合法边）→ impact（六字段 canonical：documents/objects/links/re-pins/validation_scope/issues；一跳对象扩展无传递）+ 零写入 preview（工程状态零变化硬锁）→ **D4 = exact intent approval + 单事务原子多域执行（当前）** → D5 evidence/read UI/e2e/closeout。
 - **D4 冻结范围（CODE GO 原文）**：中性 tool apply_project_change_set（ask/engineering_change）；approval 绑定 project_id+declared pins+evaluation_as_of+ordered mutations+D3 canonical impacted/re-pins+effective profile fingerprint；apply 前重算比对（drift→change_set_conflict 零写入）；C4 四要素（真实 M10 approval+intent hash+未消费+C1）；成功事务=pid CAS+cable CAS+existing link re-pin+change-set approved→applied+evidence（事务内 readiness hash=post-commit D4 hash）+五元组 closeout+恰好一条 applied 审计；失败=rollback+独立 closeout（refused+failed tool call+failed session+恰好一条 rejected）。

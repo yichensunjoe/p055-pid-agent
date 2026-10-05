@@ -394,6 +394,93 @@ def test_approval_replay_refused(tmp_path: Path) -> None:
     binding_doc = sorted(payload["intent"]["mutations"], key=lambda m: m["document_id"])[0]["document_id"]
     plane.runtime.apply_authorized(authorized, binding_doc, payload)
 
+    events_before = len(plane.recorder.store.all_audit_records())
     with pytest.raises(ChangeSetError) as exc_info:
         plane.runtime.apply_authorized(authorized, binding_doc, payload)
     assert exc_info.value.code == "change_set_not_authorized"
+
+    # D85-5: replay must NOT overwrite the terminal success records.
+    tool_call = plane.store.get_tool_call(authorized.record.id)
+    assert tool_call.status == "completed"
+    session = plane.store.get_agent_session(authorized.session.id)
+    assert session.status == "completed"
+    approval = plane.store.get_tool_approval(authorized.approval.id)
+    assert approval.status == "consumed"
+    events_after = plane.recorder.store.all_audit_records()
+    assert len(events_after) == events_before  # no new refusal audit either
+    applied = [e for e in events_after if e.event_type == "project_change_set.applied"]
+    assert len(applied) == 1
+
+
+def test_undo_exactly_reverts_change_set_pid_revision(tmp_path: Path) -> None:
+    """D85-2 hard-lock: the change-set P&ID write maintains undo/redo +
+    history, so a normal undo() reverts exactly the change-set revision."""
+    plane = Plane(tmp_path, "undo.db")
+    intent = plane.intent()
+    base_revision = plane.service.get_document(plane.pid_id).revision
+    authorized, change_set_id, payload = _stage_approve_authorize(plane, intent)
+    binding_doc = sorted(payload["intent"]["mutations"], key=lambda m: m["document_id"])[0]["document_id"]
+    plane.runtime.apply_authorized(authorized, binding_doc, payload)
+
+    assert plane.service.get_document(plane.pid_id).revision == base_revision + 1
+    undone = plane.service.undo(plane.pid_id)
+    # undo() itself lands a new revision whose CONTENT is exactly the base
+    # revision content — the change-set revision is reverted, not skipped.
+    assert undone.revision == base_revision + 2
+    element = next(e for e in undone.elements if e.id == "PMP-101")
+    assert element.label == "PMP-101"  # change-set label change reverted
+    history = plane.service.get_history(plane.pid_id, limit=10)
+    revisions = [entry.revision for entry in history]
+    assert base_revision + 1 in revisions  # no history hole
+
+
+def test_in_transaction_repin_race_rolls_back(tmp_path: Path, monkeypatch) -> None:
+    """D85-1 hard-lock: if the in-transaction endpoint facts disagree with
+    the approval-bound pins, the whole change set rolls back."""
+    plane = Plane(tmp_path, "repin_race.db")
+    intent = plane.intent()
+    pins = plane.pins()
+    authorized, change_set_id, payload = _stage_approve_authorize(plane, intent)
+
+    original = plane.store._link_endpoint_facts  # noqa: SLF001
+    calls = {"n": 0}
+
+    def flaky(connection, **kwargs):
+        calls["n"] += 1
+        result = original(connection, **kwargs)
+        if "expected" in kwargs and calls["n"] >= 1:
+            # in-transaction re-validation sees different current revisions
+            return (result[0] + 9, result[1] + 9)
+        return result
+
+    monkeypatch.setattr(plane.store, "_link_endpoint_facts", flaky)
+    binding_doc = sorted(payload["intent"]["mutations"], key=lambda m: m["document_id"])[0]["document_id"]
+    from agentcad.store import StoreRevisionConflictError
+
+    with pytest.raises(StoreRevisionConflictError):
+        plane.runtime.apply_authorized(authorized, binding_doc, payload)
+
+    assert plane.pins() == pins
+    assert plane.store.get_change_set(change_set_id)["status"] == "refused"
+    assert plane.recorder.verify_chain().ok
+
+
+def test_result_pins_cover_unmutated_members(tmp_path: Path) -> None:
+    """D85-4 hard-lock: after_pins / result_pins are full project pins —
+    unmutated members keep their declared base pin."""
+    plane = Plane(tmp_path, "fullpins.db")
+    other = plane.service.create_document(CreateDocumentRequest(name="pid2", width=800, height=600))
+    plane.store.add_document_to_project(DEFAULT_PROJECT, other.id, added_by="tester")
+    intent = plane.intent()  # mutates pid + cable only
+    declared = plane.pins()
+    authorized, change_set_id, payload = _stage_approve_authorize(plane, intent)
+    binding_doc = sorted(payload["intent"]["mutations"], key=lambda m: m["document_id"])[0]["document_id"]
+    outcome = plane.runtime.apply_authorized(authorized, binding_doc, payload)
+
+    assert outcome.payload["result_pins"][other.id] == declared[other.id]
+    assert outcome.payload["result_pins"][plane.pid_id] == declared[plane.pid_id] + 1
+    row = plane.store.get_change_set(change_set_id)
+    stored_pins = json.loads(row["result_pins"])
+    assert stored_pins == outcome.payload["result_pins"]
+    # stored pins equal the current project pins -> M12 package-ready
+    assert stored_pins == plane.pins()

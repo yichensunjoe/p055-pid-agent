@@ -29,7 +29,7 @@ from pydantic import Field
 from .audit import AuditRecorder
 from .audit_models import AuditRecordDraft
 from .cable_service import CableService
-from .models import StrictModel
+from .models import HistoryEntry, StrictModel
 from .project_change_set import (
     MUTATION_PID_TRANSACTION,
     ChangeSetError,
@@ -183,6 +183,15 @@ class ChangeSetExecutor:
     ) -> ExecutionOutcome:
         store = self._store
         change_set_id = intent.change_set_id
+        persisted_call = store.get_tool_call(authorized.record.id)
+        if persisted_call is None or str(persisted_call.status) != "running":
+            # Replay of an already-terminal execution: refuse WITHOUT
+            # touching the completed records (D85-5) — no closeout, no new
+            # audit; the refusal is this raised error itself.
+            raise ChangeSetError(
+                "change_set_not_authorized",
+                "this authorization has already been used",
+            )
         try:
             row = store.get_change_set(change_set_id)
             if row is None:
@@ -223,18 +232,53 @@ class ChangeSetExecutor:
                     "impacted / derived re-pins / profile drifted since approval",
                 )
 
+            if authorized.record.status != "running":
+                # Replay of an already-terminal execution: refuse WITHOUT
+                # touching the completed records (D85-5) — no closeout, no
+                # new audit; the refusal is this raised error itself.
+                raise ChangeSetError(
+                    "change_set_not_authorized",
+                    "this authorization has already been used",
+                )
             staged = self._stage_writes(intent.intent)
             readiness_after = self._previewer._assess_staged(  # noqa: SLF001
                 intent.intent,
                 self._staged_members(intent.intent, staged),
                 impact,
             )
-            evidence = self._build_evidence(
+            evidence_base = self._build_evidence(
                 intent, impact, staged, readiness_after, authorized
             )
-            audit = self._success_audit(authorized, audit_event, intent, evidence)
+            full_result_pins = dict(intent.intent.base_member_pins)
+            for write in staged:
+                full_result_pins[write.document_id] = write.result_revision
+            history_entries = [
+                HistoryEntry(
+                    document_id=write.document_id,
+                    revision=write.result_revision,
+                    source="mcp",
+                    action="transaction",
+                    label=f"Change set {change_set_id}",
+                    operation_count=len(
+                        [
+                            m
+                            for m in intent.intent.mutations
+                            if m.document_id == write.document_id
+                        ]
+                    ),
+                )
+                for write in staged
+                if write.domain == "pid"
+            ]
+            from .engineering_links import EngineeringLinkService
+
+            link_plane = EngineeringLinkService(
+                store, self._pid, self._cable
+            )
+            audit = self._success_audit(authorized, audit_event, intent, evidence_base)
             store.commit_project_change_set(
                 change_set_id=change_set_id,
+                project_id=intent.intent.project_id,
                 pid_writes=[
                     (w.document_id, w.result_revision, w.data_json)
                     for w in staged
@@ -249,10 +293,19 @@ class ChangeSetExecutor:
                     (a.link_id, a.pinned_source_revision, a.pinned_target_revision)
                     for a in impact.derived_repin_actions
                 ],
-                result_pins=_canonical(
-                    {w.document_id: w.result_revision for w in staged}
+                declared_pins=dict(intent.intent.base_member_pins),
+                member_identity=sorted(
+                    (document_id, domain)
+                    for document_id, domain, _added in store.list_project_documents(
+                        intent.intent.project_id
+                    )
                 ),
-                evidence=json.dumps(evidence, ensure_ascii=False, sort_keys=True),
+                known_symbol_keys=link_plane._known_symbol_keys,  # noqa: SLF001
+                instrument_symbol_keys=link_plane._instrument_symbol_keys,  # noqa: SLF001
+                history_entries=history_entries,
+                evidence_base=evidence_base,
+                result_pins=_canonical(full_result_pins),
+                history_limit=self._pid.history_limit,
                 audit=audit,
                 tool_call=authorized.record.model_copy(
                     update={"status": "completed", "completed_at": datetime.now(UTC)}
@@ -278,7 +331,7 @@ class ChangeSetExecutor:
             result_revision=None,
             payload={
                 "change_set_id": change_set_id,
-                "result_pins": {w.document_id: w.result_revision for w in staged},
+                "result_pins": full_result_pins,
             },
         )
 
@@ -375,9 +428,26 @@ class ChangeSetExecutor:
             }
             for action in impact.derived_repin_actions
         ]
+        import hashlib as _hashlib
+
+        def _sha(text: str) -> str:
+            return _hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+        per_domain = {}
+        writes_by_doc = {w.document_id: w for w in staged}
+        for document_id, diff in diffs.items():
+            write = writes_by_doc[document_id]
+            per_domain[document_id] = {
+                "semantic_diff_hash": _sha(_canonical(diff)),
+                "staged_payload_hash": _sha(write.data_json),
+            }
         return {
             "before_pins": dict(intent.intent.base_member_pins),
-            "after_pins": {w.document_id: w.result_revision for w in staged},
+            "after_pins": {
+                **intent.intent.base_member_pins,
+                **{w.document_id: w.result_revision for w in staged},
+            },
+            "per_domain": per_domain,
             "per_domain_diffs": diffs,
             "link_snapshot": link_snapshot,
             "readiness_result_hash": readiness_after.result_hash,

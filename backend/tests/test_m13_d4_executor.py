@@ -465,6 +465,44 @@ def test_in_transaction_repin_race_rolls_back(tmp_path: Path, monkeypatch) -> No
     assert plane.recorder.verify_chain().ok
 
 
+def test_losing_closeout_never_rewrites_terminal_records(tmp_path: Path) -> None:
+    """Concurrent-replay edge: a closeout from a losing execution must not
+    overwrite the successful execution's completed tool call / session."""
+    from agentcad.audit_models import AuditRecordDraft
+
+    plane = Plane(tmp_path, "concurrent.db")
+    intent = plane.intent()
+    authorized, change_set_id, payload = _stage_approve_authorize(plane, intent)
+    binding_doc = sorted(payload["intent"]["mutations"], key=lambda m: m["document_id"])[0]["document_id"]
+    plane.runtime.apply_authorized(authorized, binding_doc, payload)
+
+    events_before = len(plane.recorder.store.all_audit_records())
+    # simulate the losing execution's closeout arriving late
+    plane.store.change_set_failure_closeout(
+        change_set_id=change_set_id,
+        tool_call=authorized.record.model_copy(
+            update={"status": "failed", "error_code": "late_conflict"}
+        ),
+        session=authorized.session.model_copy(update={"status": "failed"}),
+        audit=AuditRecordDraft(
+            event_type="project_change_set.rejected",
+            actor="engineer",
+            surface="internal",
+            tool_name=TOOL_APPLY_CHANGE_SET,
+            status="rejected",
+            error_code="late_conflict",
+        ),
+    )
+    tool_call = plane.store.get_tool_call(authorized.record.id)
+    assert tool_call.status == "completed"
+    session = plane.store.get_agent_session(authorized.session.id)
+    assert session.status == "completed"
+    assert plane.store.get_change_set(change_set_id)["status"] == "applied"
+    events_after = plane.recorder.store.all_audit_records()
+    assert len(events_after) == events_before + 1  # only the rejection evidence
+    assert plane.recorder.verify_chain().ok
+
+
 def test_result_pins_cover_unmutated_members(tmp_path: Path) -> None:
     """D85-4 hard-lock: after_pins / result_pins are full project pins —
     unmutated members keep their declared base pin."""

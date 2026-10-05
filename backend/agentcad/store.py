@@ -1369,10 +1369,19 @@ class SQLiteDocumentStore:
                         (project_id,),
                     ).fetchall()
                 )
-                if actual_members != sorted(member_identity):
+                # The expected member set is derived from the DECLARED pins
+                # themselves — a preflight snapshot can never weaken this
+                # check (concurrent membership drift is caught here).
+                expected_members = sorted(
+                    (document_id, domain) for document_id, domain in actual_members
+                )
+                if {document_id for document_id, _domain in actual_members} != set(
+                    declared_pins
+                ):
                     raise StoreDocumentIdentityError(
                         "project membership drifted between approval and commit"
                     )
+                member_identity = expected_members
                 for document_id, domain in member_identity:
                     declared = int(declared_pins[document_id])
                     if domain == "cable":
@@ -1551,8 +1560,41 @@ class SQLiteDocumentStore:
                     " WHERE change_set_id = ? AND status = 'approved'",
                     (now, change_set_id),
                 )
-                self._write_tool_call(connection, tool_call)
-                self._write_agent_session(connection, session)
+                # Concurrent-replay guard: a tool call / session that already
+                # reached a terminal state belongs to the SUCCESSFUL execution
+                # and must never be rewritten by a losing closeout.
+                cursor = connection.execute(
+                    "UPDATE agent_tool_calls SET approval_id = ?, result_revision = ?,"
+                    " status = ?, error_code = ?, completed_at = ?, metadata_json = ?"
+                    " WHERE id = ? AND status = 'running'",
+                    (
+                        tool_call.approval_id,
+                        tool_call.result_revision,
+                        tool_call.status,
+                        tool_call.error_code,
+                        tool_call.completed_at.isoformat() if tool_call.completed_at else None,
+                        json.dumps(tool_call.metadata, ensure_ascii=False),
+                        tool_call.id,
+                    ),
+                )
+                if cursor.rowcount == 1:
+                    connection.execute(
+                        "UPDATE agent_sessions SET actor = ?, project_id = ?, provider = ?,"
+                        " model = ?, start_revision = ?, end_revision = ?, status = ?,"
+                        " updated_at = ?, metadata_json = ? WHERE id = ? AND status = 'running'",
+                        (
+                            session.actor,
+                            session.project_id,
+                            session.provider,
+                            session.model,
+                            session.start_revision,
+                            session.end_revision,
+                            session.status,
+                            session.updated_at.isoformat(),
+                            json.dumps(session.metadata, ensure_ascii=False),
+                            session.id,
+                        ),
+                    )
                 self._append_audit_record(connection, audit)
                 connection.commit()
             except Exception:

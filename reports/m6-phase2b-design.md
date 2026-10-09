@@ -1,6 +1,8 @@
 # M6-2B-D1 — Integration Contract Design：真实 DXF → 人工确认 → 受治理工程写入
 
-> 状态：DESIGN DRAFT v1（docs-only）。在 Gate 对 D1 的 Design Gate 签署前，本文所有结论均为 proposal。
+> 状态：DESIGN FINAL FIX（D87-1~D87-5 修订版，docs-only）。在 Gate 对 D1 的 Design Gate 签署前，
+> 本文所有结论均为 proposal。Gate 2026-10-09 复核裁定：CHANGES REQUIRED（五项）+
+> Q1–Q4 已裁（见 §10 裁定记录），并签 **M6-2B-D1 DESIGN FINAL FIX GO — APPROVED**（限 #87 原四文件范围）。
 > 授权依据：Gate 2026-10-09 方向裁定——「M6 — Governed Semantic Ingestion（恢复建设），不创建 M14」，
 > 并签 **M6-2B-D1 DESIGN PREP GO — APPROVED**（首片只允许设计准备，不允许工程数据写入）。
 > base = main@8331de1（M13 closeout 后）。Charter 依据：PROJECT_CHARTER v1.2.0 §51。
@@ -80,8 +82,9 @@
 
 ### 2.4 调研中发现的既有不一致（仅登记，D1 不改）
 
-- `docs/cad-import.md:23` 声称支持二进制 DXF，但 `cad_dxf.py:183-187` 实际只读文本 DXF——文档与代码矛盾，
-  D1 范围不含该文件，报 Gate 路由（建议作为后续 docs 维护项）。
+- `docs/cad-import.md:23` 声称支持二进制 DXF，但 `cad_dxf.py:183-187` 实际只读文本 DXF——文档与代码矛盾。
+  **Gate 已路由：列为 P1 documentation correctness debt，下次正常文档维护独立修正；D2 只按
+  已核实支持的 DXF 子集设计，不因文档措辞推断能力**（Gate 2026-10-09 复核第五节）。
 - 文字旋转/MTEXT 行内格式不保留（`cad_dxf.py:656-664`；`docs/cad-import.md:193`）——对 tag 提取的影响：
   文字锚点（插入点）与内容在，可作 `text_spans` selector；旋转角丢失意味着「竖排位号」的区域重定位精度降级，
   列入 §7 gold corpus 的 `acceptable_ambiguity` 标注维度。
@@ -90,29 +93,44 @@
 
 ## 3. 目标数据流与权限图
 
+**双文档身份（D87-1 冻结）**：摄取始终区分两种文档身份——
+
+- **Source（证据身份，只读）**：`source_document_id + source_revision + source_content_hash`。
+  导入产物自摄取钉死起**视为不可变证据**：后续工程修改不得写回该文档；要在更新版原图上重新摄取，
+  只能导入产生**新的** source 文档/ revision，从而产生新的 artifact/region/candidate 身份，
+  旧身份链原样封存（不编辑、不迁移、不静默移动）。
+- **Target（工程写入目标，可增长）**：`target_document_id + expected_target_revision`。
+  目标可以是新建的工程重建文档，也可以是既有工程文档（富化场景）。target revision 随每次
+  受治理提交正常 +1；**target 前进不使候选失效**——候选只钉 source 证据身份，
+  对 target 的一致性由 baseline digest + CAS 在 apply 时刻重新核算（§4.5）。
+
 ```text
 DXF 文件（外部真实输入）
   │  ① 既有 cad_import 受治理导入（一次导入=1 revision/1 history/1 audit/1 undo；
-  │     源 SHA-256 入 metadata+审计；产出全几何文档，0 symbol/0 connector，P0 边界保持）
+  │     源 SHA-256 入 metadata+审计；产出全几何 source 文档，0 symbol/0 connector，P0 边界保持）
   ▼
-imported_document（documents 表，revision=R0，元素带 cad_layer/cad_block/cad_handle 出处键）
-  │  ② M6 intake（D2，只读文档）：SourceArtifactRef{source_document_id, source_revision=R0,
-  │     content_hash=文档内容哈希}；区域推导 → SourceRegion（三类 selector，coordinate_frame="document"）
+SOURCE：imported_document（documents 表，revision=R0 钉死为证据基线，
+  元素带 cad_layer/cad_block/cad_handle 出处键；摄取后只读，不再作为编辑目标）
+  │  ② M6 intake（D2，只读 source）：SourceArtifactRef{source_document_id, source_revision=R0,
+  │     content_hash=source 内容哈希}；区域推导 → SourceRegion（三类 selector，
+  │     coordinate_frame="document"）；候选声明其 target_document_id
   ▼
-semantic_candidate（既有 v7 表；producer=deterministic_rule_engine v1；
-  ProposedSemantics 只写事实；confidence≠authority）
-  │  ③ M6 review（D3，HTTP 读面 + 决策端点 + 最小 UI）：人工确认事实（reviewer_identity 必带），
-  │     拒绝/歧义/冲突各有稳定状态；baseline_record 在决策时快照
+semantic_candidate（既有 v7 表 + D2 起 candidate payload 携带 target_document_id；
+  producer=deterministic_rule_engine v1；ProposedSemantics 只写事实；confidence≠authority）
+  │  ③ M6 review（D3，HTTP 读面 + 决策端点 + 最小 UI）：人工确认事实（reviewer 身份四要素 §4.3），
+  │     拒绝/歧义/冲突各有稳定状态；baseline_record 对 TARGET 当时状态快照
   ▼
 confirmed_semantic_finding（既有 v7 表；provenance_chain 四链）
   │  ④ compile（既有编译器，D4 扩展 relationship_addition）→ StructuredEngineeringPatch
-  │     →（D4 新增）patch 持久化（§5 v17）
+  │     （baseline_revision = target 在编译/确认时刻的 revision）
+  │     →（D4 新增）patch 持久化（§5 v17，patch 行同时记录 source/target 双文档身份）
   ▼
 structured_engineering_patch（持久化，write_authority="none" 不变——它只是数据）
   │  ⑤ governed apply（D4）：M10 sealed flow（专用 M6 registry/adapter/runtime，
   │     tool=apply_m6_confirmed_finding，permission=ask/risk=engineering_change）
-  │     → authorize（intent hash 四元绑定 + 服务端重算比对）
-  │     → DocumentService.apply_transaction(expected_revision=baseline CAS, precommit_validator)
+  │     → authorize（intent hash 绑定 source/target 双身份，服务端重算比对）
+  │     → DocumentService.apply_transaction(document_id=target_document_id,
+  │         expected_revision=target baseline CAS, precommit_validator)
   ▼
 apply_v2_transaction → committed_revision（唯一工程写入层，契约铁律不变）
   │  ⑥ replay harness（D4）/ 补偿撤销（经 apply-v2 的补偿事务，TRANSACTION_STATES 记账）
@@ -130,16 +148,22 @@ M6-2B 全程不新增第二 writer。
 
 ## 4. 绑定设计（Gate 要求的五项完整绑定）
 
-### 4.1 Source revision 绑定
+### 4.1 Source revision 绑定（D87-1 修订：staleness 只钉 source，不钉 target）
 
 - artifact = 既有导入文档（`documents` 行），`SourceArtifactRef` 已带 `source_document_id` +
   `source_revision` + `content_hash`（`m6_candidate_models.py:115-123`）。
-- intake 在**观察时刻**钉死三元组；`content_hash` 取该 revision 文档内容哈希（复用审计侧 content hash
-  口径，`audit.py` 的 `base/result_content_hash` 同族）。
-- 文档 revision 前进后，旧候选不静默升级：review/apply 时比对 `source_revision` 与文档当前 revision，
-  漂移 → 候选标 stale（展示态），apply 一律拒绝（稳定码 `stale_source_revision`，零写）。这与
-  「revision 变则必须产生新区域身份」的区域契约（`m6_ingestion_contract.py:941-947` 断言组）配套：
-  新 revision 上的摄取产生**新** artifact ref / region / candidate，不编辑旧的。
+- intake 在**观察时刻**钉死 source 三元组；`content_hash` 取该 revision 文档内容哈希
+  （复用审计侧 content hash 口径，`audit.py` 的 `base/result_content_hash` 同族）。
+- **source 侧 staleness**：source 文档被删除、或其 source_revision 快照不可读（历史快照不可用）时，
+  该区域证据链失效——review 面显示 `source_unavailable`，apply 一律拒绝
+  （稳定码 `source_snapshot_unavailable`，零写）。source revision 本身被冻结为证据基线，
+  不存在「source 文档 revision 自然前进」的路径（摄取后 source 只读；要摄取新原图 = 新导入 = 新身份）。
+- **target 侧不 staleness**：target 文档 revision 随受治理提交正常前进，候选**不因此失效**；
+  target 一致性由 §4.5 的 baseline digest 重算 + CAS 在每次 apply 时刻独立核算，
+  冲突走 `conflicted`（需新 reviewer decision），而不是 stale。
+- **设计级负例（D87-1 指定）**：同一 source 产出十个候选，顺序人工确认并逐条 apply——
+  第 1 条 apply 使 target R0→R1，其余九条钉的 source R0 不变、**必须仍然可继续审阅与 apply**；
+  每条 apply 以自己的 baseline digest 对 target 当前态重算，互不影响（见 §6.2-N13）。
 
 ### 4.2 区域可重定位
 
@@ -154,16 +178,26 @@ M6-2B 全程不新增第二 writer。
   避免重走已知坑）。
 - `text_spans` 引用文字元素内容与锚点（文字旋转不保留是已知限制，见 §2.4）。
 
-### 4.3 人工身份
+### 4.3 人工身份（D87-2 修订：区分四件事，不把共享 token 伪装成个人身份）
 
-- 决策层：`ReviewDecision` 人类决定必须带 `reviewer_action`+`reviewer_identity`，事件类决定禁止携带
-  （`m6_candidate_models.py:372-393`）；decision id = `review-decision-v1` 全内容 digest
-  （含 reviewer 身份，`decided_at` 排除）。
-- HTTP 层（D3）：shared 模式 reviewer 身份 = `Authorization: Bearer` operator（`security.py:95-113`），
-  服务端注入，客户端自报字段不作数（与 audit 不读 `TransactionRequest.source` 同一纪律，
-  `service.py:61-76` 注释先例）；local 模式 reviewer = 本地操作者显式标识。
+明确区分四个概念（D3 决策面与审计证据按此四元组记录）：
+
+1. **authentication evidence**：哪种访问凭据通过了校验。shared 模式当前是服务级
+   `Authorization: Bearer <api_token>`（`security.py:95-113`）——它只证明「请求携带有效的服务访问
+   凭据」，**不能映射到具体工程师个人**；如实记录为 service-token，不虚标个人身份。
+2. **reviewer attribution**：操作者声明的人员身份（`reviewer_identity` 自由文本/工号），
+   由客户端表单显式填写，服务端不伪造、不从 token 推导。
+3. **human decision evidence**：确认内容 + 动作 + 时间 + 可追溯记录——`ReviewDecision` 人类决定
+   必须带 `reviewer_action`+`reviewer_identity`，事件类决定禁止携带（`m6_candidate_models.py:372-393`）；
+   decision id = `review-decision-v1` 全内容 digest（含 reviewer 身份，`decided_at` 排除）。
+4. **identity assurance**：身份可信级别显式标注——`identity_assurance ∈ {declared, authenticated}`。
+   现阶段（不重做 Auth）一律 `declared`：界面与证据中明示「该身份为操作者声明、未经独立认证」；
+   未来若接入真实账号体系，新值 `authenticated` 才允许出现，且必须带认证来源。
+   绝不允许把 `service-token + declared identity` 包装成 `authenticated`。
+
+- local 模式：同样四元组，authentication evidence 记为 local-process，assurance 仍 `declared`。
 - D3 决策端点全部走 `surface_contract.py` 声明 + audited 类别（机械测试 `test_surface_contract.py`
-  守住），并在该分片 CODE GO 时同步收窄 `PHASE_1_FORBIDDEN_SURFACE_TOKENS`（见 §10-Q2）。
+  守住），令牌收窄节奏按 Gate 裁定执行（§10 裁定记录 Q2）。
 
 ### 4.4 Approval 绑定
 
@@ -174,53 +208,61 @@ M6-2B 全程不新增第二 writer。
   permission=ask，risk=engineering_change（沿用 `ToolRisk` 五值，`runtime/ports.py:37`）。
 - intent 绑定材料（服务端派生，apply 时重算比对，漂移即 409 零写——同 M13
   `project_change_set_runtime.py:74-90/:221-233` 模式）：`patch_id` + `canonical_digest` +
-  `source_document_id` + `baseline_revision` + `expected_revision` + finding/candidate 身份链。
+  **source 三元组（document/revision/content_hash）+ target 二元组（document/baseline_revision）** +
+  `expected_revision` + finding/candidate 身份链。
   `tool_intent_hash`（`runtime/harness.py:120-132`）四元（session/tool/document/intent）精确相等才放行
   （`runtime/harness.py:427-438`），approval 单次消费（状态 approved→consumed）。
 
-### 4.5 Baseline CAS 与 conflict 重查
+### 4.5 Baseline CAS 与 conflict 重查（绑定对象是 target，不是 source）
 
-- patch 携带 `baseline_revision`（编译时快照）；apply 以 `expected_revision=baseline_revision` 走
-  `apply_transaction` CAS（`service.py:519-522`，冲突 `RevisionConflictError`→409）。
+- patch 携带 `baseline_revision`（**target** 在编译/确认时刻的 revision 快照）；apply 对
+  **target_document_id** 以 `expected_revision=baseline_revision` 走 `apply_transaction` CAS
+  （`service.py:519-522`，冲突 `RevisionConflictError`→409）。
 - 语义级 conflict：review 时记录的 `ConflictBaselineRecord`（digest_version="semantic-value-v1"，
-  `m6_candidate_models.py:252-267`）在 apply 前对**当前 committed 状态**重算（path-aware digest），
-  不一致 → `conflicted`，零写；解除冲突必须产生新的 reviewer decision（契约 `:980-1005` 已断言）。
-- precommit_validator（B' 协议，`service.py:525-531`）：D4 在写前对暂存文档重跑适用校验子集，
-  失败零写（与 M7 物化器同一协议，`m7_layout_materialization.py:1292` 先例）。
+  `m6_candidate_models.py:252-267`）在 apply 前对 **target 当前 committed 状态**重算
+  （path-aware digest），不一致 → `conflicted`，零写；解除冲突必须产生新的 reviewer decision
+  （契约 `:980-1005` 已断言）。source 的 revision 不参与此重算（它是冻结证据身份）。
+- precommit_validator（B' 协议，`service.py:525-531`）：D4 在写前对暂存 target 文档重跑适用
+  校验子集，失败零写（与 M7 物化器同一协议，`m7_layout_materialization.py:1292` 先例）。
 
 ## 5. 持久化裁定：需要 schema v17（两张新表；D1 不迁移）
 
 ### 5.1 裁定与理由
 
-**裁定：M6-2B 需要一次 schema v17 迁移，新增恰好两张 append-only 表。**
+**裁定：M6-2B 需要一次 schema v17 迁移，新增恰好两张表**（Gate Q1：两表最小化方向**原则批准**，
+DDL 在 D87-1/D87-3 闭合后随 D4 CODE GO 冻结；Gate 确认无证据要求第三张表）。
 
 需要新持久化的最小性论证：
 - `m6_structured_patches` 必需：patch 当前只在内存（§2.3），而完成标志 6 要求
   source→candidate→reviewer→patch→revision 全链可追 + replay 重放验证 canonical patch——
-  patch 必须有 durable identity。
-- `m6_apply_records` 必需：apply 的 ledger（patch↔transaction↔revision↔audit 绑定、
+  patch 必须有 durable identity。本表**真 append-only**（patch 一旦产生不可变；内容变=新 digest=新行）。
+- `m6_apply_records` 必需：apply 的账本（patch↔transaction↔revision↔audit 绑定、
   `TRANSACTION_STATES=(applied,reverted,superseded)` 记账）无法由现有表表达——
   `documents`/`audit_records` 是工程面真相，M6 需要自己的治理面视图（与 M12/M13 的
-  project_change_sets 治理面表先例一致）。
+  project_change_sets 治理面表先例一致）。本表**不是纯 append-only**，而是**受 CAS 约束的
+  生命周期账本**（D87-3）：行插入后只允许两条状态迁移边，其余字段不可变。
 - **不新增** artifact 表：artifact = 既有 `documents` 行 + revision（§4.1），身份可推导；
   **不新增** region 表：region 作为值对象内嵌 candidate payload（v7 既有设计），身份由 §4.2 digest 派生。
   两张表是回答完成标志 4/6 的最小集合。
+- **双文档身份入列（D87-1/D87-3）**：两表都同时携带 `source_document_id` 与 `target_document_id`，
+  落库模型层面杜绝 source/target 混淆。
 
 ### 5.2 DDL proposal（v16→v17；遵循 v14→v15 先例：迁移全程 FK enforcement 保持 ON）
 
 ```sql
 CREATE TABLE m6_structured_patches (
     patch_id            TEXT PRIMARY KEY,        -- 'm6patch_' + 64 hex（= canonical_digest）
-    finding_ids_json    TEXT NOT NULL,           -- 有序 finding id JSON 数组
+    finding_ids_json    TEXT NOT NULL,           -- 有序 finding id JSON 数组（顺序进 digest）
     intent              TEXT NOT NULL,
     policy_disposition  TEXT NOT NULL,
     operations_json     TEXT NOT NULL,           -- canonical operations 载荷
     compiler_name       TEXT NOT NULL,           -- 如 'm6.patch_compiler'
     compiler_version    TEXT NOT NULL,
     compiler_rules      TEXT NOT NULL,
-    baseline_revision   INTEGER NOT NULL CHECK (baseline_revision >= 0),
+    baseline_revision   INTEGER NOT NULL CHECK (baseline_revision >= 0),  -- target 侧
     canonical_digest    TEXT NOT NULL,           -- 64 hex
-    source_document_id  TEXT NOT NULL,           -- 无 FK：文档删除不级联（任务书 §2.2 / 契约 :950-960）
+    source_document_id  TEXT NOT NULL,           -- 证据文档（无 FK：文档删除不级联，任务书 §2.2 / 契约 :950-960）
+    target_document_id  TEXT NOT NULL,           -- 工程写入目标（无 FK，同上）
     created_at          TEXT NOT NULL
 );
 
@@ -229,8 +271,9 @@ CREATE TABLE m6_apply_records (
     patch_id            TEXT NOT NULL REFERENCES m6_structured_patches(patch_id) ON DELETE RESTRICT,
     candidate_id        TEXT NOT NULL REFERENCES semantic_candidates(candidate_id) ON DELETE RESTRICT,
     source_document_id  TEXT NOT NULL,           -- 无 FK（同上）
-    base_revision       INTEGER NOT NULL CHECK (base_revision >= 0),
-    result_revision     INTEGER,                 -- 成功写入后的实际 revision
+    target_document_id  TEXT NOT NULL,           -- 无 FK（同上）
+    base_revision       INTEGER NOT NULL CHECK (base_revision >= 0),      -- target 侧
+    result_revision     INTEGER,                 -- target 侧，成功写入后的实际 revision
     status              TEXT NOT NULL CHECK (status IN ('applied','reverted','superseded')),
     tool_intent_hash    TEXT NOT NULL,
     approval_id         TEXT NOT NULL DEFAULT '',
@@ -240,15 +283,29 @@ CREATE TABLE m6_apply_records (
     revert_apply_id     TEXT NOT NULL DEFAULT ''   -- 补偿撤销时指向补偿 apply 记录
 );
 CREATE INDEX idx_m6_apply_records_patch ON m6_apply_records(patch_id);
-CREATE INDEX idx_m6_apply_records_doc ON m6_apply_records(source_document_id);
+CREATE INDEX idx_m6_apply_records_target ON m6_apply_records(target_document_id);
 ```
 
-- `m6_apply_records.status` 迁移纪律：合法边仅 `applied→reverted`、`applied→superseded`，
-  由 store 方法 CAS 守卫（M13 `update_change_set_status` 三边先例，`store.py:1264-1310`）；
-  补偿撤销 = 一条新的 apply 记录（intent=revert）+ 原记录 `applied→reverted`，candidate 永不出现
-  `reverted` 状态（契约 `:548-560`）。
-- 身份前缀注册：`m6apply_` 需入 `PERSISTENT_IDENTITIES`（契约 `:599-630`，附带 identity 测试更新）；
-  `m6reg_`（§4.2）同理。这属于契约数据变更，随 D4 CODE GO 一并签署。
+**账本不变量（D87-3 闭合项，D4 以测试钉死）**：
+
+- **L1 身份链交叉校验（同事务）**：写入 `m6_apply_records` 的同一事务内，服务端必须：
+  ① patch 行存在；② 重算 patch 的 `canonical_digest` 与 `patch_id` 一致；
+  ③ `finding_ids_json` 逐条存在且回放现状为 confirmed；
+  ④ 本行 `candidate_id` ∈ 这些 finding 的 `candidate_id` 集合；
+  ⑤ `source_document_id` / `target_document_id` 与候选、patch 双侧一致。
+  任一不满足 → 整事务回滚，零写（负例见 §6.2-N8/N14）。
+- **L2 状态迁移**：仅 `applied→reverted`、`applied→superseded` 两条边，CAS 携带原状态；
+  重复迁移 / 非法边 / 终态再写一律拒绝（M13 三边 CAS 先例，`store.py:1264-1310`）。
+- **L3 治理账本与工程提交同事务一致**：apply 成功的账本行（`status='applied'` +
+  `result_revision` + `audit_record_id`）必须与工程文档 CAS 写在**同一事务**落库；
+  失败路径走独立 closeout 事务（恰好一条 rejected 审计）——不允许出现「审计已 applied
+  而账本未 applied」的半态（M13 `commit_project_change_set` 单事务纪律，`store.py:1312-1536`）。
+- **L4 补偿撤销**：补偿 = 一条新 apply 记录（intent=revert，经同一 sealed apply-v2 流）+
+  原子同事务把原记录 `applied→reverted` 并回填 `revert_apply_id`/`reverted_at`；
+  candidate 永不出现 `reverted` 状态（契约 `:548-560`）。
+- 身份前缀注册：**`m6reg_`（区域身份）随 D2 登记**入 `PERSISTENT_IDENTITIES` 并同步契约测试
+  （D87-5：D2 就需要产生区域身份，不能等到 D4）；**`m6apply_` 随 D4 登记**。
+  两者均属契约数据变更，随对应分片 CODE GO 一并签署。
 
 ### 5.3 迁移 / 备份 / 回滚设计
 
@@ -274,7 +331,7 @@ CREATE INDEX idx_m6_apply_records_doc ON m6_apply_records(source_document_id);
 | P6 | 补偿撤销 | 经 apply-v2 的补偿事务成功；原 apply 记录 →reverted；candidate 无 reverted 态 | D4 |
 | P7 | 真实图纸局部场景端到端（设备+位号+可验证连接） | 完成标志 5 证据链齐全 | D5 |
 
-### 6.2 拒绝 / 负例（Gate 点名十项 + 既有纪律）
+### 6.2 拒绝 / 负例（Gate 点名十项 + D87 修订新增 N13/N14 + 既有纪律）
 
 | # | 场景 | 期望稳定行为 | 分片 |
 |---|---|---|---|
@@ -282,28 +339,30 @@ CREATE INDEX idx_m6_apply_records_doc ON m6_apply_records(source_document_id);
 | N2 | 证据不足（候选缺 evidence 或 region 无 selector） | schema 层拒绝（`SourceRegion` 至少一个 selector，`m6_candidate_models.py:160-168`）；登记失败零写 | D2 |
 | N3 | 歧义（一个区域多个同样合法读法；多端口连接歧义） | 候选标歧义态，必须人工决断；端口不猜（M7-Q2 冻结纪律：receipt→完整重述→确定性 selector） | D2/D3 |
 | N4 | 错误关联（位号绑错设备簇） | 人工可在 review 改派关联；改派产生**新** decision（追加式日志，不改历史） | D3 |
-| N5 | 过期 source（文档 revision 已前进） | review/apply 拒绝 `stale_source_revision`，零写；新 revision 上重新摄取 | D3/D4 |
-| N6 | baseline drift（review 后目标语义值被改） | apply 前重算 digest 不一致 → `conflicted`，零写；需新 reviewer decision 解除 | D4（核心已在 Phase-2A） |
+| N5 | 过期 source（source 文档被删 / source_revision 快照不可读） | review 面显示 `source_unavailable`；apply 拒绝 `source_snapshot_unavailable`，零写；在更新版原图上重新导入产生全新身份链 | D3/D4 |
+| N6 | baseline drift（review 后 target 侧目标语义值被改） | apply 前对 target 当前态重算 digest 不一致 → `conflicted`，零写；需新 reviewer decision 解除 | D4（核心已在 Phase-2A） |
 | N7 | 重复应用（同一 patch 二次 apply / approval 重放） | approval consumed → `tool_approval_consumed`；terminal 记录不被覆盖（M13 closeout 纪律） | D4 |
 | N8 | reviewer 决策缺失（finding 无 decision 引用直接进编译/apply） | composite FK RESTRICT + 服务层校验双重拒绝；零写 | D4 |
 | N9 | 补偿撤销失败（补偿事务 CAS 冲突） | 原记录保持 applied；失败 closeout 恰好一条 rejected 审计；可重试 | D4 |
-| N10 | 失败零脏写（apply 任意环节故障注入） | 工程面零写；治理面独立 closeout；无半提交状态（M13 `commit_project_change_set` 原子纪律） | D4 |
+| N10 | 失败零脏写（apply 任意环节故障注入） | 工程面零写；治理面独立 closeout；无半提交状态（M13 `commit_project_change_set` 原子纪律 + §5-L3） | D4 |
 | N11 | 无 token / 错误 token（shared 模式） | 401/403 fail-closed（`approval_not_self_served` 语义沿用） | D3/D4 |
 | N12 | 模型高置信度绕过人工 | 契约层不可能：`AUTO_ACCEPT_WHITELIST=()` + `CONFIDENCE_CAN_AUTHORISE_A_WRITE=False`；任何 auto-accept 提案=契约测试红 | 全程 |
+| N13 | 同一 source 十个候选顺序应用（D87-1 指定设计级负例） | 第 1 条 apply 使 target R0→R1 后，其余九条**不得**因 source 钉死而失效；每条 apply 独立对 target 当前态重算 baseline digest 与 CAS，全部可顺序完成；若中途他人改了某条的目标语义值，仅该条走 N6 conflict | D4 |
+| N14 | 账本身份链伪造（apply 记录引用不属于 patch findings 的 candidate / 双侧 document id 不一致 / digest 重算不符） | §5-L1 同事务交叉校验任一不满足 → 整事务回滚零写 + 稳定拒绝码；负测逐项变红 | D4 |
 
 ## 7. 真实样本取得计划 + gold corpus 标注方案
 
 ### 7.1 真实 P&ID 样本
 
-- **首选（外部依赖，Owner 决策）**：Owner 提供一份可合法使用的真实项目 P&ID（DXF 导出），
-  登记数据授权（来源/用途/脱敏状态）。这与 WS3B 挂起项同源但**不等价**：本 milestone 只需要
-  「可合法用于开发/测试语料的图纸」，不要求真实试点流程。
-- **既有本地资产（可作开发样本，不可作 gold truth）**：`气路系统总图.dwg`（939,381 B，AC1032，
-  SHA-256 `5e62ec5c…`，导入 9757 元素，`reports/m5/repair-scale-real.json`）——其授权状态未经登记，
-  按 Gate 口径只能证明流程可运行。
+- **正式资格化路径（Gate Q4 裁定）**：**Owner 授权的真实 DXF 为正式资格化首选**——Owner 提供一份
+  可合法使用的真实项目 P&ID（DXF 导出），登记数据授权（来源/用途/脱敏状态）。这与 WS3B 挂起项
+  同源但**不等价**：本 milestone 只需要「可合法用于开发/测试语料的图纸」，不要求真实试点流程。
+- **D2–D4 材料边界（Gate Q4 裁定）**：未取得授权前只使用**合成或明确获准的开发材料**；
+  既有本地 `气路系统总图.dwg`（939,381 B，AC1032，SHA-256 `5e62ec5c…`，导入 9757 元素，
+  `reports/m5/repair-scale-real.json`）的**历史实验结果不等于未来使用授权**。
 - **合成兜底**：工程审阅过的合成 DXF（覆盖七维度的受控构造），明确标注 synthetic。
-- **状态标注**：在 Owner 提供授权样本前，D2–D4 不阻塞（用合成/开发样本），
-  **D5 的「真实图纸资格化」与 M6 Final Acceptance 保持阻塞**（Gate 边界声明原文）。
+- **状态标注**：在 Owner 提供授权样本前，D2–D4 不阻塞（用合成/获准开发材料），
+  **D5 的「真实图纸资格化」与 M6 Final Acceptance 保持阻塞**（Gate 边界声明 + Q4 裁定原文）。
 
 ### 7.2 gold corpus 首批标注方案
 
@@ -343,45 +402,69 @@ CREATE INDEX idx_m6_apply_records_doc ON m6_apply_records(source_document_id);
 ### D2 — Source-to-Candidate Adapter（service 层，无表层）
 
 - 范围：导入文档 → 区域推导（block 聚簇 + 文字锚点）→ 确定性抽取（symbol 候选匹配、tag 候选、
-  annotation_role 候选）→ 候选登记（复用 `M6CandidateService.file_candidate`）。
-- 只允许 producer=`deterministic_rule_engine`；bounded-judgment producer（TypeSafe 等）**接口预留、
-  本片不接线**（任务书 §14 顺序 2 的后半）。
-- 禁：HTTP/MCP 表层（令牌冻结不动）、review UI、apply、migration。
+  annotation_role 候选）→ 候选登记（复用 `M6CandidateService.file_candidate`，payload 携带
+  `target_document_id`）。
+- **区域身份本片登记（D87-5）**：`m6reg_` 完整身份格式入 `PERSISTENT_IDENTITIES` + 契约测试同步，
+  不等 D4。
+- producer 只接 `deterministic_rule_engine`（Gate Q3 APPROVED）；bounded-judgment producer
+  （TypeSafe 等）接口预留、**本片不接线**，也不建立伪造的 confidence calibration。
+- 禁：HTTP/MCP 表层（**D2 零解禁**，令牌冻结原样——Gate Q2）、review UI、apply、migration。
 - 完成标志：§6 P1 + N1/N2/N3 测试；walkthrough 脚本 + 报告 evidence。
 
 ### D3 — Human Review & Conflict Control
 
 - 范围：review queue 只读 GET 面（候选列表/详情/证据区渲染数据）+ 决策端点（confirm/reject/recheck/
-  改派关联）+ 最小 UI 面板；shared 模式 reviewer=operator token；决策全审计。
-- 本片才收窄 `PHASE_1_FORBIDDEN_SURFACE_TOKENS`（对应 token 移入「已登记」清单），
-  每个新路由同步 `surface_contract.py` 声明（否则 `test_every_mutating_route_is_declared` 红）。
+  改派关联）+ 最小 UI 面板；决策全审计；reviewer 身份按 §4.3 四元组记录
+  （authentication evidence / reviewer attribution / human decision evidence / identity assurance），
+  shared 模式如实标注 `declared`，不得把服务 token 包装成个人身份（D87-2）。
+- 本片才收窄 `PHASE_1_FORBIDDEN_SURFACE_TOKENS`：**按实际已登记表层逐词收窄**（Gate Q2：
+  只移除本片真实登记的令牌，不整块清空）；每个新路由同步 `surface_contract.py` 声明
+  （否则 `test_every_mutating_route_is_declared` 红）。
 - 禁：apply、migration、编译器变更。
 - 完成标志：§6 P2 + N3/N4/N5/N11；e2e（人工确认/拒绝/冲突重决）。
 
 ### D4 — Governed Apply & Replay
 
-- 范围：schema v17（§5 两表）+ 编译器扩展 `relationship_addition`（连接创建：端点只带
-  symbol+port_id，坐标由 `_normalize_endpoint` 服务端重算——绝不信任抽取坐标）+ patch 持久化 +
-  M10 sealed apply（§4.4）+ replay harness + 补偿撤销 + 失败 closeout（M13 双事务纪律）。
+- 范围：schema v17（§5 两表 + L1–L4 账本不变量）+ 编译器扩展 `relationship_addition`（连接创建：
+  端点只带 symbol+port_id，坐标由 `_normalize_endpoint` 服务端重算——绝不信任抽取坐标）+
+  patch 持久化 + M10 sealed apply（§4.4，intent 绑定含 source/target 双身份）+ replay harness +
+  补偿撤销 + 失败 closeout（M13 双事务纪律）。`m6apply_` 前缀本片登记。
+- 表层令牌：D4 只处理余下**真实需要**的令牌（Gate Q2；既有禁止清单无独立 apply 字面令牌，
+  不假设需要删除）。
 - 禁：改 M13 executor、改 audit hash/ordinal、改 `runtime/ports.py` 中性语义、auto-accept。
-- 完成标志：§6 P3–P6 + N5–N10、N12；全量非回归 + 性能证据。
+- 完成标志：§6 P3–P6 + N5–N10、N12–N14；全量非回归 + 性能证据。
 
 ### D5 — Real Drawing Qualification & Closeout
 
 - 范围：真实授权样本局部场景端到端（完成标志 5）+ gold corpus 首批（§7.2）+ 拒识/歧义/错误
   分布报告 + 全量非回归 + closeout 报告（八条完成标志矩阵）。
-- 真实样本未获授权 → 技术阶段可收，**M6 Final Acceptance 不宣称**（Gate 原文边界）。
+- 真实样本未获授权 → 技术阶段可收，**M6 Final Acceptance 不宣称**（Gate 原文边界 + Q4 裁定）。
 
-## 10. 提请 Gate 裁定的问题
+## 10. Gate 裁定记录（2026-10-09，D1 复核：CHANGES REQUIRED → FINAL FIX GO）
 
-- **Q1**：§5 的 v17 两表 DDL 与「不新增 artifact/region 表」的最小性裁定是否批准？
-  （若 Gate 认为 patch/apply 可并入既有表或应加列而非新表，请指示。）
-- **Q2**：`PHASE_1_FORBIDDEN_SURFACE_TOKENS` 的收窄节奏——本设计提议 D3 CODE GO 时随该分片
-  批准移除 `candidate/review-queue` 等令牌、D4 时移除 apply 相关令牌，每次同步改契约数据+测试。
-  是否批准此节奏（而非 D2 一次性解禁）？
-- **Q3**：D2 是否确认「仅 deterministic_rule_engine 一个 producer 接线，bounded-judgment producer
-  只留接口」？
-- **Q4**：真实样本取得（§7.1）请 Owner/Gate 指示走哪条路径；在指示前 D5 资格化保持阻塞。
+**五项修复项及落实位置**：
+
+| 项 | 内容 | 落实 |
+|---|---|---|
+| D87-1 | source/target 工程文档身份解耦（双身份冻结、staleness 只钉 source、同源十候选顺序应用负例、source 删除/快照不可用拒绝行为） | §3 双身份定义、§4.1、§5.2 双列、§6.2-N5/N13 |
+| D87-2 | Bearer token ≠ 个人审阅者身份；四概念分离（authentication evidence / reviewer attribution / human decision evidence / identity assurance），如实标 `declared` | §4.3、§9-D3 |
+| D87-3 | v17 DDL 不变量闭合：apply_records 改定性为 CAS 约束生命周期账本；身份链同事务交叉校验 + 哈希绑定 + 负例；账本与工程提交同事务一致 | §5.1/§5.2 L1–L4、§6.2-N14 |
+| D87-4 | architecture.md 全平台过度概括修正 | `docs/architecture.md` 现状对账（改为「M6 P&ID 写复用 apply-v2；全平台写入均受各自已批准的 domain transaction/governance executor 约束」） |
+| D87-5 | `m6reg_` 随 D2 登记（身份格式 + 契约测试），`m6apply_` 留 D4 | §5.2 末条、§9-D2 |
+
+**Q1–Q4 裁定**：
+
+| 问题 | 裁定 |
+|---|---|
+| Q1 v17 两表 | 两表最小化方向**原则批准**；DDL FINAL HOLD→D87-1/3 闭合后随 D4 CODE GO 冻结；无证据要求第三张表 |
+| Q2 令牌收窄节奏 | **APPROVED**：D2 零解禁；D3 按实际已登记表层逐词收窄；D4 处理余下真实需要者；禁止清单无独立 apply 字面令牌，不得假设需删除 |
+| Q3 D2 只接 deterministic_rule_engine | **APPROVED**：不接 TypeSafe/LLM producer，保留接口但不建立伪造的 confidence calibration |
+| Q4 真实样本路径 | **指定 Owner 授权真实 DXF 为正式资格化首选**；D2–D4 仅用合成或明确获准的开发材料；既有 DWG 历史实验结果≠未来使用授权；D5 真实资格化保持阻塞 |
+
+**Gate 对既有 CAD 导入不一致的处置**：`docs/cad-import.md` 二进制 DXF 描述与代码不一致列为
+**P1 documentation correctness debt**，下次正常文档维护独立修正；D2 只按已核实支持的 DXF 子集设计，
+不因文档措辞推断能力（§2.4 登记项）。文字旋转与图元计数口径差异保持已知限制，
+进入 gold corpus 的能力/歧义记录。
 
 ---
 

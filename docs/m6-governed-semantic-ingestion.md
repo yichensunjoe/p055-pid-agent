@@ -644,16 +644,26 @@ TypeSafe 与 LLM 的摄取接入、R8 的 112×2 数据、auto-accept、批量�
 Gate 于 2026-10-09 裁定 **M6 恢复建设**（不新建 M14），并签 **M6-2B-D1 DESIGN PREP GO**。
 Phase-2B 的集成契约设计基线见 **`reports/m6-phase2b-design.md`**，要点：
 
-- 分片顺序与责任边界：**D2** Source-to-Candidate Adapter（service 层，无表层）→
+- 分片顺序与责任边界：**D2** Source-to-Candidate Adapter（service 层，无表层，零令牌解禁；
+  本片登记 `m6reg_` 区域身份格式与契约测试）→
   **D3** Human Review & Conflict Control（本片才收窄 §14 的 `PHASE_1_FORBIDDEN_SURFACE_TOKENS`，
-  逐令牌随分片 CODE GO 解禁）→ **D4** Governed Apply & Replay（schema v17 两张 append-only 表 +
-  编译器扩展 `relationship_addition` + M10 sealed apply + replay harness + 补偿撤销）→
+  按实际已登记表层逐词收窄——Gate 2026-10-09 Q2 裁定）→ **D4** Governed Apply & Replay
+  （schema v17 两表 + 编译器扩展 `relationship_addition` + M10 sealed apply + replay harness +
+  补偿撤销；`m6apply_` 本片登记）→
   **D5** Real Drawing Qualification & Closeout。
-- 持久化裁定（proposal，待 Design Gate 签署）：v17 新增 `m6_structured_patches` 与
-  `m6_apply_records`；**不新增** artifact/region 表（artifact=既有 documents 行+revision，
-  region 为 candidate 内嵌值对象）。
+- **source/target 双身份（Gate D87-1 冻结）**：source = 只读证据文档（document+revision+content_hash
+  钉死，staleness 只钉 source）；target = 可增长工程写入目标（target 前进不使候选失效，
+  一致性靠 baseline digest + CAS 在 apply 时刻重算）。
+- 持久化裁定（Gate Q1 原则批准，DDL 随 D4 CODE GO 冻结）：v17 新增 `m6_structured_patches`
+  （真 append-only）与 `m6_apply_records`（受 CAS 约束的生命周期账本，仅 `applied→reverted /
+  applied→superseded` 两条迁移边）；两表均带 `source_document_id` + `target_document_id` 双列；
+  **不新增** artifact/region 表（artifact=既有 documents 行+revision，region 为 candidate 内嵌值对象）。
+- 人工身份四要素（Gate D87-2）：authentication evidence / reviewer attribution /
+  human decision evidence / identity assurance；shared 的服务级 Bearer 只证明服务访问凭据，
+  reviewer 身份为声明制并显式标注 `declared`，不得包装成已认证个人身份。
 - 完成标志八条以 Gate 2026-10-09 裁定原文为准（已誊入设计基线 §1）；真实外部 P&ID 与独立
-  人工标注未到位时，技术阶段可完成但 **M6 Final Acceptance 不得宣称**。
+  人工标注未到位时，技术阶段可完成但 **M6 Final Acceptance 不得宣称**（Q4：资格化首选 =
+  Owner 授权真实 DXF；既有 DWG 历史实验≠未来使用授权）。
 - 本任务书 §1–§17 的全部冻结口径（八层链、唯一写入层、状态机、白名单为空、
   confidence≠authority、校准闸、replay 两层、gold corpus 七维度）继续有效；Phase-2B 设计
   基线是它们的续建方案，不是修订。

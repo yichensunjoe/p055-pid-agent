@@ -2,11 +2,21 @@
 
 > 交接文档：每次开新会话先读本文件。更新规则见 `AGENTS.md`「HANDOFF 交接规则」。
 
-## 当前状态（2026-10-09 —— **M6 恢复建设（Gate 方向裁定：不新建 M14）；M6-2B-D1 DESIGN PREP GO 已批，D1 设计交付待 Design Gate**）
+## 当前状态（2026-10-09 —— **M6 恢复建设（Gate 方向裁定：不新建 M14）；M6-2B-D1 经 Gate 一轮 CHANGES REQUIRED（D87-1~5）修复完毕，复报等 Design PASS**）
 
 - **Gate 方向裁定（2026-10-09，conv `6abd7e9f`）**：路线**未偏离初心**，但存在「治理/平台能力先于真实工程输入与交付成熟」的结构性失衡；不横向扩平台（不开第三域），下一阶段 = **M6 Governed Semantic Ingestion 恢复建设**（补「真实旧 P&ID → 受治理语义工程模型」纵向能力）。M6 完成标志八条冻结（原文誊入 `reports/m6-phase2b-design.md` §1）。
 - **M6-2B 分片边界（Gate 冻结，逐片 CODE GO，不一次授权）**：D1 集成契约设计（docs-only）→ D2 Source-to-Candidate Adapter（service 层无表层）→ D3 Human Review & Conflict Control（收窄 Phase-1 表层令牌）→ D4 Governed Apply & Replay（schema v17 两表 + 编译器扩展 relationship_addition + M10 sealed apply + replay + 补偿撤销）→ D5 真实图纸资格化 + closeout。
-- **D1 交付（本状态写入时 = 待 Gate Design PASS）**：`reports/m6-phase2b-design.md`（Phase-2A 实现矩阵 / DXF→apply-v2 数据流权限图 / 五项绑定设计 / v17 两表 DDL+迁移回滚 / 十二负例测试矩阵 / 真实样本+七维 gold corpus 计划 / 性能预算证据方法）+ 任务书 §18 + `docs/architecture.md` 现状对账。
+- **D1 状态**：首报（`f98cfcb`，CI 37879507180 四绿）→ Gate 裁 **CHANGES REQUIRED（D87-1~5）+
+  Q1–Q4 已裁**（Q1 两表原则批准 DDL 随 D4 冻结；Q2 令牌逐分片收窄 APPROVED；Q3 D2 仅
+  deterministic producer APPROVED；Q4 资格化首选=Owner 授权真实 DXF）→ 签 **DESIGN FINAL FIX GO**，
+  限 #87 原四文件修复。
+- **D87 修复落实**：①source/target 双身份冻结（staleness 只钉 source，target 前进靠 baseline
+  digest+CAS 重算，同源十候选顺序应用不失效，负例 N13）②人工身份四要素（authentication/
+  attribution/decision evidence/identity assurance，shared token 只证明服务凭据，reviewer 声明制
+  标 `declared`）③v17 DDL 闭合（apply_records=受 CAS 约束生命周期账本非纯 append-only；L1–L4
+  不变量：同事务身份链交叉校验/两条迁移边/账本与工程提交同事务/补偿撤销）④architecture.md
+  过度概括改准（M6 P&ID 写复用 apply-v2；全平台写入受各自已批准 executor 约束）⑤`m6reg_`
+  随 D2 登记、`m6apply_` 随 D4。
 - **治理口径**：WS3B / M9 Closeout / M10 FINAL ACCEPTANCE 维持 Owner 挂起（M10 TC、M11、M12、M13 不重开）；DEPLOY 未授权；真实样本/独立标注未到位前 **M6 Final Acceptance 不得宣称**；不直接 push main（代码经 Gate exact-head MERGE GO + PR squash；docs 记账例外）。
 - **下一动作**：D1 PR → 报 Gate → Design PASS 后等 D2 CODE GO。
 

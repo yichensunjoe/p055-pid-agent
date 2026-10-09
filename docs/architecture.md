@@ -5,8 +5,10 @@
 > 各里程碑封账文档为准：`runtime/` 中性端口与 Harness（M10）、`documents_registry` 与 Cable 第二域
 > （M11）、项目图谱/工程链接/readiness/确定性交付包（M12，`reports/m12-closeout.md`）、受治理多域
 > 变更集（M13，`reports/m13-closeout.md`）、M6 治理化语义摄取（Phase-1/2A 契约与实现，Phase-2B
-> 设计基线 `reports/m6-phase2b-design.md`）。下文的「单一文档真相源」原则在多域架构下仍然成立：
-> 所有工程写入最终仍归于 `DocumentService.apply_transaction` 一条受治理路径。
+> 设计基线 `reports/m6-phase2b-design.md`）。下文的「单一文档真相源」原则在单文档内核内仍然成立；
+> 在工程写入路径上，M6 的 P&ID 写复用 `DocumentService.apply_transaction`（apply-v2），
+> 而全平台所有写入均受各自已批准的 domain transaction / governance executor 约束
+> （如 M13 多域原子变更集执行器），不存在任意直写路径。
 
 ## 设计原则
 

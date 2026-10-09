@@ -28,6 +28,7 @@ from agentcad.models import (
 )
 from agentcad.service import DocumentService
 from agentcad.store import SQLiteDocumentStore, StoredDocument
+from agentcad.symbols import SymbolRegistry
 
 REVIEWER = "engineer.joe"
 TARGET_ID = "doc_m6d3_target"
@@ -802,3 +803,379 @@ def test_shared_mode_requires_a_token_and_records_service_token_evidence(
         assert evidence["authentication_evidence"] == "service-token"
         assert evidence["reviewer_attribution"] == REVIEWER
         assert evidence["identity_assurance"] == "declared"
+
+
+# --------------------------------------------------------------------------------------
+# D89-1: the write transaction itself re-verifies the pinned source
+# --------------------------------------------------------------------------------------
+
+
+def test_the_store_reverifies_the_source_inside_the_write_transaction(
+    client: TestClient, app
+) -> None:
+    """Bypassing the entry check entirely: a stale pin dies inside the write transaction."""
+
+    source_id = _seed(app)
+    store = _store(app)
+    row = _tag_candidate(client, source_id, "P-201")
+
+    moved = _source_document(source_id).model_copy(update={"revision": 4})
+    store.save(StoredDocument(document=moved, undo_stack=[], redo_stack=[]))
+    audits_before = len(store.all_audit_records())
+
+    from agentcad.store import M6FilingError
+
+    # A hand-driven write with the source moved after pinning: refused inside the
+    # transaction, and nothing lands.
+    with pytest.raises(M6FilingError) as caught:
+        store.record_review_decision(_reject_decision(row["candidate_id"], "needs_review"))
+    assert caught.value.code == "source_revision_drift"
+    assert len(store.list_review_decisions(row["candidate_id"])) == 1  # only the filing
+    assert len(store.all_audit_records()) == audits_before
+
+
+def _reject_decision(candidate_id: str, from_status: str):
+    from agentcad.m6_candidate_core import review_decision_id
+    from agentcad.m6_candidate_models import ReviewDecision
+
+    return ReviewDecision(
+        review_decision_id=review_decision_id(
+            candidate_id=candidate_id,
+            kind="human_reject",
+            from_status=from_status,
+            to_status="rejected",
+            reviewer_identity=REVIEWER,
+            reviewer_action="拒绝",
+            note="",
+            baseline=None,
+            conflict_resolution="",
+            resolution_choice=None,
+            successor_candidate_id="",
+        ),
+        candidate_id=candidate_id,
+        kind="human_reject",
+        from_status=from_status,
+        to_status="rejected",
+        reviewer_identity=REVIEWER,
+        reviewer_action="拒绝",
+    )
+
+
+def test_a_reassign_on_a_drifted_source_is_a_409_not_a_500(client: TestClient, app) -> None:
+    """Gate's exact ask: the final verification failure must map, never escape as 500."""
+
+    source_id = _seed(app)
+    store = _store(app)
+    row = _tag_candidate(client, source_id, "P-201")
+    moved = _source_document(source_id).model_copy(update={"revision": 4})
+    store.save(StoredDocument(document=moved, undo_stack=[], redo_stack=[]))
+
+    response = _decide(
+        client,
+        source_id,
+        row["candidate_id"],
+        {
+            "action": "reassign",
+            "reviewer_identity": REVIEWER,
+            "reviewer_action": "改派",
+            "element_refs": ["p2_a", "p2_b", "p2_c", "p2_d", "p2_e", "t1"],
+        },
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "source_revision_drift"
+
+
+# --------------------------------------------------------------------------------------
+# D89-2: the decision log is CAS-checked on the write connection
+# --------------------------------------------------------------------------------------
+
+
+def _race(*actions) -> list[dict]:
+    """Run the actions on threads with a shared start line; collect outcomes in order."""
+
+    import threading
+
+    barrier = threading.Barrier(len(actions))
+    outcomes: list[dict] = [{} for _ in actions]
+
+    def run(index: int) -> None:
+        barrier.wait()
+        try:
+            result = actions[index]()
+            outcomes[index] = {"ok": True, "result": result}
+        except Exception as exc:  # noqa: BLE001 - the test asserts the failure shape
+            outcomes[index] = {"ok": False, "error": exc}
+
+    threads = [threading.Thread(target=run, args=(index,)) for index in range(len(actions))]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    return outcomes
+
+
+def _decide_service(app, source_id: str, candidate_id: str, payload: dict):
+    """A decision through the service layer (as the API does), for the race tests."""
+
+    from agentcad.m6_review_service import M6ReviewService
+
+    reviews = M6ReviewService(_store(app), SymbolRegistry())
+    return reviews.decide(candidate_id, **payload)
+
+
+def test_concurrent_confirm_and_reject_only_one_lands(client: TestClient, app) -> None:
+    """Store-level proof of the CAS itself: two decisions prebuilt against the same state,
+    raced into the store — exactly one lands, and the loser is refused deterministically."""
+
+    source_id = _seed(app)
+    store = _store(app)
+    row = _tag_candidate(client, source_id, "P-201")
+    candidate_id = row["candidate_id"]
+
+    from agentcad.m6_candidate_core import review_decision_id
+    from agentcad.m6_candidate_models import ReviewDecision
+    from agentcad.store import M6FilingError
+
+    def reject_decision(reviewer: str) -> ReviewDecision:
+        return ReviewDecision(
+            review_decision_id=review_decision_id(
+                candidate_id=candidate_id,
+                kind="human_reject",
+                from_status="needs_review",
+                to_status="rejected",
+                reviewer_identity=reviewer,
+                reviewer_action="位号不属此簇",
+                note="",
+                baseline=None,
+                conflict_resolution="",
+                resolution_choice=None,
+                successor_candidate_id="",
+            ),
+            candidate_id=candidate_id,
+            kind="human_reject",
+            from_status="needs_review",
+            to_status="rejected",
+            reviewer_identity=reviewer,
+            reviewer_action="位号不属此簇",
+        )
+
+    outcomes = _race(
+        lambda: store.record_review_decision(reject_decision("engineer.joe")),
+        lambda: store.record_review_decision(reject_decision("engineer.jane")),
+    )
+    winners = [outcome for outcome in outcomes if outcome["ok"]]
+    losers = [outcome for outcome in outcomes if not outcome["ok"]]
+    assert len(winners) == 1 and len(losers) == 1
+    loser = losers[0]["error"]
+    assert isinstance(loser, M6FilingError)
+    assert loser.code == "decision_state_moved"
+    # The log replays cleanly to exactly the winner's state.
+    from agentcad.m6_candidate_core import M6CandidateService
+
+    assert M6CandidateService(store).current_status(candidate_id) == "rejected"
+    decisions = store.list_review_decisions(candidate_id)
+    assert [decision.kind for decision in decisions] == ["filed", "human_reject"]
+
+
+def test_concurrent_confirms_only_one_lands(client: TestClient, app) -> None:
+    """Service-level race: the loser is refused with a stable 409-family code, either by the
+    write-transaction CAS or by the core's declared-edge check when it read the moved state."""
+
+    source_id = _seed(app)
+    row = _tag_candidate(client, source_id, "P-202")
+    outcomes = _race(
+        lambda: _decide_service(
+            app,
+            source_id,
+            row["candidate_id"],
+            {
+                "action": "confirm",
+                "reviewer_identity": "engineer.joe",
+                "reviewer_action": "核对一致",
+            },
+        ),
+        lambda: _decide_service(
+            app,
+            source_id,
+            row["candidate_id"],
+            {
+                "action": "confirm",
+                "reviewer_identity": "engineer.jane",
+                "reviewer_action": "核对一致",
+            },
+        ),
+    )
+    assert sum(1 for outcome in outcomes if outcome["ok"]) == 1
+    loser = next(outcome["error"] for outcome in outcomes if not outcome["ok"])
+    assert loser.code in {"decision_state_moved", "undeclared_transition"}
+    store = _store(app)
+    findings = store.list_confirmed_findings(source_document_id=source_id)
+    assert len(findings) == 1  # one confirmation, one finding — never two
+    from agentcad.m6_candidate_core import M6CandidateService
+
+    assert M6CandidateService(store).current_status(row["candidate_id"]) == "confirmed"
+    assert len(store.list_review_decisions(row["candidate_id"])) == 2
+
+
+def test_concurrent_resolves_only_one_lands(client: TestClient, app) -> None:
+    source_id = _seed(app)
+    confirmed = _confirm_p201(client, source_id)
+    candidate_id = confirmed["candidate_id"]
+    _move_target_with_p201(app, _queue(client, source_id)[0]["target_document_id"])
+    assert (
+        _decide_service(
+            app, source_id, candidate_id, {"action": "recheck", "reviewer_identity": REVIEWER}
+        ).status
+        == "conflicted"
+    )
+    outcomes = _race(
+        lambda: _decide_service(
+            app,
+            source_id,
+            candidate_id,
+            {
+                "action": "resolve_conflict",
+                "reviewer_identity": "engineer.joe",
+                "reviewer_action": "复核解除",
+                "conflict_resolution": "保留既有值",
+                "resolution_choice": "keep_existing",
+            },
+        ),
+        lambda: _decide_service(
+            app,
+            source_id,
+            candidate_id,
+            {
+                "action": "resolve_conflict",
+                "reviewer_identity": "engineer.jane",
+                "reviewer_action": "复核解除",
+                "conflict_resolution": "接受提案值",
+                "resolution_choice": "accept_proposed",
+            },
+        ),
+    )
+    assert sum(1 for outcome in outcomes if outcome["ok"]) == 1
+    loser = next(outcome["error"] for outcome in outcomes if not outcome["ok"])
+    assert loser.code in {"decision_state_moved", "undeclared_transition"}
+    from agentcad.m6_candidate_core import M6CandidateService
+
+    assert M6CandidateService(_store(app)).current_status(candidate_id) == "needs_review"
+
+
+def test_reassign_racing_a_confirm_keeps_exactly_one(client: TestClient, app) -> None:
+    source_id = _seed(app)
+    row = _tag_candidate(client, source_id, "P-201")
+    outcomes = _race(
+        lambda: _decide_service(
+            app,
+            source_id,
+            row["candidate_id"],
+            {
+                "action": "confirm",
+                "reviewer_identity": "engineer.joe",
+                "reviewer_action": "核对一致",
+            },
+        ),
+        lambda: _decide_service(
+            app,
+            source_id,
+            row["candidate_id"],
+            {
+                "action": "reassign",
+                "reviewer_identity": "engineer.jane",
+                "reviewer_action": "位号绑错簇",
+                "element_refs": ["p2_a", "p2_b", "p2_c", "p2_d", "p2_e", "t1"],
+            },
+        ),
+    )
+    assert sum(1 for outcome in outcomes if outcome["ok"]) == 1
+    loser = next(outcome["error"] for outcome in outcomes if not outcome["ok"])
+    assert loser.code in {"decision_state_moved", "undeclared_transition"}
+    store = _store(app)
+    from agentcad.m6_candidate_core import M6CandidateService
+
+    # The log replays, and the loser's side wrote nothing: if the reassign lost, no
+    # corrected candidate exists; if the confirm lost, no finding exists.
+    status = M6CandidateService(store).current_status(row["candidate_id"])
+    assert status in {"confirmed", "superseded"}
+    if status == "superseded":
+        assert store.list_confirmed_findings(source_document_id=source_id) == []
+    else:
+        successors = [
+            candidate
+            for candidate in store.list_semantic_candidates(source_document_id=source_id)
+            if row["candidate_id"] in candidate.derived_from
+        ]
+        assert successors == []
+
+
+def _move_target_with_p201(app, target_id: str) -> None:
+    from agentcad.models import SymbolElement
+
+    store = _store(app)
+    target = store.get(target_id).document
+    store.save(
+        StoredDocument(
+            document=target.model_copy(
+                update={
+                    "revision": target.revision + 1,
+                    "elements": [
+                        *target.elements,
+                        SymbolElement(
+                            id="sym_p201",
+                            symbol_key="centrifugal_pump",
+                            position=Point(x=50, y=50),
+                            width=60,
+                            height=60,
+                            label="P-201",
+                        ),
+                    ],
+                }
+            ),
+            undo_stack=[],
+            redo_stack=[],
+        )
+    )
+
+
+# --------------------------------------------------------------------------------------
+# D89 suggestion: every decision's audit fact names its review_decision_id
+# --------------------------------------------------------------------------------------
+
+
+def test_every_decision_audit_names_its_own_decision(client: TestClient, app) -> None:
+    source_id = _seed(app)
+    confirmed = _confirm_p201(client, source_id)
+    candidate_id = confirmed["candidate_id"]
+    target_id = _queue(client, source_id)[0]["target_document_id"]
+    _move_target_with_p201(app, target_id)
+    recheck = _decide(client, source_id, candidate_id, {"action": "recheck", "reviewer_identity": REVIEWER})
+    assert recheck.json()["changed"] is True
+    resolved = _decide(
+        client,
+        source_id,
+        candidate_id,
+        {
+            "action": "resolve_conflict",
+            "reviewer_identity": "engineer.jane",
+            "reviewer_action": "复核后解除",
+            "conflict_resolution": "保留既有对象",
+            "resolution_choice": "keep_existing",
+        },
+    )
+    assert resolved.status_code == 200
+
+    audits = _audit_records(client)
+    assert len(audits) == 3
+    by_decision = {record["evidence"]["review_decision_id"]: record for record in audits}
+    expected = {
+        confirmed["review_decision_id"],
+        recheck.json()["review_decision_id"],
+        resolved.json()["review_decision_id"],
+    }
+    assert set(by_decision) == expected
+    assert by_decision[confirmed["review_decision_id"]]["evidence"]["action"] == "confirm"
+    assert by_decision[recheck.json()["review_decision_id"]]["evidence"]["action"] == "recheck"
+    assert by_decision[resolved.json()["review_decision_id"]]["evidence"]["action"] == (
+        "resolve_conflict"
+    )

@@ -35,7 +35,7 @@ from pydantic import ValidationError
 from agentcad import m6_candidate_core as core
 from agentcad import m6_candidate_models as schemas
 from agentcad import m6_ingestion_contract as contract
-from agentcad.engineering_ir import build_engineering_graph
+from agentcad.engineering_ir import build_engineering_graph, document_content_hash
 from agentcad.m6_candidate_core import (
     CandidateSchemaViolation,
     CompilationRefused,
@@ -82,7 +82,11 @@ def registry() -> SymbolRegistry:
 
 @pytest.fixture()
 def store(tmp_path) -> SQLiteDocumentStore:
-    return SQLiteDocumentStore(tmp_path / "m6.sqlite3")
+    store = SQLiteDocumentStore(tmp_path / "m6.sqlite3")
+    # D89-1: every decision write re-verifies the pinned source inside its transaction, so
+    # the canonical fixture drawing lives in the store from the start.
+    store.save(_stored(_default_document()))
+    return store
 
 
 @pytest.fixture()
@@ -161,12 +165,18 @@ def _region(
     )
 
 
+def _default_document() -> Document:
+    """The canonical fixture drawing: what the shared artifact pins (D89-1)."""
+
+    return _drawing([_untagged_pump(), _tagged_pump()])
+
+
 def _artifact() -> SourceArtifactRef:
     return SourceArtifactRef(
         artifact_id="artifact_m6_1",
         source_document_id=DOCUMENT_ID,
         source_revision=7,
-        content_hash="deadbeef",
+        content_hash=document_content_hash(_default_document()),
     )
 
 
@@ -734,8 +744,12 @@ def test_the_positive_fixture_reaches_a_patch_and_stops_there(
     assert patch.operations[0].patch == {"label": "P-201"}
     assert patch.baseline_revision == document.revision
 
-    # the document itself is untouched
-    assert store.get(DOCUMENT_ID) is None
+    # the document itself is untouched (the store fixture pre-saves the canonical drawing so
+    # the decision writes can verify the pin; the flow must leave it byte-identical)
+    stored = store.get(DOCUMENT_ID)
+    assert stored is not None
+    assert stored.document.revision == document.revision
+    assert document_content_hash(stored.document) == document_content_hash(document)
     with pytest.raises(GovernedWriteNotAuthorized):
         service.request_apply(patch.patch_id)
 

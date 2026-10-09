@@ -28,7 +28,7 @@ from .m6_candidate_core import (
 )
 from .m6_candidate_models import ConflictResolutionChoice
 from .m6_review_service import M6ReviewService, ReviewSurfaceError
-from .m6_source_adapter import SourceVerificationError
+from .m6_source_adapter import CandidateIdentityConflict, SourceVerificationError
 from .service import DocumentService
 from .store import SQLiteDocumentStore
 from .symbols import SymbolRegistry
@@ -61,9 +61,14 @@ def create_m6_review_router(
 
     def _reject(exc: Exception) -> HTTPException:
         if isinstance(exc, ReviewSurfaceError):
-            status = 404 if exc.code in {"candidate_not_found", "source_unknown"} else 422
+            if exc.code in {"candidate_not_found", "source_unknown"}:
+                status = 404
+            elif exc.code in {"decision_state_moved", "decision_log_out_of_order"}:
+                status = 409
+            else:
+                status = 422
             return HTTPException(status_code=status, detail={"code": exc.code, "message": str(exc)})
-        if isinstance(exc, SourceVerificationError):
+        if isinstance(exc, (SourceVerificationError, CandidateIdentityConflict)):
             return HTTPException(
                 status_code=409, detail={"code": exc.code, "message": str(exc)}
             )
@@ -152,6 +157,7 @@ def create_m6_review_router(
         except (
             ReviewSurfaceError,
             SourceVerificationError,
+            CandidateIdentityConflict,
             CandidateNotFound,
             IllegalTransition,
             NotConfirmedError,

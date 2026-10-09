@@ -26,6 +26,7 @@ from .m6_candidate_models import (
     SemanticCandidate,
     candidate_comparison_payload,
 )
+from .m6_ingestion_contract import CANDIDATE_TRANSITIONS
 from .m7_semantic_specs import SemanticSpecRecord, record_from_row, spec_payload
 from .m7_synthesis_models import PROPOSAL_EVIDENCE_TABLE, SynthesisProposalEvidence
 from .models import Document, DocumentSummary, HistoryEntry
@@ -2418,6 +2419,98 @@ class SQLiteDocumentStore:
                 f"pinned revision {expected_source_revision}",
             )
 
+    def _verify_m6_source_for_decision(
+        self, connection: sqlite3.Connection, decision: ReviewDecision
+    ) -> None:
+        """Re-verify the *candidate's* pinned source inside the decision's write transaction.
+
+        D89-1: the pin comes from the stored candidate row (insert-only, so it cannot have
+        moved), never from caller-supplied parameters. A drifted or missing source refuses
+        the decision before anything is written.
+        """
+
+        row = connection.execute(
+            "SELECT payload_json FROM semantic_candidates WHERE candidate_id = ?",
+            (decision.candidate_id,),
+        ).fetchone()
+        if row is None:
+            raise M6FilingError(
+                "candidate_not_found",
+                f"decision references unknown candidate {decision.candidate_id!r}",
+            )
+        artifact = SemanticCandidate.model_validate_json(row["payload_json"]).artifact
+        self._verify_m6_source_on_write_connection(
+            connection,
+            source_document_id=artifact.source_document_id,
+            expected_source_revision=artifact.source_revision,
+            expected_source_content_hash=artifact.content_hash,
+        )
+
+    def _check_decision_log_cas(
+        self, connection: sqlite3.Connection, decision: ReviewDecision
+    ) -> None:
+        """Replay the candidate's decision log on the write connection and CAS the move.
+
+        D89-2: ``current_status`` computed outside the transaction is a stale read by the
+        time the write lands. Replaying on the write connection (under BEGIN IMMEDIATE)
+        sees the locked state; if the log no longer supports the decision's claimed
+        ``from_status``, the queue moved and the decision is refused — the conflict is
+        expressed by the refusal, never by appending a contradictory decision.
+        """
+
+        candidate_row = connection.execute(
+            "SELECT review_status_at_creation FROM semantic_candidates WHERE candidate_id = ?",
+            (decision.candidate_id,),
+        ).fetchone()
+        if candidate_row is None:
+            raise M6FilingError(
+                "candidate_not_found",
+                f"decision references unknown candidate {decision.candidate_id!r}",
+            )
+        status = str(candidate_row["review_status_at_creation"])
+        rows = connection.execute(
+            "SELECT payload_json FROM review_decisions WHERE candidate_id = ? "
+            "ORDER BY decided_at ASC, review_decision_id ASC",
+            (decision.candidate_id,),
+        ).fetchall()
+        for row in rows:
+            logged = ReviewDecision.model_validate_json(row["payload_json"])
+            if logged.from_status != status:
+                raise M6FilingError(
+                    "decision_log_out_of_order",
+                    f"logged decision {logged.review_decision_id} claims to leave "
+                    f"{logged.from_status!r} but the log is at {status!r}",
+                )
+            if not any(
+                edge.from_state == status and edge.to_state == logged.to_status
+                for edge in CANDIDATE_TRANSITIONS
+            ):
+                raise M6FilingError(
+                    "decision_log_out_of_order",
+                    f"logged transition {status!r} -> {logged.to_status!r} is not declared",
+                )
+            status = logged.to_status
+        if decision.from_status != status:
+            raise M6FilingError(
+                "decision_state_moved",
+                f"the decision claims to leave {decision.from_status!r} but the candidate "
+                f"log is at {status!r}: a concurrent decision moved it — write nothing, "
+                "let the caller re-read and re-decide",
+            )
+
+    @staticmethod
+    def _m6_decision_audit(audit: AuditRecordDraft, decision: ReviewDecision) -> AuditRecordDraft:
+        """The audit fact of a decision names the decision it belongs to (D89 suggestion)."""
+
+        return audit.model_copy(
+            update={
+                "evidence": {
+                    **audit.evidence,
+                    "review_decision_id": decision.review_decision_id,
+                }
+            }
+        )
+
     def file_semantic_candidates(
         self,
         entries: list[tuple[SemanticCandidate, ReviewDecision]],
@@ -2526,8 +2619,18 @@ class SQLiteDocumentStore:
         with self._lock, self._connect() as connection:
             try:
                 connection.execute("BEGIN IMMEDIATE")
+                # D89: the decision's source pin and its claimed from-status are re-verified
+                # on the write connection before anything lands.
+                self._verify_m6_source_for_decision(connection, decision)
+                self._check_decision_log_cas(connection, decision)
                 self._insert_review_decision(connection, decision)
-                record = self._append_audit_record(connection, audit) if audit is not None else None
+                record = (
+                    self._append_audit_record(
+                        connection, self._m6_decision_audit(audit, decision)
+                    )
+                    if audit is not None
+                    else None
+                )
                 connection.commit()
             except Exception:
                 connection.rollback()
@@ -2570,10 +2673,16 @@ class SQLiteDocumentStore:
                     expected_source_revision=expected_source_revision,
                     expected_source_content_hash=expected_source_content_hash,
                 )
+                # The new candidate's filing leaves "proposed"; the supersede CASes the old
+                # candidate's log (a concurrent decision on it refuses the whole reassign).
                 self._insert_semantic_candidate(connection, candidate)
+                self._check_decision_log_cas(connection, filing_decision)
                 self._insert_review_decision(connection, filing_decision)
+                self._check_decision_log_cas(connection, supersede_decision)
                 self._insert_review_decision(connection, supersede_decision)
-                record = self._append_audit_record(connection, audit)
+                record = self._append_audit_record(
+                    connection, self._m6_decision_audit(audit, supersede_decision)
+                )
                 connection.commit()
             except Exception:
                 connection.rollback()
@@ -2628,9 +2737,17 @@ class SQLiteDocumentStore:
         with self._lock, self._connect() as connection:
             try:
                 connection.execute("BEGIN IMMEDIATE")
+                self._verify_m6_source_for_decision(connection, decision)
+                self._check_decision_log_cas(connection, decision)
                 self._insert_review_decision(connection, decision)
                 self._insert_confirmed_finding(connection, finding)
-                record = self._append_audit_record(connection, audit) if audit is not None else None
+                record = (
+                    self._append_audit_record(
+                        connection, self._m6_decision_audit(audit, decision)
+                    )
+                    if audit is not None
+                    else None
+                )
                 connection.commit()
             except Exception:
                 connection.rollback()

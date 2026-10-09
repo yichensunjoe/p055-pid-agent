@@ -23,7 +23,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
-from agentcad.engineering_ir import build_engineering_graph  # noqa: E402
+from agentcad.engineering_ir import build_engineering_graph, document_content_hash  # noqa: E402
 from agentcad.m6_candidate_core import (  # noqa: E402
     CompilationRefused,
     GovernedWriteNotAuthorized,
@@ -94,14 +94,14 @@ def _drawing(untagged_label: str = "") -> Document:
     )
 
 
-def _candidate() -> SemanticCandidate:
+def _candidate(document: Document) -> SemanticCandidate:
     return SemanticCandidate(
         candidate_id="cand_tag_walkthrough",
         artifact=SourceArtifactRef(
             artifact_id="artifact_1",
             source_document_id=DOCUMENT_ID,
             source_revision=7,
-            content_hash="deadbeef",
+            content_hash=document_content_hash(document),
         ),
         region=SourceRegion(
             region_id="region_1",
@@ -140,7 +140,7 @@ def main() -> int:
         document = _drawing()
         store.save(StoredDocument(document=document, undo_stack=[], redo_stack=[]))
 
-        candidate = _candidate()
+        candidate = _candidate(document)
         service.file_candidate(candidate)
         graph = build_engineering_graph(document, registry)
         baseline = baseline_record(

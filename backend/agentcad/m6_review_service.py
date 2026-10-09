@@ -58,11 +58,12 @@ from .m6_region import bbox_geometry, build_source_region, element_bbox, union_b
 from .m6_source_adapter import (
     M6_SOURCE_ADAPTER_VERSION,
     M6_SOURCE_RULES,
+    CandidateIdentityConflict,
     M6SourceAdapter,
     SourceVerificationError,
 )
 from .models import Document, StrictModel
-from .store import SQLiteDocumentStore
+from .store import M6FilingError, SQLiteDocumentStore
 from .symbols import SymbolRegistry
 
 ReviewAction = Literal["confirm", "reject", "recheck", "resolve_conflict", "reassign"]
@@ -255,42 +256,65 @@ class M6ReviewService:
         # evidence that moved is evidence of nothing (Gate D88-1 carried into review).
         document = self._adapter.verify_source(candidate.artifact)
 
-        if action == "confirm":
-            return self._confirm(
-                candidate,
-                reviewer_identity=reviewer_identity,
-                reviewer_action=reviewer_action,
-                note=note,
-            )
-        if action == "reject":
-            return self._reject(
-                candidate,
-                reviewer_identity=reviewer_identity,
-                reviewer_action=reviewer_action,
-                note=note,
-            )
-        if action == "recheck":
-            return self._recheck(candidate, reviewer_identity=reviewer_identity)
-        if action == "resolve_conflict":
-            return self._resolve(
-                candidate,
-                reviewer_identity=reviewer_identity,
-                reviewer_action=reviewer_action,
-                conflict_resolution=conflict_resolution,
-                resolution_choice=resolution_choice,
-                note=note,
-            )
-        if action == "reassign":
-            return self._reassign(
-                candidate,
-                document,
-                reviewer_identity=reviewer_identity,
-                reviewer_action=reviewer_action,
-                note=note,
-                element_refs=element_refs or [],
-                equipment_tag=equipment_tag,
-            )
+        try:
+            if action == "confirm":
+                return self._confirm(
+                    candidate,
+                    reviewer_identity=reviewer_identity,
+                    reviewer_action=reviewer_action,
+                    note=note,
+                )
+            if action == "reject":
+                return self._reject(
+                    candidate,
+                    reviewer_identity=reviewer_identity,
+                    reviewer_action=reviewer_action,
+                    note=note,
+                )
+            if action == "recheck":
+                return self._recheck(candidate, reviewer_identity=reviewer_identity)
+            if action == "resolve_conflict":
+                return self._resolve(
+                    candidate,
+                    reviewer_identity=reviewer_identity,
+                    reviewer_action=reviewer_action,
+                    conflict_resolution=conflict_resolution,
+                    resolution_choice=resolution_choice,
+                    note=note,
+                )
+            if action == "reassign":
+                return self._reassign(
+                    candidate,
+                    document,
+                    reviewer_identity=reviewer_identity,
+                    reviewer_action=reviewer_action,
+                    note=note,
+                    element_refs=element_refs or [],
+                    equipment_tag=equipment_tag,
+                )
+        except M6FilingError as exc:
+            # The store's in-transaction refusal (final source verification or the
+            # decision-log CAS), mapped once — the API layer sees only typed errors.
+            raise self._map_store_error(exc) from exc
         raise ReviewSurfaceError(f"unknown review action {action!r}", code="unknown_review_action")
+
+    @staticmethod
+    def _map_store_error(exc: M6FilingError) -> M6CoreError:
+        """One mapping for the store's in-transaction refusals (D89-1, unified).
+
+        A drift refusal inside the write transaction is the same refusal as the entry-time
+        verification — the same family, the same codes, so a caller never has to ask which
+        layer caught it. ``decision_state_moved`` is the concurrency CAS: the queue moved
+        between the caller's read and the write, which is a conflict, not a crash.
+        """
+
+        if exc.code.startswith("source_"):
+            return SourceVerificationError(str(exc), code=exc.code)
+        if exc.code == "candidate_identity_conflict":
+            return CandidateIdentityConflict(str(exc))
+        if exc.code in {"decision_state_moved", "decision_log_out_of_order", "candidate_not_found"}:
+            return ReviewSurfaceError(str(exc), code=exc.code)
+        return exc
 
     def _confirm(
         self,

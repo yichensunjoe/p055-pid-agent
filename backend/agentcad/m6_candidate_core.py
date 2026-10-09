@@ -298,9 +298,19 @@ class M6CandidateRepository(Protocol):
     def insert_semantic_candidate(self, candidate: SemanticCandidate) -> None: ...
 
     def record_confirmation(
-        self, decision: ReviewDecision, finding: ConfirmedSemanticFinding
+        self,
+        decision: ReviewDecision,
+        finding: ConfirmedSemanticFinding,
+        *,
+        audit: Any | None = None,
     ) -> None:
         """Commit the decision and its finding in one transaction."""
+        ...
+
+    def record_review_decision(
+        self, decision: ReviewDecision, *, audit: Any | None = None
+    ) -> None:
+        """Commit one decision (and its audit fact, when given) in one transaction."""
         ...
 
     def get_semantic_candidate(self, candidate_id: str) -> SemanticCandidate | None: ...
@@ -341,6 +351,45 @@ if "applied" in _KIND_TARGET_STATUS.values():  # pragma: no cover - a structural
     raise RuntimeError(
         "no review decision may move a candidate to 'applied': that transition belongs to the "
         "apply-v2 gate, which Phase-2A does not have"
+    )
+
+if not any(  # pragma: no cover - a structural guard
+    edge.from_state == "proposed"
+    and edge.to_state == "needs_review"
+    and edge.trigger == "producer_files_candidate"
+    for edge in CANDIDATE_TRANSITIONS
+):
+    raise RuntimeError(
+        "the contract no longer declares producer_files_candidate (proposed -> needs_review)"
+    )
+
+
+def filing_decision(candidate: SemanticCandidate) -> ReviewDecision:
+    """The producer's filing event: the row that moves a candidate proposed -> needs_review.
+
+    Shared by the D2 batch filing and the D3 reassignment filing; the id is the same
+    ``review-decision-v1`` content derivation every other decision row uses, and the
+    ``ReviewDecision`` model keeps an event row from ever claiming a reviewer.
+    """
+
+    return ReviewDecision(
+        review_decision_id=review_decision_id(
+            candidate_id=candidate.candidate_id,
+            kind="filed",
+            from_status="proposed",
+            to_status="needs_review",
+            reviewer_identity="",
+            reviewer_action="",
+            note="",
+            baseline=None,
+            conflict_resolution="",
+            resolution_choice=None,
+            successor_candidate_id="",
+        ),
+        candidate_id=candidate.candidate_id,
+        kind="filed",
+        from_status="proposed",
+        to_status="needs_review",
     )
 
 
@@ -414,6 +463,7 @@ class M6CandidateService:
         successor_candidate_id: str = "",
         conflict_resolution: str = "",
         resolution_choice: ConflictResolutionChoice | None = None,
+        audit: Any | None = None,
     ) -> ReviewDecision:
         decision = self._build_decision(
             candidate_id,
@@ -427,7 +477,7 @@ class M6CandidateService:
             conflict_resolution=conflict_resolution,
             resolution_choice=resolution_choice,
         )
-        self._repository.insert_review_decision(decision)
+        self._repository.record_review_decision(decision, audit=audit)
         return decision
 
     def _build_decision(
@@ -538,12 +588,14 @@ class M6CandidateService:
         reviewer_action: str,
         baseline: ConflictBaselineRecord,
         note: str = "",
+        audit: Any | None = None,
     ) -> Confirmation:
         """Record a person's confirmation and the finding it creates, atomically.
 
         These are two rows but one decision. Committing them separately would leave a window in
         which the state machine says ``confirmed`` while no finding can be traced back to a
         person — exactly the crack Phase-2B must not inherit before it gains write permission.
+        When ``audit`` is given (D3), the decision's audit fact joins the same transaction.
         """
 
         candidate = self._repository.get_semantic_candidate(candidate_id)
@@ -558,7 +610,7 @@ class M6CandidateService:
             note=note,
         )
         finding = self._build_finding(candidate, decision)
-        self._repository.record_confirmation(decision, finding)
+        self._repository.record_confirmation(decision, finding, audit=audit)
         return Confirmation(decision=decision, finding=finding)
 
     def reject(
@@ -568,6 +620,7 @@ class M6CandidateService:
         reviewer_identity: str,
         reviewer_action: str,
         note: str = "",
+        audit: Any | None = None,
     ) -> ReviewDecision:
         return self.record_decision(
             candidate_id,
@@ -575,6 +628,7 @@ class M6CandidateService:
             reviewer_identity=reviewer_identity,
             reviewer_action=reviewer_action,
             note=note,
+            audit=audit,
         )
 
     def recheck_baseline(
@@ -582,6 +636,7 @@ class M6CandidateService:
         candidate_id: str,
         *,
         current: ConflictBaselineRecord,
+        audit: Any | None = None,
     ) -> ReviewDecision | None:
         """Re-read the authoritative value. A baseline that moved forces a conflict.
 
@@ -625,6 +680,7 @@ class M6CandidateService:
                 f"authoritative baseline moved from revision {reviewed.baseline_revision} to "
                 f"{current.baseline_revision}; the confirmation no longer applies"
             ),
+            audit=audit,
         )
 
     def resolve_conflict(
@@ -637,6 +693,7 @@ class M6CandidateService:
         resolution_choice: ConflictResolutionChoice,
         baseline: ConflictBaselineRecord,
         note: str = "",
+        audit: Any | None = None,
     ) -> ReviewDecision:
         """Leaving a conflict costs a *new* decision; the old confirmation cannot be reused."""
 
@@ -649,16 +706,23 @@ class M6CandidateService:
             resolution_choice=resolution_choice,
             baseline=baseline,
             note=note,
+            audit=audit,
         )
 
     def supersede(
-        self, candidate_id: str, *, successor_candidate_id: str, note: str = ""
+        self,
+        candidate_id: str,
+        *,
+        successor_candidate_id: str,
+        note: str = "",
+        audit: Any | None = None,
     ) -> ReviewDecision:
         return self.record_decision(
             candidate_id,
             "superseded",
             successor_candidate_id=successor_candidate_id,
             note=note,
+            audit=audit,
         )
 
     def _reviewed_baseline(self, candidate_id: str) -> ConflictBaselineRecord | None:
@@ -1058,6 +1122,7 @@ __all__ = [
     "build_baseline_graph",
     "canonical_digest",
     "canonicalize_semantic_value",
+    "filing_decision",
     "resolve_identity",
     "review_decision_id",
     "review_decision_payload",

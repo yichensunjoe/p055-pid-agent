@@ -484,10 +484,13 @@ ingestion_runtime · candidate_persistence · new_http_route · new_mcp_tool
 review_queue_api · patch_compiler · gold_corpus_claim
 ```
 
-对应的表层令牌（`PHASE_1_FORBIDDEN_SURFACE_TOKENS`，测试对着活的表层枚举）：
+对应的表层令牌（`PHASE_1_FORBIDDEN_SURFACE_TOKENS`，测试对着活的表层枚举）——按 Gate Q2
+裁定**随分片实际登记表层逐词收窄**（D2 未收窄；D3 登记了 `/m6/candidates` 读面与决策路由，
+故 `candidate` 已移出禁止清单；其余四词保持禁止，直到各自分片登记真实表层）：
 
 ```text
-candidate · ingestion · ingest · semantic-finding · confirmed-finding · review-queue
+ingestion · ingest · semantic-finding · confirmed-finding · review-queue
+（D3 起 `candidate` 移出本清单：review 读面与决策路由已真实登记）
 ```
 
 也就是说：**本阶段回答"边界在哪"，不回答"怎么实现"**。后续阶段的顺序建议（等 Gate 签署后）：
@@ -535,6 +538,7 @@ candidate · ingestion · ingest · semantic-finding · confirmed-finding · rev
 | 事实 → patch 的确定性 compiler | `m6_candidate_core.py`（仅 `creation` / `metadata_enrichment`） | **Phase-2A 子集 ✓** |
 | source 证据核验与区域身份（`m6reg_` 登记入契约） | `backend/agentcad/m6_region.py` | **Phase-2B D2 ✓** |
 | source→candidate 确定性适配器（block 聚簇 / 位号与 annotation role 候选 / 候选登记） | `backend/agentcad/m6_source_adapter.py` | **Phase-2B D2 ✓** |
+| 人工审阅与冲突控制（候选只读面 + 决策端点 + 最小 UI；决策与审计同事务） | `backend/agentcad/m6_review_service.py` + `api_m6_review.py` | **Phase-2B D3 ✓** |
 | replay harness | 待定 | 待 Gate 签署 |
 | gold corpus | `backend/tests/m6_gold_corpus/` | 待 Gate 签署 |
 

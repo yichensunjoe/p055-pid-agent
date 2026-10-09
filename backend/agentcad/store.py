@@ -2370,6 +2370,54 @@ class SQLiteDocumentStore:
             return None
         return SemanticCandidate.model_validate_json(row["payload_json"])
 
+    def _verify_m6_source_on_write_connection(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        source_document_id: str,
+        expected_source_revision: int,
+        expected_source_content_hash: str,
+    ) -> None:
+        """Re-verify the pinned source triple inside a write transaction (D88-2).
+
+        The window between a caller's pre-check and the write closes here: the document row
+        is re-read on the write connection and compared with the pinned revision and content
+        hash. Any drift fails the whole transaction closed.
+        """
+
+        row = connection.execute(
+            "SELECT data_json FROM documents WHERE id = ?", (source_document_id,)
+        ).fetchone()
+        if row is None:
+            raise M6FilingError(
+                "source_snapshot_unavailable",
+                f"source document {source_document_id!r} does not exist",
+            )
+        document = Document.model_validate_json(row["data_json"])
+        if document.revision != expected_source_revision:
+            raise M6FilingError(
+                "source_revision_drift",
+                f"source document {source_document_id!r} moved from pinned revision "
+                f"{expected_source_revision} to {document.revision}",
+            )
+        if not expected_source_content_hash:
+            raise M6FilingError(
+                "source_snapshot_unavailable",
+                "the pinned source carries no content hash to verify against",
+            )
+        # Deferred import: engineering_ir reaches the store through
+        # flow_topology -> diagram_quality -> annotation_layout -> service, so a
+        # module-level import here would close a cycle. The hash口径 itself stays
+        # in exactly one place (engineering_ir.document_content_hash).
+        from .engineering_ir import document_content_hash
+
+        if document_content_hash(document) != expected_source_content_hash:
+            raise M6FilingError(
+                "source_content_drift",
+                f"source document {source_document_id!r} content hash drifted at the "
+                f"pinned revision {expected_source_revision}",
+            )
+
     def file_semantic_candidates(
         self,
         entries: list[tuple[SemanticCandidate, ReviewDecision]],
@@ -2399,38 +2447,12 @@ class SQLiteDocumentStore:
         with self._lock, self._connect() as connection:
             try:
                 connection.execute("BEGIN IMMEDIATE")
-                row = connection.execute(
-                    "SELECT data_json FROM documents WHERE id = ?", (source_document_id,)
-                ).fetchone()
-                if row is None:
-                    raise M6FilingError(
-                        "source_snapshot_unavailable",
-                        f"source document {source_document_id!r} does not exist",
-                    )
-                document = Document.model_validate_json(row["data_json"])
-                if document.revision != expected_source_revision:
-                    raise M6FilingError(
-                        "source_revision_drift",
-                        f"source document {source_document_id!r} moved from pinned revision "
-                        f"{expected_source_revision} to {document.revision}",
-                    )
-                if not expected_source_content_hash:
-                    raise M6FilingError(
-                        "source_snapshot_unavailable",
-                        "the pinned source carries no content hash to verify against",
-                    )
-                # Deferred import: engineering_ir reaches the store through
-                # flow_topology -> diagram_quality -> annotation_layout -> service, so a
-                # module-level import here would close a cycle. The hash口径 itself stays
-                # in exactly one place (engineering_ir.document_content_hash).
-                from .engineering_ir import document_content_hash
-
-                if document_content_hash(document) != expected_source_content_hash:
-                    raise M6FilingError(
-                        "source_content_drift",
-                        f"source document {source_document_id!r} content hash drifted at the "
-                        f"pinned revision {expected_source_revision}",
-                    )
+                self._verify_m6_source_on_write_connection(
+                    connection,
+                    source_document_id=source_document_id,
+                    expected_source_revision=expected_source_revision,
+                    expected_source_content_hash=expected_source_content_hash,
+                )
                 for candidate, decision in entries:
                     if (
                         candidate.artifact.source_document_id != source_document_id
@@ -2490,6 +2512,74 @@ class SQLiteDocumentStore:
         with self._lock, self._connect() as connection:
             self._insert_review_decision(connection, decision)
 
+    def record_review_decision(
+        self, decision: ReviewDecision, *, audit: AuditRecordDraft | None = None
+    ) -> str | None:
+        """Write one review decision and its audit fact in one transaction (M6-2B-D3).
+
+        A decision the queue acts on is a governance fact; its audit record is not a
+        follow-up that may lag behind. When ``audit`` is given the two commit together or
+        not at all, and the audit record id is returned. With ``audit=None`` this is
+        exactly ``insert_review_decision``.
+        """
+
+        with self._lock, self._connect() as connection:
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                self._insert_review_decision(connection, decision)
+                record = self._append_audit_record(connection, audit) if audit is not None else None
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+        return record.record_id if record is not None else None
+
+    def file_superseding_candidate(
+        self,
+        candidate: SemanticCandidate,
+        *,
+        filing_decision: ReviewDecision,
+        supersede_decision: ReviewDecision,
+        audit: AuditRecordDraft,
+        source_document_id: str,
+        expected_source_revision: int,
+        expected_source_content_hash: str,
+    ) -> str:
+        """A reassignment's three rows and its audit fact, atomically (M6-2B-D3).
+
+        Reassigning a binding never edits the old candidate: the corrected candidate is
+        filed, and the old one is marked superseded by it. Four writes — the new candidate,
+        its filing event, the supersede decision on the old candidate, and the audit fact —
+        commit in one transaction, preceded by the same final source verification the
+        filing batch performs. Any failure leaves both candidates exactly as they were.
+        Returns the audit record id.
+        """
+
+        if filing_decision.candidate_id != candidate.candidate_id:
+            raise ValueError("the filing decision must belong to the candidate being filed")
+        if supersede_decision.successor_candidate_id != candidate.candidate_id:
+            raise ValueError("the supersede decision must name the candidate being filed")
+        if supersede_decision.candidate_id == candidate.candidate_id:
+            raise ValueError("a candidate cannot supersede itself")
+        with self._lock, self._connect() as connection:
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                self._verify_m6_source_on_write_connection(
+                    connection,
+                    source_document_id=source_document_id,
+                    expected_source_revision=expected_source_revision,
+                    expected_source_content_hash=expected_source_content_hash,
+                )
+                self._insert_semantic_candidate(connection, candidate)
+                self._insert_review_decision(connection, filing_decision)
+                self._insert_review_decision(connection, supersede_decision)
+                record = self._append_audit_record(connection, audit)
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+        return record.record_id
+
     def list_review_decisions(self, candidate_id: str) -> list[ReviewDecision]:
         with self._lock, self._connect() as connection:
             rows = connection.execute(
@@ -2510,14 +2600,20 @@ class SQLiteDocumentStore:
         return ReviewDecision.model_validate_json(row["payload_json"])
 
     def record_confirmation(
-        self, decision: ReviewDecision, finding: ConfirmedSemanticFinding
-    ) -> None:
+        self,
+        decision: ReviewDecision,
+        finding: ConfirmedSemanticFinding,
+        *,
+        audit: AuditRecordDraft | None = None,
+    ) -> str | None:
         """Write a confirmation and the finding it creates in one transaction.
 
         A confirmation is one decision that produces two durable rows. Writing them separately
         leaves a window where the state machine says ``confirmed`` and no finding can be traced
         to the person who decided — so both rows commit together, or neither does. The exception
-        path rolls the transaction back through the connection's own context manager.
+        path rolls the transaction back through the connection's own context manager. When
+        ``audit`` is given (M6-2B-D3), the decision's audit fact joins the same transaction:
+        a confirmed fact never exists without its evidence, and the audit record id is returned.
         """
 
         if decision.kind != "human_confirm" or decision.to_status != "confirmed":
@@ -2530,8 +2626,16 @@ class SQLiteDocumentStore:
         if finding.review_decision_id != decision.review_decision_id:
             raise ValueError("the finding must cite the decision that produced it")
         with self._lock, self._connect() as connection:
-            self._insert_review_decision(connection, decision)
-            self._insert_confirmed_finding(connection, finding)
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                self._insert_review_decision(connection, decision)
+                self._insert_confirmed_finding(connection, finding)
+                record = self._append_audit_record(connection, audit) if audit is not None else None
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+        return record.record_id if record is not None else None
 
     def _insert_review_decision(
         self, connection: sqlite3.Connection, decision: ReviewDecision

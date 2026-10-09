@@ -1082,3 +1082,131 @@ export async function downloadProjectPackage(
     `${projectId}-package.zip`,
   );
 }
+
+// ---------------------------------------------------------------------------
+// M6-2B-D3: the semantic-candidate review queue (read-only list/detail + one
+// audited decision route). The reviewer identity is declared by the operator
+// and recorded verbatim; the service token only ever authenticates the request.
+// ---------------------------------------------------------------------------
+
+export type M6SourceStatus = { available: boolean; code: string; revision: number | null };
+
+export type M6CandidateRow = {
+  candidate_id: string;
+  candidate_type: string;
+  review_status: string;
+  proposed_semantics: Record<string, string>;
+  region_id: string;
+  target_document_id: string;
+  producer: { key: string; version: string };
+  confidence: number;
+  evidence_count: number;
+  created_at: string;
+};
+
+export type M6CandidateQueue = {
+  document_id: string;
+  source: M6SourceStatus;
+  total: number;
+  offset: number;
+  limit: number;
+  candidates: M6CandidateRow[];
+};
+
+export type M6CandidateDetail = {
+  candidate: Record<string, unknown> & {
+    candidate_id: string;
+    candidate_type: string;
+    proposed_semantics: Record<string, unknown>;
+    evidence: Array<{ kind: string; detail: string; region_id: string; observed_value: string }>;
+    region: {
+      region_id: string;
+      element_refs: string[];
+      text_spans: Array<{ text: string }>;
+      geometry_selector: { x: number; y: number; width: number; height: number } | null;
+    };
+  };
+  review_status: string;
+  decisions: Array<Record<string, unknown>>;
+  source: M6SourceStatus;
+  evidence_elements: Array<Record<string, unknown>>;
+  target: { target_document_id: string; exists: boolean; revision: number | null };
+};
+
+export type M6DecisionRequest = {
+  action: "confirm" | "reject" | "recheck" | "resolve_conflict" | "reassign";
+  reviewer_identity: string;
+  reviewer_action?: string;
+  note?: string;
+  conflict_resolution?: string;
+  resolution_choice?: "keep_existing" | "accept_proposed";
+  element_refs?: string[];
+  equipment_tag?: string;
+};
+
+export type M6DecisionOutcome = {
+  candidate_id: string;
+  action: string;
+  changed: boolean;
+  review_decision_id: string;
+  status: string;
+  finding_id: string;
+  successor_candidate_id: string;
+};
+
+async function readM6Response<T>(response: Response, fallback: string): Promise<T> {
+  if (!response.ok) {
+    let code = `HTTP ${response.status}`;
+    let message = fallback;
+    try {
+      const body = (await response.json()) as { detail?: { code?: string; message?: string } };
+      if (body.detail?.code) code = body.detail.code;
+      if (body.detail?.message) message = body.detail.message;
+    } catch {
+      // keep the fallback
+    }
+    throw new ApiError(message, { status: response.status, code });
+  }
+  return (await response.json()) as T;
+}
+
+export async function fetchM6Candidates(
+  documentId: string,
+  options?: { status?: string; offset?: number; limit?: number },
+): Promise<M6CandidateQueue> {
+  const params = new URLSearchParams();
+  if (options?.status) params.set("status", options.status);
+  if (options?.offset) params.set("offset", String(options.offset));
+  if (options?.limit) params.set("limit", String(options.limit));
+  const query = params.size ? `?${params.toString()}` : "";
+  const response = await authorizedFetch(
+    `/api/v2/documents/${encodeURIComponent(documentId)}/m6/candidates${query}`,
+  );
+  return readM6Response(response, "候选队列读取失败");
+}
+
+export async function fetchM6CandidateDetail(
+  documentId: string,
+  candidateId: string,
+): Promise<M6CandidateDetail> {
+  const response = await authorizedFetch(
+    `/api/v2/documents/${encodeURIComponent(documentId)}/m6/candidates/${encodeURIComponent(candidateId)}`,
+  );
+  return readM6Response(response, "候选详情读取失败");
+}
+
+export async function postM6Decision(
+  documentId: string,
+  candidateId: string,
+  decision: M6DecisionRequest,
+): Promise<M6DecisionOutcome> {
+  const response = await authorizedFetch(
+    `/api/v2/documents/${encodeURIComponent(documentId)}/m6/candidates/${encodeURIComponent(candidateId)}/decisions`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(decision),
+    },
+  );
+  return readM6Response(response, "决策提交失败");
+}

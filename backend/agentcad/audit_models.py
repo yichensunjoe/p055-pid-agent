@@ -71,6 +71,10 @@ AuditEventType = Literal[
     "project_change_set.staged",
     "project_change_set.applied",
     "project_change_set.rejected",
+    # M6-2B-D3: human review of semantic candidates. One governance-plane fact per
+    # recorded review decision (confirm/reject/recheck/reassign/resolve); it never
+    # moves an engineering revision or digest, and never appears as one.
+    "m6.review.decision",
 ]
 
 AuditStatus = Literal["applied", "rejected", "failed"]

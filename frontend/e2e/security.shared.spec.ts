@@ -350,3 +350,36 @@ test("shared deployment runs the full governed change-set chain with a human app
   cleanup.prepare("DELETE FROM project_change_sets WHERE created_by = 'web-user'").run();
   cleanup.close();
 });
+
+// M6-2B-D3: the review queue surface sits behind the same shared-mode boundary.
+// Without the token both the read routes and the decision route are 401; with it the
+// (empty) queue reads fine, and a decision against a nonexistent candidate is a clean
+// 404 — proving auth passed and the route exists.
+test("shared deployment protects the M6 review surface with the same token boundary", async ({ request }) => {
+  const created = await request.post(`${API}/documents`, {
+    headers: authorization,
+    data: { name: "M6 shared boundary" },
+  });
+  expect(created.ok()).toBeTruthy();
+  const { id: documentId } = (await created.json()) as { id: string };
+
+  const queueUrl = `${API}/documents/${documentId}/m6/candidates`;
+  const anonymousQueue = await request.get(queueUrl);
+  expect(anonymousQueue.status()).toBe(401);
+
+  const anonymousDecision = await request.post(`${queueUrl}/cand_m6_nope/decisions`, {
+    data: { action: "reject", reviewer_identity: "engineer.joe", reviewer_action: "拒绝" },
+  });
+  expect(anonymousDecision.status()).toBe(401);
+
+  const queue = await request.get(queueUrl, { headers: authorization });
+  expect(queue.status()).toBe(200);
+  expect((await queue.json()).candidates).toEqual([]);
+
+  const missing = await request.post(`${queueUrl}/cand_m6_nope/decisions`, {
+    headers: authorization,
+    data: { action: "reject", reviewer_identity: "engineer.joe", reviewer_action: "拒绝" },
+  });
+  expect(missing.status()).toBe(404);
+  expect((await missing.json()).detail.code).toBe("candidate_not_found");
+});

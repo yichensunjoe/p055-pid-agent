@@ -25,6 +25,7 @@ from .api_engineering import create_engineering_router
 from .api_export import _max_export_pixels, create_export_router
 from .api_harness import create_harness_router
 from .api_layout import create_layout_router
+from .api_m6_review import create_m6_review_router
 from .api_project import create_project_router
 from .api_repair import create_repair_router
 from .api_reports import create_reports_router
@@ -298,6 +299,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(create_engineering_router(service, project_index))
     app.include_router(create_export_router(service, diagnostics))
     app.include_router(create_review_router(service, store, settings))
+    app.include_router(create_m6_review_router(service, store, settings))
     app.include_router(create_dxf_router(service, diagnostics))
     app.include_router(create_cable_router(store))
     app.include_router(create_project_router(store, service))

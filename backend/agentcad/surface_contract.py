@@ -575,6 +575,26 @@ HTTP_SURFACE_BINDINGS: tuple[SurfaceBinding, ...] = (
         tool="update_project_settings",
         audited=True,
     ),
+    # --- M6-2B-D3: semantic-candidate review surface (governance plane) -----------
+    # Two reads are pure (no write, no audit). The decision route records exactly one
+    # review decision with its audit fact in the same transaction; it never moves an
+    # engineering revision. The pinned source is re-verified before every decision
+    # (drift -> 409, zero writes). Reviewer identity is declared by the caller and
+    # recorded with identity_assurance="declared"; a shared deployment's service token
+    # authenticates the request and is never mapped to a person.
+    _read("/api/v2/documents/{document_id}/m6/candidates"),
+    _read("/api/v2/documents/{document_id}/m6/candidates/{candidate_id}"),
+    _http(
+        "POST",
+        "/api/v2/documents/{document_id}/m6/candidates/{candidate_id}/decisions",
+        "governance_write",
+        audited=True,
+        notes=(
+            "One recorded review decision (confirm/reject/recheck/reassign/resolve) with "
+            "its audit fact in the same transaction; never an engineering write. Verified "
+            "by tests/test_m6_review_surface.py."
+        ),
+    ),
     # --- process runtime --------------------------------------------------------
     _http("POST", "/api/v2/symbols/reload", "runtime", notes="Reloads the symbol catalog."),
     _http(

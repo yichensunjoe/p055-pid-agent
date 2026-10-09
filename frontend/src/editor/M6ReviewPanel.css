@@ -1,0 +1,111 @@
+/* M6-2B-D3 review panel: reuses the report/panel look; only the queue table and the
+   decision forms are its own. */
+
+.m6-review-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.m6-review-source {
+  align-items: center;
+  color: var(--text-dim, #64748b);
+  display: flex;
+  font-size: 12px;
+  justify-content: space-between;
+}
+
+.m6-reviewer {
+  display: flex;
+  flex-direction: column;
+  font-size: 12px;
+  gap: 4px;
+}
+
+.m6-review-error {
+  color: var(--danger, #b91c1c);
+  font-size: 12px;
+  margin: 0;
+}
+
+.m6-queue {
+  border-collapse: collapse;
+  font-size: 12px;
+  width: 100%;
+}
+
+.m6-queue th,
+.m6-queue td {
+  border-bottom: 1px solid var(--border, #e2e8f0);
+  padding: 4px 6px;
+  text-align: left;
+}
+
+.m6-queue tbody tr {
+  cursor: pointer;
+}
+
+.m6-queue tbody tr:hover {
+  background: var(--hover, #f1f5f9);
+}
+
+.m6-queue tbody tr.selected {
+  background: var(--selected, #e0e7ff);
+}
+
+.m6-detail h3,
+.m6-detail h4 {
+  margin: 8px 0 4px;
+}
+
+.m6-detail-facts {
+  display: grid;
+  font-size: 12px;
+  gap: 2px 8px;
+  grid-template-columns: auto 1fr;
+  margin: 0;
+}
+
+.m6-detail-facts dt {
+  color: var(--text-dim, #64748b);
+}
+
+.m6-detail-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.m6-detail pre {
+  background: var(--code-bg, #f8fafc);
+  font-size: 11px;
+  margin: 0;
+  overflow-x: auto;
+  padding: 6px;
+}
+
+.m6-evidence,
+.m6-decisions {
+  font-size: 12px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.m6-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.m6-reassign,
+.m6-resolve {
+  border: 1px solid var(--border, #e2e8f0);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+}
+
+.m6-reassign p {
+  font-size: 12px;
+  margin: 0;
+}

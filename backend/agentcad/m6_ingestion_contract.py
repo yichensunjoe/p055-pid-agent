@@ -783,8 +783,10 @@ PHASE_1_FORBIDDEN: tuple[str, ...] = (
 
 #: Substrings that must not appear in any live HTTP path or MCP tool name while M6 is in
 #: phase 1. A test enumerates the real surface and fails if one appears.
+#: D3 narrowing (Gate Q2, word-by-word as slices register real surfaces): D2 removed nothing;
+#: D3 registered the ``/m6/candidates`` read surface and the decisions route, so ``candidate``
+#: leaves the list. The remaining words stay forbidden until their slices register them.
 PHASE_1_FORBIDDEN_SURFACE_TOKENS: tuple[str, ...] = (
-    "candidate",
     "ingestion",
     "ingest",
     "semantic-finding",

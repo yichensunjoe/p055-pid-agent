@@ -27,7 +27,7 @@ from cad_fixtures import DxfBuilder
 from agentcad.cad_import import CadImporter
 from agentcad.cad_models import CadImportOptions
 from agentcad.engineering_ir import document_content_hash
-from agentcad.m6_candidate_core import M6CandidateService
+from agentcad.m6_candidate_core import M6CandidateService, filing_decision
 from agentcad.m6_candidate_models import (
     RegionGeometry,
     SemanticCandidate,
@@ -43,7 +43,6 @@ from agentcad.m6_source_adapter import (
     M6SourceAdapter,
     SourceVerificationError,
     TargetDocumentError,
-    _filing_decision,
 )
 from agentcad.models import (
     CircleElement,
@@ -728,14 +727,14 @@ def test_the_batch_skips_known_identities_and_files_new_ones_atomically(
     candidates = adapter.derive_candidates(document, artifact, target_document_id=TARGET_ID)
     known, new = candidates[:2], candidates[2:]
     store.file_semantic_candidates(
-        [(candidate, _filing_decision(candidate)) for candidate in known],
+        [(candidate, filing_decision(candidate)) for candidate in known],
         source_document_id=SOURCE_ID,
         expected_source_revision=document.revision,
         expected_source_content_hash=document_content_hash(document),
     )
 
     filed, already = store.file_semantic_candidates(
-        [(candidate, _filing_decision(candidate)) for candidate in [*known, *new]],
+        [(candidate, filing_decision(candidate)) for candidate in [*known, *new]],
         source_document_id=SOURCE_ID,
         expected_source_revision=document.revision,
         expected_source_content_hash=document_content_hash(document),

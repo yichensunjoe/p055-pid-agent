@@ -47,7 +47,7 @@ from .m6_candidate_core import (
     M6CandidateRepository,
     M6CoreError,
     canonical_digest,
-    review_decision_id,
+    filing_decision,
 )
 from .m6_candidate_models import (
     CandidateEvidence,
@@ -63,7 +63,6 @@ from .m6_candidate_models import (
     TextSpan,
     strip_volatile_keys,
 )
-from .m6_ingestion_contract import CANDIDATE_TRANSITIONS
 from .m6_region import bbox_geometry, build_source_region, element_bbox, union_bbox
 from .models import Document, Element, StrictModel
 from .store import M6FilingError, StoredDocument
@@ -141,48 +140,6 @@ class M6SourceStore(M6CandidateRepository, Protocol):
         expected_source_revision: int,
         expected_source_content_hash: str,
     ) -> tuple[list[str], list[str]]: ...
-
-
-#: The filing edge the batch registration writes. Structural guard, checked at import: the
-#: adapter must never be able to write a transition the contract has not declared.
-if not any(
-    edge.from_state == "proposed"
-    and edge.to_state == "needs_review"
-    and edge.trigger == "producer_files_candidate"
-    for edge in CANDIDATE_TRANSITIONS
-):  # pragma: no cover - a structural guard
-    raise RuntimeError(
-        "the contract no longer declares producer_files_candidate (proposed -> needs_review)"
-    )
-
-
-def _filing_decision(candidate: SemanticCandidate) -> ReviewDecision:
-    """The producer's filing event for one candidate, derived the same way the core derives it.
-
-    The batch filing writes candidates and these decisions in one transaction; the decision id
-    therefore comes from the same ``review-decision-v1`` content derivation the core uses, and
-    the model validators keep an event row from ever claiming a reviewer.
-    """
-
-    return ReviewDecision(
-        review_decision_id=review_decision_id(
-            candidate_id=candidate.candidate_id,
-            kind="filed",
-            from_status="proposed",
-            to_status="needs_review",
-            reviewer_identity="",
-            reviewer_action="",
-            note="",
-            baseline=None,
-            conflict_resolution="",
-            resolution_choice=None,
-            successor_candidate_id="",
-        ),
-        candidate_id=candidate.candidate_id,
-        kind="filed",
-        from_status="proposed",
-        to_status="needs_review",
-    )
 
 
 def _is_instrument_tag(tag: str) -> bool:
@@ -1071,7 +1028,7 @@ class M6SourceAdapter:
         document = self.verify_source(artifact)
         derivation = self._derive(document, artifact, target_document_id=target_document_id)
         entries = [
-            (candidate, _filing_decision(candidate)) for candidate in derivation.candidates
+            (candidate, filing_decision(candidate)) for candidate in derivation.candidates
         ]
         try:
             filed, already_present = self._store.file_semantic_candidates(

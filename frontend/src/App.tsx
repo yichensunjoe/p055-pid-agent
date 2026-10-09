@@ -20,6 +20,7 @@ import { ValidationPanel } from "./editor/ValidationPanel";
 import { CablePanel } from "./cable/CablePanel";
 import { ProjectPanel } from "./project/ProjectPanel";
 import { ReviewPanel } from "./editor/ReviewPanel";
+import { M6ReviewPanel } from "./editor/M6ReviewPanel";
 import { ViewNavigator } from "./editor/ViewNavigator";
 import { elementPaletteCommands, type PaletteCommand } from "./editor/paletteCommands";
 import { currentNavigationZone, deriveNavigationZones, loadNamedViews, persistNamedViews, sanitizeNamedViews, type CanvasView, type NamedCanvasView, type NavigationZone } from "./editor/navigationViews";
@@ -1268,7 +1269,14 @@ export default function App() {
           {rightPanel === "properties" ? <section className="inspector-panel" role="tabpanel"><h2>元素属性</h2><PropertyInspector /></section> : null}
           {rightPanel === "groups" ? <section className="inspector-panel" role="tabpanel"><h2>图层与工艺系统</h2><LayerSystemPanel /></section> : null}
           {rightPanel === "history" ? <section className="inspector-panel" role="tabpanel"><h2>Revision 历史</h2><HistoryPanel /></section> : null}
-          {rightPanel === "review" ? <section className="inspector-panel" role="tabpanel"><h2>工程审查</h2><ReviewPanel /></section> : null}
+          {rightPanel === "review" ? (
+            <section className="inspector-panel" role="tabpanel">
+              <h2>工程审查</h2>
+              <ReviewPanel />
+              <h3>语义摄取候选审查（M6）</h3>
+              <M6ReviewPanel />
+            </section>
+          ) : null}
 
           {rightPanel === "reports" ? (
             <section className="inspector-panel" role="tabpanel">

@@ -8,7 +8,7 @@
 1. **钉住身份只认调用方交付的 pin**：`ingest(artifact, …)` 接收 `pin_source` 产物，入口先 `verify_source`（存在性+revision+content hash），store 批量事务内再做最终复验（`BEGIN IMMEDIATE` 下重读 documents 行重算 hash，关住 verify→write 的 TOCTOU 窗口）；漂移=稳定码拒绝+零写。纯函数 `derive_candidates` 也校验 content hash，不给「绕过入口直接推导」留缝。
 2. **批量原子登记的写法**：store 只增不改——按 `_insert_review_decision` 先例提取 `_insert_semantic_candidate(connection, …)`，新方法 `file_semantic_candidates(entries, …)` 一个事务内完成 验证+预校验（同 id 同内容幂等跳过/异内容冲突）+全量写入。故障注入用真 SQLite 触发器（`BEFORE INSERT … RAISE(FAIL)`）而非 mock，断言零新增行。
 3. **store 不能模块级 import engineering_ir**：链 store→engineering_ir→flow_topology→diagram_quality→annotation_layout→service→store 成环。按同文件 `_new_audit_record_id` 的先例在方法内延迟 import 并注释原因，hash 口径仍单点。
-4. **10k 规模暴露两处二次方**：tag→簇绑定 O(tags×clusters) 改网格索引（`_GRID_CELL` 分桶+精确距离终判，结果与朴素扫描全等）；包含合并从「合并即重启」定点循环改单遍 ascending-area union-find（容器面积≥被含者，链式包含一遍完成）。附带收益：批量登记使 2.6k 摄取从 1718ms→347ms。
+4. **10k 规模暴露两处二次方**：tag→簇绑定 O(tags×clusters) 改网格索引（`_GRID_CELL` 分桶+精确距离终判）；包含合并从「合并即重启」定点循环改单遍 ascending-area union-find（容器面积≥被含者，链式包含一遍完成）。口径修正（Gate D2 复核第四节）：两处优化**已通过现有确定性与典型场景测试，但尚无独立朴素参考算法的全场景等价对拍**——列为 P1 测试证据补强，D5 真实图纸资格化前补齐复杂重叠/包含/等距场景的参考对拍。附带收益：批量登记使 2.6k 摄取从 1718ms→347ms。
 
 **踩坑点**：`model_copy(update=…)` 不做校验，适合在测试里造「同 id 异内容」的篡改行；比较候选幂等性必须剥离 volatile 键（`candidate_comparison_payload`，单一来源在 m6_candidate_models）。
 

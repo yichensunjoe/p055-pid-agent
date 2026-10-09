@@ -2,13 +2,27 @@
 
 > 交接文档：每次开新会话先读本文件。更新规则见 `AGENTS.md`「HANDOFF 交接规则」。
 
-## 当前状态（2026-10-05，**M13 MILESTONE CLOSEOUT APPROVED；main = `15d9bac`（#82–#86 五个 squash 全合），main CI 四绿（run 37255329750，Backend 1845 passed / 275.31s）**）
+## 当前状态（2026-10-09 —— **M6 恢复建设（Gate 方向裁定：不新建 M14）；M6-2B-D1 DESIGN PREP GO 已批，D1 设计交付待 Design Gate**）
+
+- **Gate 方向裁定（2026-10-09，conv `6abd7e9f`）**：路线**未偏离初心**，但存在「治理/平台能力先于真实工程输入与交付成熟」的结构性失衡；不横向扩平台（不开第三域），下一阶段 = **M6 Governed Semantic Ingestion 恢复建设**（补「真实旧 P&ID → 受治理语义工程模型」纵向能力）。M6 完成标志八条冻结（原文誊入 `reports/m6-phase2b-design.md` §1）。
+- **M6-2B 分片边界（Gate 冻结，逐片 CODE GO，不一次授权）**：D1 集成契约设计（docs-only）→ D2 Source-to-Candidate Adapter（service 层无表层）→ D3 Human Review & Conflict Control（收窄 Phase-1 表层令牌）→ D4 Governed Apply & Replay（schema v17 两表 + 编译器扩展 relationship_addition + M10 sealed apply + replay + 补偿撤销）→ D5 真实图纸资格化 + closeout。
+- **D1 交付（本状态写入时 = 待 Gate Design PASS）**：`reports/m6-phase2b-design.md`（Phase-2A 实现矩阵 / DXF→apply-v2 数据流权限图 / 五项绑定设计 / v17 两表 DDL+迁移回滚 / 十二负例测试矩阵 / 真实样本+七维 gold corpus 计划 / 性能预算证据方法）+ 任务书 §18 + `docs/architecture.md` 现状对账。
+- **治理口径**：WS3B / M9 Closeout / M10 FINAL ACCEPTANCE 维持 Owner 挂起（M10 TC、M11、M12、M13 不重开）；DEPLOY 未授权；真实样本/独立标注未到位前 **M6 Final Acceptance 不得宣称**；不直接 push main（代码经 Gate exact-head MERGE GO + PR squash；docs 记账例外）。
+- **下一动作**：D1 PR → 报 Gate → Design PASS 后等 D2 CODE GO。
+
+## 近期轮次（2026-10-09：接管 → Gate 方向审视 → M6 恢复建设授权 → M6-2B-D1 设计交付）
+
+- **做了什么**：接管核对（main=`8331de1`、CI run 37255834517 四绿、open PR=0、Gate 尾部=M13 封账确认，无遗留指示）；按 Owner 指令请 Gate 方向审视+下一阶段指示；Gate 裁定后完成 D1 设计三件套。
+- **关键结论**：下一阶段=M6 恢复建设；D1 全程 docs-only（零代码/零迁移/零新表层）；schema v17 两表（`m6_structured_patches`/`m6_apply_records`）为 proposal 待 Design Gate；真实样本与独立标注 = 外部依赖（Owner）。
+- **Gate 通道**：会话 `6abd7e9f` 模型默认成了 GPT-5.6 Sol——bsk click/键盘切换 menuitemradio 均无效，**evaluate JS 直接点击 DOM 元素生效**；之后闸门脚本 PASS（chat(implicit)/GPT-6/高）。
+- **下一步**：D1 PR + CI → 报 Gate 拿 Design PASS → 等 D2 CODE GO。
+
+## 上一状态（2026-10-05，**M13 MILESTONE CLOSEOUT APPROVED；main = `15d9bac`（#82–#86 五个 squash 全合），main CI 四绿（run 37255329750，Backend 1845 passed / 275.31s）**）
 
 - **M13（Charter v1.2.0 §55C 受治理多域变更集）全部 CLOSED**：D1 Charter+设计（#82）→ D2 v16 持久化（#83）→ D3 契约+确定性 impact+零写 shadow preview（#84）→ D4 exact intent 批准绑定+原子执行器（#85）→ D5 evidence/read API + 治理写面（stage/apply/approval-requests）+ 最小 UI + frozen 双域 e2e（#86）。封账 artifact：`reports/m13-closeout.md`（§55C 七完成标志逐项证据 + 性能六样本表）。
 - **M13 关键终态**：change-set 四状态机仅 (staged→approved, approved→applied, approved→refused) 三条合法边；apply 唯一提交路径 = sealed M10/D4 flow（session→approval→authorize→atomic executor），HTTP 层零复制域逻辑；shared 模式 token 全链（approval-requests → 人工 resolve → apply），无人工批准 403 fail-closed；package 字节 parity 三向（UI==HTTP==fresh-process）。
 - **性能**：Gate 两次裁定均 PASS（f0ba95b 样本 275.87s +5.96%；最终 main 样本 275.31s +5.7%，ceiling 286.407s 内）。教训：该 runner 同工作量 wall-clock 噪声 >±40%，单次样本在 ceiling 附近不可分辨，证据须多样本如实呈现。
 - **治理口径**：WS3B / M9 Closeout / M10 FINAL ACCEPTANCE 维持 Owner 挂起（M10 Technical Completion、M11、M12 不重开）；DEPLOY 未授权；不直接 push main（代码经 Gate exact-head MERGE GO + PR squash）。
-- **下一项工程工作不要自动开始**：等远端（ChatGPT Gate 会话 `6abd7e9f`）对下一 milestone 的 CODE GO，或 Owner 决定收口挂起项。
 - 2026-09-29 及更早的 M8/M5 历史段落保留在下供考古。
 
 ## 近期轮次（2026-10-05：M13-D5 + D86 FINAL ACCEPTANCE FIXES → M13 收口）

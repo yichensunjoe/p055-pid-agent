@@ -638,3 +638,22 @@ TypeSafe 与 LLM 的摄取接入、R8 的 112×2 数据、auto-accept、批量�
   "用户指令"换成"外部工件的观察"。
 - **A6 real-model qualification**：处于 `BLOCKED — EXTERNAL PROVIDER DEPENDENCY`，与 M6 无关；
   M6 不因为要拿到一个可跑的模型而改这条状态。
+
+## 18. Phase-2B 设计基线（M6-2B-D1，2026-10-09 Gate 方向裁定授权）
+
+Gate 于 2026-10-09 裁定 **M6 恢复建设**（不新建 M14），并签 **M6-2B-D1 DESIGN PREP GO**。
+Phase-2B 的集成契约设计基线见 **`reports/m6-phase2b-design.md`**，要点：
+
+- 分片顺序与责任边界：**D2** Source-to-Candidate Adapter（service 层，无表层）→
+  **D3** Human Review & Conflict Control（本片才收窄 §14 的 `PHASE_1_FORBIDDEN_SURFACE_TOKENS`，
+  逐令牌随分片 CODE GO 解禁）→ **D4** Governed Apply & Replay（schema v17 两张 append-only 表 +
+  编译器扩展 `relationship_addition` + M10 sealed apply + replay harness + 补偿撤销）→
+  **D5** Real Drawing Qualification & Closeout。
+- 持久化裁定（proposal，待 Design Gate 签署）：v17 新增 `m6_structured_patches` 与
+  `m6_apply_records`；**不新增** artifact/region 表（artifact=既有 documents 行+revision，
+  region 为 candidate 内嵌值对象）。
+- 完成标志八条以 Gate 2026-10-09 裁定原文为准（已誊入设计基线 §1）；真实外部 P&ID 与独立
+  人工标注未到位时，技术阶段可完成但 **M6 Final Acceptance 不得宣称**。
+- 本任务书 §1–§17 的全部冻结口径（八层链、唯一写入层、状态机、白名单为空、
+  confidence≠authority、校准闸、replay 两层、gold corpus 七维度）继续有效；Phase-2B 设计
+  基线是它们的续建方案，不是修订。

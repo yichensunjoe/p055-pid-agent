@@ -1,0 +1,190 @@
+
+=== intake record: import -> pinned source -> regions -> candidates ===
+{
+  "blockless_geometry": 2,
+  "candidates": [
+    {
+      "candidate_id": "cand_m6_1d58934c87a6197a536c62e9933590b9ff34fbcb1a141536fa14c9521d5fd82d",
+      "candidate_type": "unresolved",
+      "confidence": 0.0,
+      "facts": {
+        "unresolved_reason": "out_of_catalog"
+      },
+      "producer": "deterministic_rule_engine",
+      "region_id": "m6reg_8d99e720e65190e043deccbbc65e7d6ff925eb576a1a00041cd16afcc9fb4bfc",
+      "target_document_id": "doc_rebuild_target"
+    },
+    {
+      "candidate_id": "cand_m6_e8dc9dfbbd0542effbc9fd3e083e362d1ebf0ac6e8abd1a2d375b0a6ceb76d32",
+      "candidate_type": "symbol_class",
+      "confidence": 1.0,
+      "facts": {
+        "symbol_class": "centrifugal_pump"
+      },
+      "producer": "deterministic_rule_engine",
+      "region_id": "m6reg_3490ef3247fa0280957cbdac811d6e028c259fe0e7ce9adbfab4e4ef0a9a23d4",
+      "target_document_id": "doc_rebuild_target"
+    },
+    {
+      "candidate_id": "cand_m6_91b9a91fcccf89dd2e114c85da6e027c3732d13c8b1554d2400e8cfa0acbb029",
+      "candidate_type": "equipment_tag",
+      "confidence": 1.0,
+      "facts": {
+        "equipment_tag": "P-201"
+      },
+      "producer": "deterministic_rule_engine",
+      "region_id": "m6reg_08241e3bb826d4871a4941583385e711f1cf7e2e61c0dcef712e3564306c5ee6",
+      "target_document_id": "doc_rebuild_target"
+    },
+    {
+      "candidate_id": "cand_m6_d39e40b573798792f836300f6299ab22886c1f340cc8d9ce7895034b8a338091",
+      "candidate_type": "annotation_role",
+      "confidence": 1.0,
+      "facts": {
+        "annotation_role": "equipment_label"
+      },
+      "producer": "deterministic_rule_engine",
+      "region_id": "m6reg_78da135af6ca0d01b825fd5c313a9c551da9dbf2f5b2a6039f36814fb03573d9",
+      "target_document_id": "doc_rebuild_target"
+    },
+    {
+      "candidate_id": "cand_m6_e0862b607570e5c7d7e1ddabdbac33fa1edbedb005a6156a6d55e37d9e660d06",
+      "candidate_type": "symbol_class",
+      "confidence": 1.0,
+      "facts": {
+        "symbol_class": "centrifugal_pump"
+      },
+      "producer": "deterministic_rule_engine",
+      "region_id": "m6reg_6ebc70ff02b726005d79e70650a41a58d020e3b3e06f3cb2524b1c8d1598f0ed",
+      "target_document_id": "doc_rebuild_target"
+    },
+    {
+      "candidate_id": "cand_m6_4402975552e6f666b94ec31649ad5d0515a45bcd644455743d048eaf4d903d32",
+      "candidate_type": "equipment_tag",
+      "confidence": 1.0,
+      "facts": {
+        "equipment_tag": "P-202"
+      },
+      "producer": "deterministic_rule_engine",
+      "region_id": "m6reg_fe4003e0b45443014576be1661b29cf0d9f9d0c410513881701b723d19a62e35",
+      "target_document_id": "doc_rebuild_target"
+    },
+    {
+      "candidate_id": "cand_m6_55272013964746fc21dc826dfd4942f9ca872036b7c8c08e3584810c28ffd3d3",
+      "candidate_type": "annotation_role",
+      "confidence": 1.0,
+      "facts": {
+        "annotation_role": "equipment_label"
+      },
+      "producer": "deterministic_rule_engine",
+      "region_id": "m6reg_39398fc47148ee4603e41b3ba40feaf1c196e13c79cd7f04450691815dd5897d",
+      "target_document_id": "doc_rebuild_target"
+    },
+    {
+      "candidate_id": "cand_m6_43202f55aea1a793b0cacbbe6fd13d881248fb61bb26e072669601a791cde13d",
+      "candidate_type": "symbol_class",
+      "confidence": 1.0,
+      "facts": {
+        "symbol_class": "gate_valve"
+      },
+      "producer": "deterministic_rule_engine",
+      "region_id": "m6reg_56ef390b6b0dc2387bcb4cd5a0036dd5dea1ee8aea83348c5c4b1e339ad06988",
+      "target_document_id": "doc_rebuild_target"
+    },
+    {
+      "candidate_id": "cand_m6_07572396f202ea8e497cdff0c73df2d1f7220990ba70a3d602af1c6acf081cf1",
+      "candidate_type": "equipment_tag",
+      "confidence": 1.0,
+      "facts": {
+        "equipment_tag": "V-101"
+      },
+      "producer": "deterministic_rule_engine",
+      "region_id": "m6reg_ae4db7ce99b2d49774c780ac1a160485590663ac5b1c10391381252e5b7f27c7",
+      "target_document_id": "doc_rebuild_target"
+    },
+    {
+      "candidate_id": "cand_m6_fcea5abee4671a645b284dfe9987905f0dd0369e9c0a81c618443f52c10bb618",
+      "candidate_type": "annotation_role",
+      "confidence": 1.0,
+      "facts": {
+        "annotation_role": "equipment_label"
+      },
+      "producer": "deterministic_rule_engine",
+      "region_id": "m6reg_90fc032401f17887bcc7f7e388553eeea8d2519a5f768d4c6996d7d0c09d4890",
+      "target_document_id": "doc_rebuild_target"
+    },
+    {
+      "candidate_id": "cand_m6_7df1706eeab5d668b54b49b5036badd89f5dcf1d83d5e2f7eb162790242c8b5c",
+      "candidate_type": "annotation_role",
+      "confidence": 1.0,
+      "facts": {
+        "annotation_role": "instrument_tag"
+      },
+      "producer": "deterministic_rule_engine",
+      "region_id": "m6reg_22a9a27a52e904ec4910377df215c7b5a49a5fda7558450ee85ed03f0ead3f51",
+      "target_document_id": "doc_rebuild_target"
+    },
+    {
+      "candidate_id": "cand_m6_36f3835b4da6944b490045dfb9fd715373dc9895b8eeae0bc29cfe4149d0d67b",
+      "candidate_type": "unresolved",
+      "confidence": 0.0,
+      "facts": {
+        "unresolved_reason": "ambiguous"
+      },
+      "producer": "deterministic_rule_engine",
+      "region_id": "m6reg_0fd79b99584b4cb46688161bcb8f5e25b0fc71d7ab51bbd07bd5eaf96ee73429",
+      "target_document_id": "doc_rebuild_target"
+    }
+  ],
+  "catalogue_fingerprint": "a5a9fe6a93816012c38969b4b114e5365b108ab4dc5431e6e855cae73dee2954",
+  "clusters": 4,
+  "counts_by_type": {
+    "annotation_role": 4,
+    "equipment_tag": 3,
+    "symbol_class": 3,
+    "unresolved": 2
+  },
+  "elements": 24,
+  "extraction_digest": "cf760e92715d8a8ff9402bf66e0a9e23548c37d40dd0135668813cebcab0c70c",
+  "rules": "m6-source-rules/1",
+  "source_content_hash": "8244511bcb39734578658137909e7d515f8d0027612f7c4bf1ab9ce6f27b0f1e",
+  "source_document_id": "doc_35d1b24dc3fc",
+  "source_revision": 1,
+  "tag_texts": 5,
+  "target_document_id": "doc_rebuild_target",
+  "unclassified_texts": 1
+}
+
+=== determinism record: same source + target + catalogue + rules ===
+{
+  "already_present": true,
+  "digest_first": "cf760e92715d8a8ff9402bf66e0a9e23548c37d40dd0135668813cebcab0c70c",
+  "digest_second": "cf760e92715d8a8ff9402bf66e0a9e23548c37d40dd0135668813cebcab0c70c",
+  "identical": true,
+  "refile_filed": 0
+}
+
+=== zero-write record: ingestion never touches the engineering plane ===
+{
+  "audit_records": 1,
+  "candidates_filed": 12,
+  "history_entries": 1,
+  "revision": 1,
+  "zero_engineering_write": true
+}
+
+=== refusal record: drift and catalogue gaps are stable codes, zero writes ===
+{
+  "ambiguous_tie_candidate": "ambiguous",
+  "deleted_source": {
+    "code": "source_snapshot_unavailable",
+    "reason": "source document 'doc_deleted' no longer exists; the pinned snapshot cannot be re-verified",
+    "refused": "SourceVerificationError"
+  },
+  "moved_revision": {
+    "code": "source_revision_drift",
+    "reason": "source document 'doc_35d1b24dc3fc' moved from pinned revision 2 to 1; the old evidence identity is sealed and cannot be re-pinned in place",
+    "refused": "SourceVerificationError"
+  },
+  "unknown_block_candidate": "out_of_catalog"
+}

@@ -1,0 +1,41 @@
+{
+  "milestone": "M6-2B-D2 source-to-candidate adapter",
+  "measured_path": "M6SourceAdapter.ingest (pin source + derive + file via the governed core)",
+  "budget_reference": "design baseline reports/m6-phase2b-design.md §8.1 proposal: region derivation + deterministic extraction <= 5s on a ~10k-element import, local median-of-5",
+  "runs": 5,
+  "ingest_ms_samples": [
+    1696.47,
+    1718.21,
+    1818.46,
+    1753.81,
+    1665.07
+  ],
+  "ingest_ms_median": 1718.21,
+  "derive_only_ms_samples": [
+    219.24,
+    233.67,
+    242.22,
+    225.51,
+    217.62
+  ],
+  "derive_only_ms_median": 225.51,
+  "elements": 2580,
+  "clusters": 360,
+  "candidates": 1080,
+  "counts_by_type": {
+    "unresolved": 90,
+    "equipment_tag": 360,
+    "annotation_role": 360,
+    "symbol_class": 270
+  },
+  "import_ms_last_run": 273.42,
+  "extraction_digest": "fec61bcb23b8ae0593a47322c00bbbb38ca5c6a19b80f9c1e47fae00d0105126",
+  "catalogue_fingerprint": "a5a9fe6a93816012c38969b4b114e5365b108ab4dc5431e6e855cae73dee2954",
+  "environment": {
+    "python": "3.12.13",
+    "platform": "macOS-26.6.1-arm64-arm-64bit",
+    "machine": "arm64",
+    "processor_count": 18,
+    "note": "local development machine, SQLite on a temp directory, synthetic DXF. Per the M13 evidence-method ruling these numbers are a baseline, not a CI ceiling: runner noise there exceeds +/-40%, so cross-workflow comparison is meaningless."
+  }
+}

@@ -533,6 +533,8 @@ candidate · ingestion · ingest · semantic-finding · confirmed-finding · rev
 | 治理核心（状态机执行 / 基线重读 / 确定性编译） | `backend/agentcad/m6_candidate_core.py` | **Phase-2A ✓** |
 | review queue 与状态机持久化 | `backend/agentcad/database_recovery.py`（schema v7）+ `store.py` | **Phase-2A ✓** |
 | 事实 → patch 的确定性 compiler | `m6_candidate_core.py`（仅 `creation` / `metadata_enrichment`） | **Phase-2A 子集 ✓** |
+| source 证据核验与区域身份（`m6reg_` 登记入契约） | `backend/agentcad/m6_region.py` | **Phase-2B D2 ✓** |
+| source→candidate 确定性适配器（block 聚簇 / 位号与 annotation role 候选 / 候选登记） | `backend/agentcad/m6_source_adapter.py` | **Phase-2B D2 ✓** |
 | replay harness | 待定 | 待 Gate 签署 |
 | gold corpus | `backend/tests/m6_gold_corpus/` | 待 Gate 签署 |
 
@@ -576,10 +578,11 @@ SourceArtifactRef → SourceRegion → SemanticCandidate → ReviewDecision
    `ConfirmedSemanticFinding` 在**同一个数据库事务**里提交（`store.record_confirmation`）。
    分开写会留下一个窗口：状态机已经说 `confirmed`，却没有任何 finding 能追溯到人——这正是 Phase-2B
    获得写权限之前不能继承的裂缝。故障注入测试真的让第二行写失败（SQLite trigger）并断言两行都不存在。
-3c. **内容派生的身份取完整 digest，且格式只声明一次。** 五条持久身份的写法如下，出自
+3c. **内容派生的身份取完整 digest，且格式只声明一次。** 六条持久身份的写法如下，出自
    `PERSISTENT_IDENTITIES`（不是本节措辞），并且**核心代码从同一份声明取前缀**：
 
    ```text
+   region_id            = m6reg_<64 hex>
    patch_id             = m6patch_<64 hex>
    review_decision_id   = m6dec_<64 hex>
    conflict_id          = m6cfl_<64 hex>
@@ -587,7 +590,10 @@ SourceArtifactRef → SourceRegion → SemanticCandidate → ReviewDecision
    generated_element_id = el_m6<64 hex>
    ```
 
-   最后一条的前缀是 `el_m6` —— **没有下划线**（它与其他四条不是同一命名族），而它恰恰是最不能截断的一条：
+   其中 `region_id`（第 2 层 source_region 的区域身份）随 Phase-2B D2 登记（Gate D87-5），身份
+   由 artifact、钉住的 source revision 与三类 selector 的 canonical 内容派生，revision 变更新身份。
+
+   最后一条的前缀是 `el_m6` —— **没有下划线**（它与其他五条不是同一命名族），而它恰恰是最不能截断的一条：
    编译生成的新元素 id 会成为真正工程对象的身份，在那里一次哈希截断是图纸里的碰撞，不是报告里的碰撞。
    本节此前把两条身份的宽度写成不同值（一处 `digest[:16]`、一处 `<sha256>`）——同文自相矛盾正是
    “格式写在多处”的必然产物，所以现在由契约声明、由代码取用、由测试对拍本文件。

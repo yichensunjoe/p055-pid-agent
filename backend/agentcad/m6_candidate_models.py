@@ -287,6 +287,13 @@ class SemanticCandidate(StrictModel):
     candidate_id: str = Field(min_length=1)
     artifact: SourceArtifactRef
     region: SourceRegion
+    #: The engineering document this proposal would land in *if* a person later confirms it.
+    #: Phase-2B keeps two document identities apart (Gate D87-1): the source is pinned,
+    #: immutable evidence; the target is the engineering document that may legitimately move.
+    #: A candidate never pins a target revision — that check is the baseline digest + CAS at
+    #: apply time. Optional with a ``""`` default so a v7 payload written before this field
+    #: existed still reads back unchanged.
+    target_document_id: str = ""
     candidate_type: FactKind
     proposed_semantics: ProposedSemantics
     confidence: Confidence

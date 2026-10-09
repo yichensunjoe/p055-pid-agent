@@ -33,6 +33,7 @@ from agentcad.engineering_ir import document_content_hash  # noqa: E402
 from agentcad.m6_source_adapter import (  # noqa: E402
     M6SourceAdapter,
     SourceVerificationError,
+    TargetDocumentError,
 )
 from agentcad.service import DocumentService  # noqa: E402
 from agentcad.store import SQLiteDocumentStore  # noqa: E402
@@ -135,7 +136,7 @@ def _print(title: str, payload: object) -> None:
 def _refusal(action) -> dict[str, str]:
     try:
         action()
-    except SourceVerificationError as refusal:
+    except (SourceVerificationError, TargetDocumentError) as refusal:
         return {"refused": type(refusal).__name__, "code": refusal.code, "reason": str(refusal)}
     raise AssertionError("this call was supposed to be refused")
 
@@ -163,11 +164,11 @@ def main() -> int:
             "content_hash": document_content_hash(document),
         }
 
-        # 2. Intake: pin the source, derive, file.
+        # 2. Intake: pin the source, verify the pin, derive, file — one atomic batch.
         adapter = M6SourceAdapter(store, registry)
         artifact = adapter.pin_source(source_id)
         adapter.verify_source(artifact)
-        summary = adapter.ingest(source_id, target_document_id=TARGET_DOCUMENT_ID)
+        summary = adapter.ingest(artifact, target_document_id=TARGET_DOCUMENT_ID)
         candidates = store.list_semantic_candidates(source_document_id=source_id)
         _print(
             "intake record: import -> pinned source -> regions -> candidates",
@@ -213,7 +214,7 @@ def main() -> int:
         second_digest = adapter.extraction_digest(
             artifact, TARGET_DOCUMENT_ID, second_pass
         )
-        refiled = adapter.ingest(source_id, target_document_id=TARGET_DOCUMENT_ID)
+        refiled = adapter.ingest(artifact, target_document_id=TARGET_DOCUMENT_ID)
         _print(
             "determinism record: same source + target + catalogue + rules",
             {
@@ -242,7 +243,8 @@ def main() -> int:
             },
         )
 
-        # 5. Refusals: a moved revision, a deleted source, an unknown block.
+        # 5. Refusals: a moved revision, a deleted source, an unknown block — and the two
+        #    target-identity guards a new ingestion must pass (D88-3).
         drifted = artifact.model_copy(update={"source_revision": artifact.source_revision + 1})
         _print(
             "refusal record: drift and catalogue gaps are stable codes, zero writes",
@@ -252,6 +254,15 @@ def main() -> int:
                     lambda: adapter.verify_source(
                         artifact.model_copy(update={"source_document_id": "doc_deleted"})
                     )
+                ),
+                "stale_pin_at_ingest": _refusal(
+                    lambda: adapter.ingest(drifted, target_document_id=TARGET_DOCUMENT_ID)
+                ),
+                "empty_target": _refusal(
+                    lambda: adapter.ingest(artifact, target_document_id="")
+                ),
+                "target_is_source": _refusal(
+                    lambda: adapter.ingest(artifact, target_document_id=source_id)
                 ),
                 "unknown_block_candidate": next(
                     candidate.proposed_semantics.unresolved_reason

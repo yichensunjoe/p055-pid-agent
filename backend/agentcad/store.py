@@ -24,6 +24,7 @@ from .m6_candidate_models import (
     ConfirmedSemanticFinding,
     ReviewDecision,
     SemanticCandidate,
+    candidate_comparison_payload,
 )
 from .m7_semantic_specs import SemanticSpecRecord, record_from_row, spec_payload
 from .m7_synthesis_models import PROPOSAL_EVIDENCE_TABLE, SynthesisProposalEvidence
@@ -59,6 +60,14 @@ class ReviewStateConflictError(RuntimeError):
 
 class StoreDocumentIdentityError(RuntimeError):
     """A document id is already registered to a different domain (M11 fail-closed)."""
+
+
+class M6FilingError(ValueError):
+    """A batch candidate filing that failed closed, with a stable machine-readable code."""
+
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
 
 
 def _registry_available(connection: sqlite3.Connection) -> bool:
@@ -2321,28 +2330,35 @@ class SQLiteDocumentStore:
 
     def insert_semantic_candidate(self, candidate: SemanticCandidate) -> None:
         with self._lock, self._connect() as connection:
-            connection.execute(
-                """
-                INSERT INTO semantic_candidates (
-                    candidate_id, source_document_id, source_revision, region_id,
-                    candidate_type, review_status_at_creation, producer_key,
-                    producer_version, contract_version, created_at, payload_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    candidate.candidate_id,
-                    candidate.artifact.source_document_id,
-                    candidate.artifact.source_revision,
-                    candidate.region.region_id,
-                    candidate.candidate_type,
-                    candidate.review_status,
-                    candidate.producer.key,
-                    candidate.producer.version,
-                    candidate.contract,
-                    candidate.created_at.isoformat(),
-                    self._encode(candidate.model_dump(mode="json", by_alias=True)),
-                ),
-            )
+            self._insert_semantic_candidate(connection, candidate)
+
+    def _insert_semantic_candidate(
+        self, connection: sqlite3.Connection, candidate: SemanticCandidate
+    ) -> None:
+        """Connection-scoped insert, so a batch filing can share one transaction."""
+
+        connection.execute(
+            """
+            INSERT INTO semantic_candidates (
+                candidate_id, source_document_id, source_revision, region_id,
+                candidate_type, review_status_at_creation, producer_key,
+                producer_version, contract_version, created_at, payload_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                candidate.candidate_id,
+                candidate.artifact.source_document_id,
+                candidate.artifact.source_revision,
+                candidate.region.region_id,
+                candidate.candidate_type,
+                candidate.review_status,
+                candidate.producer.key,
+                candidate.producer.version,
+                candidate.contract,
+                candidate.created_at.isoformat(),
+                self._encode(candidate.model_dump(mode="json", by_alias=True)),
+            ),
+        )
 
     def get_semantic_candidate(self, candidate_id: str) -> SemanticCandidate | None:
         with self._lock, self._connect() as connection:
@@ -2353,6 +2369,109 @@ class SQLiteDocumentStore:
         if row is None:
             return None
         return SemanticCandidate.model_validate_json(row["payload_json"])
+
+    def file_semantic_candidates(
+        self,
+        entries: list[tuple[SemanticCandidate, ReviewDecision]],
+        *,
+        source_document_id: str,
+        expected_source_revision: int,
+        expected_source_content_hash: str,
+    ) -> tuple[list[str], list[str]]:
+        """File a batch of candidates and their filing decisions atomically (M6-2B-D2).
+
+        One ``BEGIN IMMEDIATE`` transaction carries, in order:
+
+        1. the **final** source verification on the write connection — the pinned
+           ``(document, revision, content hash)`` triple is re-read and re-checked here,
+           so the window between the caller's pre-check and the write cannot race;
+        2. the per-candidate identity pre-check — an unknown id is filed, an id already
+           stored with identical (non-volatile) content is skipped as an idempotent
+           re-filing, and an id stored with *different* content fails the whole batch;
+        3. the candidate rows and their ``filed`` decision rows.
+
+        Any failure rolls back everything: an ingest either files its full candidate set
+        or leaves the review tables exactly as they were.
+        """
+
+        filed: list[str] = []
+        already_present: list[str] = []
+        with self._lock, self._connect() as connection:
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                row = connection.execute(
+                    "SELECT data_json FROM documents WHERE id = ?", (source_document_id,)
+                ).fetchone()
+                if row is None:
+                    raise M6FilingError(
+                        "source_snapshot_unavailable",
+                        f"source document {source_document_id!r} does not exist",
+                    )
+                document = Document.model_validate_json(row["data_json"])
+                if document.revision != expected_source_revision:
+                    raise M6FilingError(
+                        "source_revision_drift",
+                        f"source document {source_document_id!r} moved from pinned revision "
+                        f"{expected_source_revision} to {document.revision}",
+                    )
+                if not expected_source_content_hash:
+                    raise M6FilingError(
+                        "source_snapshot_unavailable",
+                        "the pinned source carries no content hash to verify against",
+                    )
+                # Deferred import: engineering_ir reaches the store through
+                # flow_topology -> diagram_quality -> annotation_layout -> service, so a
+                # module-level import here would close a cycle. The hash口径 itself stays
+                # in exactly one place (engineering_ir.document_content_hash).
+                from .engineering_ir import document_content_hash
+
+                if document_content_hash(document) != expected_source_content_hash:
+                    raise M6FilingError(
+                        "source_content_drift",
+                        f"source document {source_document_id!r} content hash drifted at the "
+                        f"pinned revision {expected_source_revision}",
+                    )
+                for candidate, decision in entries:
+                    if (
+                        candidate.artifact.source_document_id != source_document_id
+                        or candidate.artifact.source_revision != expected_source_revision
+                        or candidate.review_status != "proposed"
+                        or decision.candidate_id != candidate.candidate_id
+                        or decision.kind != "filed"
+                        or decision.from_status != "proposed"
+                        or decision.to_status != "needs_review"
+                    ):
+                        raise M6FilingError(
+                            "batch_consistency_violation",
+                            f"entry for candidate {candidate.candidate_id} does not match the "
+                            "batch's pinned source or the born-proposed filing shape",
+                        )
+                    existing = connection.execute(
+                        "SELECT payload_json FROM semantic_candidates WHERE candidate_id = ?",
+                        (candidate.candidate_id,),
+                    ).fetchone()
+                    if existing is None:
+                        self._insert_semantic_candidate(connection, candidate)
+                        self._insert_review_decision(connection, decision)
+                        filed.append(candidate.candidate_id)
+                        continue
+                    stored = SemanticCandidate.model_validate_json(existing["payload_json"])
+                    if candidate_comparison_payload(stored) == candidate_comparison_payload(
+                        candidate
+                    ):
+                        already_present.append(candidate.candidate_id)
+                        continue
+                    raise M6FilingError(
+                        "candidate_identity_conflict",
+                        f"candidate {candidate.candidate_id} exists with different content; "
+                        "the identity is content-derived, so this is a contradiction, not "
+                        "an update",
+                    )
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+        return filed, already_present
 
     def list_semantic_candidates(
         self, *, source_document_id: str | None = None

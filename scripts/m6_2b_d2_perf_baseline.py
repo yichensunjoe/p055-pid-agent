@@ -1,15 +1,15 @@
-"""M6-2B-D2 performance baseline: intake on a large synthetic import, median-of-5.
+"""M6-2B-D2 performance baseline: intake on synthetic imports, median-of-5, two scales.
 
 The budget this anchors (design baseline §8.1 proposal): region derivation + deterministic
 candidate extraction on a ~10k-element imported document should stay under 5 s locally. This
-script builds a synthetic multi-thousand-element drawing, runs it through the unchanged
-governed import, then times the full D2 intake (pin + derive + file) five times on fresh
-stores, plus the pure derivation alone.
+script builds synthetic drawings at two scales — ~2.6k elements (the D2 baseline the Gate
+already accepted) and ~10k elements (the scale the budget names) — runs each through the
+unchanged governed import, then times the full D2 intake (verify pinned source + derive +
+one atomic filing batch) five times on fresh stores, plus the pure derivation alone.
 
 Honesty rules carried over from M13's evidence-method ruling: the numbers are local
 median-of-5 wall clock with the environment recorded; they are a *baseline to compare
-against*, not a CI ceiling, and must never be quoted against a different machine or a
-different workflow without the noise band being stated.
+against*, not a CI ceiling; every sample is printed, nothing is extrapolated between scales.
 """
 
 from __future__ import annotations
@@ -34,11 +34,16 @@ from agentcad.symbols import SymbolRegistry  # noqa: E402
 
 REPORT = Path(__file__).resolve().parents[1] / "reports" / "m6-2b" / "perf-baseline.json"
 
-#: Grid sizing: 4 block kinds x 90 instances = 360 clusters, each ~5-6 elements, plus one
-#: tag per cluster, piping between neighbours and free notes -> ~2.7k elements.
-GRID_COLUMNS = 18
-INSTANCES_PER_BLOCK = 90
+#: One scenario = 4 block kinds x instances_per_block clusters, each ~5-6 elements, plus one
+#: tag per cluster, one piping stub per cluster and a handful of free notes.
+#:   90/block  -> 360 clusters  -> ~2.6k elements (the accepted D2 baseline scale)
+#:   360/block -> 1440 clusters -> ~10.2k elements (the budget's named scale)
+SCENARIOS = {
+    "2.6k_elements": 90,
+    "10k_elements": 360,
+}
 BLOCK_KINDS = ("centrifugal_pump", "闸阀", "heat_exchanger", "ZZZ-UNKNOWN")
+GRID_COLUMNS = 24
 PITCH = 90.0
 RUNS = 5
 
@@ -47,7 +52,7 @@ def _record(kind: str, items: list[tuple[int, object]]) -> list[tuple[int, objec
     return [(0, kind), *items]
 
 
-def _big_dxf() -> bytes:
+def _big_dxf(instances_per_block: int) -> bytes:
     lines: list[str] = []
 
     def emit(*records: tuple[int, object]) -> None:
@@ -81,9 +86,9 @@ def _big_dxf() -> bytes:
 
     tag_index = 0
     for block_index, name in enumerate(BLOCK_KINDS):
-        for instance in range(INSTANCES_PER_BLOCK):
-            column = (block_index * INSTANCES_PER_BLOCK + instance) % GRID_COLUMNS
-            row = (block_index * INSTANCES_PER_BLOCK + instance) // GRID_COLUMNS
+        for instance in range(instances_per_block):
+            column = (block_index * instances_per_block + instance) % GRID_COLUMNS
+            row = (block_index * instances_per_block + instance) // GRID_COLUMNS
             x, y = 50.0 + column * PITCH, 50.0 + row * PITCH
             emit(
                 *_record("INSERT", [(8, "EQUIP"), (2, name), (10, x), (20, y), (30, 0.0)])
@@ -133,9 +138,8 @@ def _big_dxf() -> bytes:
     return ("\n".join(lines) + "\n").encode("utf-8")
 
 
-def main() -> int:
-    registry = SymbolRegistry()
-    data = _big_dxf()
+def _run_scenario(registry: SymbolRegistry, instances_per_block: int) -> dict[str, object]:
+    data = _big_dxf(instances_per_block)
     ingest_ms: list[float] = []
     derive_ms: list[float] = []
     context: dict[str, object] = {}
@@ -149,12 +153,12 @@ def main() -> int:
             )
             import_ms = (perf_counter() - import_started) * 1000
             adapter = M6SourceAdapter(store, registry)
+            artifact = adapter.pin_source(result.document_id)
             started = perf_counter()
-            summary = adapter.ingest(result.document_id, target_document_id="doc_target")
+            summary = adapter.ingest(artifact, target_document_id="doc_target")
             ingest_ms.append((perf_counter() - started) * 1000)
 
             document = service.get_document(result.document_id)
-            artifact = adapter.pin_source(result.document_id)
             started = perf_counter()
             adapter.derive_candidates(document, artifact, target_document_id="doc_target")
             derive_ms.append((perf_counter() - started) * 1000)
@@ -165,21 +169,33 @@ def main() -> int:
                 "counts_by_type": summary.counts_by_type,
                 "import_ms_last_run": round(import_ms, 2),
                 "extraction_digest": summary.extraction_digest,
-                "catalogue_fingerprint": summary.catalogue_fingerprint,
             }
-
-    report = {
-        "milestone": "M6-2B-D2 source-to-candidate adapter",
-        "measured_path": "M6SourceAdapter.ingest (pin source + derive + file via the governed core)",
-        "budget_reference": "design baseline reports/m6-phase2b-design.md §8.1 proposal: "
-        "region derivation + deterministic extraction <= 5s on a ~10k-element import, "
-        "local median-of-5",
+    return {
         "runs": RUNS,
         "ingest_ms_samples": [round(sample, 2) for sample in ingest_ms],
         "ingest_ms_median": round(statistics.median(ingest_ms), 2),
         "derive_only_ms_samples": [round(sample, 2) for sample in derive_ms],
         "derive_only_ms_median": round(statistics.median(derive_ms), 2),
         **context,
+    }
+
+
+def main() -> int:
+    registry = SymbolRegistry()
+    scenarios = {
+        name: _run_scenario(registry, instances_per_block)
+        for name, instances_per_block in SCENARIOS.items()
+    }
+    report = {
+        "milestone": "M6-2B-D2 source-to-candidate adapter (post-D88 hardening)",
+        "measured_path": (
+            "M6SourceAdapter.ingest (verify pinned source + derive + one atomic filing batch)"
+        ),
+        "budget_reference": "design baseline reports/m6-phase2b-design.md §8.1 proposal: "
+        "region derivation + deterministic extraction <= 5s on a ~10k-element import, "
+        "local median-of-5",
+        "catalogue_fingerprint": registry.fingerprint(),
+        "scenarios": scenarios,
         "environment": {
             "python": platform.python_version(),
             "platform": platform.platform(),
@@ -189,7 +205,8 @@ def main() -> int:
                 "local development machine, SQLite on a temp directory, synthetic DXF. "
                 "Per the M13 evidence-method ruling these numbers are a baseline, not a CI "
                 "ceiling: runner noise there exceeds +/-40%, so cross-workflow comparison "
-                "is meaningless."
+                "is meaningless. All samples are reported; nothing is extrapolated between "
+                "the two scales."
             ),
         },
     }

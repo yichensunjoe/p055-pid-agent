@@ -27,9 +27,10 @@ Every rule here is deterministic and declared, and the failure modes are the poi
 * **The only producer wired is ``deterministic_rule_engine``** (Gate Q3). TypeSafe/LLM
   producers keep their contract-declared seats; this slice does not connect them.
 
-Nothing in this module writes the engineering model: the only store writes are the existing
-insert-only M6 review tables, through the unchanged ``M6CandidateService.file_candidate``
-(born ``proposed``, empty auto-accept whitelist). No HTTP route, no MCP tool.
+Nothing in this module writes the engineering model: the only store writes go to the
+existing insert-only M6 review tables, in one atomic batch transaction whose candidates are
+born ``proposed`` and whose only transition is the contract's own ``producer_files_candidate``
+edge (empty auto-accept whitelist, verified at filing time). No HTTP route, no MCP tool.
 """
 
 from __future__ import annotations
@@ -37,14 +38,16 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Protocol
 
+from . import m6_ingestion_contract
 from .engineering_ir import document_content_hash
 from .m6_candidate_core import (
+    CandidateSchemaViolation,
     M6CandidateRepository,
-    M6CandidateService,
     M6CoreError,
     canonical_digest,
+    review_decision_id,
 )
 from .m6_candidate_models import (
     CandidateEvidence,
@@ -53,15 +56,17 @@ from .m6_candidate_models import (
     ProducerRef,
     ProposedSemantics,
     ProvenanceRef,
+    ReviewDecision,
     SemanticCandidate,
     SourceArtifactRef,
     SourceRegion,
     TextSpan,
+    strip_volatile_keys,
 )
-from .m6_ingestion_contract import REPLAY_VOLATILE_FIELDS_EXCLUDED
+from .m6_ingestion_contract import CANDIDATE_TRANSITIONS
 from .m6_region import bbox_geometry, build_source_region, element_bbox, union_bbox
 from .models import Document, Element, StrictModel
-from .store import StoredDocument
+from .store import M6FilingError, StoredDocument
 from .symbols import SymbolRegistry
 
 M6_SOURCE_ADAPTER = "m6.source_adapter"
@@ -117,28 +122,67 @@ class CandidateIdentityConflict(M6CoreError):
     code = "candidate_identity_conflict"
 
 
+class TargetDocumentError(M6CoreError):
+    """The declared engineering write target is not acceptable for a new ingestion."""
+
+    code = "target_document_error"
+
+
 class M6SourceStore(M6CandidateRepository, Protocol):
-    """What the adapter needs from the store: the candidate repository plus document reads."""
+    """What the adapter needs from the store: document reads plus the atomic batch filing."""
 
     def get(self, document_id: str) -> StoredDocument | None: ...
 
+    def file_semantic_candidates(
+        self,
+        entries: list[tuple[SemanticCandidate, ReviewDecision]],
+        *,
+        source_document_id: str,
+        expected_source_revision: int,
+        expected_source_content_hash: str,
+    ) -> tuple[list[str], list[str]]: ...
 
-#: Keys excluded from replay digests and re-ingest comparison. The set is the contract's
-#: replay exclusion plus the timestamps the models stamp at birth — the same lesson the patch
-#: compiler encodes: bookkeeping must never change an identity.
-_VOLATILE_KEYS = frozenset(
-    {*REPLAY_VOLATILE_FIELDS_EXCLUDED, "created_at", "decided_at", "confirmed_at", "imported_at"}
-)
+
+#: The filing edge the batch registration writes. Structural guard, checked at import: the
+#: adapter must never be able to write a transition the contract has not declared.
+if not any(
+    edge.from_state == "proposed"
+    and edge.to_state == "needs_review"
+    and edge.trigger == "producer_files_candidate"
+    for edge in CANDIDATE_TRANSITIONS
+):  # pragma: no cover - a structural guard
+    raise RuntimeError(
+        "the contract no longer declares producer_files_candidate (proposed -> needs_review)"
+    )
 
 
-def _without_volatile(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {
-            key: _without_volatile(item) for key, item in value.items() if key not in _VOLATILE_KEYS
-        }
-    if isinstance(value, list):
-        return [_without_volatile(item) for item in value]
-    return value
+def _filing_decision(candidate: SemanticCandidate) -> ReviewDecision:
+    """The producer's filing event for one candidate, derived the same way the core derives it.
+
+    The batch filing writes candidates and these decisions in one transaction; the decision id
+    therefore comes from the same ``review-decision-v1`` content derivation the core uses, and
+    the model validators keep an event row from ever claiming a reviewer.
+    """
+
+    return ReviewDecision(
+        review_decision_id=review_decision_id(
+            candidate_id=candidate.candidate_id,
+            kind="filed",
+            from_status="proposed",
+            to_status="needs_review",
+            reviewer_identity="",
+            reviewer_action="",
+            note="",
+            baseline=None,
+            conflict_resolution="",
+            resolution_choice=None,
+            successor_candidate_id="",
+        ),
+        candidate_id=candidate.candidate_id,
+        kind="filed",
+        from_status="proposed",
+        to_status="needs_review",
+    )
 
 
 def _is_instrument_tag(tag: str) -> bool:
@@ -181,6 +225,27 @@ def _box_contains(
         and outer[1] <= inner[1]
         and inner[3] <= outer[3]
     )
+
+
+def _box_area(box: tuple[float, float, float, float]) -> float:
+    return (box[2] - box[0]) * (box[3] - box[1])
+
+
+#: Spatial index cell size for tag binding (document units). Without it, binding is
+#: O(tags x clusters), which turns a ~10k-element drawing into seconds of pointless
+#: point-rect distances. The grid only *narrows* the candidate set; the exact distance
+#: rule decides, so the result is identical to the naive scan.
+_GRID_CELL = 128.0
+
+
+def _cluster_grid(clusters: list[_Cluster]) -> dict[tuple[int, int], list[int]]:
+    grid: dict[tuple[int, int], list[int]] = {}
+    for index, cluster in enumerate(clusters):
+        x0, y0, x1, y1 = cluster.bbox
+        for cx in range(math.floor(x0 / _GRID_CELL), math.floor(x1 / _GRID_CELL) + 1):
+            for cy in range(math.floor(y0 / _GRID_CELL), math.floor(y1 / _GRID_CELL) + 1):
+                grid.setdefault((cx, cy), []).append(index)
+    return grid
 
 
 def _find_root(parent: dict[str, str], element_id: str) -> str:
@@ -249,7 +314,6 @@ class M6SourceAdapter:
     def __init__(self, store: M6SourceStore, registry: SymbolRegistry) -> None:
         self._store = store
         self._registry = registry
-        self._candidates = M6CandidateService(store)
 
     # -- source evidence identity ------------------------------------------------------
 
@@ -339,12 +403,27 @@ class M6SourceAdapter:
         if document.id != artifact.source_document_id:
             raise ValueError("the artifact does not describe this document")
         if document.revision != artifact.source_revision:
-            raise ValueError(
-                "the artifact pins a different revision than the document carries; "
-                "a region is only re-locatable under its own revision"
+            raise SourceVerificationError(
+                f"the artifact pins revision {artifact.source_revision} but the document is "
+                f"at revision {document.revision}; a region is only re-locatable under its "
+                "own revision",
+                code="source_revision_drift",
+            )
+        if not artifact.content_hash:
+            raise SourceVerificationError(
+                "the artifact carries no content hash, so there is nothing to verify against",
+                code="source_snapshot_unavailable",
+            )
+        if document_content_hash(document) != artifact.content_hash:
+            raise SourceVerificationError(
+                f"the artifact pins the content hash of revision {artifact.source_revision}, "
+                "but the document handed to derivation hashes differently; deriving from "
+                "unpinned evidence would let a drifted drawing stand as its own proof",
+                code="source_content_drift",
             )
 
         clusters = self._clusters(document)
+        grid = _cluster_grid(clusters)
         free_texts = [
             element
             for element in document.elements
@@ -358,7 +437,7 @@ class M6SourceAdapter:
                 unclassified += 1
                 continue
             tags.append(_TagText(element=element, tag=match.group(1)))
-        bindings = {tag.element.id: self._bind(tag, clusters) for tag in tags}
+        bindings = {tag.element.id: self._bind(tag, clusters, grid) for tag in tags}
 
         candidates: list[SemanticCandidate] = []
         for cluster in clusters:
@@ -426,31 +505,31 @@ class M6SourceAdapter:
                 head: union_bbox([boxes[element_id] for element_id in ids]) or (0, 0, 0, 0)
                 for head, ids in groups.items()
             }
-            # Phase 2: containment joins floaters to their outline. Fixpoint loop because
-            # containment chains through the growing union box; group counts per block are
-            # small, and the pass order is pinned by element id so the result is stable.
-            while True:
-                heads = sorted(groups)
-                merged = False
-                for inner in heads:
-                    if inner not in groups:
+            # Phase 2: containment joins floaters to their outline. Single pass, ascending
+            # original area: a container is never smaller than what it contains, so chains
+            # (circle inside box inside enclosure) resolve in one sweep, and union boxes grow
+            # as groups merge. The iteration order is pinned by (area, head id), so the merge
+            # choice is deterministic rather than traversal-dependent.
+            group_parent = {head: head for head in groups}
+            group_order = sorted(
+                groups, key=lambda head: (_box_area(group_boxes[head]), head)
+            )
+            for inner in group_order:
+                for outer in group_order:
+                    outer_root = _find_root(group_parent, outer)
+                    if outer_root == inner:
                         continue
-                    for outer in heads:
-                        if outer == inner or outer not in groups:
-                            continue
-                        if _box_contains(group_boxes[outer], group_boxes[inner]):
-                            groups[outer] = [*groups[outer], *groups.pop(inner)]
-                            group_boxes[outer] = union_bbox(
-                                [group_boxes[outer], group_boxes.pop(inner)]
-                            ) or (0, 0, 0, 0)
-                            merged = True
-                            break
-                    if merged:
+                    if _box_contains(group_boxes[outer_root], group_boxes[inner]):
+                        group_parent[inner] = outer_root
+                        group_boxes[outer_root] = union_bbox(
+                            [group_boxes[outer_root], group_boxes[inner]]
+                        ) or (0, 0, 0, 0)
                         break
-                if not merged:
-                    break
 
-            for ids in groups.values():
+            merged: dict[str, list[str]] = {}
+            for head, ids in groups.items():
+                merged.setdefault(_find_root(group_parent, head), []).extend(ids)
+            for ids in merged.values():
                 member_set = set(ids)
                 layers = sorted(
                     {
@@ -475,14 +554,30 @@ class M6SourceAdapter:
         clusters.sort(key=lambda cluster: (cluster.block, cluster.element_ids[0]))
         return clusters
 
-    def _bind(self, tag: _TagText, clusters: list[_Cluster]) -> _Binding:
+    def _bind(
+        self,
+        tag: _TagText,
+        clusters: list[_Cluster],
+        grid: dict[tuple[int, int], list[int]],
+    ) -> _Binding:
         position = tag.element.position
         reach = max(
             TAG_BINDING_MIN_REACH, tag.element.font_size * TAG_BINDING_REACH_FONT_MULTIPLE
         )
+        nearby: set[int] = set()
+        for cx in range(
+            math.floor((position.x - reach) / _GRID_CELL),
+            math.floor((position.x + reach) / _GRID_CELL) + 1,
+        ):
+            for cy in range(
+                math.floor((position.y - reach) / _GRID_CELL),
+                math.floor((position.y + reach) / _GRID_CELL) + 1,
+            ):
+                nearby.update(grid.get((cx, cy), ()))
         best_distance: float | None = None
         best: list[_Cluster] = []
-        for cluster in clusters:
+        for index in sorted(nearby):
+            cluster = clusters[index]
             distance = round(
                 _point_rect_distance(position.x, position.y, cluster.bbox), _DISTANCE_DECIMALS
             )
@@ -931,42 +1026,66 @@ class M6SourceAdapter:
                 },
                 "target_document_id": target_document_id,
                 "candidates": [
-                    _without_volatile(candidate.model_dump(mode="json", by_alias=True))
+                    strip_volatile_keys(candidate.model_dump(mode="json", by_alias=True))
                     for candidate in candidates
                 ],
             }
         )
 
-    def ingest(self, source_document_id: str, *, target_document_id: str) -> IngestionSummary:
-        """Pin the source, derive candidates, file them through the governed core.
+    def ingest(self, artifact: SourceArtifactRef, *, target_document_id: str) -> IngestionSummary:
+        """File the candidates derived from a *pinned* source, as one atomic batch.
 
-        Re-ingesting the same source under the same rules is idempotent *by identity*: a
-        candidate whose id is already stored with identical (non-volatile) content is left
-        untouched, and the same id with different content is a contradiction that fails
-        loudly rather than an overwrite.
+        The caller pins the source with :meth:`pin_source` and hands the pin over. This entry
+        re-verifies the pin against the live store before anything is derived
+        (:meth:`verify_source`), and the store re-verifies it a final time inside the filing
+        transaction — a source that drifted between pin and filing is refused with zero
+        writes, and the intake never re-pins from the document's current state to make the
+        pin fit (Gate D88-1).
+
+        The whole candidate set commits in one ``BEGIN IMMEDIATE`` transaction (Gate D88-2):
+        a failure part-way leaves the review tables exactly as they were instead of half a
+        filing. Re-ingesting the same pinned source under the same rules is idempotent *by
+        identity*: a candidate whose id is already stored with identical (non-volatile)
+        content is left untouched, and the same id with different content is a contradiction
+        that fails loudly rather than an overwrite.
         """
 
-        document = self._read_source(source_document_id)
-        artifact = self._artifact_for(document)
-        derivation = self._derive(document, artifact, target_document_id=target_document_id)
-        filed: list[str] = []
-        already_present: list[str] = []
-        for candidate in derivation.candidates:
-            existing = self._store.get_semantic_candidate(candidate.candidate_id)
-            if existing is None:
-                self._candidates.file_candidate(candidate)
-                filed.append(candidate.candidate_id)
-                continue
-            old = _without_volatile(existing.model_dump(mode="json", by_alias=True))
-            new = _without_volatile(candidate.model_dump(mode="json", by_alias=True))
-            if old == new:
-                already_present.append(candidate.candidate_id)
-                continue
-            raise CandidateIdentityConflict(
-                f"candidate {candidate.candidate_id} exists with different content; the "
-                "identity is content-derived, so this is a derivation contradiction, not an "
-                "update",
+        if not target_document_id:
+            raise TargetDocumentError(
+                "a new ingestion must declare the engineering document its candidates target; "
+                "an empty target would file proposals nobody can ever apply",
+                code="target_document_id_required",
             )
+        if target_document_id == artifact.source_document_id:
+            raise TargetDocumentError(
+                "the engineering target must not be the source evidence document itself: the "
+                "source is pinned read-only proof, the target is where confirmed facts land",
+                code="target_document_equals_source",
+            )
+        if m6_ingestion_contract.AUTO_ACCEPT_WHITELIST:
+            raise CandidateSchemaViolation(
+                "M6 v1 signs no auto-accept class, so filing must not be able to skip review",
+                code="auto_accept_whitelist_not_empty",
+            )
+
+        document = self.verify_source(artifact)
+        derivation = self._derive(document, artifact, target_document_id=target_document_id)
+        entries = [
+            (candidate, _filing_decision(candidate)) for candidate in derivation.candidates
+        ]
+        try:
+            filed, already_present = self._store.file_semantic_candidates(
+                entries,
+                source_document_id=artifact.source_document_id,
+                expected_source_revision=artifact.source_revision,
+                expected_source_content_hash=artifact.content_hash,
+            )
+        except M6FilingError as exc:
+            if exc.code == "candidate_identity_conflict":
+                raise CandidateIdentityConflict(str(exc)) from exc
+            if exc.code.startswith("source_"):
+                raise SourceVerificationError(str(exc), code=exc.code) from exc
+            raise
 
         counts: dict[str, int] = {}
         for candidate in derivation.candidates:
@@ -1008,4 +1127,5 @@ __all__ = [
     "M6SourceAdapter",
     "M6SourceStore",
     "SourceVerificationError",
+    "TargetDocumentError",
 ]

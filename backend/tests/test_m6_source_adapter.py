@@ -16,6 +16,7 @@ The positive fixtures are built two ways on purpose:
 from __future__ import annotations
 
 import json
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -38,8 +39,11 @@ from agentcad.m6_region import build_source_region, region_identity
 from agentcad.m6_source_adapter import (
     M6_SOURCE_RULES,
     CandidateIdentityConflict,
+    IngestionSummary,
     M6SourceAdapter,
     SourceVerificationError,
+    TargetDocumentError,
+    _filing_decision,
 )
 from agentcad.models import (
     CircleElement,
@@ -50,7 +54,7 @@ from agentcad.models import (
     TextElement,
 )
 from agentcad.service import DocumentService
-from agentcad.store import SQLiteDocumentStore, StoredDocument
+from agentcad.store import M6FilingError, SQLiteDocumentStore, StoredDocument
 from agentcad.symbols import SymbolRegistry
 
 SOURCE_ID = "doc_m6d2_source"
@@ -149,6 +153,14 @@ def _by_type(candidates: list[SemanticCandidate], kind: str) -> list[SemanticCan
     return [candidate for candidate in candidates if candidate.candidate_type == kind]
 
 
+def _ingest(
+    adapter: M6SourceAdapter, source_id: str = SOURCE_ID, target_id: str = TARGET_ID
+) -> IngestionSummary:
+    """Pin-then-ingest: the only way in after D88-1 — the adapter never re-pins."""
+
+    return adapter.ingest(adapter.pin_source(source_id), target_document_id=target_id)
+
+
 # --------------------------------------------------------------------------------------
 # Region identity: derived, deterministic, revision-sensitive
 # --------------------------------------------------------------------------------------
@@ -232,7 +244,7 @@ def test_block_instances_of_the_same_block_split_spatially(
     recovered as connected geometry, so both pumps must become *separate* regions."""
 
     _save(store, _two_pump_document())
-    summary = adapter.ingest(SOURCE_ID, target_document_id=TARGET_ID)
+    summary = _ingest(adapter)
 
     assert summary.cluster_count == 2
     symbol = _by_type(store.list_semantic_candidates(), "symbol_class")
@@ -247,7 +259,7 @@ def test_candidates_carry_both_document_identities(
     adapter: M6SourceAdapter, store: SQLiteDocumentStore
 ) -> None:
     _save(store, _two_pump_document())
-    adapter.ingest(SOURCE_ID, target_document_id=TARGET_ID)
+    _ingest(adapter)
 
     for candidate in store.list_semantic_candidates():
         assert candidate.artifact.source_document_id == SOURCE_ID
@@ -263,7 +275,7 @@ def test_filed_candidates_are_born_proposed_then_needs_review(
     producer's filing event, and nothing reaches confirmed without a recorded person."""
 
     _save(store, _two_pump_document())
-    summary = adapter.ingest(SOURCE_ID, target_document_id=TARGET_ID)
+    summary = _ingest(adapter)
 
     service = M6CandidateService(store)
     assert summary.filed == summary.candidate_ids
@@ -280,7 +292,7 @@ def test_equipment_tag_and_role_candidates_anchor_to_their_cluster(
     adapter: M6SourceAdapter, store: SQLiteDocumentStore
 ) -> None:
     _save(store, _two_pump_document())
-    adapter.ingest(SOURCE_ID, target_document_id=TARGET_ID)
+    _ingest(adapter)
 
     tags = _by_type(store.list_semantic_candidates(), "equipment_tag")
     assert {candidate.proposed_semantics.equipment_tag for candidate in tags} == {
@@ -302,7 +314,7 @@ def test_an_instrument_shaped_tag_gets_the_instrument_role(
     adapter: M6SourceAdapter, store: SQLiteDocumentStore
 ) -> None:
     _save(store, _document([_tag("t_pt", 800, 700, "PT-101")]))
-    adapter.ingest(SOURCE_ID, target_document_id=TARGET_ID)
+    _ingest(adapter)
 
     roles = _by_type(store.list_semantic_candidates(), "annotation_role")
     assert len(roles) == 1
@@ -317,9 +329,89 @@ def test_an_instrument_shaped_tag_gets_the_instrument_role(
 def test_a_missing_source_is_refused_without_writes(
     adapter: M6SourceAdapter, store: SQLiteDocumentStore
 ) -> None:
+    gone = SourceArtifactRef(
+        artifact_id="artifact_gone",
+        source_document_id="doc_never_existed",
+        source_revision=1,
+        content_hash="x" * 64,
+    )
     with pytest.raises(SourceVerificationError) as caught:
-        adapter.ingest("doc_never_existed", target_document_id=TARGET_ID)
+        adapter.ingest(gone, target_document_id=TARGET_ID)
     assert caught.value.code == "source_snapshot_unavailable"
+    assert store.list_semantic_candidates() == []
+
+
+def test_ingest_refuses_a_stale_artifact_without_writes(
+    adapter: M6SourceAdapter, store: SQLiteDocumentStore
+) -> None:
+    """D88-1: the pin is the evidence identity; ingest must never re-pin to fit it."""
+
+    _save(store, _two_pump_document())
+    artifact = adapter.pin_source(SOURCE_ID)
+    _save(store, _two_pump_document().model_copy(update={"revision": 4}))
+
+    with pytest.raises(SourceVerificationError) as caught:
+        adapter.ingest(artifact, target_document_id=TARGET_ID)
+    assert caught.value.code == "source_revision_drift"
+    assert store.list_semantic_candidates() == []
+    assert all(
+        store.list_review_decisions(cid) == []
+        for cid in [c.candidate_id for c in store.list_semantic_candidates()]
+    )
+
+
+def test_ingest_refuses_a_forged_hash_without_writes(
+    adapter: M6SourceAdapter, store: SQLiteDocumentStore
+) -> None:
+    _save(store, _two_pump_document())
+    artifact = adapter.pin_source(SOURCE_ID).model_copy(
+        update={"content_hash": "0" * 64}
+    )
+    with pytest.raises(SourceVerificationError) as caught:
+        adapter.ingest(artifact, target_document_id=TARGET_ID)
+    assert caught.value.code == "source_content_drift"
+    assert store.list_semantic_candidates() == []
+
+
+def test_derive_refuses_a_document_that_does_not_match_the_pin(
+    adapter: M6SourceAdapter, store: SQLiteDocumentStore
+) -> None:
+    """D88-1, second half: derivation itself verifies the content hash it was handed."""
+
+    _save(store, _two_pump_document())
+    artifact = adapter.pin_source(SOURCE_ID)
+    drifted = _document(
+        [*_two_pump_document().elements, _tag("t_extra", 700, 700, "E-301")],
+        revision=3,
+    )
+    with pytest.raises(SourceVerificationError) as caught:
+        adapter.derive_candidates(drifted, artifact, target_document_id=TARGET_ID)
+    assert caught.value.code == "source_content_drift"
+
+
+def test_ingest_requires_a_declared_target_document(
+    adapter: M6SourceAdapter, store: SQLiteDocumentStore
+) -> None:
+    """D88-3: an empty target is refused with a stable code and zero writes."""
+
+    _save(store, _two_pump_document())
+    artifact = adapter.pin_source(SOURCE_ID)
+    with pytest.raises(TargetDocumentError) as caught:
+        adapter.ingest(artifact, target_document_id="")
+    assert caught.value.code == "target_document_id_required"
+    assert store.list_semantic_candidates() == []
+
+
+def test_ingest_refuses_a_target_that_is_the_source(
+    adapter: M6SourceAdapter, store: SQLiteDocumentStore
+) -> None:
+    """D88-3: the evidence document can never be its own engineering target."""
+
+    _save(store, _two_pump_document())
+    artifact = adapter.pin_source(SOURCE_ID)
+    with pytest.raises(TargetDocumentError) as caught:
+        adapter.ingest(artifact, target_document_id=SOURCE_ID)
+    assert caught.value.code == "target_document_equals_source"
     assert store.list_semantic_candidates() == []
 
 
@@ -385,7 +477,7 @@ def test_an_unknown_block_is_out_of_catalogue_not_guessed(
     adapter: M6SourceAdapter, store: SQLiteDocumentStore
 ) -> None:
     _save(store, _document(_block_lines("z1", 500, 500, "ZZZ-MYSTERY")))
-    adapter.ingest(SOURCE_ID, target_document_id=TARGET_ID)
+    _ingest(adapter)
 
     candidates = store.list_semantic_candidates()
     assert _by_type(candidates, "symbol_class") == []
@@ -425,7 +517,7 @@ def test_a_tied_symbol_match_is_ambiguous_not_picked(
     )
     adapter = M6SourceAdapter(store, SymbolRegistry(search_paths=[tmp_path]))
     _save(store, _document(_block_lines("m1", 500, 500, "MULTIWAY")))
-    adapter.ingest(SOURCE_ID, target_document_id=TARGET_ID)
+    _ingest(adapter)
 
     candidates = store.list_semantic_candidates()
     assert _by_type(candidates, "symbol_class") == []
@@ -449,7 +541,7 @@ def test_two_tags_on_one_cluster_are_an_ambiguity_record(
             ]
         ),
     )
-    adapter.ingest(SOURCE_ID, target_document_id=TARGET_ID)
+    _ingest(adapter)
 
     candidates = store.list_semantic_candidates()
     assert _by_type(candidates, "equipment_tag") == []
@@ -473,7 +565,7 @@ def test_an_equidistant_tag_binding_is_ambiguous_not_picked(
             ]
         ),
     )
-    adapter.ingest(SOURCE_ID, target_document_id=TARGET_ID)
+    _ingest(adapter)
 
     candidates = store.list_semantic_candidates()
     assert _by_type(candidates, "equipment_tag") == []
@@ -495,7 +587,7 @@ def test_an_unanchorable_tag_is_insufficient_evidence(
             ]
         ),
     )
-    adapter.ingest(SOURCE_ID, target_document_id=TARGET_ID)
+    _ingest(adapter)
 
     candidates = store.list_semantic_candidates()
     assert _by_type(candidates, "equipment_tag") == []
@@ -540,8 +632,8 @@ def test_re_ingest_is_idempotent_by_identity(
     adapter: M6SourceAdapter, store: SQLiteDocumentStore
 ) -> None:
     _save(store, _two_pump_document())
-    first = adapter.ingest(SOURCE_ID, target_document_id=TARGET_ID)
-    second = adapter.ingest(SOURCE_ID, target_document_id=TARGET_ID)
+    first = _ingest(adapter)
+    second = _ingest(adapter)
 
     assert second.filed == []
     assert sorted(second.already_present) == sorted(first.candidate_ids)
@@ -553,16 +645,140 @@ def test_re_ingest_is_idempotent_by_identity(
 
 
 def test_a_candidate_id_collision_with_different_content_fails_loudly(
-    adapter: M6SourceAdapter, store: SQLiteDocumentStore, monkeypatch: pytest.MonkeyPatch
+    adapter: M6SourceAdapter, store: SQLiteDocumentStore
 ) -> None:
+    """A stored row whose content disagrees with its content-derived id aborts the batch."""
+
     _save(store, _two_pump_document())
-    adapter.ingest(SOURCE_ID, target_document_id=TARGET_ID)
-    original = store.list_semantic_candidates()[0]
-    corrupted = original.model_copy(update={"review_status": "needs_review"})
-    monkeypatch.setattr(store, "get_semantic_candidate", lambda _id: corrupted)
+    artifact = adapter.pin_source(SOURCE_ID)
+    candidates = adapter.derive_candidates(
+        store.get(SOURCE_ID).document, artifact, target_document_id=TARGET_ID
+    )
+    victim = candidates[len(candidates) // 2]
+    tampered = victim.model_copy(update={"review_status": "needs_review"})
+    store.insert_semantic_candidate(tampered)  # same id, different content
 
     with pytest.raises(CandidateIdentityConflict):
-        adapter.ingest(SOURCE_ID, target_document_id=TARGET_ID)
+        adapter.ingest(artifact, target_document_id=TARGET_ID)
+
+    # The batch rolled back: the tampered row is all that exists, and no filing decisions.
+    assert [c.candidate_id for c in store.list_semantic_candidates()] == [victim.candidate_id]
+    assert store.list_review_decisions(victim.candidate_id) == []
+
+
+# --------------------------------------------------------------------------------------
+# Atomic filing: one transaction, all or nothing (D88-2)
+# --------------------------------------------------------------------------------------
+
+
+def test_a_mid_batch_failure_rolls_back_everything(
+    adapter: M6SourceAdapter, store: SQLiteDocumentStore
+) -> None:
+    """Fault injection: the middle filing decision fails -> zero new rows anywhere.
+
+    A trigger on the decisions table makes a mid-batch write fail for real, inside the
+    transaction the store opened — nothing is mocked, so this exercises the rollback rather
+    than an imitation of it.
+    """
+
+    _save(store, _two_pump_document())
+    artifact = adapter.pin_source(SOURCE_ID)
+    candidates = adapter.derive_candidates(
+        store.get(SOURCE_ID).document, artifact, target_document_id=TARGET_ID
+    )
+    victim = candidates[len(candidates) // 2]
+    with sqlite3.connect(store.database_path) as connection:
+        connection.execute(
+            f"""
+            CREATE TRIGGER m6_inject_filing_failure
+            BEFORE INSERT ON review_decisions
+            WHEN NEW.candidate_id = '{victim.candidate_id}'
+            BEGIN SELECT RAISE(FAIL, 'injected mid-batch failure'); END
+            """
+        )
+        connection.commit()
+
+    with pytest.raises(sqlite3.Error):
+        adapter.ingest(artifact, target_document_id=TARGET_ID)
+
+    assert store.list_semantic_candidates() == []
+    for candidate in candidates:
+        assert store.list_review_decisions(candidate.candidate_id) == []
+    # The source document is exactly as the save left it.
+    assert store.get(SOURCE_ID).document.revision == 3
+
+    with sqlite3.connect(store.database_path) as connection:
+        connection.execute("DROP TRIGGER m6_inject_filing_failure")
+        connection.commit()
+
+    # And once the fault is gone, the same ingest goes through cleanly.
+    summary = adapter.ingest(artifact, target_document_id=TARGET_ID)
+    assert len(summary.filed) == len(candidates)
+
+
+def test_the_batch_skips_known_identities_and_files_new_ones_atomically(
+    store: SQLiteDocumentStore,
+) -> None:
+    """A mixed batch: known ids are left untouched, new ids file, in one transaction."""
+
+    _save(store, _two_pump_document())
+    adapter = M6SourceAdapter(store, SymbolRegistry())
+    artifact = adapter.pin_source(SOURCE_ID)
+    document = store.get(SOURCE_ID).document
+    candidates = adapter.derive_candidates(document, artifact, target_document_id=TARGET_ID)
+    known, new = candidates[:2], candidates[2:]
+    store.file_semantic_candidates(
+        [(candidate, _filing_decision(candidate)) for candidate in known],
+        source_document_id=SOURCE_ID,
+        expected_source_revision=document.revision,
+        expected_source_content_hash=document_content_hash(document),
+    )
+
+    filed, already = store.file_semantic_candidates(
+        [(candidate, _filing_decision(candidate)) for candidate in [*known, *new]],
+        source_document_id=SOURCE_ID,
+        expected_source_revision=document.revision,
+        expected_source_content_hash=document_content_hash(document),
+    )
+
+    assert sorted(already) == sorted(c.candidate_id for c in known)
+    assert sorted(filed) == sorted(c.candidate_id for c in new)
+    assert len(store.list_semantic_candidates()) == len(candidates)
+    for candidate in candidates:
+        assert len(store.list_review_decisions(candidate.candidate_id)) == 1
+
+
+def test_the_batch_reverifies_the_source_inside_its_transaction(
+    store: SQLiteDocumentStore,
+) -> None:
+    """The final in-transaction check, exercised directly: wrong pins fail closed."""
+
+    _save(store, _two_pump_document())
+    document = store.get(SOURCE_ID).document
+    with pytest.raises(M6FilingError) as caught:
+        store.file_semantic_candidates(
+            [],
+            source_document_id=SOURCE_ID,
+            expected_source_revision=99,
+            expected_source_content_hash=document_content_hash(document),
+        )
+    assert caught.value.code == "source_revision_drift"
+    with pytest.raises(M6FilingError) as caught:
+        store.file_semantic_candidates(
+            [],
+            source_document_id=SOURCE_ID,
+            expected_source_revision=document.revision,
+            expected_source_content_hash="0" * 64,
+        )
+    assert caught.value.code == "source_content_drift"
+    with pytest.raises(M6FilingError) as caught:
+        store.file_semantic_candidates(
+            [],
+            source_document_id="doc_gone",
+            expected_source_revision=1,
+            expected_source_content_hash="0" * 64,
+        )
+    assert caught.value.code == "source_snapshot_unavailable"
 
 
 # --------------------------------------------------------------------------------------
@@ -574,7 +790,7 @@ def test_a_v7_payload_without_target_document_id_still_validates(
     adapter: M6SourceAdapter, store: SQLiteDocumentStore
 ) -> None:
     _save(store, _two_pump_document())
-    adapter.ingest(SOURCE_ID, target_document_id=TARGET_ID)
+    _ingest(adapter)
     candidate = store.list_semantic_candidates()[0]
 
     payload = candidate.model_dump(mode="json", by_alias=True)
@@ -588,7 +804,7 @@ def test_a_stored_candidate_round_trips_with_its_target(
     adapter: M6SourceAdapter, store: SQLiteDocumentStore
 ) -> None:
     _save(store, _two_pump_document())
-    adapter.ingest(SOURCE_ID, target_document_id=TARGET_ID)
+    _ingest(adapter)
     written = store.list_semantic_candidates()[0]
     read_back = store.get_semantic_candidate(written.candidate_id)
     assert read_back is not None
@@ -617,7 +833,7 @@ def test_ingestion_writes_zero_engineering_state(tmp_path, registry: SymbolRegis
     before_audit = len(store.all_audit_records())
     before_content = document_content_hash(store.get(SOURCE_ID).document)
 
-    summary = M6SourceAdapter(store, registry).ingest(SOURCE_ID, target_document_id=TARGET_ID)
+    summary = _ingest(M6SourceAdapter(store, registry))
     assert summary.filed, "the fixture must actually file candidates"
 
     after = store.get(SOURCE_ID)
@@ -693,7 +909,9 @@ def test_the_governed_import_feeds_the_adapter(tmp_path, registry: SymbolRegistr
     assert all(not hasattr(element, "symbol_key") for element in imported.elements)
 
     adapter = M6SourceAdapter(store, registry)
-    summary = adapter.ingest(result.document_id, target_document_id=TARGET_ID)
+    summary = adapter.ingest(
+        adapter.pin_source(result.document_id), target_document_id=TARGET_ID
+    )
 
     assert summary.cluster_count == 4  # two pump instances, one valve, one mystery block
     candidates = store.list_semantic_candidates()
@@ -728,3 +946,5 @@ def test_the_evidence_walkthrough_still_runs() -> None:
     assert '"zero_engineering_write": true' in result.stdout
     assert "source_revision_drift" in result.stdout
     assert '"already_present": true' in result.stdout
+    assert "target_document_id_required" in result.stdout
+    assert "target_document_equals_source" in result.stdout

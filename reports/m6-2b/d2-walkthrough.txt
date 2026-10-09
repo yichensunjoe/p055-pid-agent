@@ -4,135 +4,135 @@
   "blockless_geometry": 2,
   "candidates": [
     {
-      "candidate_id": "cand_m6_1d58934c87a6197a536c62e9933590b9ff34fbcb1a141536fa14c9521d5fd82d",
+      "candidate_id": "cand_m6_5692cf47563e1a2c21cb24c9cd4a4e5137501dfba4ec1eb188b062834ec3f1ef",
       "candidate_type": "unresolved",
       "confidence": 0.0,
       "facts": {
         "unresolved_reason": "out_of_catalog"
       },
       "producer": "deterministic_rule_engine",
-      "region_id": "m6reg_8d99e720e65190e043deccbbc65e7d6ff925eb576a1a00041cd16afcc9fb4bfc",
+      "region_id": "m6reg_84b0b835dd6ceead8b13a499ae452ad7a0d162c3ea6364e8b7229eba0e4f2e7c",
       "target_document_id": "doc_rebuild_target"
     },
     {
-      "candidate_id": "cand_m6_e8dc9dfbbd0542effbc9fd3e083e362d1ebf0ac6e8abd1a2d375b0a6ceb76d32",
+      "candidate_id": "cand_m6_345c8bebe756ee2c0da2908e8af019e598475a6621d5be128595f035f4cf3ebf",
       "candidate_type": "symbol_class",
       "confidence": 1.0,
       "facts": {
         "symbol_class": "centrifugal_pump"
       },
       "producer": "deterministic_rule_engine",
-      "region_id": "m6reg_3490ef3247fa0280957cbdac811d6e028c259fe0e7ce9adbfab4e4ef0a9a23d4",
+      "region_id": "m6reg_0e2621cc959e2554ca34740fe80cbf10a21baafe3e662954d734cf6300aeaabd",
       "target_document_id": "doc_rebuild_target"
     },
     {
-      "candidate_id": "cand_m6_91b9a91fcccf89dd2e114c85da6e027c3732d13c8b1554d2400e8cfa0acbb029",
+      "candidate_id": "cand_m6_364090a0e10ff7357fc001974c690d0eef984679a97cfd300ade655a926716f5",
       "candidate_type": "equipment_tag",
       "confidence": 1.0,
       "facts": {
         "equipment_tag": "P-201"
       },
       "producer": "deterministic_rule_engine",
-      "region_id": "m6reg_08241e3bb826d4871a4941583385e711f1cf7e2e61c0dcef712e3564306c5ee6",
+      "region_id": "m6reg_5c9e22e1a56ab9d456b2fe563eaa24a0003641c85916b987aeb0783fe840bca7",
       "target_document_id": "doc_rebuild_target"
     },
     {
-      "candidate_id": "cand_m6_d39e40b573798792f836300f6299ab22886c1f340cc8d9ce7895034b8a338091",
+      "candidate_id": "cand_m6_f621c158613399903579cf36c08964c3f60750b5d61fbad7f6306d385aa07cc3",
       "candidate_type": "annotation_role",
       "confidence": 1.0,
       "facts": {
         "annotation_role": "equipment_label"
       },
       "producer": "deterministic_rule_engine",
-      "region_id": "m6reg_78da135af6ca0d01b825fd5c313a9c551da9dbf2f5b2a6039f36814fb03573d9",
+      "region_id": "m6reg_90e448123b52da26f73430ed63a2ee30426de22c9b6f570eba8a6cf55da3218e",
       "target_document_id": "doc_rebuild_target"
     },
     {
-      "candidate_id": "cand_m6_e0862b607570e5c7d7e1ddabdbac33fa1edbedb005a6156a6d55e37d9e660d06",
+      "candidate_id": "cand_m6_e61a105a3d1ecd754f3763102d032a55691c9968c035381d91feef0232adf51e",
       "candidate_type": "symbol_class",
       "confidence": 1.0,
       "facts": {
         "symbol_class": "centrifugal_pump"
       },
       "producer": "deterministic_rule_engine",
-      "region_id": "m6reg_6ebc70ff02b726005d79e70650a41a58d020e3b3e06f3cb2524b1c8d1598f0ed",
+      "region_id": "m6reg_244178c5cec2aec3fe26023b3566abbae139bb8fc97bb0c008247d4d5448359c",
       "target_document_id": "doc_rebuild_target"
     },
     {
-      "candidate_id": "cand_m6_4402975552e6f666b94ec31649ad5d0515a45bcd644455743d048eaf4d903d32",
+      "candidate_id": "cand_m6_73d91617af7ae3fb5100a6582600b0f6c583f82d8819d507185107941eb5de7a",
       "candidate_type": "equipment_tag",
       "confidence": 1.0,
       "facts": {
         "equipment_tag": "P-202"
       },
       "producer": "deterministic_rule_engine",
-      "region_id": "m6reg_fe4003e0b45443014576be1661b29cf0d9f9d0c410513881701b723d19a62e35",
+      "region_id": "m6reg_fd3cefbf940f0f82aceb1ac5cef84e65a9abc5f7500d2c3fe66cf4202a7253e4",
       "target_document_id": "doc_rebuild_target"
     },
     {
-      "candidate_id": "cand_m6_55272013964746fc21dc826dfd4942f9ca872036b7c8c08e3584810c28ffd3d3",
+      "candidate_id": "cand_m6_58ae1bfe67ae22644a6f8534fb443cf291a6414c40c72b122d376505482f0782",
       "candidate_type": "annotation_role",
       "confidence": 1.0,
       "facts": {
         "annotation_role": "equipment_label"
       },
       "producer": "deterministic_rule_engine",
-      "region_id": "m6reg_39398fc47148ee4603e41b3ba40feaf1c196e13c79cd7f04450691815dd5897d",
+      "region_id": "m6reg_7d71814035d747ead33481c2ac4333de1a201aaee893899a8d9020abc4d1e181",
       "target_document_id": "doc_rebuild_target"
     },
     {
-      "candidate_id": "cand_m6_43202f55aea1a793b0cacbbe6fd13d881248fb61bb26e072669601a791cde13d",
+      "candidate_id": "cand_m6_b75a2f83cb4cc9142f10e3ceb664b2cd2b4b8b55cfd2ac5b8835db23eea59fef",
       "candidate_type": "symbol_class",
       "confidence": 1.0,
       "facts": {
         "symbol_class": "gate_valve"
       },
       "producer": "deterministic_rule_engine",
-      "region_id": "m6reg_56ef390b6b0dc2387bcb4cd5a0036dd5dea1ee8aea83348c5c4b1e339ad06988",
+      "region_id": "m6reg_77ac905de578c5b3fb349935d010c70edeeb5b68ceca8a4079fce65fd04b0cbc",
       "target_document_id": "doc_rebuild_target"
     },
     {
-      "candidate_id": "cand_m6_07572396f202ea8e497cdff0c73df2d1f7220990ba70a3d602af1c6acf081cf1",
+      "candidate_id": "cand_m6_50a237feafea112d12b5b49cac61c7cda5727801cbe3efb7b1c78feb4f51f840",
       "candidate_type": "equipment_tag",
       "confidence": 1.0,
       "facts": {
         "equipment_tag": "V-101"
       },
       "producer": "deterministic_rule_engine",
-      "region_id": "m6reg_ae4db7ce99b2d49774c780ac1a160485590663ac5b1c10391381252e5b7f27c7",
+      "region_id": "m6reg_c558defc6879a146ad450cd18f0082cc9cadf7238668484b217cd48b59971ed5",
       "target_document_id": "doc_rebuild_target"
     },
     {
-      "candidate_id": "cand_m6_fcea5abee4671a645b284dfe9987905f0dd0369e9c0a81c618443f52c10bb618",
+      "candidate_id": "cand_m6_c156f6cb3f0771f40d13fb80aee0f4d94c8fb5b471e915d63c17b9f9d2698244",
       "candidate_type": "annotation_role",
       "confidence": 1.0,
       "facts": {
         "annotation_role": "equipment_label"
       },
       "producer": "deterministic_rule_engine",
-      "region_id": "m6reg_90fc032401f17887bcc7f7e388553eeea8d2519a5f768d4c6996d7d0c09d4890",
+      "region_id": "m6reg_2333cd126490be6610a96a01f0025f58a8425f85b2ec091a7f36adfe37376e11",
       "target_document_id": "doc_rebuild_target"
     },
     {
-      "candidate_id": "cand_m6_7df1706eeab5d668b54b49b5036badd89f5dcf1d83d5e2f7eb162790242c8b5c",
+      "candidate_id": "cand_m6_ff18af34dd68d57c2eca2fbbe708e2c7d6af4adc269044b788cbe2831bfa67af",
       "candidate_type": "annotation_role",
       "confidence": 1.0,
       "facts": {
         "annotation_role": "instrument_tag"
       },
       "producer": "deterministic_rule_engine",
-      "region_id": "m6reg_22a9a27a52e904ec4910377df215c7b5a49a5fda7558450ee85ed03f0ead3f51",
+      "region_id": "m6reg_a5bb27f484b54266452969e4f4e3397fe8bf492a5a3f9026aed5a85d784e755b",
       "target_document_id": "doc_rebuild_target"
     },
     {
-      "candidate_id": "cand_m6_36f3835b4da6944b490045dfb9fd715373dc9895b8eeae0bc29cfe4149d0d67b",
+      "candidate_id": "cand_m6_959bfab9700704fd6740dd0b3bf1d8c5483aab584ce879b97ac893d157c5d426",
       "candidate_type": "unresolved",
       "confidence": 0.0,
       "facts": {
         "unresolved_reason": "ambiguous"
       },
       "producer": "deterministic_rule_engine",
-      "region_id": "m6reg_0fd79b99584b4cb46688161bcb8f5e25b0fc71d7ab51bbd07bd5eaf96ee73429",
+      "region_id": "m6reg_978d24369bff985f23ffa240ea5a4820fdab03b1ae1779d828e5e77354357811",
       "target_document_id": "doc_rebuild_target"
     }
   ],
@@ -145,10 +145,10 @@
     "unresolved": 2
   },
   "elements": 24,
-  "extraction_digest": "cf760e92715d8a8ff9402bf66e0a9e23548c37d40dd0135668813cebcab0c70c",
+  "extraction_digest": "f58470b387c292eaeba536b7716e9806b35fab29453788745340a64d094e4493",
   "rules": "m6-source-rules/1",
-  "source_content_hash": "8244511bcb39734578658137909e7d515f8d0027612f7c4bf1ab9ce6f27b0f1e",
-  "source_document_id": "doc_35d1b24dc3fc",
+  "source_content_hash": "0d6f311c84d793345d1c24d8a4c3a0a8a874fed2a59102f6e4548c6eead4db37",
+  "source_document_id": "doc_7891fd18f1fc",
   "source_revision": 1,
   "tag_texts": 5,
   "target_document_id": "doc_rebuild_target",
@@ -158,8 +158,8 @@
 === determinism record: same source + target + catalogue + rules ===
 {
   "already_present": true,
-  "digest_first": "cf760e92715d8a8ff9402bf66e0a9e23548c37d40dd0135668813cebcab0c70c",
-  "digest_second": "cf760e92715d8a8ff9402bf66e0a9e23548c37d40dd0135668813cebcab0c70c",
+  "digest_first": "f58470b387c292eaeba536b7716e9806b35fab29453788745340a64d094e4493",
+  "digest_second": "f58470b387c292eaeba536b7716e9806b35fab29453788745340a64d094e4493",
   "identical": true,
   "refile_filed": 0
 }
@@ -181,10 +181,25 @@
     "reason": "source document 'doc_deleted' no longer exists; the pinned snapshot cannot be re-verified",
     "refused": "SourceVerificationError"
   },
+  "empty_target": {
+    "code": "target_document_id_required",
+    "reason": "a new ingestion must declare the engineering document its candidates target; an empty target would file proposals nobody can ever apply",
+    "refused": "TargetDocumentError"
+  },
   "moved_revision": {
     "code": "source_revision_drift",
-    "reason": "source document 'doc_35d1b24dc3fc' moved from pinned revision 2 to 1; the old evidence identity is sealed and cannot be re-pinned in place",
+    "reason": "source document 'doc_7891fd18f1fc' moved from pinned revision 2 to 1; the old evidence identity is sealed and cannot be re-pinned in place",
     "refused": "SourceVerificationError"
+  },
+  "stale_pin_at_ingest": {
+    "code": "source_revision_drift",
+    "reason": "source document 'doc_7891fd18f1fc' moved from pinned revision 2 to 1; the old evidence identity is sealed and cannot be re-pinned in place",
+    "refused": "SourceVerificationError"
+  },
+  "target_is_source": {
+    "code": "target_document_equals_source",
+    "reason": "the engineering target must not be the source evidence document itself: the source is pinned read-only proof, the target is where confirmed facts land",
+    "refused": "TargetDocumentError"
   },
   "unknown_block_candidate": "out_of_catalog"
 }

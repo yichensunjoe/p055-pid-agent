@@ -2,18 +2,21 @@
 
 > 交接文档：每次开新会话先读本文件。更新规则见 `AGENTS.md`「HANDOFF 交接规则」。
 
-## 当前状态（2026-10-09 —— **M6-2B-D2 Source-to-Candidate Adapter 已在分支 `m6-2b-d2` 本地实现完毕（从 main `a659110` 切出），全量后端 1873 passed + ruff 全净；未 push、未建 PR，等 Gate 处置**）
+## 当前状态（2026-10-09 —— **M6-2B-D2 已实现 + Gate D88 FINAL HARDENING FIX GO 三项必修全部落实（分支 `m6-2b-d2`，首提交 `7e13f1b` 已在 PR #88）；全量后端 1881 passed + ruff 全净；10k 实测达标；不 push、不建 PR，等 Gate 处置**）
 
 - **Gate 方向裁定（2026-10-09，conv `6abd7e9f`）**：路线**未偏离初心**，但存在「治理/平台能力先于真实工程输入与交付成熟」的结构性失衡；不横向扩平台（不开第三域），下一阶段 = **M6 Governed Semantic Ingestion 恢复建设**。M6 完成标志八条冻结（原文誊入 `reports/m6-phase2b-design.md` §1）。
-- **M6-2B 分片边界（Gate 冻结，逐片 CODE GO，不一次授权）**：D1 集成契约设计（docs-only，#87 已合）→ **D2 Source-to-Candidate Adapter（本片）** → D3 Human Review & Conflict Control（收窄 Phase-1 表层令牌）→ D4 Governed Apply & Replay（schema v17 两表 + 编译器扩展 + M10 sealed apply + replay + 补偿撤销）→ D5 真实图纸资格化 + closeout。
-- **D2 已交付（本地）**：`m6_region.py`（区域身份 `m6reg_`+64hex，随本片登记入 `PERSISTENT_IDENTITIES`，任务书 §16b 3c 同步为六条）+ `m6_source_adapter.py`（source 三态核验 `source_snapshot_unavailable`/`source_revision_drift`/`source_content_drift` 零写；block 聚簇=同块名接触连通+包含合并；tag 正则就近绑定；目录精确匹配，多候选同分/证据不足一律 unresolved 拒识）+ `SemanticCandidate.target_document_id`（默认 ""，v7 旧 payload 可读）+ 27 条新测试 + walkthrough/perf 证据（`reports/m6-2b/`）。
-- **D2 禁项守住了**：零 HTTP/MCP 表层（`PHASE_1_FORBIDDEN_SURFACE_TOKENS` 原样）、无 review UI、无 apply、无 v17 migration、无第二 writer、无自动批准；唯一 producer=deterministic_rule_engine（TypeSafe/LLM 接口未接）；摄取对工程文档 revision/history/audit 零写（测试+walkthrough 双证据）。
-- **实现中发现并如实处理**：`cad_handle` 属块定义而非 INSERT 实例（同块多实例 handle 相同），实例聚簇必须按空间连通+包含合并恢复——与设计 §4.2「天然分组」措辞有出入，已在模块文档与汇报中注明。
+- **M6-2B 分片边界（Gate 冻结，逐片 CODE GO，不一次授权）**：D1 集成契约设计（docs-only，#87 已合）→ **D2 Source-to-Candidate Adapter（本片，D88 硬化已落实）** → D3 Human Review & Conflict Control（收窄 Phase-1 表层令牌）→ D4 Governed Apply & Replay（schema v17 两表 + 编译器扩展 + M10 sealed apply + replay + 补偿撤销）→ D5 真实图纸资格化 + closeout。
+- **D88-1（钉住身份不重用）**：`ingest(artifact, target_document_id=…)` 改为接收 `pin_source` 产物，入口先 `verify_source`（存在性+revision+content hash），漂移即拒绝零写，绝不按当前文档状态重钉；`derive_candidates` 同样校验 content hash。walkthrough/测试已同步新签名。
+- **D88-2（登记原子性）**：store 新增 `file_semantic_candidates`（只增不改；`_insert_semantic_candidate` 按 `_insert_review_decision` 先例提取 connection 级助手）：同一 `BEGIN IMMEDIATE` 内含事务内最终 source 验证 + 候选身份预校验（同 id 同内容幂等跳过/异内容 fail-loud）+ 全部 candidate+filed decision 写入；中途失败整体回滚（触发器故障注入测试钉死：零新增行、源文档不动）。
+- **D88-3（双身份入口约束）**：`target_document_id=""` → `target_document_id_required`；target==source → `target_document_equals_source`，各零写；`SemanticCandidate.target_document_id` 默认 `""` 保 v7 旧 payload 读兼容（既有测试保持绿）。
+- **性能口径闭合**：`reports/m6-2b/perf-baseline.json` 现为双场景实测——2.6k 元素 ingest median 347ms（批量登记替代逐条写后从 1718ms 降下来）/ 10k 元素（10140 元素、1440 簇、4320 候选）ingest median 1995ms、纯推导 1190ms，均低于 §8.1「10k≤5s」预算提案；样本全列、不外推。
+- **D2 禁项守住了**：零 HTTP/MCP 表层（`PHASE_1_FORBIDDEN_SURFACE_TOKENS` 原样）、无 review UI、无 apply、无 v17 migration、无第二 writer、无自动批准；唯一 producer=deterministic_rule_engine；摄取对工程文档 revision/history/audit 零写。
 - **治理口径**：WS3B / M9 Closeout / M10 FINAL ACCEPTANCE 维持 Owner 挂起；DEPLOY 未授权；真实样本/独立标注未到位前 **M6 Final Acceptance 不得宣称**；不直接 push main。
-- **下一动作**：D2 提交后报 Gate（等 D2 的 CI/Merge Gate 处置）；D3 未授权不动工。
+- **下一动作**：D88 硬化提交后报 Gate（等 D2 的 CI/Merge Gate 处置）；D3 未授权不动工。
 
 ## 近期轮次（2026-10-09：接管 → Gate 方向审视 → M6 恢复建设授权 → M6-2B-D1 设计交付）
 
+- **2026-10-09 D88 硬化轮（分支 `m6-2b-d2`，PR #88 复核后）**：Gate FINAL HARDENING FIX GO 三项必修落实——D88-1 ingest 改为接收 pin 产物并先 verify_source（漂移拒写零写，derive 同步校验 content hash）；D88-2 store 新增 `file_semantic_candidates` 批量原子登记（事务内最终 source 验证 + 身份预校验 + 全量写入，触发器故障注入证明中途失败零新增行）；D88-3 target 空/等于 source 各一个稳定拒绝码。另按 Gate 口径补 10k 实测（10140 元素 ingest median 1995ms）；附带把 tag 绑定从 O(tags×clusters) 改为网格索引、包含合并从定点循环改为单遍 ascending-area union-find（否则 10k 会撞二次方）。新增 8 条测试（stale pin/forge hash/derive 哈希校验/两个 target 拒绝/中途回滚/混合批次/事务内复验）。
 - **2026-10-09 D2 轮（分支 `m6-2b-d2`）**：实现 Source-to-Candidate Adapter——`m6_region.py`（区域身份 = 契约声明前缀 + sha256(artifact, 钉住 revision, 三类 selector canonical 内容)，full 64 hex，revision 变更新身份）+ `m6_source_adapter.py`（source 核验三态稳定拒绝码零写；block 实例聚簇 = 同块名接触连通（0.25 容差）+ 包含合并（浮动部件）；tag 全文本正则 + 就近绑定，等距/多读法一律 unresolved 拒识；目录 key/name/aliases 精确匹配，无命中=`out_of_catalog`；登记走既有 `file_candidate`，幂等重摄取，同 id 异内容 fail-loud）；`SemanticCandidate.target_document_id` 默认 "" 保 v7 读兼容；契约 `PERSISTENT_IDENTITIES` 登记 region_id + 任务书 §16b 3c 同步；27 条新测试 + walkthrough（`reports/m6-2b/d2-walkthrough.txt`）+ perf 基线（`reports/m6-2b/perf-baseline.json`，2580 元素摄取 median ~1.7s，远低于 §8.1 的 10k@5s 预算提案）。
 - **2026-10-09 D1 轮（接管 → 方向审视 → M6 恢复授权 → D1 设计三件套，已随 #87 合并）**：
 - **做了什么**：接管核对（main=`8331de1`、CI run 37255834517 四绿、open PR=0、Gate 尾部=M13 封账确认，无遗留指示）；按 Owner 指令请 Gate 方向审视+下一阶段指示；Gate 裁定后完成 D1 设计三件套。

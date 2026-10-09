@@ -1,8 +1,10 @@
 # M6-2B-D1 — Integration Contract Design：真实 DXF → 人工确认 → 受治理工程写入
 
-> 状态：DESIGN FINAL FIX（D87-1~D87-5 修订版，docs-only）。在 Gate 对 D1 的 Design Gate 签署前，
-> 本文所有结论均为 proposal。Gate 2026-10-09 复核裁定：CHANGES REQUIRED（五项）+
-> Q1–Q4 已裁（见 §10 裁定记录），并签 **M6-2B-D1 DESIGN FINAL FIX GO — APPROVED**（限 #87 原四文件范围）。
+> 状态：DESIGN CONTRACT-CONSISTENCY FINAL FIX（D87-1~D87-5 修复 + D87-F1/F2 措辞修订版，docs-only）。
+> 在 Gate 对 D1 的 Design Gate 签署前，本文所有结论均为 proposal。Gate 2026-10-09 两轮复核：
+> 首轮 CHANGES REQUIRED（五项）+ Q1–Q4 已裁（见 §10 裁定记录），签 DESIGN FINAL FIX GO；
+> 次轮 D87-3/4/5 CLOSED、D87-1/2 CORE ACCEPTED 加措辞修正（F1/F2），
+> 签 CONTRACT CONSISTENCY FINAL FIX GO（仍限 #87 原四文件范围）。
 > 授权依据：Gate 2026-10-09 方向裁定——「M6 — Governed Semantic Ingestion（恢复建设），不创建 M14」，
 > 并签 **M6-2B-D1 DESIGN PREP GO — APPROVED**（首片只允许设计准备，不允许工程数据写入）。
 > base = main@8331de1（M13 closeout 后）。Charter 依据：PROJECT_CHARTER v1.2.0 §51。
@@ -140,7 +142,9 @@ D5：真实图纸资格化 + gold corpus 首批 + 全量非回归 + closeout
 
 **权限分级（每段）**：①导入=既有 governed（不动）；②intake/候选登记=治理面数据写（非工程写，
 audited，permission 设计见 §9-D2——建议 ask/draft_edit 级，不进 DRAFT_EDIT_EXCEPTIONS 白名单理由栏除非
-Gate 另批）；③review 决策=治理面写（audited；shared 模式 reviewer 身份=operator token）；⑤apply=
+Gate 另批）；③review 决策=治理面写（audited；shared 模式的服务级 Bearer **仅用于请求认证**，reviewer 身份由
+  操作者显式声明、identity assurance 固定为 `declared`，并保留人类决定证据——不得将服务 token
+  映射为已认证个人身份，详见 §4.3 四元组）；⑤apply=
 engineering_change + ask，shared 模式必须人工 resolve approval（沿用 M13 `approval_not_self_served`
 语义，`api_change_set.py:297-308` 先例）；⑥replay=只读验证。
 **唯一工程写入层保持 `apply_v2_transaction`**（`SOLE_WRITE_LAYER`，`m6_ingestion_contract.py:175`），
@@ -154,10 +158,13 @@ M6-2B 全程不新增第二 writer。
   `source_revision` + `content_hash`（`m6_candidate_models.py:115-123`）。
 - intake 在**观察时刻**钉死 source 三元组；`content_hash` 取该 revision 文档内容哈希
   （复用审计侧 content hash 口径，`audit.py` 的 `base/result_content_hash` 同族）。
-- **source 侧 staleness**：source 文档被删除、或其 source_revision 快照不可读（历史快照不可用）时，
-  该区域证据链失效——review 面显示 `source_unavailable`，apply 一律拒绝
-  （稳定码 `source_snapshot_unavailable`，零写）。source revision 本身被冻结为证据基线，
-  不存在「source 文档 revision 自然前进」的路径（摄取后 source 只读；要摄取新原图 = 新导入 = 新身份）。
+- **source 侧 staleness（D87-F1 修订）**：source 预期为不可变证据，但**这不是系统强制**——
+  既有 `/api/v2/documents/{id}/transactions` 仍可对任意合法文档执行受治理编辑，仓库没有（本设计
+  也不要求）M6 source 文档的全局写保护。因此：D3 review / D4 apply 必须**重新验证** source 的
+  存在性、钉住的 revision 与 content hash；发现 source revision/hash 漂移 → 拒绝旧候选继续确认或
+  应用（零写），**不得静默更新其证据身份**；source 删除或所需快照不可验证 → 保持
+  `source_snapshot_unavailable`；review 面显示 `source_unavailable`。要在更新版原图上摄取 =
+  新导入 = 全新身份链，旧链原样封存（不编辑、不迁移）。
 - **target 侧不 staleness**：target 文档 revision 随受治理提交正常前进，候选**不因此失效**；
   target 一致性由 §4.5 的 baseline digest 重算 + CAS 在每次 apply 时刻独立核算，
   冲突走 `conflicted`（需新 reviewer decision），而不是 stale。
@@ -339,7 +346,7 @@ CREATE INDEX idx_m6_apply_records_target ON m6_apply_records(target_document_id)
 | N2 | 证据不足（候选缺 evidence 或 region 无 selector） | schema 层拒绝（`SourceRegion` 至少一个 selector，`m6_candidate_models.py:160-168`）；登记失败零写 | D2 |
 | N3 | 歧义（一个区域多个同样合法读法；多端口连接歧义） | 候选标歧义态，必须人工决断；端口不猜（M7-Q2 冻结纪律：receipt→完整重述→确定性 selector） | D2/D3 |
 | N4 | 错误关联（位号绑错设备簇） | 人工可在 review 改派关联；改派产生**新** decision（追加式日志，不改历史） | D3 |
-| N5 | 过期 source（source 文档被删 / source_revision 快照不可读） | review 面显示 `source_unavailable`；apply 拒绝 `source_snapshot_unavailable`，零写；在更新版原图上重新导入产生全新身份链 | D3/D4 |
+| N5 | source 失效三态：①source 文档被删 / 快照不可验证 ②source revision 漂移（其他受治理编辑路径仍可改它，本设计不设全局写保护）③content hash 漂移 | review/apply 前重验 source 存在性+钉住 revision+content hash；任一漂移 → 拒绝继续确认/应用，零写，**不静默更新证据身份**；删除/不可验证 → `source_snapshot_unavailable`；重新摄取=新导入=全新身份链 | D3/D4 |
 | N6 | baseline drift（review 后 target 侧目标语义值被改） | apply 前对 target 当前态重算 digest 不一致 → `conflicted`，零写；需新 reviewer decision 解除 | D4（核心已在 Phase-2A） |
 | N7 | 重复应用（同一 patch 二次 apply / approval 重放） | approval consumed → `tool_approval_consumed`；terminal 记录不被覆盖（M13 closeout 纪律） | D4 |
 | N8 | reviewer 决策缺失（finding 无 decision 引用直接进编译/apply） | composite FK RESTRICT + 服务层校验双重拒绝；零写 | D4 |
@@ -451,6 +458,8 @@ CREATE INDEX idx_m6_apply_records_target ON m6_apply_records(target_document_id)
 | D87-3 | v17 DDL 不变量闭合：apply_records 改定性为 CAS 约束生命周期账本；身份链同事务交叉校验 + 哈希绑定 + 负例；账本与工程提交同事务一致 | §5.1/§5.2 L1–L4、§6.2-N14 |
 | D87-4 | architecture.md 全平台过度概括修正 | `docs/architecture.md` 现状对账（改为「M6 P&ID 写复用 apply-v2；全平台写入均受各自已批准的 domain transaction/governance executor 约束」） |
 | D87-5 | `m6reg_` 随 D2 登记（身份格式 + 契约测试），`m6apply_` 留 D4 | §5.2 末条、§9-D2 |
+| D87-F1 | source 不可变是约定非系统强制（不写全局写保护）；review/apply 前重验 source 存在性+revision+hash；漂移拒写且不静默更新证据身份；N5 补漂移负例 | §4.1、§6.2-N5 |
+| D87-F2 | §3 权限分级残留「reviewer=operator token」旧口径，与 §4.3 矛盾 | §3 ③改为四元组口径 |
 
 **Q1–Q4 裁定**：
 

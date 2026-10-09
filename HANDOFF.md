@@ -8,8 +8,12 @@
 - **M6-2B 分片边界（Gate 冻结，逐片 CODE GO，不一次授权）**：D1 集成契约设计（docs-only）→ D2 Source-to-Candidate Adapter（service 层无表层）→ D3 Human Review & Conflict Control（收窄 Phase-1 表层令牌）→ D4 Governed Apply & Replay（schema v17 两表 + 编译器扩展 relationship_addition + M10 sealed apply + replay + 补偿撤销）→ D5 真实图纸资格化 + closeout。
 - **D1 状态**：首报（`f98cfcb`，CI 37879507180 四绿）→ Gate 裁 **CHANGES REQUIRED（D87-1~5）+
   Q1–Q4 已裁**（Q1 两表原则批准 DDL 随 D4 冻结；Q2 令牌逐分片收窄 APPROVED；Q3 D2 仅
-  deterministic producer APPROVED；Q4 资格化首选=Owner 授权真实 DXF）→ 签 **DESIGN FINAL FIX GO**，
-  限 #87 原四文件修复。
+  deterministic producer APPROVED；Q4 资格化首选=Owner 授权真实 DXF）→ 修复后二轮复核
+  **D87-3/4/5 CLOSED，D87-1/2 CORE ACCEPTED + 措辞修正 F1/F2**（F1：source 不可变是约定非系统
+  强制，review/apply 前重验 source 存在性+revision+hash，漂移拒写不静默更新；F2：§3 权限分级
+  残留 reviewer=token 旧口径改四元组），签 CONTRACT CONSISTENCY FINAL FIX GO（限原四文件）。
+  通过后 Gate 将直接签 #87 MERGE GO + D1 CLOSED + **D2 CODE GO**（D2 既定范围：deterministic
+  producer + Source-to-Candidate Adapter + `m6reg_` 登记 + service 层测试；不开表层/review/apply/v17）。
 - **D87 修复落实**：①source/target 双身份冻结（staleness 只钉 source，target 前进靠 baseline
   digest+CAS 重算，同源十候选顺序应用不失效，负例 N13）②人工身份四要素（authentication/
   attribution/decision evidence/identity assurance，shared token 只证明服务凭据，reviewer 声明制

@@ -1,0 +1,75 @@
+{
+  "milestone": "M6-2B-D2 source-to-candidate adapter (post-D88 hardening)",
+  "measured_path": "M6SourceAdapter.ingest (verify pinned source + derive + one atomic filing batch)",
+  "budget_reference": "design baseline reports/m6-phase2b-design.md §8.1 proposal: region derivation + deterministic extraction <= 5s on a ~10k-element import, local median-of-5",
+  "catalogue_fingerprint": "a5a9fe6a93816012c38969b4b114e5365b108ab4dc5431e6e855cae73dee2954",
+  "scenarios": {
+    "2.6k_elements": {
+      "runs": 5,
+      "ingest_ms_samples": [
+        308.26,
+        369.12,
+        347.37,
+        375.83,
+        313.76
+      ],
+      "ingest_ms_median": 347.37,
+      "derive_only_ms_samples": [
+        96.93,
+        144.8,
+        144.37,
+        130.16,
+        137.57
+      ],
+      "derive_only_ms_median": 137.57,
+      "elements": 2580,
+      "clusters": 360,
+      "candidates": 1080,
+      "counts_by_type": {
+        "unresolved": 90,
+        "equipment_tag": 360,
+        "annotation_role": 360,
+        "symbol_class": 270
+      },
+      "import_ms_last_run": 336.74,
+      "extraction_digest": "59eb033e8bfd46ad163e21a39932637f7f84e2d5da509b91a8508368c7e37800"
+    },
+    "10k_elements": {
+      "runs": 5,
+      "ingest_ms_samples": [
+        1897.49,
+        2627.37,
+        1965.67,
+        1995.06,
+        2046.18
+      ],
+      "ingest_ms_median": 1995.06,
+      "derive_only_ms_samples": [
+        1190.31,
+        1338.16,
+        1123.77,
+        1238.87,
+        1125.58
+      ],
+      "derive_only_ms_median": 1190.31,
+      "elements": 10140,
+      "clusters": 1440,
+      "candidates": 4320,
+      "counts_by_type": {
+        "unresolved": 360,
+        "equipment_tag": 1440,
+        "annotation_role": 1440,
+        "symbol_class": 1080
+      },
+      "import_ms_last_run": 3968.1,
+      "extraction_digest": "9081e94b08506bdc85ed1eea67c1c9dd365cb28ebafd79fa80d88d30a348433b"
+    }
+  },
+  "environment": {
+    "python": "3.12.13",
+    "platform": "macOS-26.6.1-arm64-arm-64bit",
+    "machine": "arm64",
+    "processor_count": 18,
+    "note": "local development machine, SQLite on a temp directory, synthetic DXF. Per the M13 evidence-method ruling these numbers are a baseline, not a CI ceiling: runner noise there exceeds +/-40%, so cross-workflow comparison is meaningless. All samples are reported; nothing is extrapolated between the two scales."
+  }
+}

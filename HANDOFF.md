@@ -2,30 +2,23 @@
 
 > 交接文档：每次开新会话先读本文件。更新规则见 `AGENTS.md`「HANDOFF 交接规则」。
 
-## 当前状态（2026-10-09 —— **M6 恢复建设（Gate 方向裁定：不新建 M14）；M6-2B-D1 经 Gate 一轮 CHANGES REQUIRED（D87-1~5）修复完毕，复报等 Design PASS**）
+## 当前状态（2026-10-09 —— **M6-2B-D2 已实现 + Gate D88 FINAL HARDENING FIX GO 三项必修全部落实（分支 `m6-2b-d2`，首提交 `7e13f1b` 已在 PR #88）；全量后端 1881 passed + ruff 全净；10k 实测达标；不 push、不建 PR，等 Gate 处置**）
 
-- **Gate 方向裁定（2026-10-09，conv `6abd7e9f`）**：路线**未偏离初心**，但存在「治理/平台能力先于真实工程输入与交付成熟」的结构性失衡；不横向扩平台（不开第三域），下一阶段 = **M6 Governed Semantic Ingestion 恢复建设**（补「真实旧 P&ID → 受治理语义工程模型」纵向能力）。M6 完成标志八条冻结（原文誊入 `reports/m6-phase2b-design.md` §1）。
-- **M6-2B 分片边界（Gate 冻结，逐片 CODE GO，不一次授权）**：D1 集成契约设计（docs-only）→ D2 Source-to-Candidate Adapter（service 层无表层）→ D3 Human Review & Conflict Control（收窄 Phase-1 表层令牌）→ D4 Governed Apply & Replay（schema v17 两表 + 编译器扩展 relationship_addition + M10 sealed apply + replay + 补偿撤销）→ D5 真实图纸资格化 + closeout。
-- **D1 状态**：首报（`f98cfcb`，CI 37879507180 四绿）→ Gate 裁 **CHANGES REQUIRED（D87-1~5）+
-  Q1–Q4 已裁**（Q1 两表原则批准 DDL 随 D4 冻结；Q2 令牌逐分片收窄 APPROVED；Q3 D2 仅
-  deterministic producer APPROVED；Q4 资格化首选=Owner 授权真实 DXF）→ 修复后二轮复核
-  **D87-3/4/5 CLOSED，D87-1/2 CORE ACCEPTED + 措辞修正 F1/F2**（F1：source 不可变是约定非系统
-  强制，review/apply 前重验 source 存在性+revision+hash，漂移拒写不静默更新；F2：§3 权限分级
-  残留 reviewer=token 旧口径改四元组），签 CONTRACT CONSISTENCY FINAL FIX GO（限原四文件）。
-  通过后 Gate 将直接签 #87 MERGE GO + D1 CLOSED + **D2 CODE GO**（D2 既定范围：deterministic
-  producer + Source-to-Candidate Adapter + `m6reg_` 登记 + service 层测试；不开表层/review/apply/v17）。
-- **D87 修复落实**：①source/target 双身份冻结（staleness 只钉 source，target 前进靠 baseline
-  digest+CAS 重算，同源十候选顺序应用不失效，负例 N13）②人工身份四要素（authentication/
-  attribution/decision evidence/identity assurance，shared token 只证明服务凭据，reviewer 声明制
-  标 `declared`）③v17 DDL 闭合（apply_records=受 CAS 约束生命周期账本非纯 append-only；L1–L4
-  不变量：同事务身份链交叉校验/两条迁移边/账本与工程提交同事务/补偿撤销）④architecture.md
-  过度概括改准（M6 P&ID 写复用 apply-v2；全平台写入受各自已批准 executor 约束）⑤`m6reg_`
-  随 D2 登记、`m6apply_` 随 D4。
-- **治理口径**：WS3B / M9 Closeout / M10 FINAL ACCEPTANCE 维持 Owner 挂起（M10 TC、M11、M12、M13 不重开）；DEPLOY 未授权；真实样本/独立标注未到位前 **M6 Final Acceptance 不得宣称**；不直接 push main（代码经 Gate exact-head MERGE GO + PR squash；docs 记账例外）。
-- **下一动作**：D1 PR → 报 Gate → Design PASS 后等 D2 CODE GO。
+- **Gate 方向裁定（2026-10-09，conv `6abd7e9f`）**：路线**未偏离初心**，但存在「治理/平台能力先于真实工程输入与交付成熟」的结构性失衡；不横向扩平台（不开第三域），下一阶段 = **M6 Governed Semantic Ingestion 恢复建设**。M6 完成标志八条冻结（原文誊入 `reports/m6-phase2b-design.md` §1）。
+- **M6-2B 分片边界（Gate 冻结，逐片 CODE GO，不一次授权）**：D1 集成契约设计（docs-only，#87 已合）→ **D2 Source-to-Candidate Adapter（本片，D88 硬化已落实）** → D3 Human Review & Conflict Control（收窄 Phase-1 表层令牌）→ D4 Governed Apply & Replay（schema v17 两表 + 编译器扩展 + M10 sealed apply + replay + 补偿撤销）→ D5 真实图纸资格化 + closeout。
+- **D88-1（钉住身份不重用）**：`ingest(artifact, target_document_id=…)` 改为接收 `pin_source` 产物，入口先 `verify_source`（存在性+revision+content hash），漂移即拒绝零写，绝不按当前文档状态重钉；`derive_candidates` 同样校验 content hash。walkthrough/测试已同步新签名。
+- **D88-2（登记原子性）**：store 新增 `file_semantic_candidates`（只增不改；`_insert_semantic_candidate` 按 `_insert_review_decision` 先例提取 connection 级助手）：同一 `BEGIN IMMEDIATE` 内含事务内最终 source 验证 + 候选身份预校验（同 id 同内容幂等跳过/异内容 fail-loud）+ 全部 candidate+filed decision 写入；中途失败整体回滚（触发器故障注入测试钉死：零新增行、源文档不动）。
+- **D88-3（双身份入口约束）**：`target_document_id=""` → `target_document_id_required`；target==source → `target_document_equals_source`，各零写；`SemanticCandidate.target_document_id` 默认 `""` 保 v7 旧 payload 读兼容（既有测试保持绿）。
+- **性能口径闭合**：`reports/m6-2b/perf-baseline.json` 现为双场景实测——2.6k 元素 ingest median 347ms（批量登记替代逐条写后从 1718ms 降下来）/ 10k 元素（10140 元素、1440 簇、4320 候选）ingest median 1995ms、纯推导 1190ms，均低于 §8.1「10k≤5s」预算提案；样本全列、不外推。
+- **D2 禁项守住了**：零 HTTP/MCP 表层（`PHASE_1_FORBIDDEN_SURFACE_TOKENS` 原样）、无 review UI、无 apply、无 v17 migration、无第二 writer、无自动批准；唯一 producer=deterministic_rule_engine；摄取对工程文档 revision/history/audit 零写。
+- **治理口径**：WS3B / M9 Closeout / M10 FINAL ACCEPTANCE 维持 Owner 挂起；DEPLOY 未授权；真实样本/独立标注未到位前 **M6 Final Acceptance 不得宣称**；不直接 push main。
+- **下一动作**：D88 硬化提交后报 Gate（等 D2 的 CI/Merge Gate 处置）；D3 未授权不动工。
 
 ## 近期轮次（2026-10-09：接管 → Gate 方向审视 → M6 恢复建设授权 → M6-2B-D1 设计交付）
 
+- **2026-10-09 D88 硬化轮（分支 `m6-2b-d2`，PR #88 复核后）**：Gate FINAL HARDENING FIX GO 三项必修落实——D88-1 ingest 改为接收 pin 产物并先 verify_source（漂移拒写零写，derive 同步校验 content hash）；D88-2 store 新增 `file_semantic_candidates` 批量原子登记（事务内最终 source 验证 + 身份预校验 + 全量写入，触发器故障注入证明中途失败零新增行）；D88-3 target 空/等于 source 各一个稳定拒绝码。另按 Gate 口径补 10k 实测（10140 元素 ingest median 1995ms）；附带把 tag 绑定从 O(tags×clusters) 改为网格索引、包含合并从定点循环改为单遍 ascending-area union-find（否则 10k 会撞二次方）。新增 8 条测试（stale pin/forge hash/derive 哈希校验/两个 target 拒绝/中途回滚/混合批次/事务内复验）。
+- **2026-10-09 D2 轮（分支 `m6-2b-d2`）**：实现 Source-to-Candidate Adapter——`m6_region.py`（区域身份 = 契约声明前缀 + sha256(artifact, 钉住 revision, 三类 selector canonical 内容)，full 64 hex，revision 变更新身份）+ `m6_source_adapter.py`（source 核验三态稳定拒绝码零写；block 实例聚簇 = 同块名接触连通（0.25 容差）+ 包含合并（浮动部件）；tag 全文本正则 + 就近绑定，等距/多读法一律 unresolved 拒识；目录 key/name/aliases 精确匹配，无命中=`out_of_catalog`；登记走既有 `file_candidate`，幂等重摄取，同 id 异内容 fail-loud）；`SemanticCandidate.target_document_id` 默认 "" 保 v7 读兼容；契约 `PERSISTENT_IDENTITIES` 登记 region_id + 任务书 §16b 3c 同步；27 条新测试 + walkthrough（`reports/m6-2b/d2-walkthrough.txt`）+ perf 基线（`reports/m6-2b/perf-baseline.json`，2580 元素摄取 median ~1.7s，远低于 §8.1 的 10k@5s 预算提案）。
+- **2026-10-09 D1 轮（接管 → 方向审视 → M6 恢复授权 → D1 设计三件套，已随 #87 合并）**：
 - **做了什么**：接管核对（main=`8331de1`、CI run 37255834517 四绿、open PR=0、Gate 尾部=M13 封账确认，无遗留指示）；按 Owner 指令请 Gate 方向审视+下一阶段指示；Gate 裁定后完成 D1 设计三件套。
 - **关键结论**：下一阶段=M6 恢复建设；D1 全程 docs-only（零代码/零迁移/零新表层）；schema v17 两表（`m6_structured_patches`/`m6_apply_records`）为 proposal 待 Design Gate；真实样本与独立标注 = 外部依赖（Owner）。
 - **Gate 通道**：会话 `6abd7e9f` 模型默认成了 GPT-5.6 Sol——bsk click/键盘切换 menuitemradio 均无效，**evaluate JS 直接点击 DOM 元素生效**；之后闸门脚本 PASS（chat(implicit)/GPT-6/高）。

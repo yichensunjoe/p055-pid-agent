@@ -256,21 +256,38 @@ def test_every_declared_identity_is_used_by_the_core_through_the_declaration() -
     """A declaration nobody reads is documentation; the point is that the core reads it.
 
     The implementation may not spell an identity prefix as a literal: if it does, the contract
-    can be edited without changing behaviour, and the doc binding above becomes theatre.
+    can be edited without changing behaviour, and the doc binding above becomes theatre. The
+    guard covers every module that *mints* a declared identity: the candidate core (patches,
+    decisions, conflicts, findings, generated elements) and the D2 region/adapter modules
+    (region ids).
     """
 
-    core_source = (Path(__file__).resolve().parents[1] / "agentcad" / "m6_candidate_core.py").read_text(
-        encoding="utf-8"
-    )
+    agentcad = Path(__file__).resolve().parents[1] / "agentcad"
+    minting_sources = [
+        (agentcad / "m6_candidate_core.py").read_text(encoding="utf-8"),
+        (agentcad / "m6_region.py").read_text(encoding="utf-8"),
+        (agentcad / "m6_source_adapter.py").read_text(encoding="utf-8"),
+    ]
     for item in contract.PERSISTENT_IDENTITIES:
         # Bare substring, not a quoted-string match: the tempting literal is an f-string such as
         # ``f"m6patch_{digest}"``, where the prefix is followed by ``{`` rather than by a closing
         # quote. Asserting on the quoted form would pass on exactly the code this is meant to
         # catch -- a guard that cannot fail is worse than no guard, because it reads as covered.
-        assert item.prefix not in core_source, (
-            f"the core mentions the identity prefix {item.prefix!r}; it must get it from "
-            "identity_prefix() so the declaration is the only place the format lives"
-        )
+        for source in minting_sources:
+            assert item.prefix not in source, (
+                f"the implementation mentions the identity prefix {item.prefix!r}; it must get "
+                "it from identity_prefix() so the declaration is the only place the format lives"
+            )
+
+
+def test_the_region_identity_is_registered_for_d2() -> None:
+    """Gate D87-5: the region identity format is registered with D2, not deferred to D4."""
+
+    declared = {item.field: item for item in contract.PERSISTENT_IDENTITIES}
+    region = declared["region_id"]
+    assert region.prefix == "m6reg_"
+    assert region.digest_hex == contract.IDENTITY_FULL_DIGEST_HEX
+    assert contract.identity_prefix("region_id") == "m6reg_"
 
 
 # --------------------------------------------------------------------------------------

@@ -1,5 +1,34 @@
 # REUSE_AND_PITFALL_LOG — P055-PID-Agent
 
+## 2026-10-09 · M6-2B-D2 D88 硬化：钉住身份不可重用、批量登记事务、store 的 import 环（P055-PID-Agent）
+
+**场景**：Gate 复核 D2（PR #88）回 FINAL HARDENING FIX GO：①ingest 曾用 `_read_source` 重读文档并现场重建 source identity——等于静默重钉，钉住的 artifact 漂移时照样登记；②逐条 `file_candidate` 登记中途失败留半套治理记录；③target 双身份入口无约束。
+
+**结论做法**：
+1. **钉住身份只认调用方交付的 pin**：`ingest(artifact, …)` 接收 `pin_source` 产物，入口先 `verify_source`（存在性+revision+content hash），store 批量事务内再做最终复验（`BEGIN IMMEDIATE` 下重读 documents 行重算 hash，关住 verify→write 的 TOCTOU 窗口）；漂移=稳定码拒绝+零写。纯函数 `derive_candidates` 也校验 content hash，不给「绕过入口直接推导」留缝。
+2. **批量原子登记的写法**：store 只增不改——按 `_insert_review_decision` 先例提取 `_insert_semantic_candidate(connection, …)`，新方法 `file_semantic_candidates(entries, …)` 一个事务内完成 验证+预校验（同 id 同内容幂等跳过/异内容冲突）+全量写入。故障注入用真 SQLite 触发器（`BEFORE INSERT … RAISE(FAIL)`）而非 mock，断言零新增行。
+3. **store 不能模块级 import engineering_ir**：链 store→engineering_ir→flow_topology→diagram_quality→annotation_layout→service→store 成环。按同文件 `_new_audit_record_id` 的先例在方法内延迟 import 并注释原因，hash 口径仍单点。
+4. **10k 规模暴露两处二次方**：tag→簇绑定 O(tags×clusters) 改网格索引（`_GRID_CELL` 分桶+精确距离终判，结果与朴素扫描全等）；包含合并从「合并即重启」定点循环改单遍 ascending-area union-find（容器面积≥被含者，链式包含一遍完成）。附带收益：批量登记使 2.6k 摄取从 1718ms→347ms。
+
+**踩坑点**：`model_copy(update=…)` 不做校验，适合在测试里造「同 id 异内容」的篡改行；比较候选幂等性必须剥离 volatile 键（`candidate_comparison_payload`，单一来源在 m6_candidate_models）。
+
+**适用场景**：后续 D3/D4 的治理面批量写；任何「pin-then-verify-then-write」的证据链；store 层加功能时的 import 方向自检。
+
+## 2026-10-09 · M6-2B-D2：cad_handle 是块定义的、符号实例聚簇要接触+包含两相、content-hash 口径（P055-PID-Agent）
+
+**场景**：实现 source→candidate 适配器（导入文档 → 区域聚簇 → 确定性候选），依赖 CAD 导入产物上的 `cad_block`/`cad_handle` 出处键做「同一符号实例」分组。
+
+**结论做法**：
+1. **`cad_handle` 属于块定义实体，不是 INSERT 实例**（`cad_dxf.py` `_insert` 展开时 handle 取自块定义内的实体记录）——同一块名的多个实例 handle 完全相同。实例级聚簇只能按「同块名 + 空间连通」恢复：先按块名分组，再扫描线 union-find（bbox 接触，容差 0.25 文档单位）。
+2. **符号内部件可以互不相触**（电机圆浮在方框壳内）：纯接触连通会把一个实例劈成两个簇。补第二相「包含合并」——同块名组若整体落入另一组 bbox 则并入（定点循环，组序钉死保确定性）。该近似已声明（L 形轮廓的 bbox 包含≠包围），只并同块名，绝不跨块并。
+3. **`document_content_hash` 明确排除 name/style/时间戳**——写「同 revision 内容漂移」测试时改 `name` 不算漂移，必须改元素级内容才触发 `source_content_drift`。
+4. **`SourceArtifactRef.imported_at` 是 volatile provenance**：跨调用比较 artifact 身份要排除时间戳（与 replay 排除 `decided_at` 同一教训）；确定性重放 digest 用 `_VOLATILE_KEYS` 剥离后比。
+5. **契约身份登记机制自检有效**：`PERSISTENT_IDENTITIES` 新增 `m6reg_` 后，任务书对拍测试立刻要求 `docs/m6-governed-semantic-ingestion.md` 引用 `m6reg_<64 hex>`，core 源码字面前缀禁令扩展到新身份的生产模块（`m6_region.py`/`m6_source_adapter.py`）——文档/契约/代码三方一致由测试强制。
+
+**踩坑点**：union-find 写在 for 循环内的闭包会触发 ruff B023（loop variable binding）——`root()` 提成模块级 `_find_root(parent, id)`；第一版 walkthrough 因此暴露的「6 簇≠4 簇」正是包含合并缺失，而不是扫描线本身的 bug（零宽竖边被提前逐出活跃窗口是对的——它们和圆在 x 上确实不相交）。
+
+**适用场景**：后续 D3/D4 对区域重定位/证据复核的任何开发；一切要从导入几何恢复「实例」语义的任务。
+
 ## 2026-10-05 · M13-D5/D86 收口：shared 人工批准链 + CI 性能噪声 + bsk 会话漂移（P055-PID-Agent）
 
 **场景**：M13-D5 Gate 回 HOLD 三项 final acceptance blocker，闭合过程中踩三个值得记录的坑。

@@ -627,6 +627,15 @@ PERSISTENT_IDENTITIES: tuple[PersistentIdentity, ...] = (
         digest_hex=IDENTITY_FULL_DIGEST_HEX,
         meaning="the identity of an element compiled into being, which becomes a live object id",
     ),
+    PersistentIdentity(
+        field="region_id",
+        prefix="m6reg_",
+        digest_hex=IDENTITY_FULL_DIGEST_HEX,
+        meaning=(
+            "the identity of a source evidence region, derived from the artifact, the pinned "
+            "source revision and the canonical content of its selectors"
+        ),
+    ),
 )
 
 #: Prefix lookup for the core, so the implementation spelling and the declaration cannot differ.

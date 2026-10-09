@@ -36,6 +36,7 @@ from .agent_semantic_models import SemanticOperation
 from .m6_ingestion_contract import (
     CONFIDENCE_MEANING,
     M6_CONTRACT_VERSION,
+    REPLAY_VOLATILE_FIELDS_EXCLUDED,
 )
 from .models import StrictModel, utc_now
 
@@ -287,6 +288,13 @@ class SemanticCandidate(StrictModel):
     candidate_id: str = Field(min_length=1)
     artifact: SourceArtifactRef
     region: SourceRegion
+    #: The engineering document this proposal would land in *if* a person later confirms it.
+    #: Phase-2B keeps two document identities apart (Gate D87-1): the source is pinned,
+    #: immutable evidence; the target is the engineering document that may legitimately move.
+    #: A candidate never pins a target revision — that check is the baseline digest + CAS at
+    #: apply time. Optional with a ``""`` default so a v7 payload written before this field
+    #: existed still reads back unchanged.
+    target_document_id: str = ""
     candidate_type: FactKind
     proposed_semantics: ProposedSemantics
     confidence: Confidence
@@ -478,3 +486,32 @@ def candidate_document(candidate: SemanticCandidate) -> dict[str, Any]:
     """The candidate as a plain document, with provenance timestamps kept out of any digest."""
 
     return candidate.model_dump(mode="json", by_alias=True)
+
+
+#: Payload keys that may differ between two runs that agree on the semantics: the contract's
+#: replay exclusions plus the birth timestamps the models stamp. The set lives here exactly
+#: once — the replay digest and the store's idempotent re-filing comparison both read it, so
+#: the two can never drift into disagreeing about what "same candidate" means.
+VOLATILE_PAYLOAD_KEYS = frozenset(
+    {*REPLAY_VOLATILE_FIELDS_EXCLUDED, "created_at", "decided_at", "confirmed_at", "imported_at"}
+)
+
+
+def strip_volatile_keys(value: Any) -> Any:
+    """Remove volatile bookkeeping keys from a payload, rebuilding instead of mutating."""
+
+    if isinstance(value, dict):
+        return {
+            key: strip_volatile_keys(item)
+            for key, item in value.items()
+            if key not in VOLATILE_PAYLOAD_KEYS
+        }
+    if isinstance(value, list):
+        return [strip_volatile_keys(item) for item in value]
+    return value
+
+
+def candidate_comparison_payload(candidate: SemanticCandidate) -> dict[str, Any]:
+    """The candidate minus bookkeeping: the identity an idempotent re-filing compares by."""
+
+    return strip_volatile_keys(candidate_document(candidate))

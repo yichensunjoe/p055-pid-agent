@@ -1,5 +1,19 @@
 # REUSE_AND_PITFALL_LOG — P055-PID-Agent
 
+> 按问题关键词检索，不默认通读、非每轮必写、不双写。只记录会复发且已有验证结论的问题，优先固化为测试或代码；跨项目共享仅写短摘要和来源链接。历史条目与“待同步”字样为当时记录，不产生当前同步义务。
+
+## 2026-10-11 · M6-2B-D4 补测：对称路径的错误翻译要成对核对；N9/N13 冻结负例补齐（P055-PID-Agent）
+
+**场景**：接续被中断的 M6-2B-D4 工作时按冻结清单补两条负例——N9（补偿撤销事务 CAS/提交失败）与 N13（同一 source 十条候选编译在前、顺序应用）。写 N9 的故障注入测试时发现真缺陷：`apply_authorized` 会把原子提交里的 `sqlite3.Error` 翻译成稳定拒绝码 `apply_commit_failed`（409），而对称的 `revert_authorized` 只有裸 `except Exception`——触发器故障沿 revert 路径以原始 `IntegrityError` 直达 HTTP 层变成 500，既无稳定码也不进 closeout 映射。
+
+**结论做法**：
+1. **成对路径的错误翻译必须成对核对**：apply/revert、stage/apply、confirm/reject 这类「同一纪律的两条腿」，给一条加故障注入测试时另一条必须同样有；审查 diff 时把 `except` 子句列表并排比对，比看业务逻辑更容易抓不对称。
+2. **N9 的写法**：`BEFORE UPDATE ON m6_apply_records ... RAISE(FAIL)` 触发器让补偿事务在 CAS 步失败——断言原记录保持 `applied`、无补偿行、文档 revision 不动、恰好一条 `m6.apply.rejected` 审计，删触发器后同一 revert 可重试成功。
+3. **N13 的写法**：十候选先全部 compile（绑定同一 baseline revision），再顺序 apply——证明 apply 的语义基线重算针对 target **当前态**（digest 比对在比较键上），而不是钉死编译时的 revision 号；十条全落、账本十行。
+4. 修复即测试：`revert_commit_failed`/409 对称映射进 `m6_apply_runtime.py`，N9 测试先红后绿。
+
+**适用场景**：一切带补偿/撤销的事务面；多阶段 governance flow 的故障注入设计；评审「主路径有翻译、次要路径裸奔」类不对称。
+
 ## 2026-10-09 · M6-2B-D2 D88 硬化：钉住身份不可重用、批量登记事务、store 的 import 环（P055-PID-Agent）
 
 **场景**：Gate 复核 D2（PR #88）回 FINAL HARDENING FIX GO：①ingest 曾用 `_read_source` 重读文档并现场重建 source identity——等于静默重钉，钉住的 artifact 漂移时照样登记；②逐条 `file_candidate` 登记中途失败留半套治理记录；③target 双身份入口无约束。

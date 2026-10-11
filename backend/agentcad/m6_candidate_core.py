@@ -59,6 +59,8 @@ from .m6_ingestion_contract import (
 )
 from .models import (
     AddElementOperation,
+    ConnectorElement,
+    ConnectorEndpoint,
     Document,
     Point,
     SymbolElement,
@@ -231,7 +233,12 @@ def resolve_identity(graph: EngineeringGraph, identity: str):
         return None
     if needle.startswith("element:"):
         return graph.object(needle.split(":", 1)[1])
-    return graph.object(needle) or graph.object(needle.split(":", 1)[1])
+    found = graph.object(needle)
+    if found is None and ":" in needle:
+        # Only a colon-qualified spelling has a suffix to fall back to; a plain unknown tag is
+        # simply unresolved (it used to raise IndexError here).
+        found = graph.object(needle.split(":", 1)[1])
+    return found
 
 
 def semantic_value(
@@ -861,11 +868,11 @@ class M6CandidateService:
                 code="unresolved_carries_no_fact",
             )
         if finding.candidate_type == "connection_relationship":
-            raise CompilationRefused(
-                "relationship addition is not compiled in Phase-2A: the dry-run and port checks that "
-                "make a new connection reviewable arrive with the apply phase",
-                code="relationship_addition_not_compiled_in_phase_2a",
-            )
+            return "relationship_addition", [
+                self._relationship_operation(
+                    finding, facts, document=document, graph=graph, registry=registry
+                )
+            ]
 
         target = resolve_identity(graph, facts.target_identity) if facts.target_identity else None
 
@@ -942,6 +949,102 @@ class M6CandidateService:
             )
         )
 
+    def _relationship_operation(
+        self,
+        finding: ConfirmedSemanticFinding,
+        facts: ProposedSemantics,
+        *,
+        document: Document,
+        graph: EngineeringGraph,
+        registry: SymbolRegistry,
+    ) -> SemanticOperation:
+        """M6-2B-D4: compile one confirmed ``A -> B`` fact into a connector creation.
+
+        The endpoints carry only (element, port): the coordinates are recomputed from the
+        symbol catalogue at compile time and *again* at apply time by the staged write's
+        orthogonal normalization — extracted coordinates from the source drawing are never
+        trusted. Port selection never guesses (the M7-Q2 receipt discipline): each side
+        compiles only when exactly one process port matches its flow role; zero or several
+        is a refusal, not a pick.
+        """
+
+        source_element, source_port, source_point = self._relationship_endpoint(
+            document, graph, registry, facts.relationship_source, role="source"
+        )
+        target_element, target_port, target_point = self._relationship_endpoint(
+            document, graph, registry, facts.relationship_target, role="target"
+        )
+        connector_id = identity_prefix("generated_element_id") + canonical_digest(
+            {
+                "finding": finding.finding_id,
+                "relationship": [facts.relationship_source, facts.relationship_target],
+            }
+        )
+        return AddElementOperation(
+            element=ConnectorElement(
+                id=connector_id,
+                points=[source_point, target_point],
+                source=ConnectorEndpoint(
+                    element_id=source_element.id,
+                    port_id=source_port.id,
+                    point=source_point,
+                ),
+                target=ConnectorEndpoint(
+                    element_id=target_element.id,
+                    port_id=target_port.id,
+                    point=target_point,
+                ),
+                routing="orthogonal",
+            )
+        )
+
+    def _relationship_endpoint(
+        self,
+        document: Document,
+        graph: EngineeringGraph,
+        registry: SymbolRegistry,
+        tag: str,
+        *,
+        role: str,
+    ):
+        """Resolve one relationship endpoint to (symbol element, its unique process port)."""
+
+        record = resolve_identity(graph, tag.strip())
+        if record is None:
+            raise CompilationRefused(
+                f"relationship endpoint {tag!r} is not in the committed engineering model",
+                code="relationship_endpoint_not_resolved",
+            )
+        element = _find_element(document, record.primary_element_id)
+        if element is None or element.type != "symbol":
+            raise CompilationRefused(
+                f"relationship endpoint {tag!r} does not resolve to a symbol element",
+                code="relationship_endpoint_not_resolved",
+            )
+        try:
+            definition = registry.get(element.symbol_key)
+        except KeyError:
+            raise CompilationRefused(
+                f"endpoint {tag!r} uses symbol {element.symbol_key!r}, which is not in the "
+                "symbol catalogue",
+                code="out_of_catalogue",
+            ) from None
+        wanted = ("out", "bidirectional") if role == "source" else ("in", "bidirectional")
+        ports = [
+            port
+            for port in definition.ports
+            if port.direction in wanted and port.medium == "process"
+        ]
+        if len(ports) != 1:
+            raise CompilationRefused(
+                f"endpoint {tag!r} has {len(ports)} {role} process ports; choosing one would "
+                "be a guess — the connection needs a human-stated port",
+                code="ambiguous_port_selection",
+            )
+        from .drafting_geometry import symbol_port_point
+
+        return element, ports[0], symbol_port_point(element, ports[0], definition)
+
     # -- the boundary Phase-2A must not cross ------------------------------------------
 
     def request_apply(self, patch_id: str) -> None:
@@ -991,6 +1094,26 @@ def _facts_payload(facts: ProposedSemantics) -> dict[str, Any]:
         "relationship": [facts.relationship_source, facts.relationship_target],
         "unresolved_reason": facts.unresolved_reason,
     }
+
+
+def finding_facts_payload(finding: ConfirmedSemanticFinding) -> dict[str, Any]:
+    """The digest-input projection of a finding's confirmed facts.
+
+    Shared by the compiler and by the apply-time recomputation that proves a stored patch
+    row still re-derives to its identity (D87-3 L1): one projection, spelled once.
+    """
+
+    return _facts_payload(finding.confirmed_semantics)
+
+
+def patch_operations_payload(patch: StructuredEngineeringPatch) -> list[dict[str, Any]]:
+    """The operations as the canonical digest sees them (volatile-free).
+
+    The same projection feeds the patch digest and the persisted ``operations_json``, so a
+    stored patch row always re-derives to its own identity.
+    """
+
+    return [_strip_volatile(op.model_dump(mode="json")) for op in patch.operations]
 
 
 def _symbol_definition(registry: SymbolRegistry, key: str):
@@ -1123,6 +1246,8 @@ __all__ = [
     "canonical_digest",
     "canonicalize_semantic_value",
     "filing_decision",
+    "finding_facts_payload",
+    "patch_operations_payload",
     "resolve_identity",
     "review_decision_id",
     "review_decision_payload",

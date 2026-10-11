@@ -75,6 +75,13 @@ AuditEventType = Literal[
     # recorded review decision (confirm/reject/recheck/reassign/resolve); it never
     # moves an engineering revision or digest, and never appears as one.
     "m6.review.decision",
+    # M6-2B-D4: a compiled structured patch is a durable, append-only fact; recompiling
+    # the same finding audits nothing.
+    "m6.patch.compiled",
+    # M6-2B-D4: governed apply. The success audit of an apply/revert is the
+    # "revision.created" record the document write produces; a refused apply closes out
+    # with exactly one of these (M13's change-set discipline).
+    "m6.apply.rejected",
 ]
 
 AuditStatus = Literal["applied", "rejected", "failed"]

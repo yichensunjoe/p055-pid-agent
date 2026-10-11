@@ -24,6 +24,7 @@ from .m6_candidate_models import (
     ConfirmedSemanticFinding,
     ReviewDecision,
     SemanticCandidate,
+    SourceArtifactRef,
     candidate_comparison_payload,
 )
 from .m6_ingestion_contract import CANDIDATE_TRANSITIONS
@@ -32,6 +33,7 @@ from .m7_synthesis_models import PROPOSAL_EVIDENCE_TABLE, SynthesisProposalEvide
 from .models import Document, DocumentSummary, HistoryEntry
 from .project_io import ProjectSettings
 from .review_models import ReviewState
+from .symbols import SymbolRegistry
 
 
 def _new_audit_record_id() -> str:
@@ -2644,18 +2646,17 @@ class SQLiteDocumentStore:
         filing_decision: ReviewDecision,
         supersede_decision: ReviewDecision,
         audit: AuditRecordDraft,
-        source_document_id: str,
-        expected_source_revision: int,
-        expected_source_content_hash: str,
     ) -> str:
         """A reassignment's three rows and its audit fact, atomically (M6-2B-D3).
 
         Reassigning a binding never edits the old candidate: the corrected candidate is
         filed, and the old one is marked superseded by it. Four writes — the new candidate,
         its filing event, the supersede decision on the old candidate, and the audit fact —
-        commit in one transaction, preceded by the same final source verification the
-        filing batch performs. Any failure leaves both candidates exactly as they were.
-        Returns the audit record id.
+        commit in one transaction. The source identity is derived from the *stored* old
+        candidate (never from caller-supplied parameters — D89 review item): the new
+        candidate's pinned artifact must agree with the old candidate's, and the source is
+        re-verified against the documents table on the write connection. Any failure leaves
+        both candidates exactly as they were. Returns the audit record id.
         """
 
         if filing_decision.candidate_id != candidate.candidate_id:
@@ -2667,11 +2668,36 @@ class SQLiteDocumentStore:
         with self._lock, self._connect() as connection:
             try:
                 connection.execute("BEGIN IMMEDIATE")
+                old_row = connection.execute(
+                    "SELECT payload_json FROM semantic_candidates WHERE candidate_id = ?",
+                    (supersede_decision.candidate_id,),
+                ).fetchone()
+                if old_row is None:
+                    raise M6FilingError(
+                        "candidate_not_found",
+                        f"supersede references unknown candidate "
+                        f"{supersede_decision.candidate_id!r}",
+                    )
+                old_artifact = SemanticCandidate.model_validate_json(
+                    old_row["payload_json"]
+                ).artifact
+                # The corrected candidate must name the *same* pinned evidence chain —
+                # a reassignment re-anchors a reading, it never moves the evidence.
+                if (
+                    candidate.artifact.source_document_id != old_artifact.source_document_id
+                    or candidate.artifact.source_revision != old_artifact.source_revision
+                    or candidate.artifact.content_hash != old_artifact.content_hash
+                ):
+                    raise M6FilingError(
+                        "apply_identity_chain_mismatch",
+                        "the corrected candidate's source identity disagrees with the "
+                        "superseded candidate's",
+                    )
                 self._verify_m6_source_on_write_connection(
                     connection,
-                    source_document_id=source_document_id,
-                    expected_source_revision=expected_source_revision,
-                    expected_source_content_hash=expected_source_content_hash,
+                    source_document_id=old_artifact.source_document_id,
+                    expected_source_revision=old_artifact.source_revision,
+                    expected_source_content_hash=old_artifact.content_hash,
                 )
                 # The new candidate's filing leaves "proposed"; the supersede CASes the old
                 # candidate's log (a concurrent decision on it refuses the whole reassign).
@@ -2834,6 +2860,670 @@ class SQLiteDocumentStore:
         with self._lock, self._connect() as connection:
             rows = connection.execute(query, params).fetchall()
         return [ConfirmedSemanticFinding.model_validate_json(row["payload_json"]) for row in rows]
+
+    # ----------------------------------------------------------------------------------
+    # M6-2B-D4: patch persistence + the governed apply ledger (schema v17).
+    #
+    # m6_structured_patches is truly append-only: a patch's content IS its identity, so a
+    # second insert of the same id is idempotent only when the content is byte-identical;
+    # same id with different content is a contradiction and fails closed. There is no update
+    # or delete method.
+    #
+    # m6_apply_records is the CAS-constrained lifecycle ledger (D87-3): the only legal
+    # transitions are applied->reverted (the compensation revert, inside commit_m6_revert)
+    # and applied->superseded; both carry the original status as the CAS guard, and no
+    # other write path exists.
+    # ----------------------------------------------------------------------------------
+
+    def insert_structured_patch(
+        self,
+        *,
+        patch_id: str,
+        finding_ids: list[str],
+        intent: str,
+        policy_disposition: str,
+        operations_json: str,
+        compiler_name: str,
+        compiler_version: str,
+        compiler_rules: str,
+        baseline_revision: int,
+        canonical_digest: str,
+        source_document_id: str,
+        target_document_id: str,
+        audit: AuditRecordDraft | None = None,
+    ) -> bool:
+        """Persist one compiled patch. Append-only: identical re-insert is a no-op proof.
+
+        Returns True when the row was created, False when an identical row already existed
+        (compilation is idempotent, so re-compiling a finding is not a new fact). When
+        ``audit`` is given it commits in the same transaction as the new row.
+        """
+
+        with self._lock, self._connect() as connection:
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                existing = connection.execute(
+                    "SELECT canonical_digest, operations_json, finding_ids_json, intent, "
+                    "baseline_revision, source_document_id, target_document_id "
+                    "FROM m6_structured_patches WHERE patch_id = ?",
+                    (patch_id,),
+                ).fetchone()
+                if existing is not None:
+                    identical = (
+                        str(existing["canonical_digest"]) == canonical_digest
+                        and str(existing["operations_json"]) == operations_json
+                        and str(existing["finding_ids_json"]) == json.dumps(finding_ids)
+                        and str(existing["intent"]) == intent
+                        and int(existing["baseline_revision"]) == baseline_revision
+                        and str(existing["source_document_id"]) == source_document_id
+                        and str(existing["target_document_id"]) == target_document_id
+                    )
+                    if identical:
+                        connection.commit()
+                        return False
+                    raise M6FilingError(
+                        "patch_identity_conflict",
+                        f"patch {patch_id} exists with different content; a patch id is derived "
+                        "from its content, so this is a contradiction, not an update",
+                    )
+                connection.execute(
+                    """
+                    INSERT INTO m6_structured_patches (
+                        patch_id, finding_ids_json, intent, policy_disposition, operations_json,
+                        compiler_name, compiler_version, compiler_rules, baseline_revision,
+                        canonical_digest, source_document_id, target_document_id, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        patch_id,
+                        json.dumps(finding_ids),
+                        intent,
+                        policy_disposition,
+                        operations_json,
+                        compiler_name,
+                        compiler_version,
+                        compiler_rules,
+                        baseline_revision,
+                        canonical_digest,
+                        source_document_id,
+                        target_document_id,
+                        datetime.now(UTC).isoformat(),
+                    ),
+                )
+                if audit is not None:
+                    self._append_audit_record(connection, audit)
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+        return True
+
+    def get_structured_patch(self, patch_id: str) -> dict[str, Any] | None:
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM m6_structured_patches WHERE patch_id = ?", (patch_id,)
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def list_structured_patches(
+        self, *, target_document_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        query = "SELECT * FROM m6_structured_patches"
+        params: tuple[Any, ...] = ()
+        if target_document_id is not None:
+            query += " WHERE target_document_id = ?"
+            params = (target_document_id,)
+        query += " ORDER BY created_at ASC, patch_id ASC"
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(query, params).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_apply_record(self, apply_id: str) -> dict[str, Any] | None:
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM m6_apply_records WHERE apply_id = ?", (apply_id,)
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def list_apply_records(
+        self,
+        *,
+        target_document_id: str | None = None,
+        patch_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if target_document_id is not None:
+            clauses.append("target_document_id = ?")
+            params.append(target_document_id)
+        if patch_id is not None:
+            clauses.append("patch_id = ?")
+            params.append(patch_id)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                f"SELECT * FROM m6_apply_records {where} "
+                "ORDER BY applied_at ASC, apply_id ASC",
+                params,
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def _replay_m6_candidate_status(
+        self, connection: sqlite3.Connection, candidate_id: str
+    ) -> str:
+        """Replay one candidate's decision log on *this* connection to its current status.
+
+        Shared by the decision-log CAS (D89-2) and the apply-time identity cross-check
+        (D87-3 L1): the read happens on the write connection, so it sees the locked state.
+        """
+
+        candidate_row = connection.execute(
+            "SELECT review_status_at_creation FROM semantic_candidates WHERE candidate_id = ?",
+            (candidate_id,),
+        ).fetchone()
+        if candidate_row is None:
+            raise M6FilingError(
+                "candidate_not_found",
+                f"unknown candidate {candidate_id!r}",
+            )
+        status = str(candidate_row["review_status_at_creation"])
+        rows = connection.execute(
+            "SELECT payload_json FROM review_decisions WHERE candidate_id = ? "
+            "ORDER BY decided_at ASC, review_decision_id ASC",
+            (candidate_id,),
+        ).fetchall()
+        for row in rows:
+            logged = ReviewDecision.model_validate_json(row["payload_json"])
+            if logged.from_status != status:
+                raise M6FilingError(
+                    "decision_log_out_of_order",
+                    f"logged decision {logged.review_decision_id} claims to leave "
+                    f"{logged.from_status!r} but the log is at {status!r}",
+                )
+            if not any(
+                edge.from_state == status and edge.to_state == logged.to_status
+                for edge in CANDIDATE_TRANSITIONS
+            ):
+                raise M6FilingError(
+                    "decision_log_out_of_order",
+                    f"logged transition {status!r} -> {logged.to_status!r} is not declared",
+                )
+            status = logged.to_status
+        return status
+
+    def _cross_check_apply_identity(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        patch_id: str,
+        candidate_id: str,
+        target_document_id: str,
+    ) -> SourceArtifactRef:
+        """D87-3 L1: the identity chain an apply record claims, cross-checked on the write
+        connection — patch exists, digest re-derives to its id, every finding exists and
+        replays to confirmed, the candidate belongs to those findings, and the source/target
+        pair agrees on both sides. Any mismatch fails the whole transaction. Returns the
+        candidate's pinned artifact (the source identity is derived from the stored evidence,
+        never from caller-supplied parameters)."""
+
+        patch_row = connection.execute(
+            "SELECT * FROM m6_structured_patches WHERE patch_id = ?", (patch_id,)
+        ).fetchone()
+        if patch_row is None:
+            raise M6FilingError(
+                "patch_not_found", f"apply references unknown patch {patch_id!r}"
+            )
+        # L1②: the stored digest must re-derive to the patch id, and the id is the digest.
+        from .m6_candidate_core import canonical_digest
+        from .m6_ingestion_contract import identity_prefix
+
+        recomputed = identity_prefix("patch_id") + str(patch_row["canonical_digest"])
+        if recomputed != patch_id:
+            raise M6FilingError(
+                "apply_identity_chain_mismatch",
+                f"patch row {patch_id} does not re-derive from its stored digest",
+            )
+        # The digest input itself is re-computed from the stored row + findings, so a row
+        # whose content was edited in place fails here instead of passing the id check.
+        finding_ids = json.loads(str(patch_row["finding_ids_json"]))
+        findings = []
+        for finding_id in finding_ids:
+            finding_row = connection.execute(
+                "SELECT payload_json FROM confirmed_semantic_findings WHERE finding_id = ?",
+                (finding_id,),
+            ).fetchone()
+            if finding_row is None:
+                raise M6FilingError(
+                    "apply_identity_chain_mismatch",
+                    f"patch {patch_id} cites missing finding {finding_id}",
+                )
+            findings.append(
+                ConfirmedSemanticFinding.model_validate_json(finding_row["payload_json"])
+            )
+        from .m6_candidate_core import finding_facts_payload
+
+        rebuilt = canonical_digest(
+            {
+                "compiler": str(patch_row["compiler_name"]),
+                "compiler_version": str(patch_row["compiler_version"]),
+                "compiler_rules": str(patch_row["compiler_rules"]),
+                "intent": str(patch_row["intent"]),
+                "finding_facts": [finding_facts_payload(finding) for finding in findings][0]
+                if len(findings) == 1
+                else [finding_facts_payload(finding) for finding in findings],
+                "operations": json.loads(str(patch_row["operations_json"])),
+                "baseline_revision": int(patch_row["baseline_revision"]),
+            }
+        )
+        if rebuilt != str(patch_row["canonical_digest"]):
+            raise M6FilingError(
+                "apply_identity_chain_mismatch",
+                f"patch {patch_id} content hash does not recompute",
+            )
+        # L1③: every finding's candidate must replay to confirmed on the write connection.
+        finding_candidate_ids: list[str] = []
+        for finding in findings:
+            replayed = self._replay_m6_candidate_status(connection, finding.candidate_id)
+            if replayed != "confirmed":
+                raise M6FilingError(
+                    "finding_not_confirmed",
+                    f"finding {finding.finding_id} replays to {replayed!r}, not confirmed",
+                )
+            finding_candidate_ids.append(finding.candidate_id)
+        # L1④: the apply's candidate belongs to the findings.
+        if candidate_id not in finding_candidate_ids:
+            raise M6FilingError(
+                "apply_identity_chain_mismatch",
+                f"candidate {candidate_id} is not among the patch's findings",
+            )
+        # L1⑤: source/target agree on both sides.
+        candidate_row = connection.execute(
+            "SELECT payload_json FROM semantic_candidates WHERE candidate_id = ?",
+            (candidate_id,),
+        ).fetchone()
+        if candidate_row is None:
+            raise M6FilingError(
+                "apply_identity_chain_mismatch", f"unknown candidate {candidate_id!r}"
+            )
+        candidate = SemanticCandidate.model_validate_json(candidate_row["payload_json"])
+        source_document_id = candidate.artifact.source_document_id
+        if (
+            str(patch_row["source_document_id"]) != source_document_id
+            or str(patch_row["target_document_id"]) != target_document_id
+            or candidate.target_document_id != target_document_id
+        ):
+            raise M6FilingError(
+                "apply_identity_chain_mismatch",
+                "source/target document ids disagree across candidate, patch and apply",
+            )
+        return candidate.artifact
+
+    def commit_m6_apply(
+        self,
+        *,
+        document: Document,
+        expected_revision: int,
+        history: HistoryEntry,
+        history_details: dict[str, Any],
+        audit: AuditRecordDraft,
+        tool_call: ToolCallRecord,
+        approval: ToolApproval | None,
+        session: AgentSession,
+        symbols: SymbolRegistry,
+        apply_id: str,
+        patch_id: str,
+        candidate_id: str,
+        baseline_revision: int,
+        expected_semantic_identity: str,
+        expected_semantic_path: str,
+        expected_baseline_digest: str,
+        history_limit: int = 100,
+    ) -> None:
+        """M6-2B-D4's single atomic governed-apply commit (L1+L3, M13 discipline).
+
+        One BEGIN IMMEDIATE carries, in order: the L1 identity-chain cross-check; the final
+        source verification against the candidate's pinned triple; the semantic baseline
+        recheck on the *current* target read on the write connection; the N7 duplicate-apply
+        guard; the document CAS write with undo/history parity; the apply ledger row
+        (applied, bound to the audit record); and the harness close-out (tool call, approval
+        consumption, session). Any failure rolls back everything — the caller closes out in
+        a separate transaction with exactly one rejected audit.
+        """
+
+        now = datetime.now(UTC).isoformat()
+        with self._lock, self._connect() as connection:
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+
+                # L1: the identity chain, cross-checked on the write connection.
+                artifact = self._cross_check_apply_identity(
+                    connection,
+                    patch_id=patch_id,
+                    candidate_id=candidate_id,
+                    target_document_id=document.id,
+                )
+                # Final source verification against the candidate's pinned triple.
+                self._verify_m6_source_on_write_connection(
+                    connection,
+                    source_document_id=artifact.source_document_id,
+                    expected_source_revision=artifact.source_revision,
+                    expected_source_content_hash=artifact.content_hash,
+                )
+
+                # N7: a patch that already has an applied record may not apply twice.
+                existing = connection.execute(
+                    "SELECT apply_id FROM m6_apply_records "
+                    "WHERE patch_id = ? AND status = 'applied'",
+                    (patch_id,),
+                ).fetchone()
+                if existing is not None:
+                    raise M6FilingError(
+                        "patch_already_applied",
+                        f"patch {patch_id} already has applied record "
+                        f"{existing['apply_id']}",
+                    )
+
+                # Semantic baseline recheck: recompute the reviewed value against the
+                # current committed target on the write connection; a moved value is a
+                # conflict, not a write.
+                current_row = connection.execute(
+                    "SELECT revision, data_json, undo_json FROM documents WHERE id = ?",
+                    (document.id,),
+                ).fetchone()
+                if current_row is None or int(current_row["revision"]) != expected_revision:
+                    raise StoreRevisionConflictError(
+                        f"target document {document.id} no longer has revision "
+                        f"{expected_revision}"
+                    )
+                current_document = Document.model_validate_json(current_row["data_json"])
+                from .engineering_ir import build_engineering_graph
+                from .m6_candidate_core import semantic_value, value_digest
+
+                current_digest = value_digest(
+                    expected_semantic_path,
+                    semantic_value(
+                        current_document,
+                        build_engineering_graph(current_document, symbols),
+                        expected_semantic_identity,
+                        expected_semantic_path,
+                    ),
+                )
+                if current_digest != expected_baseline_digest:
+                    raise M6FilingError(
+                        "semantic_baseline_moved",
+                        f"the reviewed value at {expected_semantic_identity}/"
+                        f"{expected_semantic_path} moved since the decision",
+                    )
+
+                # The document CAS write with undo/history parity (same shape as save()).
+                undo_stack = json.loads(str(current_row["undo_json"] or "[]"))
+                undo_stack.append(json.loads(str(current_row["data_json"])))
+                undo_stack = undo_stack[-history_limit:]
+                cursor = connection.execute(
+                    "UPDATE documents SET revision = ?, data_json = ?, undo_json = ?, "
+                    "redo_json = '[]', updated_at = ? WHERE id = ? AND revision = ?",
+                    (
+                        document.revision,
+                        self._encode(document.model_dump(mode="json")),
+                        json.dumps(undo_stack, ensure_ascii=False),
+                        now,
+                        document.id,
+                        expected_revision,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise StoreRevisionConflictError(
+                        f"target document {document.id} no longer has revision "
+                        f"{expected_revision}"
+                    )
+                connection.execute(
+                    """
+                    INSERT INTO document_history (
+                        document_id, revision, timestamp, source, action, label,
+                        operation_count, details_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        history.document_id,
+                        history.revision,
+                        history.timestamp.isoformat(),
+                        history.source,
+                        history.action,
+                        history.label,
+                        history.operation_count,
+                        self._encode(history_details),
+                    ),
+                )
+                record = self._append_audit_record(connection, audit)
+                self._write_tool_call(connection, tool_call)
+                if approval is not None:
+                    self._write_tool_approval(connection, approval)
+                self._write_agent_session(connection, session)
+                connection.execute(
+                    """
+                    INSERT INTO m6_apply_records (
+                        apply_id, patch_id, candidate_id, source_document_id,
+                        target_document_id, base_revision, result_revision, status,
+                        tool_intent_hash, approval_id, audit_record_id, applied_at,
+                        reverted_at, revert_apply_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'applied', ?, ?, ?, ?, '', '')
+                    """,
+                    (
+                        apply_id,
+                        patch_id,
+                        candidate_id,
+                        artifact.source_document_id,
+                        document.id,
+                        baseline_revision,
+                        document.revision,
+                        tool_call.intent_hash,
+                        approval.id if approval is not None else "",
+                        record.record_id,
+                        now,
+                    ),
+                )
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+
+    def commit_m6_revert(
+        self,
+        *,
+        document: Document,
+        expected_revision: int,
+        history: HistoryEntry,
+        history_details: dict[str, Any],
+        audit: AuditRecordDraft,
+        tool_call: ToolCallRecord,
+        approval: ToolApproval | None,
+        session: AgentSession,
+        symbols: SymbolRegistry,
+        revert_apply_id: str,
+        revert_patch_id: str,
+        original_apply_id: str,
+        candidate_id: str,
+        base_revision: int,
+        expected_semantic_identity: str,
+        expected_semantic_path: str,
+        expected_post_digest: str,
+        history_limit: int = 100,
+    ) -> None:
+        """The compensation revert (D87-3 L4): one transaction carries the inverse document
+        write, the compensation apply record (status applied), and the original record's
+        CAS transition applied->reverted with revert_apply_id/reverted_at backfilled. The
+        original record must still be applied; a terminal or missing record refuses the
+        whole transaction."""
+
+        now = datetime.now(UTC).isoformat()
+        with self._lock, self._connect() as connection:
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                original = connection.execute(
+                    "SELECT * FROM m6_apply_records WHERE apply_id = ?",
+                    (original_apply_id,),
+                ).fetchone()
+                if original is None:
+                    raise M6FilingError(
+                        "apply_record_not_found",
+                        f"revert references unknown apply record {original_apply_id!r}",
+                    )
+                if str(original["status"]) != "applied":
+                    raise M6FilingError(
+                        "apply_record_not_applied",
+                        f"apply record {original_apply_id} is {original['status']!r}; "
+                        "only an applied record can be reverted",
+                    )
+                self._cross_check_apply_identity(
+                    connection,
+                    patch_id=revert_patch_id,
+                    candidate_id=candidate_id,
+                    target_document_id=document.id,
+                )
+                artifact_row = connection.execute(
+                    "SELECT payload_json FROM semantic_candidates WHERE candidate_id = ?",
+                    (candidate_id,),
+                ).fetchone()
+                artifact = SemanticCandidate.model_validate_json(
+                    artifact_row["payload_json"]
+                ).artifact
+                self._verify_m6_source_on_write_connection(
+                    connection,
+                    source_document_id=artifact.source_document_id,
+                    expected_source_revision=artifact.source_revision,
+                    expected_source_content_hash=artifact.content_hash,
+                )
+                current_row = connection.execute(
+                    "SELECT revision, data_json, undo_json FROM documents WHERE id = ?",
+                    (document.id,),
+                ).fetchone()
+                if current_row is None or int(current_row["revision"]) != expected_revision:
+                    raise StoreRevisionConflictError(
+                        f"target document {document.id} no longer has revision "
+                        f"{expected_revision}"
+                    )
+                current_document = Document.model_validate_json(current_row["data_json"])
+                from .engineering_ir import build_engineering_graph
+                from .m6_candidate_core import semantic_value, value_digest
+
+                current_digest = value_digest(
+                    expected_semantic_path,
+                    semantic_value(
+                        current_document,
+                        build_engineering_graph(current_document, symbols),
+                        expected_semantic_identity,
+                        expected_semantic_path,
+                    ),
+                )
+                if current_digest != expected_post_digest:
+                    raise M6FilingError(
+                        "semantic_baseline_moved",
+                        "the applied value moved since the apply; the revert would not "
+                        "restore what the apply wrote",
+                    )
+
+                undo_stack = json.loads(str(current_row["undo_json"] or "[]"))
+                undo_stack.append(json.loads(str(current_row["data_json"])))
+                undo_stack = undo_stack[-history_limit:]
+                cursor = connection.execute(
+                    "UPDATE documents SET revision = ?, data_json = ?, undo_json = ?, "
+                    "redo_json = '[]', updated_at = ? WHERE id = ? AND revision = ?",
+                    (
+                        document.revision,
+                        self._encode(document.model_dump(mode="json")),
+                        json.dumps(undo_stack, ensure_ascii=False),
+                        now,
+                        document.id,
+                        expected_revision,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise StoreRevisionConflictError(
+                        f"target document {document.id} no longer has revision "
+                        f"{expected_revision}"
+                    )
+                connection.execute(
+                    """
+                    INSERT INTO document_history (
+                        document_id, revision, timestamp, source, action, label,
+                        operation_count, details_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        history.document_id,
+                        history.revision,
+                        history.timestamp.isoformat(),
+                        history.source,
+                        history.action,
+                        history.label,
+                        history.operation_count,
+                        self._encode(history_details),
+                    ),
+                )
+                record = self._append_audit_record(connection, audit)
+                self._write_tool_call(connection, tool_call)
+                if approval is not None:
+                    self._write_tool_approval(connection, approval)
+                self._write_agent_session(connection, session)
+                connection.execute(
+                    """
+                    INSERT INTO m6_apply_records (
+                        apply_id, patch_id, candidate_id, source_document_id,
+                        target_document_id, base_revision, result_revision, status,
+                        tool_intent_hash, approval_id, audit_record_id, applied_at,
+                        reverted_at, revert_apply_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'applied', ?, ?, ?, ?, '', '')
+                    """,
+                    (
+                        revert_apply_id,
+                        revert_patch_id,
+                        candidate_id,
+                        artifact.source_document_id,
+                        document.id,
+                        base_revision,
+                        document.revision,
+                        tool_call.intent_hash,
+                        approval.id if approval is not None else "",
+                        record.record_id,
+                        now,
+                    ),
+                )
+                cursor = connection.execute(
+                    "UPDATE m6_apply_records SET status = 'reverted', reverted_at = ?, "
+                    "revert_apply_id = ? WHERE apply_id = ? AND status = 'applied'",
+                    (now, revert_apply_id, original_apply_id),
+                )
+                if cursor.rowcount != 1:
+                    raise M6FilingError(
+                        "apply_record_not_applied",
+                        f"apply record {original_apply_id} left 'applied' during the revert",
+                    )
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+
+    def m6_apply_failure_closeout(
+        self,
+        *,
+        tool_call: ToolCallRecord,
+        session: AgentSession,
+        audit: AuditRecordDraft,
+    ) -> None:
+        """M6-2B-D4 failure closeout (separate transaction, after the engineering
+        transaction rolled back): failed tool call + failed session + exactly one rejected
+        audit — never any document or ledger residue (M13's change-set discipline)."""
+
+        with self._lock, self._connect() as connection:
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                self._write_tool_call(connection, tool_call)
+                self._write_agent_session(connection, session)
+                self._append_audit_record(connection, audit)
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
 
     # ----------------------------------------------------------------------------------
     # M7 phase 2A: proposal evidence. Append-only on purpose -- a replan must add a row,

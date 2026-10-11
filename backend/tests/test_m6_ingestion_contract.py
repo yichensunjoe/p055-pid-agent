@@ -267,6 +267,7 @@ def test_every_declared_identity_is_used_by_the_core_through_the_declaration() -
         (agentcad / "m6_candidate_core.py").read_text(encoding="utf-8"),
         (agentcad / "m6_region.py").read_text(encoding="utf-8"),
         (agentcad / "m6_source_adapter.py").read_text(encoding="utf-8"),
+        (agentcad / "m6_apply_runtime.py").read_text(encoding="utf-8"),
     ]
     for item in contract.PERSISTENT_IDENTITIES:
         # Bare substring, not a quoted-string match: the tempting literal is an f-string such as
@@ -288,6 +289,16 @@ def test_the_region_identity_is_registered_for_d2() -> None:
     assert region.prefix == "m6reg_"
     assert region.digest_hex == contract.IDENTITY_FULL_DIGEST_HEX
     assert contract.identity_prefix("region_id") == "m6reg_"
+
+
+def test_the_apply_identity_is_registered_for_d4() -> None:
+    """D87-5's second half: the apply ledger identity registers with D4."""
+
+    declared = {item.field: item for item in contract.PERSISTENT_IDENTITIES}
+    apply_identity = declared["apply_id"]
+    assert apply_identity.prefix == "m6apply_"
+    assert apply_identity.digest_hex == contract.IDENTITY_FULL_DIGEST_HEX
+    assert contract.identity_prefix("apply_id") == "m6apply_"
 
 
 # --------------------------------------------------------------------------------------

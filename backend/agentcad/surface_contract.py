@@ -595,6 +595,65 @@ HTTP_SURFACE_BINDINGS: tuple[SurfaceBinding, ...] = (
             "by tests/test_m6_review_surface.py."
         ),
     ),
+    # --- M6-2B-D4: governed apply surface (sealed M10 flow over persisted patches) ---
+    # The compile route persists a durable patch (governance-plane write, audited; the
+    # store writes the audit only when the row is new). Apply/revert route ONLY into the
+    # sealed runtime (M13 precedent): shared deployments consume a human-resolved approval
+    # from this router's approval-requests endpoints (approval_not_self_served otherwise).
+    # The store's atomic commit carries the L1 identity-chain cross-check, the final source
+    # verification, the semantic baseline recheck and the duplicate-apply guard.
+    _http(
+        "POST",
+        "/api/v2/documents/{document_id}/m6/patches",
+        "governance_write",
+        audited=True,
+        notes=(
+            "Compiles a confirmed finding into a durable append-only patch row; idempotent "
+            "by identity, never an engineering write. Verified by tests/test_m6_apply.py."
+        ),
+    ),
+    _read("/api/v2/documents/{document_id}/m6/patches"),
+    _read("/api/v2/documents/{document_id}/m6/patches/{patch_id}"),
+    _http(
+        "POST",
+        "/api/v2/documents/{document_id}/m6/patches/{patch_id}/approval-requests",
+        "harness_lifecycle",
+        audited=True,
+        notes=(
+            "Session/approval bookkeeping bound to the sealed M6 runtime; the approval "
+            "intent hash binds the server-derived patch/source/target chain."
+        ),
+    ),
+    _http(
+        "POST",
+        "/api/v2/documents/{document_id}/m6/patches/{patch_id}/apply",
+        "governance_write",
+        audited=True,
+        notes=(
+            "The sealed M10 flow over the persisted patch: one atomic commit (document CAS "
+            "+ history + audit + ledger + harness close-out). Shared mode requires a "
+            "human-resolved approval (approval_not_self_served)."
+        ),
+    ),
+    _read("/api/v2/documents/{document_id}/m6/apply-records"),
+    _read("/api/v2/documents/{document_id}/m6/apply-records/{apply_id}"),
+    _http(
+        "POST",
+        "/api/v2/documents/{document_id}/m6/apply-records/{apply_id}/revert-approval-requests",
+        "harness_lifecycle",
+        audited=True,
+        notes="Approval bookkeeping for the compensation revert, bound to the sealed runtime.",
+    ),
+    _http(
+        "POST",
+        "/api/v2/documents/{document_id}/m6/apply-records/{apply_id}/revert",
+        "governance_write",
+        audited=True,
+        notes=(
+            "The governed compensation write: a new apply record through the same sealed "
+            "flow plus the original record's applied->reverted CAS in one transaction."
+        ),
+    ),
     # --- process runtime --------------------------------------------------------
     _http("POST", "/api/v2/symbols/reload", "runtime", notes="Reloads the symbol catalog."),
     _http(

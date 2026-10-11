@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, BinaryIO
 from urllib.parse import quote
 
-CURRENT_SCHEMA_VERSION = 16
+CURRENT_SCHEMA_VERSION = 17
 # M12-D2: deterministic id of the default project seeded by _migration_15 so
 # that upgrading an existing database always lands on the same project identity.
 DEFAULT_PROJECT_ID = "proj_m12default"
@@ -1405,6 +1405,75 @@ def _migration_16(connection: sqlite3.Connection) -> None:
         )
 
 
+def _migration_17(connection: sqlite3.Connection) -> None:
+    """M6-2B-D4: governed apply persistence (DDL frozen at reports/m6-phase2b-design.md §5.2).
+
+    Two tables, no backfill. ``m6_structured_patches`` is truly append-only (a patch's
+    content IS its identity; changed content is a new digest and a new row).
+    ``m6_apply_records`` is the CAS-constrained lifecycle ledger (D87-3): the only legal
+    transitions are applied->reverted and applied->superseded, enforced at the service
+    layer with the original status carried as the CAS guard. FK enforcement stays ON; a
+    failure rolls the whole migration back (same discipline as v15/v16). Neither table
+    references the document lifecycle: review/apply evidence must outlive the drawing.
+    """
+
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS m6_structured_patches (
+            patch_id            TEXT PRIMARY KEY,
+            finding_ids_json    TEXT NOT NULL,
+            intent              TEXT NOT NULL,
+            policy_disposition  TEXT NOT NULL,
+            operations_json     TEXT NOT NULL,
+            compiler_name       TEXT NOT NULL,
+            compiler_version    TEXT NOT NULL,
+            compiler_rules      TEXT NOT NULL,
+            baseline_revision   INTEGER NOT NULL CHECK (baseline_revision >= 0),
+            canonical_digest    TEXT NOT NULL,
+            source_document_id  TEXT NOT NULL,
+            target_document_id  TEXT NOT NULL,
+            created_at          TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS m6_apply_records (
+            apply_id            TEXT PRIMARY KEY,
+            patch_id            TEXT NOT NULL REFERENCES m6_structured_patches(patch_id)
+                ON DELETE RESTRICT,
+            candidate_id        TEXT NOT NULL REFERENCES semantic_candidates(candidate_id)
+                ON DELETE RESTRICT,
+            source_document_id  TEXT NOT NULL,
+            target_document_id  TEXT NOT NULL,
+            base_revision       INTEGER NOT NULL CHECK (base_revision >= 0),
+            result_revision     INTEGER,
+            status              TEXT NOT NULL
+                CHECK (status IN ('applied','reverted','superseded')),
+            tool_intent_hash    TEXT NOT NULL,
+            approval_id         TEXT NOT NULL DEFAULT '',
+            audit_record_id     TEXT NOT NULL DEFAULT '',
+            applied_at          TEXT NOT NULL,
+            reverted_at         TEXT NOT NULL DEFAULT '',
+            revert_apply_id     TEXT NOT NULL DEFAULT ''
+        )
+        """
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_m6_apply_records_patch "
+        "ON m6_apply_records(patch_id)"
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_m6_apply_records_target "
+        "ON m6_apply_records(target_document_id)"
+    )
+    violations = connection.execute("PRAGMA foreign_key_check").fetchall()
+    if violations:
+        raise DatabaseMigrationError(
+            f"PRAGMA foreign_key_check found {len(violations)} violation(s) after v17"
+        )
+
+
 _MIGRATIONS = {
     1: _migration_1,
     2: _migration_2,
@@ -1422,6 +1491,7 @@ _MIGRATIONS = {
     14: _migration_14,
     15: _migration_15,
     16: _migration_16,
+    17: _migration_17,
 }
 
 
@@ -1477,6 +1547,11 @@ def _validate_required_schema(connection: sqlite3.Connection) -> None:
         # v16+ — a v15 database inspected by a v16 binary (migrate=False or a
         # pre-v16 backup) must still validate as v15.
         required_tables = required_tables | {"project_change_sets"}
+    if _schema_version(connection) >= 17:
+        # M6-2B-D4: the governed-apply tables are required only of databases
+        # actually at v17+ — a v16 database inspected by a v17 binary
+        # (migrate=False or a pre-v17 backup) must still validate as v16.
+        required_tables = required_tables | {"m6_structured_patches", "m6_apply_records"}
     missing = required_tables - _table_names(connection)
     if missing:
         raise DatabaseMigrationError(f"database schema is missing tables: {sorted(missing)}")
@@ -1548,6 +1623,20 @@ def _validate_required_schema(connection: sqlite3.Connection) -> None:
         },
         _METADATA_TABLE: {"singleton_id", "instance_id", "created_at"},
     }
+    if _schema_version(connection) >= 17:
+        # M6-2B-D4: column-level validation applies only to databases actually at v17.
+        required_columns["m6_structured_patches"] = {
+            "patch_id", "finding_ids_json", "intent", "policy_disposition",
+            "operations_json", "compiler_name", "compiler_version", "compiler_rules",
+            "baseline_revision", "canonical_digest", "source_document_id",
+            "target_document_id", "created_at",
+        }
+        required_columns["m6_apply_records"] = {
+            "apply_id", "patch_id", "candidate_id", "source_document_id",
+            "target_document_id", "base_revision", "result_revision", "status",
+            "tool_intent_hash", "approval_id", "audit_record_id", "applied_at",
+            "reverted_at", "revert_apply_id",
+        }
     for table, expected in required_columns.items():
         actual = {
             str(row[1])

@@ -1102,48 +1102,168 @@ def test_concurrent_resolves_only_one_lands(client: TestClient, app) -> None:
 
 
 def test_reassign_racing_a_confirm_keeps_exactly_one(client: TestClient, app) -> None:
+    """Store-level CAS proof for the confirm/reassign race: a confirmation and a
+    reassignment both prebuilt against the same needs_review state, raced into the store —
+    exactly one lands, deterministically.
+
+    (The service-level version of this test raced the two ``decide()`` calls directly, but
+    the supersede's ``from_status`` is read at decision-build time: when the confirm
+    committed before that read, the supersede legally claimed the declared
+    confirmed→superseded edge and both landed — a ~20% flake found by DI-1-D3's CI.
+    The store CAS is what this test exists to prove, so both sides are prebuilt against
+    needs_review and raced into the store directly.)
+    """
+
     source_id = _seed(app)
+    store = _store(app)
     row = _tag_candidate(client, source_id, "P-201")
-    outcomes = _race(
-        lambda: _decide_service(
-            app,
-            source_id,
-            row["candidate_id"],
-            {
-                "action": "confirm",
-                "reviewer_identity": "engineer.joe",
-                "reviewer_action": "核对一致",
-            },
+    candidate_id = row["candidate_id"]
+    candidate = store.get_semantic_candidate(candidate_id)
+
+    from agentcad.audit_models import AuditRecordDraft
+    from agentcad.m6_candidate_core import (
+        canonical_digest,
+        filing_decision,
+        review_decision_id,
+        value_digest,
+    )
+    from agentcad.m6_candidate_models import (
+        ConfirmedSemanticFinding,
+        ConflictBaselineRecord,
+        ReviewDecision,
+    )
+    from agentcad.m6_ingestion_contract import identity_prefix
+    from agentcad.store import M6FilingError
+
+    # Side A: a confirmation prebuilt against needs_review (same shape as the sibling race).
+    baseline = ConflictBaselineRecord(
+        baseline_revision=1,
+        comparison_identity="equipment:p-201",
+        comparison_path="existence",
+        value_digest=value_digest("existence", "absent"),
+        value_present=True,
+    )
+    confirm_decision = ReviewDecision(
+        review_decision_id=review_decision_id(
+            candidate_id=candidate_id,
+            kind="human_confirm",
+            from_status="needs_review",
+            to_status="confirmed",
+            reviewer_identity="engineer.joe",
+            reviewer_action="核对一致",
+            note="",
+            baseline=baseline,
+            conflict_resolution="",
+            resolution_choice=None,
+            successor_candidate_id="",
         ),
-        lambda: _decide_service(
-            app,
-            source_id,
-            row["candidate_id"],
-            {
-                "action": "reassign",
-                "reviewer_identity": "engineer.jane",
-                "reviewer_action": "位号绑错簇",
-                "element_refs": ["p2_a", "p2_b", "p2_c", "p2_d", "p2_e", "t1"],
-            },
+        candidate_id=candidate_id,
+        kind="human_confirm",
+        from_status="needs_review",
+        to_status="confirmed",
+        reviewer_identity="engineer.joe",
+        reviewer_action="核对一致",
+        baseline=baseline,
+    )
+    finding = ConfirmedSemanticFinding(
+        finding_id=identity_prefix("finding_id")
+        + canonical_digest(
+            {"candidate": candidate_id, "decision": confirm_decision.review_decision_id}
+        ),
+        candidate_id=candidate_id,
+        review_decision_id=confirm_decision.review_decision_id,
+        artifact=candidate.artifact,
+        region_id=candidate.region.region_id,
+        region_geometry=candidate.region.geometry_selector,
+        candidate_type=candidate.candidate_type,
+        confirmed_semantics=candidate.proposed_semantics,
+        evidence=candidate.evidence,
+        baseline=baseline,
+        producer=candidate.producer,
+        provenance=candidate.provenance,
+        provenance_chain=[
+            candidate.artifact.artifact_id,
+            candidate.region.region_id,
+            candidate_id,
+            confirm_decision.review_decision_id,
+        ],
+    )
+
+    # Side B: a reassignment prebuilt against needs_review — the corrected candidate, its
+    # filing event, and the supersede decision, exactly the rows the service would write.
+    corrected = candidate.model_copy(
+        update={
+            "candidate_id": "cand_m6_"
+            + canonical_digest(
+                {"reassigned_from": candidate_id, "tag": "P-201", "note": "corrected"}
+            ),
+            "derived_from": [candidate_id],
+        }
+    )
+    supersede_decision = ReviewDecision(
+        review_decision_id=review_decision_id(
+            candidate_id=candidate_id,
+            kind="superseded",
+            from_status="needs_review",
+            to_status="superseded",
+            reviewer_identity="",
+            reviewer_action="",
+            note="位号绑错簇",
+            baseline=None,
+            conflict_resolution="",
+            resolution_choice=None,
+            successor_candidate_id=corrected.candidate_id,
+        ),
+        candidate_id=candidate_id,
+        kind="superseded",
+        from_status="needs_review",
+        to_status="superseded",
+        successor_candidate_id=corrected.candidate_id,
+        note="位号绑错簇",
+    )
+    audit = AuditRecordDraft(
+        event_type="m6.review.decision",
+        actor="engineer.jane",
+        surface="rest",
+        label="Reassign candidate P-201",
+        evidence={"successor_candidate_id": corrected.candidate_id},
+    )
+
+    outcomes = _race(
+        lambda: store.record_confirmation(confirm_decision, finding),
+        lambda: store.file_superseding_candidate(
+            corrected,
+            filing_decision=filing_decision(corrected),
+            supersede_decision=supersede_decision,
+            audit=audit,
         ),
     )
-    assert sum(1 for outcome in outcomes if outcome["ok"]) == 1
-    loser = next(outcome["error"] for outcome in outcomes if not outcome["ok"])
-    assert loser.code in {"decision_state_moved", "undeclared_transition"}
-    store = _store(app)
+    winners = [outcome for outcome in outcomes if outcome["ok"]]
+    losers = [outcome for outcome in outcomes if not outcome["ok"]]
+    assert len(winners) == 1 and len(losers) == 1
+    loser = losers[0]["error"]
+    assert isinstance(loser, M6FilingError)
+    assert loser.code == "decision_state_moved"
+
     from agentcad.m6_candidate_core import M6CandidateService
 
-    # The log replays, and the loser's side wrote nothing: if the reassign lost, no
-    # corrected candidate exists; if the confirm lost, no finding exists.
-    status = M6CandidateService(store).current_status(row["candidate_id"])
+    # The log replays to exactly the winner's state, and the loser's side wrote nothing:
+    # if the reassign lost, no corrected candidate exists; if the confirm lost, no finding.
+    status = M6CandidateService(store).current_status(candidate_id)
     assert status in {"confirmed", "superseded"}
     if status == "superseded":
         assert store.list_confirmed_findings(source_document_id=source_id) == []
+        successors = [
+            candidate
+            for candidate in store.list_semantic_candidates(source_document_id=source_id)
+            if candidate_id in candidate.derived_from
+        ]
+        assert [c.candidate_id for c in successors] == [corrected.candidate_id]
     else:
         successors = [
             candidate
             for candidate in store.list_semantic_candidates(source_document_id=source_id)
-            if row["candidate_id"] in candidate.derived_from
+            if candidate_id in candidate.derived_from
         ]
         assert successors == []
 

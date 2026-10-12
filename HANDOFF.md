@@ -2,13 +2,13 @@
 
 ## 当前接力
 
-- 分支 `m6-2b-d4`，M6-2B-D4（Governed Apply & Replay）**实现已完成并全量验证**；Gate CODE GO 已于本轮在线核实（conv `6abd7e9f` 尾部：D4 CODE GO APPROVED + 冻结边界 + 「D4 完成后独立 PR、exact-head CI、迁移/恢复、审批、事务及撤销证据，另行申请 Merge Gate」）。
-- D4 交付：schema v17 两表（`m6_structured_patches` append-only / `m6_apply_records` CAS 账本，迁移幂等/回滚/备份恢复有测试）+ 编译器扩展 `relationship_addition`（端点只带 symbol+port_id，坐标服务端重算，端口歧义=拒绝）+ M10 sealed apply（binding 全服务端派生重算比对；冲突校验走真实创建身份/语义 digest，非 D3 的 region/恒 absent 约定——CODE GO 专项条款已落实）+ replay harness（canonical patch + 语义后态两层 digest，排除 volatile）+ 补偿撤销（同事务 applied→reverted CAS）+ 失败 closeout（M13 双事务纪律）。HTTP 面 compile/patches/apply/apply-records/revert 全部登记 `surface_contract.py`；`m6apply_` 已入 `PERSISTENT_IDENTITIES`；D3 复核遗留两个 P1（并发测试名实不符、reassign 的 source 参数统一由 store 校验）已顺手闭合。
-- 本轮接续补强（2026-10-11）：补齐冻结负例 **N9**（revert 提交故障→原记录保持 applied+恰好一条 rejected 审计+可重试）与 **N13**（同源十候选编译在前、顺序应用全落，每条对 target 当前态重算 baseline digest）；修一处真缺陷——`revert_authorized` 原先不翻译 sqlite 提交失败（原始 IntegrityError 直达 API=500），现与 apply 对称映射稳定码 `revert_commit_failed`/409（细节见 REUSE_AND_PITFALL_LOG 2026-10-11）。
-- 验证：后端全量 **1929 passed** + ruff 全净；前端单测 165 passed；`npm run build` 通过；Playwright **70 passed / 1 skipped / 1 failed**——唯一失败 `typesafe-panel「key not there」`已证实为本机环境变量 `TYPESAFE_API_KEY` 存在所致（该用例前提是服务端无 key；unset 后 4/4 通过，CI 无此变量），非 D4 回归。性能证据 `reports/m6-2b/d4-apply-perf.json`（十候选场景：compile median 3.5ms / apply 12.3ms / replay 2.6ms / revert 13.4ms；本机口径，不作 CI ceiling）。
-- 未解除：WS3B/M9 Closeout/M10 FINAL ACCEPTANCE Owner 挂起；DEPLOY 未授权；**D5 未授权不开工**；真实样本/独立标注不到位前 M6 Final Acceptance 不得宣称。不直接 push main。
-- 下一步：本地提交 → push `m6-2b-d4` → 独立 PR → exact-head CI → 向 Gate 发送 PR 链接 + Exact Head SHA + CI 结果，申请 D4 Merge Gate。
+- 本树当前在 `di1-bookkeeping`（自 origin/main 切）；**DI-1（Drawing Intelligence Iteration-1，Charter §55D v1.3.0）技术阶段全部 CLOSED**：D1 定义（#91）→ D2 设计（#92）→ D3 基线（#93）→ D4 实现（#94）→ D5 评测收口（#95），main=`8edd806`，main CI 四绿（run 38209517489）。
+- **Gate 通道已迁移并换代**：权威记录源 = ChatGPT「agentcad」项目内会话；上一线程 conv `6acc341a`（满 7 轮封顶，只读归档），当前线程 conv `6acc73cb`（Turn 1/7）。项目↔会话映射以 `/Users/joe/ai/Astra/chatgpt-threads.json` 为准（reasonix 旧表仅留指向）；发消息前必须核对 location.href 含 `g-p-6a587049` 前缀 + 过闸门（聊天/GPT-6/High）。禹豫 GPT 下线程一律历史考古，严禁再发 P055 内容。
+- DI-1 交付事实：判读式 text-plan/text-edit 为唯一主力 NL 前门（plan-v2 登记为 experimental-only）；nl-source 只读端点修通刷新断链；生成回执带图面质量门禁；F-a 回流罐别名 / F-b 方位加仪表 / F-c 双口仪表挂接 / F-e 换成语法 已修通；冻结语料 S1–S6（sha256 钉住）replay 6/6 双一致；F4 延迟阈值已冻结（median≤2000ms 且 max≤5000ms，实测 870/1972）。
+- **未解除 / 待 Owner**：drawing usability 的人工评价槽位 **PENDING_OWNER**（图纸在 `reports/di1-d5/*.png|dxf`，本机可直接看；评价回填进 `evaluation.json` 前，不得宣称「用户想要的图已验证」）；WS3B / M9 Closeout / M10 FINAL ACCEPTANCE 维持 Owner 挂起；DEPLOY 未授权；M6-2B-D5（Minimal Drawing Qualification）未启动。
+- **待独立 Design Gate**：G4 泄放支路走线；vessel 端口角色默认（S2 暴露的多 process 口未点名连接）。
+- 下一步：等 Owner 人工评价回填；两个独立 Design Gate 由 Gate 明确授权后再开；不自动开新工程切片。Gate 会话满 7 轮就在 agentcad 项目主页新开并回写映射表。
 
-## 本轮维护（2026-10-10）
+## 本轮（2026-10-12 收口记账）
 
-治理入口已精简；完整历史原样保留于 [历史交接](docs/history/HANDOFF-2026-10-10.md)。本轮仅检查文档、引用与 Git 现场，未重跑业务测试、模型或线上验收。旧验证结果仅为历史证据；后续只在状态/阻断/下一步改变时更新此页。
+DI-1 五片全链合 main（#91–#95 五个 squash），CI 全绿；过程事件（两个并发测试 flake）已修复并被 Gate 归类为测试问题、无产品回归，教训固化在 `REUSE_AND_PITFALL_LOG.md` 2026-10-11/12 条目。完整过程证据：`reports/di1-definition.md`、`reports/di1-d2-design.md`、`reports/di1-d3-baseline.md`、`reports/di1-d4-evidence.md`、`reports/di1-d5/evaluation.json`、`reports/di1-closeout.md`。

@@ -1,0 +1,1549 @@
+{
+ "milestone": "DI-1-D3 baseline (Gate CODE GO 2026-10-12: baseline measurement + corpus lock + gap assertion baseline only)",
+ "corpus": {
+  "path": "backend/tests/di1_corpus/corpus.json",
+  "sha256": "5a2450d9946acf765bf9ed70acefb381c68f5495aba5d70b9742124351893742",
+  "scenarios": [
+   "S1",
+   "S2",
+   "S3",
+   "S4",
+   "S5",
+   "S6"
+  ]
+ },
+ "runs": [
+  {
+   "run": 1,
+   "scenarios": {
+    "S1": {
+     "document_id": "doc_6c74cc8e83d4",
+     "steps": [
+      {
+       "http": 200,
+       "wall_ms": 1403.2,
+       "outcome": "committed",
+       "revision": 1,
+       "completeness": "complete",
+       "latency_ms": 1376.04,
+       "judgment_count": 2,
+       "spec_digest": "507be4a6cbc99b6c",
+       "entities": [
+        {
+         "tag": "V-101",
+         "kind": "equipment",
+         "symbol_key": "buffer_tank",
+         "equipment_class": "容器",
+         "instrument_type": ""
+        },
+        {
+         "tag": "P-101",
+         "kind": "equipment",
+         "symbol_key": "centrifugal_pump",
+         "equipment_class": "泵",
+         "instrument_type": ""
+        }
+       ],
+       "connections": [
+        {
+         "source": "V-101",
+         "target": "P-101",
+         "medium": ""
+        }
+       ],
+       "undelivered": [],
+       "skipped": [],
+       "unknown_tags": [],
+       "catalog_gaps": [],
+       "port_ambiguities": 0,
+       "model": "jev-1.13.0",
+       "quality": {
+        "score": 95.0,
+        "passed": false,
+        "target_score": 95.0,
+        "blocker_count": 1,
+        "issue_codes": [
+         "DRAFT_MICRO_SEGMENT"
+        ],
+        "engine_version": 2
+       },
+       "kind": "plan",
+       "sentence": "添加一个缓冲罐 V-101，添加一台离心泵 P-101，把 V-101 接到 P-101"
+      }
+     ],
+     "semantic_check": {
+      "tags_ok": true,
+      "tags_missing": [],
+      "connections_ok": true,
+      "connections_missing": [],
+      "completeness": "complete",
+      "expected_completeness": "complete"
+     }
+    },
+    "S2": {
+     "document_id": "doc_10c7da20cd0d",
+     "steps": [
+      {
+       "http": 422,
+       "wall_ms": 1147.6,
+       "outcome": "422:port_ambiguity",
+       "completeness": "partial",
+       "skipped": [],
+       "undelivered": [],
+       "catalog_gaps": [],
+       "port_ambiguities": [
+        {
+         "code": "port_ambiguity",
+         "reason": "missing_selector",
+         "source_requirement": "把 E-101 的工艺出口接到 V-102",
+         "role": "target",
+         "element_tag": "V-102",
+         "symbol_key": "horizontal_vessel",
+         "selector": null,
+         "candidates": [
+          {
+           "port_id": "in",
+           "name": "入口",
+           "direction": "in",
+           "medium": "process",
+           "side": "left",
+           "selectors": [
+            "in",
+            "入",
+            "入口",
+            "吸入",
+            "吸入口",
+            "大端",
+            "左侧",
+            "左端",
+            "左边",
+            "来料",
+            "进口",
+            "进料",
+            "进料口"
+           ]
+          },
+          {
+           "port_id": "top",
+           "name": "顶部接口",
+           "direction": "bidirectional",
+           "medium": "process",
+           "side": "top",
+           "selectors": [
+            "top",
+            "上端",
+            "上面",
+            "塔顶",
+            "顶上",
+            "顶部",
+            "顶部接",
+            "顶部管口"
+           ]
+          }
+         ],
+         "port_selector_contract_version": "m7-port-selector/1"
+        }
+       ],
+       "kind": "plan",
+       "sentence": "添加一台进料泵 P-101，添加一个精馏塔 T-101，添加一个冷凝器 E-101，添加一个回流罐 V-102，添加一台回流泵 P-102，把 P-101 接到 T-101 的原料进料口，把 T-101 的塔顶气相出口接到 E-101 的工艺入口，把 E-101 的工艺出口接到 V-102，把 V-102 接到 P-102，把 P-102 接到 T-101 的回流入口"
+      }
+     ],
+     "semantic_check": {
+      "tags_ok": false,
+      "connections_ok": false,
+      "reason": "no committed step"
+     }
+    },
+    "S3": {
+     "document_id": "doc_3c9ae5ae0e57",
+     "steps": [
+      {
+       "http": 200,
+       "wall_ms": 1106.8,
+       "outcome": "committed",
+       "revision": 1,
+       "completeness": "complete",
+       "latency_ms": 1086.19,
+       "judgment_count": 3,
+       "spec_digest": "db4c8535d07f9ee4",
+       "entities": [
+        {
+         "tag": "P-101",
+         "kind": "equipment",
+         "symbol_key": "centrifugal_pump",
+         "equipment_class": "泵",
+         "instrument_type": ""
+        },
+        {
+         "tag": "PI-101",
+         "kind": "instrument",
+         "symbol_key": "pressure_indicator",
+         "equipment_class": "仪表",
+         "instrument_type": ""
+        },
+        {
+         "tag": "TI-101",
+         "kind": "instrument",
+         "symbol_key": "temperature_indicator",
+         "equipment_class": "仪表",
+         "instrument_type": ""
+        }
+       ],
+       "connections": [],
+       "undelivered": [],
+       "skipped": [],
+       "unknown_tags": [],
+       "catalog_gaps": [],
+       "port_ambiguities": 0,
+       "model": "jev-1.13.0",
+       "quality": {
+        "score": 80.0,
+        "passed": false,
+        "target_score": 95.0,
+        "blocker_count": 2,
+        "issue_codes": [
+         "DRAFT_TEXT_CONNECTOR_CROSSING"
+        ],
+        "engine_version": 2
+       },
+       "kind": "plan",
+       "sentence": "添加一台离心泵 P-101，在 P-101 的出口加一台压力表 PI-101，在 P-101 的出口加一台温度计 TI-101"
+      }
+     ],
+     "semantic_check": {
+      "tags_ok": true,
+      "tags_missing": [],
+      "connections_ok": true,
+      "connections_missing": [],
+      "completeness": "complete",
+      "expected_completeness": "complete"
+     }
+    },
+    "S4": {
+     "document_id": "doc_b0356e60ead0",
+     "steps": [
+      {
+       "http": 200,
+       "wall_ms": 736.8,
+       "outcome": "committed",
+       "revision": 1,
+       "completeness": "complete",
+       "latency_ms": 715.06,
+       "judgment_count": 3,
+       "spec_digest": "4de345ddae8ba4e7",
+       "entities": [
+        {
+         "tag": "V-101",
+         "kind": "equipment",
+         "symbol_key": "buffer_tank",
+         "equipment_class": "容器",
+         "instrument_type": ""
+        },
+        {
+         "tag": "LG-101",
+         "kind": "instrument",
+         "symbol_key": "level_gauge",
+         "equipment_class": "仪表",
+         "instrument_type": ""
+        },
+        {
+         "tag": "LCV-101",
+         "kind": "equipment",
+         "symbol_key": "control_valve",
+         "equipment_class": "阀门",
+         "instrument_type": ""
+        }
+       ],
+       "connections": [
+        {
+         "source": "V-101",
+         "target": "LCV-101",
+         "medium": ""
+        }
+       ],
+       "undelivered": [],
+       "skipped": [],
+       "unknown_tags": [],
+       "catalog_gaps": [],
+       "port_ambiguities": 0,
+       "model": "jev-1.13.0",
+       "quality": {
+        "score": 83.75,
+        "passed": false,
+        "target_score": 95.0,
+        "blocker_count": 0,
+        "issue_codes": [],
+        "engine_version": 2
+       },
+       "kind": "plan",
+       "sentence": "添加一个缓冲罐 V-101，给 V-101 添加一台液位计 LG-101，添加一台控制阀 LCV-101，把 V-101 接到 LCV-101"
+      }
+     ],
+     "semantic_check": {
+      "tags_ok": true,
+      "tags_missing": [],
+      "connections_ok": true,
+      "connections_missing": [],
+      "completeness": "complete",
+      "expected_completeness": "complete"
+     }
+    },
+    "S5": {
+     "document_id": "doc_01f29560e023",
+     "steps": [
+      {
+       "http": 200,
+       "wall_ms": 1017.1,
+       "outcome": "committed",
+       "revision": 1,
+       "completeness": "complete",
+       "latency_ms": 992.88,
+       "judgment_count": 4,
+       "spec_digest": "126b7c3e92a5c62e",
+       "entities": [
+        {
+         "tag": "V-101",
+         "kind": "equipment",
+         "symbol_key": "buffer_tank",
+         "equipment_class": "容器",
+         "instrument_type": ""
+        },
+        {
+         "tag": "P-101",
+         "kind": "equipment",
+         "symbol_key": "centrifugal_pump",
+         "equipment_class": "泵",
+         "instrument_type": ""
+        },
+        {
+         "tag": "XV-101",
+         "kind": "equipment",
+         "symbol_key": "gate_valve",
+         "equipment_class": "阀门",
+         "instrument_type": ""
+        },
+        {
+         "tag": "V-102",
+         "kind": "equipment",
+         "symbol_key": "buffer_tank",
+         "equipment_class": "容器",
+         "instrument_type": ""
+        }
+       ],
+       "connections": [
+        {
+         "source": "V-101",
+         "target": "P-101",
+         "medium": ""
+        },
+        {
+         "source": "P-101",
+         "target": "XV-101",
+         "medium": ""
+        },
+        {
+         "source": "XV-101",
+         "target": "V-102",
+         "medium": ""
+        }
+       ],
+       "undelivered": [],
+       "skipped": [],
+       "unknown_tags": [],
+       "catalog_gaps": [],
+       "port_ambiguities": 0,
+       "model": "jev-1.13.0",
+       "quality": {
+        "score": 95.0,
+        "passed": false,
+        "target_score": 95.0,
+        "blocker_count": 1,
+        "issue_codes": [
+         "DRAFT_MICRO_SEGMENT"
+        ],
+        "engine_version": 2
+       },
+       "kind": "plan",
+       "sentence": "添加一个缓冲罐 V-101，添加一台离心泵 P-101，添加一个闸阀 XV-101，添加一个缓冲罐 V-102，把 V-101 接到 P-101，把 P-101 接到 XV-101，把 XV-101 接到 V-102"
+      },
+      {
+       "http": 200,
+       "wall_ms": 2002.3,
+       "outcome": "committed",
+       "revision": 2,
+       "completeness": "complete",
+       "latency_ms": 1972.1,
+       "judgment_count": 1,
+       "spec_digest": "dcbb5a54c80e72d3",
+       "entities": [
+        {
+         "tag": "V-101",
+         "kind": "equipment",
+         "symbol_key": "buffer_tank",
+         "equipment_class": "容器",
+         "instrument_type": ""
+        },
+        {
+         "tag": "P-101",
+         "kind": "equipment",
+         "symbol_key": "centrifugal_pump",
+         "equipment_class": "泵",
+         "instrument_type": ""
+        },
+        {
+         "tag": "XV-101",
+         "kind": "equipment",
+         "symbol_key": "control_valve",
+         "equipment_class": "阀门",
+         "instrument_type": ""
+        },
+        {
+         "tag": "V-102",
+         "kind": "equipment",
+         "symbol_key": "buffer_tank",
+         "equipment_class": "容器",
+         "instrument_type": ""
+        }
+       ],
+       "connections": [
+        {
+         "source": "V-101",
+         "target": "P-101",
+         "medium": ""
+        },
+        {
+         "source": "P-101",
+         "target": "XV-101",
+         "medium": ""
+        },
+        {
+         "source": "XV-101",
+         "target": "V-102",
+         "medium": ""
+        }
+       ],
+       "undelivered": [],
+       "skipped": [],
+       "unknown_tags": [],
+       "catalog_gaps": [],
+       "port_ambiguities": 0,
+       "model": "jev-1.13.0",
+       "quality": {
+        "score": 90.0,
+        "passed": false,
+        "target_score": 95.0,
+        "blocker_count": 2,
+        "issue_codes": [
+         "DRAFT_MICRO_SEGMENT"
+        ],
+        "engine_version": 2
+       },
+       "kind": "edit",
+       "sentence": "把 XV-101 换成一个控制阀"
+      }
+     ],
+     "semantic_check": {
+      "tags_ok": true,
+      "tags_missing": [],
+      "connections_ok": true,
+      "connections_missing": [],
+      "completeness": "complete",
+      "expected_completeness": "complete"
+     }
+    },
+    "S6": {
+     "document_id": "doc_90f3d76922a2",
+     "steps": [
+      {
+       "http": 200,
+       "wall_ms": 812.5,
+       "outcome": "committed",
+       "revision": 1,
+       "completeness": "complete",
+       "latency_ms": 790.63,
+       "judgment_count": 2,
+       "spec_digest": "7abbc3ae96a98399",
+       "entities": [
+        {
+         "tag": "P-101",
+         "kind": "equipment",
+         "symbol_key": "centrifugal_pump",
+         "equipment_class": "泵",
+         "instrument_type": ""
+        },
+        {
+         "tag": "T-101",
+         "kind": "equipment",
+         "symbol_key": "fractionation_column",
+         "equipment_class": "容器",
+         "instrument_type": ""
+        }
+       ],
+       "connections": [
+        {
+         "source": "P-101",
+         "target": "T-101",
+         "medium": ""
+        }
+       ],
+       "undelivered": [],
+       "skipped": [],
+       "unknown_tags": [],
+       "catalog_gaps": [],
+       "port_ambiguities": 0,
+       "model": "jev-1.13.0",
+       "quality": {
+        "score": 100.0,
+        "passed": true,
+        "target_score": 95.0,
+        "blocker_count": 0,
+        "issue_codes": [],
+        "engine_version": 2
+       },
+       "kind": "plan",
+       "sentence": "添加一台进料泵 P-101，添加一个精馏塔 T-101，把 P-101 接到 T-101 的原料进料口"
+      },
+      {
+       "http": 200,
+       "wall_ms": 35.4,
+       "outcome": "committed",
+       "revision": 2,
+       "completeness": "complete",
+       "latency_ms": 0.0,
+       "judgment_count": 0,
+       "spec_digest": "76baeac83fab6a22",
+       "entities": [
+        {
+         "tag": "P-101",
+         "kind": "equipment",
+         "symbol_key": "centrifugal_pump",
+         "equipment_class": "泵",
+         "instrument_type": ""
+        },
+        {
+         "tag": "T-101",
+         "kind": "equipment",
+         "symbol_key": "fractionation_column",
+         "equipment_class": "容器",
+         "instrument_type": ""
+        },
+        {
+         "tag": "E-101",
+         "kind": "equipment",
+         "symbol_key": "condenser",
+         "equipment_class": "换热设备",
+         "instrument_type": ""
+        }
+       ],
+       "connections": [
+        {
+         "source": "P-101",
+         "target": "T-101",
+         "medium": ""
+        },
+        {
+         "source": "T-101",
+         "target": "E-101",
+         "medium": ""
+        },
+        {
+         "source": "E-101",
+         "target": "T-101",
+         "medium": ""
+        }
+       ],
+       "undelivered": [],
+       "skipped": [],
+       "unknown_tags": [],
+       "catalog_gaps": [],
+       "port_ambiguities": 0,
+       "model": "",
+       "quality": {
+        "score": 86.75,
+        "passed": false,
+        "target_score": 95.0,
+        "blocker_count": 1,
+        "issue_codes": [
+         "DRAFT_MICRO_SEGMENT"
+        ],
+        "engine_version": 2
+       },
+       "kind": "edit",
+       "sentence": "添加一个冷凝器 E-101，把 T-101 的塔顶气相出口接到 E-101 的工艺入口，把 E-101 的工艺出口接到 T-101 的回流入口"
+      },
+      {
+       "http": 200,
+       "wall_ms": 907.6,
+       "outcome": "committed",
+       "revision": 3,
+       "completeness": "complete",
+       "latency_ms": 870.34,
+       "judgment_count": 1,
+       "spec_digest": "00782f6e16b59f73",
+       "entities": [
+        {
+         "tag": "P-101",
+         "kind": "equipment",
+         "symbol_key": "centrifugal_pump",
+         "equipment_class": "泵",
+         "instrument_type": ""
+        },
+        {
+         "tag": "T-101",
+         "kind": "equipment",
+         "symbol_key": "fractionation_column",
+         "equipment_class": "容器",
+         "instrument_type": ""
+        },
+        {
+         "tag": "E-101",
+         "kind": "equipment",
+         "symbol_key": "condenser",
+         "equipment_class": "换热设备",
+         "instrument_type": ""
+        },
+        {
+         "tag": "V-102",
+         "kind": "equipment",
+         "symbol_key": "buffer_tank",
+         "equipment_class": "容器",
+         "instrument_type": ""
+        }
+       ],
+       "connections": [
+        {
+         "source": "P-101",
+         "target": "T-101",
+         "medium": ""
+        },
+        {
+         "source": "T-101",
+         "target": "E-101",
+         "medium": ""
+        },
+        {
+         "source": "E-101",
+         "target": "T-101",
+         "medium": ""
+        },
+        {
+         "source": "T-101",
+         "target": "V-102",
+         "medium": ""
+        }
+       ],
+       "undelivered": [],
+       "skipped": [],
+       "unknown_tags": [],
+       "catalog_gaps": [],
+       "port_ambiguities": 0,
+       "model": "jev-1.13.0",
+       "quality": {
+        "score": 86.25,
+        "passed": false,
+        "target_score": 95.0,
+        "blocker_count": 1,
+        "issue_codes": [
+         "DRAFT_MICRO_SEGMENT"
+        ],
+        "engine_version": 2
+       },
+       "kind": "edit",
+       "sentence": "把 T-101 的侧线采出口接到一个缓冲罐 V-102"
+      }
+     ],
+     "semantic_check": {
+      "tags_ok": true,
+      "tags_missing": [],
+      "connections_ok": true,
+      "connections_missing": [],
+      "completeness": "complete",
+      "expected_completeness": "complete"
+     }
+    }
+   },
+   "gap_probes": [
+    {
+     "gap": "G4",
+     "title": "泄放支路走线（router 白名单）",
+     "source": "M8-Q1 DEV-3 edit",
+     "sentence": "添加一个缓冲罐 V-101，添加一台离心泵 P-101，添加一台安全阀 PSV-101，把 V-101 接到 P-101，把 P-101 的出口接到 PSV-101 的入口，把 PSV-101 的出口接到 V-101 的顶部管口",
+     "http": 422,
+     "wall_ms": 1823.8,
+     "outcome": "422:error",
+     "detail": "这句话规划出的图纸引擎目前画不了：connection 'cn_3' cannot be routed orthogonally from 'el_PSV_101'.outlet to 'el_V_101'.in without crossing 1 other node bounds"
+    },
+    {
+     "gap": "TT-101",
+     "title": "温度变送器符号（已从 agent 目录隐藏，底层定义保留）",
+     "source": "M8-Q1 DEV-4 / 2026-07-27 目录收紧",
+     "sentence": "添加一个缓冲罐 V-101，给 V-101 添加一台温度变送器 TT-101",
+     "http": 200,
+     "wall_ms": 1596.4,
+     "outcome": "committed",
+     "revision": 1,
+     "completeness": "complete",
+     "latency_ms": 1576.23,
+     "judgment_count": 2,
+     "spec_digest": "7194a4c557d03df6",
+     "entities": [
+      {
+       "tag": "V-101",
+       "kind": "equipment",
+       "symbol_key": "buffer_tank",
+       "equipment_class": "容器",
+       "instrument_type": ""
+      },
+      {
+       "tag": "TT-101",
+       "kind": "instrument",
+       "symbol_key": "temperature_transmitter",
+       "equipment_class": "仪表",
+       "instrument_type": ""
+      }
+     ],
+     "connections": [],
+     "undelivered": [],
+     "skipped": [],
+     "unknown_tags": [],
+     "catalog_gaps": [],
+     "port_ambiguities": 0,
+     "model": "jev-1.13.0",
+     "quality": {
+      "score": 81.0,
+      "passed": false,
+      "target_score": 95.0,
+      "blocker_count": 2,
+      "issue_codes": [
+       "DRAFT_MICRO_SEGMENT",
+       "DRAFT_TEXT_CONNECTOR_CROSSING"
+      ],
+      "engine_version": 2
+     }
+    },
+    {
+     "gap": "SYSTEM-DECL",
+     "title": "系统声明子句",
+     "source": "M8-Q1 DEV-5 句一",
+     "sentence": "添加一个主工艺系统",
+     "http": 422,
+     "wall_ms": 4.8,
+     "outcome": "422:typesafe_spec_no_device",
+     "completeness": null,
+     "skipped": [],
+     "undelivered": [],
+     "catalog_gaps": [],
+     "port_ambiguities": []
+    }
+   ],
+   "total_ms": 12653.6,
+   "server_port": 57600
+  },
+  {
+   "run": 2,
+   "scenarios": {
+    "S1": {
+     "document_id": "doc_3ee97a156b28",
+     "steps": [
+      {
+       "http": 200,
+       "wall_ms": 1270.1,
+       "outcome": "committed",
+       "revision": 1,
+       "completeness": "complete",
+       "latency_ms": 1242.95,
+       "judgment_count": 2,
+       "spec_digest": "507be4a6cbc99b6c",
+       "entities": [
+        {
+         "tag": "V-101",
+         "kind": "equipment",
+         "symbol_key": "buffer_tank",
+         "equipment_class": "容器",
+         "instrument_type": ""
+        },
+        {
+         "tag": "P-101",
+         "kind": "equipment",
+         "symbol_key": "centrifugal_pump",
+         "equipment_class": "泵",
+         "instrument_type": ""
+        }
+       ],
+       "connections": [
+        {
+         "source": "V-101",
+         "target": "P-101",
+         "medium": ""
+        }
+       ],
+       "undelivered": [],
+       "skipped": [],
+       "unknown_tags": [],
+       "catalog_gaps": [],
+       "port_ambiguities": 0,
+       "model": "jev-1.13.0",
+       "quality": {
+        "score": 95.0,
+        "passed": false,
+        "target_score": 95.0,
+        "blocker_count": 1,
+        "issue_codes": [
+         "DRAFT_MICRO_SEGMENT"
+        ],
+        "engine_version": 2
+       },
+       "kind": "plan",
+       "sentence": "添加一个缓冲罐 V-101，添加一台离心泵 P-101，把 V-101 接到 P-101"
+      }
+     ],
+     "semantic_check": {
+      "tags_ok": true,
+      "tags_missing": [],
+      "connections_ok": true,
+      "connections_missing": [],
+      "completeness": "complete",
+      "expected_completeness": "complete"
+     }
+    },
+    "S2": {
+     "document_id": "doc_9bbb1a5af0ad",
+     "steps": [
+      {
+       "http": 422,
+       "wall_ms": 1023.7,
+       "outcome": "422:port_ambiguity",
+       "completeness": "partial",
+       "skipped": [],
+       "undelivered": [],
+       "catalog_gaps": [],
+       "port_ambiguities": [
+        {
+         "code": "port_ambiguity",
+         "reason": "missing_selector",
+         "source_requirement": "把 E-101 的工艺出口接到 V-102",
+         "role": "target",
+         "element_tag": "V-102",
+         "symbol_key": "horizontal_vessel",
+         "selector": null,
+         "candidates": [
+          {
+           "port_id": "in",
+           "name": "入口",
+           "direction": "in",
+           "medium": "process",
+           "side": "left",
+           "selectors": [
+            "in",
+            "入",
+            "入口",
+            "吸入",
+            "吸入口",
+            "大端",
+            "左侧",
+            "左端",
+            "左边",
+            "来料",
+            "进口",
+            "进料",
+            "进料口"
+           ]
+          },
+          {
+           "port_id": "top",
+           "name": "顶部接口",
+           "direction": "bidirectional",
+           "medium": "process",
+           "side": "top",
+           "selectors": [
+            "top",
+            "上端",
+            "上面",
+            "塔顶",
+            "顶上",
+            "顶部",
+            "顶部接",
+            "顶部管口"
+           ]
+          }
+         ],
+         "port_selector_contract_version": "m7-port-selector/1"
+        }
+       ],
+       "kind": "plan",
+       "sentence": "添加一台进料泵 P-101，添加一个精馏塔 T-101，添加一个冷凝器 E-101，添加一个回流罐 V-102，添加一台回流泵 P-102，把 P-101 接到 T-101 的原料进料口，把 T-101 的塔顶气相出口接到 E-101 的工艺入口，把 E-101 的工艺出口接到 V-102，把 V-102 接到 P-102，把 P-102 接到 T-101 的回流入口"
+      }
+     ],
+     "semantic_check": {
+      "tags_ok": false,
+      "connections_ok": false,
+      "reason": "no committed step"
+     }
+    },
+    "S3": {
+     "document_id": "doc_133efe7dedc3",
+     "steps": [
+      {
+       "http": 200,
+       "wall_ms": 1203.3,
+       "outcome": "committed",
+       "revision": 1,
+       "completeness": "complete",
+       "latency_ms": 1179.19,
+       "judgment_count": 3,
+       "spec_digest": "db4c8535d07f9ee4",
+       "entities": [
+        {
+         "tag": "P-101",
+         "kind": "equipment",
+         "symbol_key": "centrifugal_pump",
+         "equipment_class": "泵",
+         "instrument_type": ""
+        },
+        {
+         "tag": "PI-101",
+         "kind": "instrument",
+         "symbol_key": "pressure_indicator",
+         "equipment_class": "仪表",
+         "instrument_type": ""
+        },
+        {
+         "tag": "TI-101",
+         "kind": "instrument",
+         "symbol_key": "temperature_indicator",
+         "equipment_class": "仪表",
+         "instrument_type": ""
+        }
+       ],
+       "connections": [],
+       "undelivered": [],
+       "skipped": [],
+       "unknown_tags": [],
+       "catalog_gaps": [],
+       "port_ambiguities": 0,
+       "model": "jev-1.13.0",
+       "quality": {
+        "score": 80.0,
+        "passed": false,
+        "target_score": 95.0,
+        "blocker_count": 2,
+        "issue_codes": [
+         "DRAFT_TEXT_CONNECTOR_CROSSING"
+        ],
+        "engine_version": 2
+       },
+       "kind": "plan",
+       "sentence": "添加一台离心泵 P-101，在 P-101 的出口加一台压力表 PI-101，在 P-101 的出口加一台温度计 TI-101"
+      }
+     ],
+     "semantic_check": {
+      "tags_ok": true,
+      "tags_missing": [],
+      "connections_ok": true,
+      "connections_missing": [],
+      "completeness": "complete",
+      "expected_completeness": "complete"
+     }
+    },
+    "S4": {
+     "document_id": "doc_a90db7aed937",
+     "steps": [
+      {
+       "http": 200,
+       "wall_ms": 916.1,
+       "outcome": "committed",
+       "revision": 1,
+       "completeness": "complete",
+       "latency_ms": 892.37,
+       "judgment_count": 3,
+       "spec_digest": "4de345ddae8ba4e7",
+       "entities": [
+        {
+         "tag": "V-101",
+         "kind": "equipment",
+         "symbol_key": "buffer_tank",
+         "equipment_class": "容器",
+         "instrument_type": ""
+        },
+        {
+         "tag": "LG-101",
+         "kind": "instrument",
+         "symbol_key": "level_gauge",
+         "equipment_class": "仪表",
+         "instrument_type": ""
+        },
+        {
+         "tag": "LCV-101",
+         "kind": "equipment",
+         "symbol_key": "control_valve",
+         "equipment_class": "阀门",
+         "instrument_type": ""
+        }
+       ],
+       "connections": [
+        {
+         "source": "V-101",
+         "target": "LCV-101",
+         "medium": ""
+        }
+       ],
+       "undelivered": [],
+       "skipped": [],
+       "unknown_tags": [],
+       "catalog_gaps": [],
+       "port_ambiguities": 0,
+       "model": "jev-1.13.0",
+       "quality": {
+        "score": 83.75,
+        "passed": false,
+        "target_score": 95.0,
+        "blocker_count": 0,
+        "issue_codes": [],
+        "engine_version": 2
+       },
+       "kind": "plan",
+       "sentence": "添加一个缓冲罐 V-101，给 V-101 添加一台液位计 LG-101，添加一台控制阀 LCV-101，把 V-101 接到 LCV-101"
+      }
+     ],
+     "semantic_check": {
+      "tags_ok": true,
+      "tags_missing": [],
+      "connections_ok": true,
+      "connections_missing": [],
+      "completeness": "complete",
+      "expected_completeness": "complete"
+     }
+    },
+    "S5": {
+     "document_id": "doc_03d7ef9df69c",
+     "steps": [
+      {
+       "http": 200,
+       "wall_ms": 1294.7,
+       "outcome": "committed",
+       "revision": 1,
+       "completeness": "complete",
+       "latency_ms": 1265.7,
+       "judgment_count": 4,
+       "spec_digest": "126b7c3e92a5c62e",
+       "entities": [
+        {
+         "tag": "V-101",
+         "kind": "equipment",
+         "symbol_key": "buffer_tank",
+         "equipment_class": "容器",
+         "instrument_type": ""
+        },
+        {
+         "tag": "P-101",
+         "kind": "equipment",
+         "symbol_key": "centrifugal_pump",
+         "equipment_class": "泵",
+         "instrument_type": ""
+        },
+        {
+         "tag": "XV-101",
+         "kind": "equipment",
+         "symbol_key": "gate_valve",
+         "equipment_class": "阀门",
+         "instrument_type": ""
+        },
+        {
+         "tag": "V-102",
+         "kind": "equipment",
+         "symbol_key": "buffer_tank",
+         "equipment_class": "容器",
+         "instrument_type": ""
+        }
+       ],
+       "connections": [
+        {
+         "source": "V-101",
+         "target": "P-101",
+         "medium": ""
+        },
+        {
+         "source": "P-101",
+         "target": "XV-101",
+         "medium": ""
+        },
+        {
+         "source": "XV-101",
+         "target": "V-102",
+         "medium": ""
+        }
+       ],
+       "undelivered": [],
+       "skipped": [],
+       "unknown_tags": [],
+       "catalog_gaps": [],
+       "port_ambiguities": 0,
+       "model": "jev-1.13.0",
+       "quality": {
+        "score": 95.0,
+        "passed": false,
+        "target_score": 95.0,
+        "blocker_count": 1,
+        "issue_codes": [
+         "DRAFT_MICRO_SEGMENT"
+        ],
+        "engine_version": 2
+       },
+       "kind": "plan",
+       "sentence": "添加一个缓冲罐 V-101，添加一台离心泵 P-101，添加一个闸阀 XV-101，添加一个缓冲罐 V-102，把 V-101 接到 P-101，把 P-101 接到 XV-101，把 XV-101 接到 V-102"
+      },
+      {
+       "http": 200,
+       "wall_ms": 737.1,
+       "outcome": "committed",
+       "revision": 2,
+       "completeness": "complete",
+       "latency_ms": 702.28,
+       "judgment_count": 1,
+       "spec_digest": "dcbb5a54c80e72d3",
+       "entities": [
+        {
+         "tag": "V-101",
+         "kind": "equipment",
+         "symbol_key": "buffer_tank",
+         "equipment_class": "容器",
+         "instrument_type": ""
+        },
+        {
+         "tag": "P-101",
+         "kind": "equipment",
+         "symbol_key": "centrifugal_pump",
+         "equipment_class": "泵",
+         "instrument_type": ""
+        },
+        {
+         "tag": "XV-101",
+         "kind": "equipment",
+         "symbol_key": "control_valve",
+         "equipment_class": "阀门",
+         "instrument_type": ""
+        },
+        {
+         "tag": "V-102",
+         "kind": "equipment",
+         "symbol_key": "buffer_tank",
+         "equipment_class": "容器",
+         "instrument_type": ""
+        }
+       ],
+       "connections": [
+        {
+         "source": "V-101",
+         "target": "P-101",
+         "medium": ""
+        },
+        {
+         "source": "P-101",
+         "target": "XV-101",
+         "medium": ""
+        },
+        {
+         "source": "XV-101",
+         "target": "V-102",
+         "medium": ""
+        }
+       ],
+       "undelivered": [],
+       "skipped": [],
+       "unknown_tags": [],
+       "catalog_gaps": [],
+       "port_ambiguities": 0,
+       "model": "jev-1.13.0",
+       "quality": {
+        "score": 90.0,
+        "passed": false,
+        "target_score": 95.0,
+        "blocker_count": 2,
+        "issue_codes": [
+         "DRAFT_MICRO_SEGMENT"
+        ],
+        "engine_version": 2
+       },
+       "kind": "edit",
+       "sentence": "把 XV-101 换成一个控制阀"
+      }
+     ],
+     "semantic_check": {
+      "tags_ok": true,
+      "tags_missing": [],
+      "connections_ok": true,
+      "connections_missing": [],
+      "completeness": "complete",
+      "expected_completeness": "complete"
+     }
+    },
+    "S6": {
+     "document_id": "doc_fc8fd66005a1",
+     "steps": [
+      {
+       "http": 200,
+       "wall_ms": 890.1,
+       "outcome": "committed",
+       "revision": 1,
+       "completeness": "complete",
+       "latency_ms": 866.33,
+       "judgment_count": 2,
+       "spec_digest": "7abbc3ae96a98399",
+       "entities": [
+        {
+         "tag": "P-101",
+         "kind": "equipment",
+         "symbol_key": "centrifugal_pump",
+         "equipment_class": "泵",
+         "instrument_type": ""
+        },
+        {
+         "tag": "T-101",
+         "kind": "equipment",
+         "symbol_key": "fractionation_column",
+         "equipment_class": "容器",
+         "instrument_type": ""
+        }
+       ],
+       "connections": [
+        {
+         "source": "P-101",
+         "target": "T-101",
+         "medium": ""
+        }
+       ],
+       "undelivered": [],
+       "skipped": [],
+       "unknown_tags": [],
+       "catalog_gaps": [],
+       "port_ambiguities": 0,
+       "model": "jev-1.13.0",
+       "quality": {
+        "score": 100.0,
+        "passed": true,
+        "target_score": 95.0,
+        "blocker_count": 0,
+        "issue_codes": [],
+        "engine_version": 2
+       },
+       "kind": "plan",
+       "sentence": "添加一台进料泵 P-101，添加一个精馏塔 T-101，把 P-101 接到 T-101 的原料进料口"
+      },
+      {
+       "http": 200,
+       "wall_ms": 36.3,
+       "outcome": "committed",
+       "revision": 2,
+       "completeness": "complete",
+       "latency_ms": 0.0,
+       "judgment_count": 0,
+       "spec_digest": "76baeac83fab6a22",
+       "entities": [
+        {
+         "tag": "P-101",
+         "kind": "equipment",
+         "symbol_key": "centrifugal_pump",
+         "equipment_class": "泵",
+         "instrument_type": ""
+        },
+        {
+         "tag": "T-101",
+         "kind": "equipment",
+         "symbol_key": "fractionation_column",
+         "equipment_class": "容器",
+         "instrument_type": ""
+        },
+        {
+         "tag": "E-101",
+         "kind": "equipment",
+         "symbol_key": "condenser",
+         "equipment_class": "换热设备",
+         "instrument_type": ""
+        }
+       ],
+       "connections": [
+        {
+         "source": "P-101",
+         "target": "T-101",
+         "medium": ""
+        },
+        {
+         "source": "T-101",
+         "target": "E-101",
+         "medium": ""
+        },
+        {
+         "source": "E-101",
+         "target": "T-101",
+         "medium": ""
+        }
+       ],
+       "undelivered": [],
+       "skipped": [],
+       "unknown_tags": [],
+       "catalog_gaps": [],
+       "port_ambiguities": 0,
+       "model": "",
+       "quality": {
+        "score": 86.75,
+        "passed": false,
+        "target_score": 95.0,
+        "blocker_count": 1,
+        "issue_codes": [
+         "DRAFT_MICRO_SEGMENT"
+        ],
+        "engine_version": 2
+       },
+       "kind": "edit",
+       "sentence": "添加一个冷凝器 E-101，把 T-101 的塔顶气相出口接到 E-101 的工艺入口，把 E-101 的工艺出口接到 T-101 的回流入口"
+      },
+      {
+       "http": 200,
+       "wall_ms": 1210.5,
+       "outcome": "committed",
+       "revision": 3,
+       "completeness": "complete",
+       "latency_ms": 1171.31,
+       "judgment_count": 1,
+       "spec_digest": "00782f6e16b59f73",
+       "entities": [
+        {
+         "tag": "P-101",
+         "kind": "equipment",
+         "symbol_key": "centrifugal_pump",
+         "equipment_class": "泵",
+         "instrument_type": ""
+        },
+        {
+         "tag": "T-101",
+         "kind": "equipment",
+         "symbol_key": "fractionation_column",
+         "equipment_class": "容器",
+         "instrument_type": ""
+        },
+        {
+         "tag": "E-101",
+         "kind": "equipment",
+         "symbol_key": "condenser",
+         "equipment_class": "换热设备",
+         "instrument_type": ""
+        },
+        {
+         "tag": "V-102",
+         "kind": "equipment",
+         "symbol_key": "buffer_tank",
+         "equipment_class": "容器",
+         "instrument_type": ""
+        }
+       ],
+       "connections": [
+        {
+         "source": "P-101",
+         "target": "T-101",
+         "medium": ""
+        },
+        {
+         "source": "T-101",
+         "target": "E-101",
+         "medium": ""
+        },
+        {
+         "source": "E-101",
+         "target": "T-101",
+         "medium": ""
+        },
+        {
+         "source": "T-101",
+         "target": "V-102",
+         "medium": ""
+        }
+       ],
+       "undelivered": [],
+       "skipped": [],
+       "unknown_tags": [],
+       "catalog_gaps": [],
+       "port_ambiguities": 0,
+       "model": "jev-1.13.0",
+       "quality": {
+        "score": 86.25,
+        "passed": false,
+        "target_score": 95.0,
+        "blocker_count": 1,
+        "issue_codes": [
+         "DRAFT_MICRO_SEGMENT"
+        ],
+        "engine_version": 2
+       },
+       "kind": "edit",
+       "sentence": "把 T-101 的侧线采出口接到一个缓冲罐 V-102"
+      }
+     ],
+     "semantic_check": {
+      "tags_ok": true,
+      "tags_missing": [],
+      "connections_ok": true,
+      "connections_missing": [],
+      "completeness": "complete",
+      "expected_completeness": "complete"
+     }
+    }
+   },
+   "gap_probes": [],
+   "total_ms": 8626.4,
+   "server_port": 57656
+  }
+ ],
+ "replay": [
+  {
+   "scenario": "S1",
+   "spec_digests_by_run": [
+    [
+     "507be4a6cbc99b6c"
+    ],
+    [
+     "507be4a6cbc99b6c"
+    ]
+   ],
+   "outcomes_by_run": [
+    [
+     "committed"
+    ],
+    [
+     "committed"
+    ]
+   ],
+   "digest_match": true,
+   "outcome_match": true
+  },
+  {
+   "scenario": "S2",
+   "spec_digests_by_run": [
+    [
+     ""
+    ],
+    [
+     ""
+    ]
+   ],
+   "outcomes_by_run": [
+    [
+     "422:port_ambiguity"
+    ],
+    [
+     "422:port_ambiguity"
+    ]
+   ],
+   "digest_match": true,
+   "outcome_match": true
+  },
+  {
+   "scenario": "S3",
+   "spec_digests_by_run": [
+    [
+     "db4c8535d07f9ee4"
+    ],
+    [
+     "db4c8535d07f9ee4"
+    ]
+   ],
+   "outcomes_by_run": [
+    [
+     "committed"
+    ],
+    [
+     "committed"
+    ]
+   ],
+   "digest_match": true,
+   "outcome_match": true
+  },
+  {
+   "scenario": "S4",
+   "spec_digests_by_run": [
+    [
+     "4de345ddae8ba4e7"
+    ],
+    [
+     "4de345ddae8ba4e7"
+    ]
+   ],
+   "outcomes_by_run": [
+    [
+     "committed"
+    ],
+    [
+     "committed"
+    ]
+   ],
+   "digest_match": true,
+   "outcome_match": true
+  },
+  {
+   "scenario": "S5",
+   "spec_digests_by_run": [
+    [
+     "126b7c3e92a5c62e",
+     "dcbb5a54c80e72d3"
+    ],
+    [
+     "126b7c3e92a5c62e",
+     "dcbb5a54c80e72d3"
+    ]
+   ],
+   "outcomes_by_run": [
+    [
+     "committed",
+     "committed"
+    ],
+    [
+     "committed",
+     "committed"
+    ]
+   ],
+   "digest_match": true,
+   "outcome_match": true
+  },
+  {
+   "scenario": "S6",
+   "spec_digests_by_run": [
+    [
+     "7abbc3ae96a98399",
+     "76baeac83fab6a22",
+     "00782f6e16b59f73"
+    ],
+    [
+     "7abbc3ae96a98399",
+     "76baeac83fab6a22",
+     "00782f6e16b59f73"
+    ]
+   ],
+   "outcomes_by_run": [
+    [
+     "committed",
+     "committed",
+     "committed"
+    ],
+    [
+     "committed",
+     "committed",
+     "committed"
+    ]
+   ],
+   "digest_match": true,
+   "outcome_match": true
+  }
+ ],
+ "environment": {
+  "python": "3.12.13",
+  "platform": "macOS-26.6.1-arm64-arm-64bit",
+  "machine": "arm64",
+  "typesafe_model_env": "(default)",
+  "note": "local development machine, real TypeSafe endpoint, scratch DB per run; median facts are reported per step across the two runs only -- no extrapolation, no CI ceiling (M13 evidence-method ruling)."
+ },
+ "provenance": {
+  "git_rev_parse_HEAD": "f8d9d8467b7f4b2cf159de257729cbf3928ec981",
+  "git_status_porcelain_before_evidence": "M backend/agentcad/api_semantic_agent.py\n M backend/agentcad/data/symbols.json\n M backend/agentcad/device_phrases.py\n M backend/agentcad/m7_attachment_targets.py\n M backend/agentcad/m7_layout_materialization.py\n M backend/agentcad/m7_text_edit.py\n M backend/agentcad/m7_text_planner.py\n M backend/agentcad/surface_contract.py\n M backend/tests/test_m7_attachment_targets.py\n M backend/tests/test_m7_layout_materialization.py\n M backend/tests/test_m7_text_edit.py\n M backend/tests/test_m7_text_planner.py\n M backend/tests/test_text_plan_surface.py\n M frontend/src/App.tsx\n M frontend/src/api.ts\n M reports/di1_baseline_runner.py\n?? reports/di1-d4-corpus-evidence.json",
+  "server_code_root": "/Users/joe/ai/Astra/projects/active/P055-PID-Agent-main",
+  "python_executable": "/Users/joe/ai/Astra/projects/active/P055-PID-Agent/.venv/bin/python"
+ }
+}

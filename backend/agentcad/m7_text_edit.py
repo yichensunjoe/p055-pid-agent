@@ -24,7 +24,15 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from .device_phrases import Clause, available_alternatives, extract_tags, split_clauses
+from .device_phrases import (
+    Clause,
+    available_alternatives,
+    candidate_symbols,
+    extract_tags,
+    matched_hints,
+    replace_target,
+    split_clauses,
+)
 from .m7_diagram_spec import DiagramConnection, DiagramEntity, DiagramSpec
 from .m7_synthesis_contract import Completeness
 from .m7_text_planner import (
@@ -32,6 +40,7 @@ from .m7_text_planner import (
     PlannedDiagram,
     PlannedEntity,
     TypesafeDiagramSpecPlanner,
+    _device_phrase,
     _is_equipment,
     attach_port_selectors,
 )
@@ -43,6 +52,7 @@ class TypesafeSpecEditor(TypesafeDiagramSpecPlanner):
     def plan_edit(self, prompt: str, *, base_spec: DiagramSpec, typesafe_config) -> PlannedDiagram:
         connect_clauses = [c for c in split_clauses(prompt) if c.kind == "connect"]
         remove_clauses = [c for c in split_clauses(prompt) if c.kind == "remove"]
+        replace_clauses = [c for c in split_clauses(prompt) if c.kind == "replace"]
         unknown_clauses = [c for c in split_clauses(prompt) if c.kind == "unknown"]
 
         # Read only the *delta* devices the edit sentence declares; the base spec's
@@ -51,6 +61,49 @@ class TypesafeSpecEditor(TypesafeDiagramSpecPlanner):
             prompt,
             existing_tags=tuple(entity.tag for entity in base_spec.entities),
         )
+
+        # DI-1-D4 F-e: 「把 <TAG> 换成 …」 replacement clauses. The target is data (the
+        # tag the clause spells out, looked up in the base spec -- never inferred); the
+        # replacement device kind is the only judgment, chosen among code-built candidates.
+        # Replacement intents stay in their own list: a duplicate add mints the same
+        # el_<tag> id as the entity it duplicates, so membership in the base spec must
+        # never be what tells a replacement from an addition.
+        replace_receipts: list[str] = []
+        replacement_entities: list[PlannedEntity] = []
+        for clause in replace_clauses:
+            parsed = replace_target(clause.text)
+            if parsed is None:
+                replace_receipts.append(
+                    f"「{clause.text}」不是可支持的替换子句（应为 把<位号>换成<新设备>）。"
+                )
+                continue
+            target_tag, rest = parsed
+            existing = next(
+                (entity for entity in base_spec.entities if entity.tag == target_tag), None
+            )
+            if existing is None:
+                replace_receipts.append(
+                    f"「{clause.text}」：位号 {target_tag} 不在当前图纸里，替换未执行。"
+                )
+                continue
+            if extract_tags(rest):
+                replace_receipts.append(
+                    f"「{clause.text}」：暂不支持替换并改名，替换未执行。"
+                )
+                continue
+            phrase = _device_phrase(rest) or rest
+            candidates = tuple(candidate_symbols(self.symbols, clause.text))
+            replacement_entities.append(
+                PlannedEntity(
+                    engineering_id=existing.engineering_id,
+                    tag=existing.tag,
+                    phrase=phrase,
+                    candidates=candidates,
+                    decided_by="judgment",
+                    source_clause=clause.text,
+                    catalog_gap=bool(matched_hints(clause.text)) and not candidates,
+                )
+            )
         base_entities = [
             PlannedEntity(
                 engineering_id=entity.engineering_id,
@@ -86,7 +139,9 @@ class TypesafeSpecEditor(TypesafeDiagramSpecPlanner):
 
         notes: list[str] = []
         skipped: list[str] = []
-        state, questions = self.questions(delta_entities, connections, label_entities=pool)
+        state, questions = self.questions(
+            [*delta_entities, *replacement_entities], connections, label_entities=pool
+        )
         if questions:
             result = self.client_factory(typesafe_config).judge(state, questions)
             answers = result["answers"]
@@ -102,6 +157,10 @@ class TypesafeSpecEditor(TypesafeDiagramSpecPlanner):
         delta_entities = [
             self._resolve_entity(entity, answers.get(entity.engineering_id), notes, skipped)
             for entity in delta_entities
+        ]
+        replacement_entities = [
+            self._resolve_entity(entity, answers.get(entity.engineering_id), notes, skipped)
+            for entity in replacement_entities
         ]
         resolved_pool = {entity.engineering_id: entity for entity in [*base_entities, *delta_entities]}
         labels = {eid: entity.tag for eid, entity in resolved_pool.items()}
@@ -122,6 +181,8 @@ class TypesafeSpecEditor(TypesafeDiagramSpecPlanner):
             unknown_tags=unknown_tags,
             notes=notes,
             skipped=skipped,
+            replace_entities=replacement_entities,
+            replace_receipts=replace_receipts,
         )
         problems = spec.problems()
         if problems:
@@ -186,8 +247,11 @@ class TypesafeSpecEditor(TypesafeDiagramSpecPlanner):
         unknown_tags: tuple[str, ...],
         notes: list[str],
         skipped: list[str],
+        replace_entities: list[PlannedEntity] | None = None,
+        replace_receipts: list[str] | None = None,
     ):
         undelivered: list[str] = [f"无法理解的子句：「{clause.text}」" for clause in unknown_clauses]
+        undelivered.extend(replace_receipts or [])
 
         removed_ids: set[str] = set()
         for clause in remove_clauses:
@@ -233,6 +297,26 @@ class TypesafeSpecEditor(TypesafeDiagramSpecPlanner):
         kept_entities = [
             entity for entity in base_spec.entities if entity.engineering_id not in removed_ids
         ]
+        # F-e replacements: a resolved delta entity whose id already exists in the base is
+        # a replacement, not an addition — swap the symbol in place (position in the entity
+        # order, tag, host and every connection are kept), never duplicate-tag receipt it.
+        replacement_by_id = {
+            entity.engineering_id: entity
+            for entity in (replace_entities or [])
+            if entity.resolved and entity.engineering_id in {e.engineering_id for e in kept_entities}
+        }
+        if replacement_by_id:
+            kept_entities = [
+                self._replaced_entity(entity, replacement_by_id[entity.engineering_id])
+                if entity.engineering_id in replacement_by_id
+                else entity
+                for entity in kept_entities
+            ]
+            for entity_id in sorted(replacement_by_id):
+                notes.append(
+                    f"位号 {replacement_by_id[entity_id].tag} 已替换为 "
+                    f"{replacement_by_id[entity_id].phrase}（连接与身份保持不变）。"
+                )
         dropped_base_connections = [
             connection
             for connection in base_spec.connections
@@ -249,7 +333,11 @@ class TypesafeSpecEditor(TypesafeDiagramSpecPlanner):
             if connection not in dropped_base_connections
         ]
 
-        additions = [entity for entity in delta_entities if entity.resolved]
+        additions = [
+            entity
+            for entity in delta_entities
+            if entity.resolved
+        ]
         duplicate_tags = {
             entity.tag
             for entity in additions
@@ -359,6 +447,24 @@ class TypesafeSpecEditor(TypesafeDiagramSpecPlanner):
             return self.symbols.get(symbol_key).category
         except Exception:  # pragma: no cover - a candidate always came from the registry
             return ""
+
+    def _replaced_entity(self, base: DiagramEntity, planned: PlannedEntity) -> DiagramEntity:
+        """F-e: the base entity after an in-place replacement -- identity, tag, position in
+        the entity order and every connection survive; the symbol and its derived kind
+        fields take the replacement. A flip to equipment drops the instrument's host
+        (equipment never carries one); a flip to instrument clears the stale class."""
+
+        instrument = not _is_equipment(planned.chosen_symbol_key, self.symbols)
+        return base.model_copy(
+            update={
+                "kind": "instrument" if instrument else "equipment",
+                "name": planned.phrase,
+                "symbol_key": planned.chosen_symbol_key,
+                "equipment_class": self._category(planned.chosen_symbol_key),
+                "instrument_type": base.instrument_type if instrument else "",
+                "host_engineering_id": base.host_engineering_id if instrument else None,
+            }
+        )
 
     def _incoherent(self, problems: list[str]):
         from .m7_text_planner import DiagramSpecPlanningError

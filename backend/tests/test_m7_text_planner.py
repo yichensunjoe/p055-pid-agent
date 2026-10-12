@@ -461,6 +461,59 @@ def test_transmitter_visibility_matrix_is_unchanged_elsewhere() -> None:
     assert REGISTRY.exists("pressure_transmitter") is False
 
 
+def test_instrument_on_host_location_clause_is_an_attachment() -> None:
+    """DI-1-D4 F-b: 「在 <HOST> 的<方位>加<仪表>」 lands in the same attachment pipeline
+    as 「给 HOST 添加」 — same host relation, same governed tap resolution."""
+
+    clauses = split_clauses("添加一台离心泵 P-101，在 P-101 的出口加一台压力表 PI-101")
+    assert [clause.kind for clause in clauses] == ["add", "add"]
+
+    answers = {"el_PI_101": {"choice": "pressure_indicator", "confidence": 0.95}}
+    plan = _planner(_Recorder(answers)).plan(
+        "添加一台离心泵 P-101，在 P-101 的出口加一台压力表 PI-101",
+        typesafe_config=_config(),
+    )
+    by_tag = {entity.tag: entity for entity in plan.spec.entities}
+    assert by_tag["P-101"].kind == "equipment"
+    assert by_tag["PI-101"].kind == "instrument"
+    assert by_tag["PI-101"].symbol_key == "pressure_indicator"
+    assert by_tag["PI-101"].host_engineering_id == "el_P_101"
+
+    # A positional placement of a non-instrument is not the attachment grammar: the
+    # location word carries no instrument suffix, so no host is claimed.
+    from agentcad.m7_text_planner import _host_tag_of
+
+    placement = split_clauses("在 V-101 的旁边加一个缓冲罐 V-102")
+    assert placement[0].kind == "add"
+    assert _host_tag_of(placement[0].text) == ""
+    assert _host_tag_of("在 P-101 的出口加一台压力表 PI-101") == "P-101"
+
+
+def test_reflux_drum_is_an_exact_lookup_not_a_confidence_gamble() -> None:
+    """DI-1-D4 F-a: 「回流罐」 names a reflux drum — exactly one horizontal_vessel candidate,
+    resolved by lookup without asking the model (the baseline showed the generic 罐 pool
+    landing on cylinder_vessel at 0.27 < 0.34 and being skipped)."""
+
+    keys = {candidate.key for candidate in candidate_symbols(REGISTRY, "添加一个回流罐 V-102")}
+    assert keys == {"horizontal_vessel"}
+    assert "cylinder_vessel" not in keys
+    assert "buffer_tank" not in keys
+
+    recorder = _Recorder()
+    plan = _planner(recorder).plan(
+        "添加一个回流罐 V-102，添加一台回流泵 P-102，把 V-102 接到 P-102",
+        typesafe_config=_config(),
+    )
+    recorder = _Recorder()
+    plan = _planner(recorder).plan(
+        "添加一个回流罐 V-102，添加一台回流泵 P-102，把 V-102 接到 P-102",
+        typesafe_config=_config(),
+    )
+    v102 = next(entity for entity in plan.spec.entities if entity.tag == "V-102")
+    assert v102.symbol_key == "horizontal_vessel"
+    assert v102.tag not in {note for note in plan.skipped}
+
+
 def test_instruments_attach_to_the_host_the_sentence_names() -> None:
     """Q2R3-A: 「给 <HOST> 添加 <仪表>」 becomes a formal spec relation (DEV-4 shape)."""
 
@@ -572,9 +625,9 @@ def test_attached_instruments_without_governed_tap_get_machine_readable_gaps() -
 
 
 def test_dev4_shape_with_pinned_symbols_materializes_tt_and_pit() -> None:
-    """Q2R3-B2 hard lock: TT/PIT resolve and leave no receipt; LIT lands on the
-    level-gauge pair-port semantics which are a separate design, so it receipts with
-    no_instrument_land_port -- never a hidden first-bidirectional default."""
+    """Q2R3-B2 hard lock, updated by DI-1-D4 F-c: TT/PIT resolve and leave no receipt;
+    LIT now resolves too — the level gauge lands on its declared lower port (the dual-tap
+    semantics the old contract deferred as a separate design; F-c is that design)."""
 
     answers = {
         "el_LIT_101": {"choice": "level_gauge", "confidence": 0.9},
@@ -587,5 +640,5 @@ def test_dev4_shape_with_pinned_symbols_materializes_tt_and_pit() -> None:
     records = {record["instrument_tag"]: record for record in plan.attachment_gaps}
     assert "TT-101" not in records
     assert "PIT-101" not in records
-    assert records["LIT-101"]["reason"] == "no_instrument_land_port"
-    assert plan.completeness == "partial"
+    assert "LIT-101" not in records
+    assert plan.completeness == "complete"

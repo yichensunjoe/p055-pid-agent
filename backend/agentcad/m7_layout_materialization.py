@@ -726,24 +726,21 @@ def _plan_rows(plan: SemanticLayoutPlan) -> tuple[dict[str, Any], ...]:
 
 
 def _instrument_land_port(registry: SymbolRegistry, symbol_key: str) -> str:
-    """The instrument-side port a governed tap connector lands on: the symbol's
-    ``process`` port, nothing else.
+    """The instrument-side port a governed tap connector lands on.
 
-    There is deliberately no bidirectional fallback: level gauges expose an
-    upper/lower pair whose dual-tap semantics are a separate design, and "the first
-    bidirectional port" would be a hidden default. An instrument without a ``process``
-    port cannot be tap-materialized; the planner ledger receipts it long before this
-    layer, and reaching here with one is a loud error, not a silent skip.
+    Delegates to the attachment resolver's single rule (``process`` port, else the
+    declared dual-port landing from ``_DECLARED_LAND_PORTS``, else nothing): the planner
+    receipts an instrument with no landing port long before this layer, and reaching here
+    with one is a loud error, not a silent skip.
     """
+
+    from .m7_attachment_targets import instrument_land_port_id
 
     try:
         definition = registry.get(symbol_key)
     except KeyError:
         return ""
-    for port in definition.ports:
-        if port.id == "process":
-            return port.id
-    return ""
+    return instrument_land_port_id(symbol_key, tuple(port.id for port in definition.ports))
 
 
 def _attachment_tap_rows(

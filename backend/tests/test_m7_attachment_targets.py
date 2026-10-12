@@ -7,7 +7,6 @@ never enter the candidate set, and no rule ever guesses from geometry.
 
 from agentcad.m7_attachment_targets import (
     REASON_NO_GOVERNED_TAP_PORT,
-    REASON_NO_INSTRUMENT_LAND_PORT,
     REASON_NO_MATCHING_GOVERNED_TAP_PORT,
     REASON_UNSUPPORTED_INSTRUMENT_TYPE,
     resolve_attachment_target,
@@ -94,18 +93,57 @@ def test_known_type_without_its_tap_is_no_matching_not_multiple() -> None:
     assert result.candidates == ("tap_level",)
 
 
-def test_level_gauge_resolves_no_land_port_without_a_hidden_default() -> None:
-    """Q2R3-B2 round fix: level gauges expose an upper/lower pair, not a process port.
-    The tap may resolve on the host side, but landing must fail closed -- never the
-    first bidirectional port."""
+def test_level_gauge_lands_on_its_declared_lower_port() -> None:
+    """DI-1-D4 F-c: the dual-tap landing is now designed — a level gauge connects its
+    declared lower (liquid-side) port to the host's level tap. Explicit port identity,
+    still never "the first bidirectional port" or a guess."""
 
     result = resolve_attachment_target(
-        instrument_tag="LIT-101",
+        instrument_tag="LG-101",
         instrument_symbol_key="level_gauge",
         host_tag="V-101",
         host_symbol_key="buffer_tank",
         host_port_ids=("in", "out", "tap_level"),
         instrument_port_ids=("upper", "lower"),
     )
+    assert result.resolved
+    assert result.resolved_port_id == "tap_level"
+
+
+def test_an_undeclared_dual_port_instrument_still_receipts() -> None:
+    """The declared-landing table is exhaustive by design: an instrument with neither a
+    ``process`` port nor a declared landing keeps the fail-closed receipt."""
+
+    from agentcad.m7_attachment_targets import instrument_land_port_id
+
+    assert instrument_land_port_id("level_gauge", ("upper", "lower")) == "lower"
+    assert instrument_land_port_id("pressure_indicator", ("process",)) == "process"
+    assert instrument_land_port_id("some_future_dual", ("upper", "lower")) == ""
+    result = resolve_attachment_target(
+        instrument_tag="X-101",
+        instrument_symbol_key="some_future_dual",
+        host_tag="V-101",
+        host_symbol_key="buffer_tank",
+        host_port_ids=("in", "out", "tap_level"),
+        instrument_port_ids=("upper", "lower"),
+    )
     assert not result.resolved
-    assert result.reason == REASON_NO_INSTRUMENT_LAND_PORT
+    # No tap-selection rule matches the unknown key first: unsupported type wins the receipt.
+    assert result.reason == REASON_UNSUPPORTED_INSTRUMENT_TYPE
+
+
+def test_the_pump_governed_tap_is_discharge_side() -> None:
+    """F-c catalogue half: the centrifugal pump now declares its governed pressure/
+    temperature tap (tap_pt) — an instrument on a pump resolves instead of receipting
+    no_governed_tap_port."""
+
+    result = resolve_attachment_target(
+        instrument_tag="PI-101",
+        instrument_symbol_key="pressure_indicator",
+        host_tag="P-101",
+        host_symbol_key="centrifugal_pump",
+        host_port_ids=("suction", "discharge", "tap_pt"),
+        instrument_port_ids=("process",),
+    )
+    assert result.resolved
+    assert result.resolved_port_id == "tap_pt"

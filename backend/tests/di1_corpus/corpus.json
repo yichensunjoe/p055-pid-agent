@@ -1,0 +1,140 @@
+{
+  "corpus_id": "di1-corpus",
+  "version": 1,
+  "frozen_by": "Gate DI-1-D2 Design Gate 2026-10-12（S1–S6 冻结批准）",
+  "evidence_record_fields": ["输入描述", "期望结果", "实际生成结果", "人工评价", "replay 结果"],
+  "categories_required": ["简单流程线", "设备+仪表", "控制回路", "管线连接", "复杂局部"],
+  "scenarios": [
+    {
+      "id": "S1",
+      "title": "泵罐进出料",
+      "category": "简单流程线",
+      "covers": ["简单流程线"],
+      "steps": [
+        {"kind": "plan", "sentence": "添加一个缓冲罐 V-101，添加一台离心泵 P-101，把 V-101 接到 P-101"}
+      ],
+      "expected": {
+        "tags": ["V-101", "P-101"],
+        "connections": [{"source": "V-101", "target": "P-101"}],
+        "completeness": "complete"
+      },
+      "gap_links": []
+    },
+    {
+      "id": "S2",
+      "title": "塔顶冷凝回流系统",
+      "category": "复杂局部",
+      "covers": ["复杂局部", "管线连接"],
+      "steps": [
+        {"kind": "plan", "sentence": "添加一台进料泵 P-101，添加一个精馏塔 T-101，添加一个冷凝器 E-101，添加一个回流罐 V-102，添加一台回流泵 P-102，把 P-101 接到 T-101 的原料进料口，把 T-101 的塔顶气相出口接到 E-101 的工艺入口，把 E-101 的工艺出口接到 V-102，把 V-102 接到 P-102，把 P-102 接到 T-101 的回流入口"}
+      ],
+      "expected": {
+        "tags": ["P-101", "T-101", "E-101", "V-102", "P-102"],
+        "connections": [
+          {"source": "P-101", "target": "T-101"},
+          {"source": "T-101", "target": "E-101"},
+          {"source": "E-101", "target": "V-102"},
+          {"source": "V-102", "target": "P-102"},
+          {"source": "P-102", "target": "T-101"}
+        ],
+        "completeness": "complete"
+      },
+      "gap_links": ["G3"]
+    },
+    {
+      "id": "S3",
+      "title": "泵出口压力与温度指示支管",
+      "category": "设备+仪表",
+      "covers": ["设备+仪表"],
+      "steps": [
+        {"kind": "plan", "sentence": "添加一台离心泵 P-101，在 P-101 的出口加一台压力表 PI-101，在 P-101 的出口加一台温度计 TI-101"}
+      ],
+      "expected": {
+        "tags": ["P-101", "PI-101", "TI-101"],
+        "connections": [],
+        "completeness": "complete"
+      },
+      "gap_links": []
+    },
+    {
+      "id": "S4",
+      "title": "液位指示与控制阀回路",
+      "category": "控制回路",
+      "covers": ["控制回路"],
+      "steps": [
+        {"kind": "plan", "sentence": "添加一个缓冲罐 V-101，给 V-101 添加一台液位计 LG-101，添加一台控制阀 LCV-101，把 V-101 接到 LCV-101"}
+      ],
+      "expected": {
+        "tags": ["V-101", "LG-101", "LCV-101"],
+        "connections": [{"source": "V-101", "target": "LCV-101"}],
+        "completeness": "complete"
+      },
+      "gap_links": []
+    },
+    {
+      "id": "S5",
+      "title": "主管串联闸阀后改控制阀",
+      "category": "管线连接",
+      "covers": ["管线连接"],
+      "steps": [
+        {"kind": "plan", "sentence": "添加一个缓冲罐 V-101，添加一台离心泵 P-101，添加一个闸阀 XV-101，添加一个缓冲罐 V-102，把 V-101 接到 P-101，把 P-101 接到 XV-101，把 XV-101 接到 V-102"},
+        {"kind": "edit", "sentence": "把 XV-101 换成一个控制阀"}
+      ],
+      "expected": {
+        "tags": ["V-101", "P-101", "XV-101", "V-102"],
+        "connections": [
+          {"source": "V-101", "target": "P-101"},
+          {"source": "P-101", "target": "XV-101"},
+          {"source": "XV-101", "target": "V-102"}
+        ],
+        "completeness": "complete"
+      },
+      "gap_links": ["HOLDOUT-1"]
+    },
+    {
+      "id": "S6",
+      "title": "进料-精馏-冷凝-回流复杂局部（M8 DEV-6 合规子集）",
+      "category": "复杂局部",
+      "covers": ["复杂局部"],
+      "steps": [
+        {"kind": "plan", "sentence": "添加一台进料泵 P-101，添加一个精馏塔 T-101，把 P-101 接到 T-101 的原料进料口"},
+        {"kind": "edit", "sentence": "添加一个冷凝器 E-101，把 T-101 的塔顶气相出口接到 E-101 的工艺入口，把 E-101 的工艺出口接到 T-101 的回流入口"},
+        {"kind": "edit", "sentence": "把 T-101 的侧线采出口接到一个缓冲罐 V-102"}
+      ],
+      "expected": {
+        "tags": ["P-101", "T-101", "E-101", "V-102"],
+        "connections": [
+          {"source": "P-101", "target": "T-101"},
+          {"source": "T-101", "target": "E-101"},
+          {"source": "E-101", "target": "T-101"},
+          {"source": "T-101", "target": "V-102"}
+        ],
+        "completeness": "complete"
+      },
+      "gap_links": ["G3"]
+    }
+  ],
+  "gap_probes": [
+    {
+      "gap": "G4",
+      "title": "泄放支路走线（router 白名单）",
+      "source": "M8-Q1 DEV-3 edit",
+      "sentence": "添加一个缓冲罐 V-101，添加一台离心泵 P-101，添加一台安全阀 PSV-101，把 V-101 接到 P-101，把 P-101 的出口接到 PSV-101 的入口，把 PSV-101 的出口接到 V-101 的顶部管口",
+      "kind": "plan"
+    },
+    {
+      "gap": "TT-101",
+      "title": "温度变送器符号（已从 agent 目录隐藏，底层定义保留）",
+      "source": "M8-Q1 DEV-4 / 2026-07-27 目录收紧",
+      "sentence": "添加一个缓冲罐 V-101，给 V-101 添加一台温度变送器 TT-101",
+      "kind": "plan"
+    },
+    {
+      "gap": "SYSTEM-DECL",
+      "title": "系统声明子句",
+      "source": "M8-Q1 DEV-5 句一",
+      "sentence": "添加一个主工艺系统",
+      "kind": "plan"
+    }
+  ]
+}

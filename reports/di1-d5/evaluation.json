@@ -1,0 +1,580 @@
+{
+ "milestone": "DI-1-D5 evaluation (Gate CODE GO 2026-10-12: evaluation + non-regression + closeout)",
+ "corpus_sha256": "5a2450d9946acf765bf9ed70acefb381c68f5495aba5d70b9742124351893742",
+ "evaluations": [
+  {
+   "scenario": "S1",
+   "title": "泵罐进出料",
+   "category": "简单流程线",
+   "输入描述": [
+    "添加一个缓冲罐 V-101，添加一台离心泵 P-101，把 V-101 接到 P-101"
+   ],
+   "期望结果": {
+    "tags": [
+     "V-101",
+     "P-101"
+    ],
+    "connections": [
+     {
+      "source": "V-101",
+      "target": "P-101"
+     }
+    ],
+    "completeness": "complete"
+   },
+   "实际生成结果": {
+    "outcomes": [
+     "committed"
+    ],
+    "semantic_check": {
+     "tags_ok": true,
+     "tags_missing": [],
+     "connections_ok": true,
+     "connections_missing": [],
+     "completeness": "complete",
+     "expected_completeness": "complete"
+    },
+    "quality": [
+     {
+      "score": 95.0,
+      "passed": false,
+      "target_score": 95.0,
+      "blocker_count": 1,
+      "issue_codes": [
+       "DRAFT_MICRO_SEGMENT"
+      ],
+      "engine_version": 2
+     }
+    ],
+    "latency_ms": [
+     1699.18
+    ],
+    "wall_ms": [
+     1729.2
+    ],
+    "drawing_exports": {
+     "png": {
+      "path": "reports/di1-d5/S1.png",
+      "bytes": 7946
+     },
+     "dxf": {
+      "path": "reports/di1-d5/S1.dxf",
+      "bytes": 4198
+     }
+    }
+   },
+   "人工评价": {
+    "status": "PENDING_OWNER",
+    "reviewer": "",
+    "verdict": "",
+    "note": "看 reports/di1-d5/ 下该场景的 PNG/DXF 导出后填写：是我要的图 / 不是 + 一句话理由"
+   },
+   "replay 结果": {
+    "scenario": "S1",
+    "digest_match": true,
+    "outcome_match": true
+   }
+  },
+  {
+   "scenario": "S2",
+   "title": "塔顶冷凝回流系统",
+   "category": "复杂局部",
+   "输入描述": [
+    "添加一台进料泵 P-101，添加一个精馏塔 T-101，添加一个冷凝器 E-101，添加一个回流罐 V-102，添加一台回流泵 P-102，把 P-101 接到 T-101 的原料进料口，把 T-101 的塔顶气相出口接到 E-101 的工艺入口，把 E-101 的工艺出口接到 V-102，把 V-102 接到 P-102，把 P-102 接到 T-101 的回流入口"
+   ],
+   "期望结果": {
+    "tags": [
+     "P-101",
+     "T-101",
+     "E-101",
+     "V-102",
+     "P-102"
+    ],
+    "connections": [
+     {
+      "source": "P-101",
+      "target": "T-101"
+     },
+     {
+      "source": "T-101",
+      "target": "E-101"
+     },
+     {
+      "source": "E-101",
+      "target": "V-102"
+     },
+     {
+      "source": "V-102",
+      "target": "P-102"
+     },
+     {
+      "source": "P-102",
+      "target": "T-101"
+     }
+    ],
+    "completeness": "complete"
+   },
+   "实际生成结果": {
+    "outcomes": [
+     "422:port_ambiguity"
+    ],
+    "semantic_check": {
+     "tags_ok": false,
+     "connections_ok": false,
+     "reason": "no committed step"
+    },
+    "quality": [],
+    "latency_ms": [],
+    "wall_ms": [
+     961.2
+    ],
+    "drawing_exports": {}
+   },
+   "人工评价": {
+    "status": "PENDING_OWNER",
+    "reviewer": "",
+    "verdict": "",
+    "note": "看 reports/di1-d5/ 下该场景的 PNG/DXF 导出后填写：是我要的图 / 不是 + 一句话理由"
+   },
+   "replay 结果": {
+    "scenario": "S2",
+    "digest_match": true,
+    "outcome_match": true
+   }
+  },
+  {
+   "scenario": "S3",
+   "title": "泵出口压力与温度指示支管",
+   "category": "设备+仪表",
+   "输入描述": [
+    "添加一台离心泵 P-101，在 P-101 的出口加一台压力表 PI-101，在 P-101 的出口加一台温度计 TI-101"
+   ],
+   "期望结果": {
+    "tags": [
+     "P-101",
+     "PI-101",
+     "TI-101"
+    ],
+    "connections": [],
+    "completeness": "complete"
+   },
+   "实际生成结果": {
+    "outcomes": [
+     "committed"
+    ],
+    "semantic_check": {
+     "tags_ok": true,
+     "tags_missing": [],
+     "connections_ok": true,
+     "connections_missing": [],
+     "completeness": "complete",
+     "expected_completeness": "complete"
+    },
+    "quality": [
+     {
+      "score": 80.0,
+      "passed": false,
+      "target_score": 95.0,
+      "blocker_count": 2,
+      "issue_codes": [
+       "DRAFT_TEXT_CONNECTOR_CROSSING"
+      ],
+      "engine_version": 2
+     }
+    ],
+    "latency_ms": [
+     768.62
+    ],
+    "wall_ms": [
+     795.2
+    ],
+    "drawing_exports": {
+     "png": {
+      "path": "reports/di1-d5/S3.png",
+      "bytes": 9581
+     },
+     "dxf": {
+      "path": "reports/di1-d5/S3.dxf",
+      "bytes": 4857
+     }
+    }
+   },
+   "人工评价": {
+    "status": "PENDING_OWNER",
+    "reviewer": "",
+    "verdict": "",
+    "note": "看 reports/di1-d5/ 下该场景的 PNG/DXF 导出后填写：是我要的图 / 不是 + 一句话理由"
+   },
+   "replay 结果": {
+    "scenario": "S3",
+    "digest_match": true,
+    "outcome_match": true
+   }
+  },
+  {
+   "scenario": "S4",
+   "title": "液位指示与控制阀回路",
+   "category": "控制回路",
+   "输入描述": [
+    "添加一个缓冲罐 V-101，给 V-101 添加一台液位计 LG-101，添加一台控制阀 LCV-101，把 V-101 接到 LCV-101"
+   ],
+   "期望结果": {
+    "tags": [
+     "V-101",
+     "LG-101",
+     "LCV-101"
+    ],
+    "connections": [
+     {
+      "source": "V-101",
+      "target": "LCV-101"
+     }
+    ],
+    "completeness": "complete"
+   },
+   "实际生成结果": {
+    "outcomes": [
+     "committed"
+    ],
+    "semantic_check": {
+     "tags_ok": true,
+     "tags_missing": [],
+     "connections_ok": true,
+     "connections_missing": [],
+     "completeness": "complete",
+     "expected_completeness": "complete"
+    },
+    "quality": [
+     {
+      "score": 83.75,
+      "passed": false,
+      "target_score": 95.0,
+      "blocker_count": 0,
+      "issue_codes": [],
+      "engine_version": 2
+     }
+    ],
+    "latency_ms": [
+     925.72
+    ],
+    "wall_ms": [
+     956.7
+    ],
+    "drawing_exports": {
+     "png": {
+      "path": "reports/di1-d5/S4.png",
+      "bytes": 10563
+     },
+     "dxf": {
+      "path": "reports/di1-d5/S4.dxf",
+      "bytes": 6530
+     }
+    }
+   },
+   "人工评价": {
+    "status": "PENDING_OWNER",
+    "reviewer": "",
+    "verdict": "",
+    "note": "看 reports/di1-d5/ 下该场景的 PNG/DXF 导出后填写：是我要的图 / 不是 + 一句话理由"
+   },
+   "replay 结果": {
+    "scenario": "S4",
+    "digest_match": true,
+    "outcome_match": true
+   }
+  },
+  {
+   "scenario": "S5",
+   "title": "主管串联闸阀后改控制阀",
+   "category": "管线连接",
+   "输入描述": [
+    "添加一个缓冲罐 V-101，添加一台离心泵 P-101，添加一个闸阀 XV-101，添加一个缓冲罐 V-102，把 V-101 接到 P-101，把 P-101 接到 XV-101，把 XV-101 接到 V-102",
+    "把 XV-101 换成一个控制阀"
+   ],
+   "期望结果": {
+    "tags": [
+     "V-101",
+     "P-101",
+     "XV-101",
+     "V-102"
+    ],
+    "connections": [
+     {
+      "source": "V-101",
+      "target": "P-101"
+     },
+     {
+      "source": "P-101",
+      "target": "XV-101"
+     },
+     {
+      "source": "XV-101",
+      "target": "V-102"
+     }
+    ],
+    "completeness": "complete"
+   },
+   "实际生成结果": {
+    "outcomes": [
+     "committed",
+     "committed"
+    ],
+    "semantic_check": {
+     "tags_ok": true,
+     "tags_missing": [],
+     "connections_ok": true,
+     "connections_missing": [],
+     "completeness": "complete",
+     "expected_completeness": "complete"
+    },
+    "quality": [
+     {
+      "score": 95.0,
+      "passed": false,
+      "target_score": 95.0,
+      "blocker_count": 1,
+      "issue_codes": [
+       "DRAFT_MICRO_SEGMENT"
+      ],
+      "engine_version": 2
+     },
+     {
+      "score": 90.0,
+      "passed": false,
+      "target_score": 95.0,
+      "blocker_count": 2,
+      "issue_codes": [
+       "DRAFT_MICRO_SEGMENT"
+      ],
+      "engine_version": 2
+     }
+    ],
+    "latency_ms": [
+     960.65,
+     716.17
+    ],
+    "wall_ms": [
+     985.7,
+     749.4
+    ],
+    "drawing_exports": {
+     "png": {
+      "path": "reports/di1-d5/S5.png",
+      "bytes": 12846
+     },
+     "dxf": {
+      "path": "reports/di1-d5/S5.dxf",
+      "bytes": 8334
+     }
+    }
+   },
+   "人工评价": {
+    "status": "PENDING_OWNER",
+    "reviewer": "",
+    "verdict": "",
+    "note": "看 reports/di1-d5/ 下该场景的 PNG/DXF 导出后填写：是我要的图 / 不是 + 一句话理由"
+   },
+   "replay 结果": {
+    "scenario": "S5",
+    "digest_match": true,
+    "outcome_match": true
+   }
+  },
+  {
+   "scenario": "S6",
+   "title": "进料-精馏-冷凝-回流复杂局部（M8 DEV-6 合规子集）",
+   "category": "复杂局部",
+   "输入描述": [
+    "添加一台进料泵 P-101，添加一个精馏塔 T-101，把 P-101 接到 T-101 的原料进料口",
+    "添加一个冷凝器 E-101，把 T-101 的塔顶气相出口接到 E-101 的工艺入口，把 E-101 的工艺出口接到 T-101 的回流入口",
+    "把 T-101 的侧线采出口接到一个缓冲罐 V-102"
+   ],
+   "期望结果": {
+    "tags": [
+     "P-101",
+     "T-101",
+     "E-101",
+     "V-102"
+    ],
+    "connections": [
+     {
+      "source": "P-101",
+      "target": "T-101"
+     },
+     {
+      "source": "T-101",
+      "target": "E-101"
+     },
+     {
+      "source": "E-101",
+      "target": "T-101"
+     },
+     {
+      "source": "T-101",
+      "target": "V-102"
+     }
+    ],
+    "completeness": "complete"
+   },
+   "实际生成结果": {
+    "outcomes": [
+     "committed",
+     "committed",
+     "committed"
+    ],
+    "semantic_check": {
+     "tags_ok": true,
+     "tags_missing": [],
+     "connections_ok": true,
+     "connections_missing": [],
+     "completeness": "complete",
+     "expected_completeness": "complete"
+    },
+    "quality": [
+     {
+      "score": 100.0,
+      "passed": true,
+      "target_score": 95.0,
+      "blocker_count": 0,
+      "issue_codes": [],
+      "engine_version": 2
+     },
+     {
+      "score": 86.75,
+      "passed": false,
+      "target_score": 95.0,
+      "blocker_count": 1,
+      "issue_codes": [
+       "DRAFT_MICRO_SEGMENT"
+      ],
+      "engine_version": 2
+     },
+     {
+      "score": 86.25,
+      "passed": false,
+      "target_score": 95.0,
+      "blocker_count": 1,
+      "issue_codes": [
+       "DRAFT_MICRO_SEGMENT"
+      ],
+      "engine_version": 2
+     }
+    ],
+    "latency_ms": [
+     656.73,
+     705.36
+    ],
+    "wall_ms": [
+     680.8,
+     37.3,
+     772.9
+    ],
+    "drawing_exports": {
+     "png": {
+      "path": "reports/di1-d5/S6.png",
+      "bytes": 21051
+     },
+     "dxf": {
+      "path": "reports/di1-d5/S6.dxf",
+      "bytes": 10999
+     }
+    }
+   },
+   "人工评价": {
+    "status": "PENDING_OWNER",
+    "reviewer": "",
+    "verdict": "",
+    "note": "看 reports/di1-d5/ 下该场景的 PNG/DXF 导出后填写：是我要的图 / 不是 + 一句话理由"
+   },
+   "replay 结果": {
+    "scenario": "S6",
+    "digest_match": true,
+    "outcome_match": true
+   }
+  }
+ ],
+ "gap_probes": [
+  {
+   "gap": "G4",
+   "title": "泄放支路走线（router 白名单）",
+   "source": "M8-Q1 DEV-3 edit",
+   "sentence": "添加一个缓冲罐 V-101，添加一台离心泵 P-101，添加一台安全阀 PSV-101，把 V-101 接到 P-101，把 P-101 的出口接到 PSV-101 的入口，把 PSV-101 的出口接到 V-101 的顶部管口",
+   "http": 422,
+   "wall_ms": 721.9,
+   "outcome": "422:error",
+   "detail": "这句话规划出的图纸引擎目前画不了：connection 'cn_3' cannot be routed orthogonally from 'el_PSV_101'.outlet to 'el_V_101'.in without crossing 1 other node bounds"
+  },
+  {
+   "gap": "TT-101",
+   "title": "温度变送器符号（已从 agent 目录隐藏，底层定义保留）",
+   "source": "M8-Q1 DEV-4 / 2026-07-27 目录收紧",
+   "sentence": "添加一个缓冲罐 V-101，给 V-101 添加一台温度变送器 TT-101",
+   "http": 200,
+   "wall_ms": 669.4,
+   "outcome": "committed",
+   "revision": 1,
+   "completeness": "complete",
+   "latency_ms": 645.49,
+   "judgment_count": 2,
+   "spec_digest": "7194a4c557d03df6",
+   "entities": [
+    {
+     "tag": "V-101",
+     "kind": "equipment",
+     "symbol_key": "buffer_tank",
+     "equipment_class": "容器",
+     "instrument_type": ""
+    },
+    {
+     "tag": "TT-101",
+     "kind": "instrument",
+     "symbol_key": "temperature_transmitter",
+     "equipment_class": "仪表",
+     "instrument_type": ""
+    }
+   ],
+   "connections": [],
+   "undelivered": [],
+   "skipped": [],
+   "unknown_tags": [],
+   "catalog_gaps": [],
+   "port_ambiguities": 0,
+   "model": "jev-1.13.0",
+   "quality": {
+    "score": 81.0,
+    "passed": false,
+    "target_score": 95.0,
+    "blocker_count": 2,
+    "issue_codes": [
+     "DRAFT_MICRO_SEGMENT",
+     "DRAFT_TEXT_CONNECTOR_CROSSING"
+    ],
+    "engine_version": 2
+   }
+  },
+  {
+   "gap": "SYSTEM-DECL",
+   "title": "系统声明子句",
+   "source": "M8-Q1 DEV-5 句一",
+   "sentence": "添加一个主工艺系统",
+   "http": 422,
+   "wall_ms": 5.3,
+   "outcome": "422:typesafe_spec_no_device",
+   "completeness": null,
+   "skipped": [],
+   "undelivered": [],
+   "catalog_gaps": [],
+   "port_ambiguities": []
+  }
+ ],
+ "replay_summary": {
+  "scenarios": 6,
+  "both_match": 6
+ },
+ "provenance": {
+  "git_rev_parse_HEAD": "a8c413de9fc140c12a2373281cc82af557b415a1",
+  "git_status_porcelain_before_evidence": "?? reports/di1_d5_evaluation.py",
+  "server_code_root": "/Users/joe/ai/Astra/projects/active/P055-PID-Agent-main",
+  "python_executable": "/Users/joe/ai/Astra/projects/active/P055-PID-Agent/.venv/bin/python"
+ }
+}

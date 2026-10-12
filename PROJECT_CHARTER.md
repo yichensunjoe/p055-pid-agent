@@ -1,8 +1,8 @@
 # P&ID-Agent / AgentCAD 总体技术任务书
 
 > 文档性质：项目长期主约束（Canonical Project Charter / Master Task Specification）  
-> 当前版本：1.2.0  
-> 生效日期：2026-10-05  
+> 当前版本：1.3.0  
+> 生效日期：2026-10-12  
 > 当前仓库：P055-PID-Agent  
 > 长期平台方向：AgentCAD Engineering Drawing Harness  
 > 首个生产级领域：P&ID  
@@ -11,6 +11,38 @@
 ---
 
 ## 0.1 Revision Record
+
+### 1.2.0 → 1.3.0（MINOR，2026-10-12，Owner replanning trigger + Gate-approved DI-1 definition）
+
+本次为 MINOR revision（依据 §59：新增里程碑 = MINOR）。变更：新增 §55D DI-1 —— Drawing
+Intelligence Iteration-1（自然语言 → 用户想要的流程图的能力迭代切片）；登记 M6-2B-D5 重构为
+Minimal Drawing Qualification（5–10 张代表性样本；三指标 semantic correctness /
+drawing usability / deterministic replay；不建独立第三方标注体系、大规模语料与完整
+qualification framework）。Owner 指令原文：「以快捷实用稳定高效、能真正画出来用户想要的
+流程图为目的进行设计优化，不要过度的工程化，影响项目进度」。
+
+不变：Immutable Core（engineering-delivery-first、semantic-first、tool-mediated editing、
+deterministic validation、audit/rollback、model-agnostic、human formal approval boundary）、
+M9 真实项目试点完成标准、M10 技术完成 ACK 与 FINAL ACCEPTANCE 条件、M6 Final Acceptance
+条件、DEPLOY 未授权状态、audit hash formation/global ordinal semantics、M6 已冻结治理契约
+（八层链、唯一写入层、状态机、白名单为空、confidence≠authority）。
+
+### 1.2.0 → 1.3.0 Revision Proposal Record
+
+- **Immutable Core**：不变（见上）。
+- **Mutable Architecture**：允许新增自然语言出图/改图的能力迭代切片及其轻量评估证据形态；
+  不得因本 revision 修改 M6 已冻结治理契约、audit hash formation、global ordinal semantics
+  或正式 approval/release 责任边界；不得形成第二条直接数据库工程写路径。
+- **Roadmap Changes**：§55D DI-1 插入 M13 之后，作为 M13 后能力路线中的绘图智能迭代切片；
+  M9/M10 完成标准与挂起状态不变；M6-2B-D5 重构口径按 §55D 注释登记。
+- **Benchmark Impact**：DI-1 样本可反哺 M6-2B-D5；不得删除、skip、xfail、弱化既有
+  M5/M6/M11/M12/M13 regression evidence。DI-1-D2 Design Gate 必须在代码实施前冻结场景集、
+  评价口径、证据格式与达标线。
+- **Migration**：本 revision 无 schema/迁移内容；DI-1 各片若需 schema revision，按既有纪律
+  单独冻结 migration-safe 方案后另行审查。
+- **Owner Approval Requirement**：Owner 2026-10-12 指令构成本次 replanning trigger。任何改变
+  Immutable Core、M9 真实试点标准、正式 release responsibility 或引入新项目边界的后续变化，
+  仍须另行取得 Owner 明确批准。
 
 ### 1.1.0 → 1.2.0（MINOR，2026-10-05，Owner replanning trigger + Gate-approved M13 definition）
 
@@ -1458,6 +1490,20 @@ M12 project graph 的 mutation/orchestration 层，不新增第三 engineering d
 5. **Atomic Governed Multi-Domain Commit**：一个 change set 是一个用户级工程动作，P&ID mutation、Cable mutation、必要 link mutation 与 governance closeout 具备明确 all-or-nothing 边界；任何 CAS/validator/link invariant/写入失败不得留下半项目状态；禁止依次调用两个现有 write endpoint 冒充原子性。
 6. **Post-Commit Project Evidence**：确定性绑定 before/after member pins、per-domain diffs、link snapshot、project readiness/result hash、validation evidence 与 audit references；新 result pins 必须能直接进入 M12 deterministic package；仍只 eligible/not_eligible，不产生 Approved/Released。
 7. **Frozen Two-Domain Acceptance + Full Non-Regression**：至少一个真正同时修改 P&ID 与 Cable 的工程场景走通 preview → exact approval → atomic apply → project validation → deterministic package 全链；failure injection / revision race / membership-link drift / approval replay / partial-commit 全负例；M5 gate、P&ID、Cable、M12 package、browser/shared-mode 全量不退化。
+
+---
+
+## 55D. DI-1 — Drawing Intelligence Iteration-1
+
+自然语言 → 用户想要的流程图的能力迭代切片（Owner 2026-10-12 指令 + Gate 2026-10-12 方向裁定与定义批准）。验证「稳定生成用户想要的流程图」，**不宣称**施工交付级 CAD 替代、工程签发资格或行业级标准认证。完成标志（冻结，Gate 2026-10-12 定义裁定）：
+
+1. **代表性场景集**：5–10 个真实用户场景，覆盖简单流程线、设备+仪表、控制回路、管线连接与一个复杂局部；每个场景保留输入描述、期望结果、实际生成结果、人工评价、replay 结果五项记录。
+2. **三指标验证**：semantic correctness（元件/连接/方向正确）、drawing usability（人工评价「是我要的图」）、deterministic replay（同输入稳定重现）；达标线随 DI-1-D2 Design Gate 按实测基线冻结，不预设硬数字；禁止扩展为大规模认证体系、第三方完整标注体系或行业级 qualification framework。
+3. **自然语言修改闭环**：每个场景至少一轮「用户继续说 → 图改对」的交互修改闭环。
+4. **交互速度**：首稿生成与修改响应在交互可接受范围；阈值随 Design Gate 按实测基线冻结。
+5. **全量非回归**：既有 M5/M6/M11/M12/M13 行为与测试不得靠删测、skip/xfail、放宽断言换绿；M6 已冻结治理契约不变。
+
+边界（冻结）：DI-1 复用现有 semantic plan/apply、deterministic drafting、validation、audit 能力面，不新造工程写路径；DI-1 样本证据反哺 M6-2B-D5（Minimal Drawing Qualification），两者共享样本、不重复建设；WS3B / M9 Closeout / M10 FINAL ACCEPTANCE 保持 Owner 挂起；DEPLOY 未授权。
 
 ---
 

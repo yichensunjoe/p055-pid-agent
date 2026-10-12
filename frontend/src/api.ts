@@ -120,8 +120,7 @@ export type TypesafeVerifyResult = {
 export type TextPlanResult = {
   document_id: string;
   committed: boolean;
-  revision: number | null;
-  spec: {
+  revision: number | null;  spec: {
     label: string;
     entities: { engineering_id: string; tag: string; name: string; symbol_key: string }[];
     connections: { engineering_id: string; source_engineering_id: string; target_engineering_id: string }[];
@@ -142,6 +141,14 @@ export type TextPlanResult = {
   latency_ms: number;
   question_count: number;
   judgment_count: number;
+};
+
+// DI-1-D4: the stored NL semantic source's coordinates (GET /documents/{id}/nl-source).
+export type NlSourceResult = {
+  document_id: string;
+  available: boolean;
+  revision: number | null;
+  spec_digest: string;
 };
 
 // The panel can carry a key, but the server may already hold one (``TYPESAFE_API_KEY``). Which of the
@@ -774,6 +781,9 @@ export const api = {
     }),
     signal,
   }),
+  // DI-1-D4: the stored NL source's coordinates, so a reload can restore the edit loop.
+  getNlSource: (id: string, signal?: AbortSignal) =>
+    request<NlSourceResult>(`/documents/${id}/nl-source`, { signal }),
   planSemanticAgentStream: async (
     id: string,
     revision: number,

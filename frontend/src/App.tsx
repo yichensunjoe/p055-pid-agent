@@ -321,6 +321,34 @@ export default function App() {
     const timer = window.setInterval(check, 1500);
     return () => window.clearInterval(timer);
   }, [state.document?.id, canvasPointerActive]);
+  // DI-1-D4: a reload loses the in-memory nlSource; ask the server whether this document
+  // carries a stored NL semantic source and restore the edit loop's coordinates from it.
+  // The effect is keyed by document identity only — the edit path itself refreshes the
+  // state after every committed edit, and re-fetching on every revision bump would loop.
+  useEffect(() => {
+    const documentId = state.document?.id;
+    if (!documentId) {
+      setNlSource(null);
+      return;
+    }
+    let cancelled = false;
+    void api
+      .getNlSource(documentId)
+      .then((source) => {
+        if (cancelled) return;
+        setNlSource(
+          source.available && typeof source.revision === "number"
+            ? { revision: source.revision, specDigest: source.spec_digest }
+            : null,
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setNlSource(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [state.document?.id]);
   useEffect(() => {
     const releasePointer = () => setCanvasPointerActive(false);
     window.addEventListener("pointerup", releasePointer);

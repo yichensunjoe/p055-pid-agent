@@ -193,6 +193,10 @@ class TextPlanResult(StrictModel):
     latency_ms: float
     question_count: int
     judgment_count: int
+    #: DI-1-D4: the drawing-quality gate on the committed drawing (F2's objective anchor):
+    #: score/passed/blocker_count/issue_codes/engine_version. Empty on dry-run and on
+    #: refusals -- nothing was drawn, so there is nothing to score.
+    quality: dict[str, Any] = Field(default_factory=dict)
 
 
 def _port_selectors_map(planned) -> dict[tuple[str, str], str]:
@@ -428,6 +432,28 @@ def _raise_service_error(exc: Exception):
     if isinstance(exc, RevisionConflictError):
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+def _quality_receipt(service: DocumentService, document_id: str) -> dict[str, Any]:
+    """DI-1-D4: the drawing-quality gate inside the generation receipt.
+
+    The drawing that was just committed is analysed read-only by the drafting engine, and
+    the receipt carries the score, the gate verdict and the blocker codes -- the objective
+    anchor F2's drawing-usability record reads. A refusal never reaches here (nothing was
+    drawn); the field stays empty on dry runs.
+    """
+
+    from .drafting_engine import DraftingEngine
+
+    report = DraftingEngine(service).report_document(service.get_document(document_id))
+    return {
+        "score": report.score,
+        "passed": report.gate.passed,
+        "target_score": report.gate.target_score,
+        "blocker_count": len(report.gate.blockers),
+        "issue_codes": sorted({finding.code for finding in report.gate.blockers}),
+        "engine_version": report.engine_version,
+    }
 
 
 PLANNER_IDENTITY = "semantic-agent/plan-v2"
@@ -710,6 +736,39 @@ def create_semantic_agent_router(
 
     # -- Natural-language surface: one sentence in, one governed revision out ------------------- #
 
+    class NlSourceResult(StrictModel):
+        """The stored NL semantic source's coordinates, so a reloaded client can resume the
+        edit loop. Read-only: presence + the revision/digest the next text-edit binds."""
+
+        document_id: str
+        available: bool
+        revision: int | None = None
+        spec_digest: str = ""
+
+    @router.get("/documents/{document_id}/nl-source", response_model=NlSourceResult)
+    def get_nl_source(document_id: str):
+        """DI-1-D4: whether this drawing carries an editable NL semantic source.
+
+        GET-only, zero audit write, zero engineering mutation. A drawing without a stored
+        source answers available=false (the edit surface's 422 semantic_source_unavailable
+        twin, minus the error).
+        """
+
+        try:
+            service.get_document(document_id)  # 404 for a ghost, same as the write paths
+        except DocumentNotFoundError as exc:
+            raise HTTPException(
+                status_code=404, detail=f"document not found: {exc.args[0]}"
+            ) from exc
+        record = service.store.latest_semantic_spec(document_id)
+        if record is None:
+            return NlSourceResult(document_id=document_id, available=False)
+        return NlSourceResult(
+            document_id=document_id,
+            available=True,
+            revision=record.revision,
+            spec_digest=record.spec_digest,
+        )
     @router.post(
         "/documents/{document_id}/agent/text-plan",
         response_model=TextPlanResult,
@@ -918,7 +977,12 @@ def create_semantic_agent_router(
                 materialization_digest=layout.materialization_digest,
             )
         return TextPlanResult(
-            **{**payload, "committed": True, "revision": applied.document.revision}
+            **{
+                **payload,
+                "committed": True,
+                "revision": applied.document.revision,
+                "quality": _quality_receipt(service, document_id),
+            }
         )
 
     # -- Natural-language edit: the second sentence edits the stored spec, the drawing is
@@ -1172,6 +1236,7 @@ def create_semantic_agent_router(
                 "committed": True,
                 "revision": applied.document.revision,
                 "replaced_from_materialization_digest": prior_layout.materialization_digest,
+                "quality": _quality_receipt(service, document_id),
             }
         )
 

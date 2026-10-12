@@ -685,9 +685,14 @@ def test_concurrent_double_apply_lands_exactly_once(client: TestClient, app) -> 
 
     assert sum(1 for outcome in outcomes if outcome["ok"]) == 1
     loser = next(outcome["error"] for outcome in outcomes if not outcome["ok"])
+    # Every legal loser refusal is a zero-write conflict; which one fires depends on where
+    # the loser stands when the winner commits: not yet authorized (m6_apply_not_authorized),
+    # past authorize but before the ledger row (patch_already_applied), or past the ledger
+    # check and refused by the created-identity recheck (semantic_baseline_moved).
     assert getattr(loser, "code", "") in {
         "patch_already_applied",
         "m6_apply_not_authorized",
+        "semantic_baseline_moved",
     }
     applied = store.list_apply_records(patch_id=patch["patch_id"])
     assert len(applied) == 1

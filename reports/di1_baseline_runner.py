@@ -123,6 +123,7 @@ def _summarize(status: int, body: dict, wall_ms: float) -> dict:
             f"{g.get('requested_type')}/{g.get('requested_tag', '')}"
             for g in detail.get("catalog_gaps", [])
         ]
+        summary["port_ambiguities"] = detail.get("port_ambiguities", [])
         return summary
     if isinstance(detail, str):
         summary["outcome"] = f"{status}:error"
@@ -147,6 +148,7 @@ def _summarize(status: int, body: dict, wall_ms: float) -> dict:
         ],
         port_ambiguities=len(body.get("port_ambiguities", [])),
         model=body.get("model", ""),
+        quality=body.get("quality", {}),
     )
     return summary
 
@@ -245,6 +247,7 @@ def main() -> None:
     assert [s["id"] for s in corpus["scenarios"]] == ["S1", "S2", "S3", "S4", "S5", "S6"], (
         "corpus drift: the runner refuses to measure anything but the frozen S1-S6 set"
     )
+    out_path = Path(sys.argv[1]) if len(sys.argv) > 1 else OUT_PATH
 
     runs = []
     for run_index in (1, 2):
@@ -311,8 +314,8 @@ def main() -> None:
             "python_executable": sys.executable,
         },
     }
-    json.dump(result, open(OUT_PATH, "w"), ensure_ascii=False, indent=1)
-    print("saved", OUT_PATH)
+    json.dump(result, open(out_path, "w"), ensure_ascii=False, indent=1)
+    print("saved", out_path)
 
 
 if __name__ == "__main__":

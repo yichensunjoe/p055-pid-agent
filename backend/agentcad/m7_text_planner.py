@@ -194,16 +194,30 @@ def _entity_id(index: int, tag: str, symbol_key: str) -> str:
 
 
 _HOST_PREFIX = re.compile(r"给\s*(?P<tag>[A-Za-z]{1,5}-?\d{1,5}[A-Za-z]?)")
+#: DI-1-D4 F-b: the location-shaped twin 「在 <HOST> 的 <方位> 加/安装…」 names the same
+#: host; the 方位 word itself is advisory (the governed tap is the attachment point by
+#: definition, and the tap resolution receipts any conflict rather than guessing).
+_HOST_LOCATION_PREFIX = re.compile(
+    r"^在\s*(?P<tag>[A-Za-z]{1,5}-?\d{1,5}[A-Za-z]?)\s*的"
+)
 
 
 def _host_tag_of(clause_text: str) -> str:
-    """The host tag an explicit 「给 <HOST> 添加 …」 names, upper-cased, or "".
+    """The host tag an explicit 「给 <HOST> 添加 …」 or 「在 <HOST> 的 … 加…」 names,
+    upper-cased, or "".
 
     The tag is data read by a pattern, not a judgment; anything the sentence does not
-    spell out stays empty, and an empty host means no attachment is claimed.
+    spell out stays empty, and an empty host means no attachment is claimed. The
+    location-shaped prefix only counts when the clause is the instrument-attachment
+    shape (INSTRUMENT_ON_HOST_RE) — a positional placement like 「在 V-101 的旁边加一个
+    缓冲罐」 names no host.
     """
 
+    from .device_phrases import INSTRUMENT_ON_HOST_RE
+
     match = _HOST_PREFIX.search(clause_text or "")
+    if match is None and INSTRUMENT_ON_HOST_RE.match(clause_text or ""):
+        match = _HOST_LOCATION_PREFIX.search(clause_text or "")
     return match.group("tag").upper() if match else ""
 
 

@@ -48,6 +48,28 @@ _TAP_SELECTION: tuple[tuple[str, str], ...] = (
     ("temperature", "tap_pt"),
 )
 
+#: DI-1-D4 F-c: instruments without a ``process`` port id land the governed-tap connector
+#: on a port declared here, keyed by symbol key. A level gauge's lower port is the
+#: liquid-side connection the host's ``tap_level`` speaks to. A missing entry is a
+#: receipt (``no_instrument_land_port``), never a fallback to a guessed port.
+_DECLARED_LAND_PORTS: dict[str, str] = {
+    "level_gauge": "lower",
+}
+
+
+def instrument_land_port_id(symbol_key: str, port_ids: tuple[str, ...]) -> str:
+    """The instrument-side port a governed tap connector lands on, or "".
+
+    ``process`` wins when present; otherwise the declared dual-port landing from
+    ``_DECLARED_LAND_PORTS`` when the symbol actually offers that port; otherwise ""
+    so the caller receipts instead of guessing.
+    """
+
+    if "process" in port_ids:
+        return "process"
+    declared = _DECLARED_LAND_PORTS.get(symbol_key, "")
+    return declared if declared in port_ids else ""
+
 
 @dataclass(frozen=True)
 class AttachmentResolution:
@@ -126,7 +148,9 @@ def resolve_attachment_target(
             reason=REASON_UNSUPPORTED_INSTRUMENT_TYPE,
             candidates=governed,
         )
-    if instrument_port_ids and "process" not in instrument_port_ids:
+    if instrument_port_ids and not instrument_land_port_id(
+        instrument_symbol_key, instrument_port_ids
+    ):
         return AttachmentResolution(
             **base,
             resolved_port_id=None,

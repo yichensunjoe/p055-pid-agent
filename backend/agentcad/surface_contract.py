@@ -451,6 +451,9 @@ HTTP_SURFACE_BINDINGS: tuple[SurfaceBinding, ...] = (
             "test_text_edit_surface.py."
         ),
     ),
+    # DI-1-D4: the stored NL source's presence/revision/spec_digest, so a reloaded client
+    # can restore the edit loop. Read-only: no audit write, no engineering mutation.
+    _read("/api/v2/documents/{document_id}/nl-source"),
     # --- harness lifecycle ------------------------------------------------------
     _http("POST", "/api/v2/agent/sessions", "harness_lifecycle", audited=True),
     _http(

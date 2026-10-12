@@ -49,6 +49,10 @@ SYMBOL_HINTS: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
 #: clause fall back to the generic table rather than silently picking one.
 EXACT_DEVICE_HINTS: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
     (("温度变送器", "temperature transmitter"), ("temperature_transmitter",)),
+    # 回流罐（reflux drum）是蒸馏回流的卧式受液容器：精确词条直连 horizontal_vessel，
+    # 不让通用「罐」类把它带进立式圆柱体等形似但端口语义不同的候选（DI-1-D4 F-a，
+    # 基线实测「回流罐」最佳候选 cylinder_vessel 置信度 0.27 < 阈值 0.34 被跳过）。
+    (("回流罐", "reflux drum", "reflux accumulator"), ("horizontal_vessel",)),
 )
 
 ADD_VERBS = (
@@ -66,11 +70,26 @@ REMOVE_VERBS = (
     "删除", "删掉", "去掉", "移除", "拿走",
     "remove", "delete",
 )
+#: 「在 <HOST> 的 <方位> 加/安装 <量词> <仪表> <TAG>」——以方位词指明挂接位置的仪表挂接
+#: 子句（DI-1-D4 F-b 最小语法扩展）。仅当所加对象是仪表（表/计/变送/indicator 词尾）时
+#: 才按挂接处理；「在 X 旁边加一个罐」这类方位放置不进入本语法，保持原分类。
+INSTRUMENT_ON_HOST_RE = re.compile(
+    r"^在\s*[A-Za-z]{1,5}-?\d{1,5}[A-Za-z]?\s*的[^，,；;。]*?"
+    r"(?:加|加装|安装|装上|设置)\s*[一两][台个只款]?"
+    r"[^，,；;。]*(?:表|计|变送|transmitter|indicator|gauge|meter)"
+)
 CLAUSE_BREAK = re.compile(r"[，,;；。\n]+")
 
 #: An engineering tag written in the sentence: ``V-101``, ``PT-101``, ``X-301A``. Read by code
 #: because it is a pattern, not a semantic question -- a tag the user spells out is data.
 TAG_PATTERN = re.compile(r"[A-Za-z]{1,5}-?\d{1,5}[A-Za-z]?")
+
+#: 「把/将 <TAG> 换成/替换为/改成 <量词?> <新设备短语>」——替换一个已存在且明确点名的
+#: 对象（DI-1-D4 F-e 最小语法）。位号必须显式写出：语法绝不推断要替换谁。
+REPLACE_RE = re.compile(
+    r"^(?:把|将)\s*(?P<tag>[A-Za-z]{1,5}-?\d{1,5}[A-Za-z]?)\s*"
+    r"(?:换成|替换为|更换为|换成是|改成|改为)\s*(?P<rest>.+)$"
+)
 
 #: How many candidates go into one judgment. System One compares options *inside* one question, and a
 #: list of two dozen near-synonyms makes the distribution meaningless rather than more precise.
@@ -105,7 +124,17 @@ def split_clauses(prompt: str) -> list[Clause]:
         if not text:
             continue
         lowered = normalise(text)
-        if any(verb in lowered for verb in CONNECT_VERBS):
+        if INSTRUMENT_ON_HOST_RE.match(text):
+            # 「在 HOST 的 方位 加 仪表」: an attachment written by location. Classified as
+            # an add so the attachment pipeline (host prefix -> host_engineering_id ->
+            # governed tap resolution) handles it exactly like the 「给 HOST 添加」 form.
+            clauses.append(Clause(text=text, kind="add"))
+        elif REPLACE_RE.match(text):
+            # 「把 <TAG> 换成 …」: a replacement names its target by tag -- data, not a
+            # judgment. Kind "replace"; the editor resolves the new device kind among
+            # candidates while the object's identity (tag, connections) is kept.
+            clauses.append(Clause(text=text, kind="replace"))
+        elif any(verb in lowered for verb in CONNECT_VERBS):
             clauses.append(Clause(text=text, kind="connect"))
         elif any(verb in lowered for verb in ADD_VERBS):
             clauses.append(Clause(text=text, kind="add"))
@@ -129,6 +158,23 @@ def extract_tags(clause: str) -> list[str]:
         if tag not in seen:
             seen.append(tag)
     return seen
+
+
+def replace_target(clause: str) -> tuple[str, str] | None:
+    """(existing tag, replacement device phrase) from a replace clause, else None.
+
+    The target tag is mandatory and read as data. The phrase is returned raw; a tag inside
+    it (「把 XV-101 换成控制阀 FCV-102」) is the caller's receipt case -- v1 replaces in
+    place and never renames.
+    """
+
+    match = REPLACE_RE.match(clause or "")
+    if not match:
+        return None
+    rest = match.group("rest").strip(" 　，,、。")
+    if not rest:
+        return None
+    return match.group("tag").upper(), rest
 
 
 def all_symbol_candidates(registry: SymbolRegistry, *, limit: int = MAX_CANDIDATES) -> list[SymbolCandidate]:

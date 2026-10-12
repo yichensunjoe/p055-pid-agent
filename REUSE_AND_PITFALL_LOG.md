@@ -2,6 +2,17 @@
 
 > 按问题关键词检索，不默认通读、非每轮必写、不双写。只记录会复发且已有验证结论的问题，优先固化为测试或代码；跨项目共享仅写短摘要和来源链接。历史条目与“待同步”字样为当时记录，不产生当前同步义务。
 
+## 2026-10-12 · 并发测试两类系统性 flake：读时序泄漏与负方码集不全（P055-PID-Agent）
+
+**场景**：DI-1-D3 的 CI 先后抓住两个 D3/D4 时代并发测试的间歇失败（本地复现率 20–23%）：review 的 confirm/reassign 竞争（assert 2==1 双落）与 m6 apply 的双 apply 竞争（负方错误码断言失败）。
+
+**结论做法**：
+1. **经 service 层的竞争测试天然带读时序**：service 在决策构建时读当前状态，胜负取决于「读」与「对方提交」的先后——合法顺序路径（confirmed→superseded 是契约已声明的边）会让两边都成功。要测 store 的 CAS，就把两侧决策**都预建在同一个 from_state 上**直接赛 store 写（参照 test_concurrent_confirm_and_reject_only_one_lands 的定型写法），service 层竞争只作补充证据。
+2. **竞争负方的合法拒绝码要枚举全**：同一「恰好一方落地」下，负方可能拿到 m6_apply_not_authorized（未过授权）/ patch_already_applied（账本守卫）/ semantic_baseline_moved（创建身份复核）任一——断言码集前先按执行器检查顺序推演所有合法拒绝点，或用故障注入逐点验证。
+3. **复现方法**：pytest 单测循环 30–40 次（`-p no:cacheprovider`），比 CI 上碰运气快得多；20% 的 flake 本地两轮就能抓到。
+
+**适用场景**：一切并发/CAS/竞争测试的设计与评审；Gate 复核里的「并发覆盖」声明要追问「碰撞是否被确定性制造」。
+
 ## 2026-10-11 · M6-2B-D4 补测：对称路径的错误翻译要成对核对；N9/N13 冻结负例补齐（P055-PID-Agent）
 
 **场景**：接续被中断的 M6-2B-D4 工作时按冻结清单补两条负例——N9（补偿撤销事务 CAS/提交失败）与 N13（同一 source 十条候选编译在前、顺序应用）。写 N9 的故障注入测试时发现真缺陷：`apply_authorized` 会把原子提交里的 `sqlite3.Error` 翻译成稳定拒绝码 `apply_commit_failed`（409），而对称的 `revert_authorized` 只有裸 `except Exception`——触发器故障沿 revert 路径以原始 `IntegrityError` 直达 HTTP 层变成 500，既无稳定码也不进 closeout 映射。

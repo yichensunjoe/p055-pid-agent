@@ -1282,15 +1282,21 @@ def test_attachment_materialization_is_deterministic() -> None:
     assert tap_first, "the tap row must exist in both runs"
 
 
-def test_attachment_without_a_land_port_refuses_instead_of_dropping() -> None:
+def test_attachment_without_a_land_port_refuses_instead_of_dropping(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Q2R3-B2 hard lock: an attachment relation that cannot materialize must fail
-    loud -- no silent tap-row drop, and never a "first bidirectional" default."""
+    loud -- no silent tap-row drop, and never a "first bidirectional" default.
 
-    import pytest
+    DI-1-D4 F-c declared level_gauge's lower-port landing, so the probe simulates the
+    not-yet-designed dual-port instrument by removing the declaration: with no landing
+    port the relation must still fail closed."""
 
+    import agentcad.m7_attachment_targets as attachment_targets
     from agentcad.api_semantic_agent import _finalize_spec_layout
     from agentcad.m7_layout_materialization import MaterializationError
 
+    monkeypatch.delitem(attachment_targets._DECLARED_LAND_PORTS, "level_gauge")
     spec = _tap_probe_spec()
     spec.entities[2] = spec.entities[2].model_copy(update={"symbol_key": "level_gauge"})
     finalized = _finalize_spec_layout(spec)

@@ -135,7 +135,8 @@
       "height": 70,
       "ports": [
         {"id": "suction", "name": "吸入口", "x": 0, "y": 38, "direction": "in"},
-        {"id": "discharge", "name": "排出口", "x": 48, "y": 0, "direction": "out"}
+        {"id": "discharge", "name": "排出口", "x": 48, "y": 0, "direction": "out"},
+        {"id": "tap_pt", "name": "压力温度取压口", "x": 58, "y": 18, "direction": "bidirectional", "medium": "instrument"}
       ],
       "shapes": [
         {"type": "circle", "cx": 38, "cy": 38, "r": 28},

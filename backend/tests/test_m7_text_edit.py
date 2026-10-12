@@ -504,3 +504,108 @@ def test_deleting_host_and_all_dependents_together_is_allowed() -> None:
     assert "T-101" not in tags
     assert "TT-101" not in tags
     assert not any("attachment_host_has_dependents" in item for item in plan.undelivered)
+
+
+# ---------------------------------------------------------------------------
+# DI-1-D4 F-e: 「把 <TAG> 换成 …」 in-place replacement
+# ---------------------------------------------------------------------------
+
+_BASE_VALVE = DiagramSpec(
+    label="base",
+    systems=[DiagramSystem(system_id="S_main", name="主工艺系统", order=0)],
+    entities=[
+        DiagramEntity(
+            engineering_id="el_V_101",
+            kind="equipment",
+            system_id="S_main",
+            tag="V-101",
+            name="缓冲罐",
+            equipment_class="vessel",
+            symbol_key="buffer_tank",
+        ),
+        DiagramEntity(
+            engineering_id="el_XV_101",
+            kind="equipment",
+            system_id="S_main",
+            tag="XV-101",
+            name="闸阀",
+            equipment_class="valve",
+            symbol_key="gate_valve",
+        ),
+        DiagramEntity(
+            engineering_id="el_P_101",
+            kind="equipment",
+            system_id="S_main",
+            tag="P-101",
+            name="离心泵",
+            equipment_class="pump",
+            symbol_key="centrifugal_pump",
+        ),
+    ],
+    connections=[
+        DiagramConnection(
+            engineering_id="cn_1",
+            source_engineering_id="el_V_101",
+            target_engineering_id="el_XV_101",
+            medium="",
+            tag="",
+        ),
+        DiagramConnection(
+            engineering_id="cn_2",
+            source_engineering_id="el_XV_101",
+            target_engineering_id="el_P_101",
+            medium="",
+            tag="",
+        ),
+    ],
+)
+
+
+def test_replace_clauses_are_classified_by_code() -> None:
+    clauses = split_clauses("把 XV-101 换成一个控制阀")
+    assert [clause.kind for clause in clauses] == ["replace"]
+
+
+def test_replacing_a_valve_keeps_identity_tag_and_connections() -> None:
+    """The tag is data, the new kind is a judgment among code-built valve candidates."""
+
+    recorder = _Recorder({"el_XV_101": {"choice": "control_valve", "confidence": 0.95}})
+    plan = _editor(recorder).plan_edit(
+        "把 XV-101 换成一个控制阀", base_spec=_BASE_VALVE, typesafe_config=_config()
+    )
+    assert plan.completeness == "complete", plan.undelivered
+    assert plan.spec.problems() == []
+    by_id = {entity.engineering_id: entity for entity in plan.spec.entities}
+    replaced = by_id["el_XV_101"]
+    assert replaced.symbol_key == "control_valve"
+    assert replaced.tag == "XV-101"  # identity survives the replacement
+    assert [entity.tag for entity in plan.spec.entities] == ["V-101", "XV-101", "P-101"]
+    pairs = {(c.source_engineering_id, c.target_engineering_id) for c in plan.spec.connections}
+    assert ("el_V_101", "el_XV_101") in pairs
+    assert ("el_XV_101", "el_P_101") in pairs
+    # The judgment's criteria are valve symbols only -- never the whole catalogue.
+    criteria = recorder.payloads[0]["questions"]["el_XV_101"]["criteria"]
+    assert "control_valve" in criteria and "gate_valve" in criteria
+    assert "centrifugal_pump" not in criteria
+    # The decision record carries what the sentence actually said.
+    assert any("XV-101" in note and "替换" in note for note in plan.notes)
+
+
+def test_replacing_a_tag_that_is_not_there_is_receipted() -> None:
+    plan = _editor(_Recorder()).plan_edit(
+        "把 XV-999 换成一个控制阀", base_spec=_BASE_VALVE, typesafe_config=_config()
+    )
+    assert plan.completeness == "partial"
+    assert any("XV-999" in item and "不在当前图纸" in item for item in plan.undelivered)
+    by_id = {entity.engineering_id: entity for entity in plan.spec.entities}
+    assert by_id["el_XV_101"].symbol_key == "gate_valve"  # untouched
+
+
+def test_replace_and_rename_together_is_receipted_not_split() -> None:
+    plan = _editor(_Recorder()).plan_edit(
+        "把 XV-101 换成一个控制阀 FCV-101", base_spec=_BASE_VALVE, typesafe_config=_config()
+    )
+    assert plan.completeness == "partial"
+    assert any("暂不支持替换并改名" in item for item in plan.undelivered)
+    by_id = {entity.engineering_id: entity for entity in plan.spec.entities}
+    assert by_id["el_XV_101"].symbol_key == "gate_valve"

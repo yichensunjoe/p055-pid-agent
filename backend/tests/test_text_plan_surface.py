@@ -317,3 +317,57 @@ def test_the_contract_declaration_and_the_live_route_agree(client: TestClient) -
     source = pathlib.Path(surface_module.__file__).read_text(encoding="utf-8")
     assert "m7_layout_contract" in source, "the declared surface module must read the contract"
     assert contract.PHASE_4_NL_SURFACE_MODULE == "api_semantic_agent.py"
+
+
+def test_nl_source_reports_the_stored_source_coordinates(client: TestClient) -> None:
+    """DI-1-D4: the read-only nl-source endpoint restores the edit loop after a reload."""
+
+    document_id = _new_document(client)
+    before = client.get(f"/api/v2/documents/{document_id}/nl-source")
+    assert before.status_code == 200
+    assert before.json() == {
+        "document_id": document_id,
+        "available": False,
+        "revision": None,
+        "spec_digest": "",
+    }
+
+    drawn = _draw(client, document_id, SENTENCE)
+    assert drawn.status_code == 200, drawn.text
+    result = drawn.json()
+    after = client.get(f"/api/v2/documents/{document_id}/nl-source")
+    assert after.status_code == 200
+    payload = after.json()
+    assert payload["available"] is True
+    assert payload["revision"] == result["revision"]
+    assert payload["spec_digest"] == result["spec_digest"]
+
+    # Read-only discipline: the GET wrote no audit record of its own (the draw's write
+    # audit is the only record on this document).
+    audits = _audit_records(client, document_id)
+    assert {record.event_type for record in audits} <= {"document.created", "revision.created"}
+
+
+def test_nl_source_unknown_document_is_404(client: TestClient) -> None:
+    response = client.get("/api/v2/documents/doc_ghost/nl-source")
+    assert response.status_code == 404
+
+
+def test_a_committed_drawing_carries_the_quality_gate_in_its_receipt(client: TestClient) -> None:
+    """DI-1-D4: score + gate verdict + blocker codes ride the generation receipt (F2's
+    objective anchor); a dry run draws nothing and scores nothing."""
+
+    document_id = _new_document(client)
+    response = _draw(client, document_id, SENTENCE)
+    assert response.status_code == 200, response.text
+    quality = response.json()["quality"]
+    assert isinstance(quality["score"], (int, float))
+    assert 0 <= quality["score"] <= 100
+    assert isinstance(quality["passed"], bool)
+    assert isinstance(quality["blocker_count"], int)
+    assert isinstance(quality["issue_codes"], list)
+    assert quality["engine_version"] >= 1
+
+    dry = _draw(client, _new_document(client), SENTENCE, dry_run=True)
+    assert dry.status_code == 200, dry.text
+    assert dry.json()["quality"] == {}

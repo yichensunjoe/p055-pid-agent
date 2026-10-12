@@ -75,7 +75,7 @@ def test_v14_to_v15_migration_backfills_default_project(
     assert _user_version(database) == 14
 
     service = _service(database)  # reopens: migrates v14 -> v15
-    assert _user_version(database) == CURRENT_SCHEMA_VERSION == 16
+    assert _user_version(database) == CURRENT_SCHEMA_VERSION
 
     store = service.store
     projects = store.list_projects()
@@ -140,7 +140,7 @@ def test_v14_backup_then_v15_migrate_then_restore_re_migrates(
 
     # v15 binary migrates the original.
     _service(database)
-    assert _user_version(database) == 16
+    assert _user_version(database) == CURRENT_SCHEMA_VERSION
 
     # Rollback = restore (first yields v14), then v15 binary re-migrates.
     restored = tmp_path / "restored.db"
@@ -152,7 +152,7 @@ def test_v14_backup_then_v15_migrate_then_restore_re_migrates(
     )
     assert _user_version(restored) == 14
     service = _service(restored)
-    assert _user_version(restored) == 16
+    assert _user_version(restored) == CURRENT_SCHEMA_VERSION
     assert service.store.get_project(DEFAULT_PROJECT_ID) is not None
 
 
@@ -232,7 +232,7 @@ def test_v16_database_passes_required_schema_validation(tmp_path: Path) -> None:
         "SELECT name FROM projects WHERE project_id = ?", (DEFAULT_PROJECT_ID,)
     ).fetchone()
     connection.close()
-    assert version == 16
+    assert version == CURRENT_SCHEMA_VERSION
     assert default_row is not None
 
 

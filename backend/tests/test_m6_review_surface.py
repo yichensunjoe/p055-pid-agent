@@ -924,44 +924,81 @@ def _decide_service(app, source_id: str, candidate_id: str, payload: dict):
 
 
 def test_concurrent_confirm_and_reject_only_one_lands(client: TestClient, app) -> None:
-    """Store-level proof of the CAS itself: two decisions prebuilt against the same state,
-    raced into the store — exactly one lands, and the loser is refused deterministically."""
+    """Store-level proof of the CAS itself: a confirm pair and a reject prebuilt against the
+    same needs_review state, raced into the store — exactly one lands, deterministically."""
 
     source_id = _seed(app)
     store = _store(app)
     row = _tag_candidate(client, source_id, "P-201")
     candidate_id = row["candidate_id"]
+    candidate = store.get_semantic_candidate(candidate_id)
 
-    from agentcad.m6_candidate_core import review_decision_id
-    from agentcad.m6_candidate_models import ReviewDecision
+    from agentcad.m6_candidate_core import canonical_digest, review_decision_id, value_digest
+    from agentcad.m6_candidate_models import (
+        ConfirmedSemanticFinding,
+        ConflictBaselineRecord,
+        ReviewDecision,
+    )
+    from agentcad.m6_ingestion_contract import identity_prefix
     from agentcad.store import M6FilingError
 
-    def reject_decision(reviewer: str) -> ReviewDecision:
-        return ReviewDecision(
-            review_decision_id=review_decision_id(
-                candidate_id=candidate_id,
-                kind="human_reject",
-                from_status="needs_review",
-                to_status="rejected",
-                reviewer_identity=reviewer,
-                reviewer_action="位号不属此簇",
-                note="",
-                baseline=None,
-                conflict_resolution="",
-                resolution_choice=None,
-                successor_candidate_id="",
-            ),
+    baseline = ConflictBaselineRecord(
+        baseline_revision=1,
+        comparison_identity="equipment:p-201",
+        comparison_path="existence",
+        value_digest=value_digest("existence", "absent"),
+        value_present=True,
+    )
+    confirm_decision = ReviewDecision(
+        review_decision_id=review_decision_id(
             candidate_id=candidate_id,
-            kind="human_reject",
+            kind="human_confirm",
             from_status="needs_review",
-            to_status="rejected",
-            reviewer_identity=reviewer,
-            reviewer_action="位号不属此簇",
-        )
+            to_status="confirmed",
+            reviewer_identity="engineer.joe",
+            reviewer_action="核对一致",
+            note="",
+            baseline=baseline,
+            conflict_resolution="",
+            resolution_choice=None,
+            successor_candidate_id="",
+        ),
+        candidate_id=candidate_id,
+        kind="human_confirm",
+        from_status="needs_review",
+        to_status="confirmed",
+        reviewer_identity="engineer.joe",
+        reviewer_action="核对一致",
+        baseline=baseline,
+    )
+    finding = ConfirmedSemanticFinding(
+        finding_id=identity_prefix("finding_id")
+        + canonical_digest(
+            {"candidate": candidate_id, "decision": confirm_decision.review_decision_id}
+        ),
+        candidate_id=candidate_id,
+        review_decision_id=confirm_decision.review_decision_id,
+        artifact=candidate.artifact,
+        region_id=candidate.region.region_id,
+        region_geometry=candidate.region.geometry_selector,
+        candidate_type=candidate.candidate_type,
+        confirmed_semantics=candidate.proposed_semantics,
+        evidence=candidate.evidence,
+        baseline=baseline,
+        producer=candidate.producer,
+        provenance=candidate.provenance,
+        provenance_chain=[
+            candidate.artifact.artifact_id,
+            candidate.region.region_id,
+            candidate_id,
+            confirm_decision.review_decision_id,
+        ],
+    )
+    reject_decision = _reject_decision(candidate_id, "needs_review")
 
     outcomes = _race(
-        lambda: store.record_review_decision(reject_decision("engineer.joe")),
-        lambda: store.record_review_decision(reject_decision("engineer.jane")),
+        lambda: store.record_confirmation(confirm_decision, finding),
+        lambda: store.record_review_decision(reject_decision),
     )
     winners = [outcome for outcome in outcomes if outcome["ok"]]
     losers = [outcome for outcome in outcomes if not outcome["ok"]]
@@ -972,9 +1009,11 @@ def test_concurrent_confirm_and_reject_only_one_lands(client: TestClient, app) -
     # The log replays cleanly to exactly the winner's state.
     from agentcad.m6_candidate_core import M6CandidateService
 
-    assert M6CandidateService(store).current_status(candidate_id) == "rejected"
+    status = M6CandidateService(store).current_status(candidate_id)
+    assert status in {"confirmed", "rejected"}
     decisions = store.list_review_decisions(candidate_id)
-    assert [decision.kind for decision in decisions] == ["filed", "human_reject"]
+    assert [decision.kind for decision in decisions] == ["filed", decisions[-1].kind]
+    assert decisions[-1].kind in {"human_confirm", "human_reject"}
 
 
 def test_concurrent_confirms_only_one_lands(client: TestClient, app) -> None:

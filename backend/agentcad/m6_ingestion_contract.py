@@ -636,6 +636,15 @@ PERSISTENT_IDENTITIES: tuple[PersistentIdentity, ...] = (
             "source revision and the canonical content of its selectors"
         ),
     ),
+    PersistentIdentity(
+        field="apply_id",
+        prefix="m6apply_",
+        digest_hex=IDENTITY_FULL_DIGEST_HEX,
+        meaning=(
+            "the identity of one governed apply record, derived from the patch, the intent "
+            "binding and the apply-side evidence"
+        ),
+    ),
 )
 
 #: Prefix lookup for the core, so the implementation spelling and the declaration cannot differ.

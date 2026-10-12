@@ -57,7 +57,7 @@ def test_v15_to_v16_migration_creates_change_set_table(
     assert _user_version(database) == 15
 
     _service(database)  # reopens: migrates v15 -> v16
-    assert _user_version(database) == CURRENT_SCHEMA_VERSION == 16
+    assert _user_version(database) == CURRENT_SCHEMA_VERSION
 
     connection = sqlite3.connect(database)
     ddl = connection.execute(
@@ -94,7 +94,7 @@ def test_migration_failure_rolls_back_to_usable_v15(
     assert "project_change_sets" not in tables
     # After rollback the database still opens and migrates cleanly.
     _service(database)
-    assert _user_version(database) == 16
+    assert _user_version(database) == CURRENT_SCHEMA_VERSION
 
 
 def test_v15_backup_then_v16_migrate_then_restore_re_migrates(
@@ -111,7 +111,7 @@ def test_v15_backup_then_v16_migrate_then_restore_re_migrates(
     assert metadata.schema_version == 15
 
     _service(database)
-    assert _user_version(database) == 16
+    assert _user_version(database) == CURRENT_SCHEMA_VERSION
 
     restored = tmp_path / "restored.db"
     restore_backup(
@@ -122,7 +122,7 @@ def test_v15_backup_then_v16_migrate_then_restore_re_migrates(
     )
     assert _user_version(restored) == 15
     _service(restored)
-    assert _user_version(restored) == 16
+    assert _user_version(restored) == CURRENT_SCHEMA_VERSION
 
 
 def _stage(store: SQLiteDocumentStore, change_set_id: str) -> None:
@@ -264,5 +264,5 @@ def test_v16_database_passes_required_schema_validation(tmp_path: Path) -> None:
         "SELECT name FROM projects WHERE project_id = ?", (DEFAULT_PROJECT,)
     ).fetchone()
     connection.close()
-    assert version == 16
+    assert version == CURRENT_SCHEMA_VERSION
     assert row is not None

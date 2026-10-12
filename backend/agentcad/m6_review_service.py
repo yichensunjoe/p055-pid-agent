@@ -564,9 +564,6 @@ class M6ReviewService:
                 note=note,
                 extra={"successor_candidate_id": new_id},
             ),
-            source_document_id=artifact.source_document_id,
-            expected_source_revision=artifact.source_revision,
-            expected_source_content_hash=artifact.content_hash,
         )
         return DecisionOutcome(
             candidate_id=candidate.candidate_id,
